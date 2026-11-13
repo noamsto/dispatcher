@@ -1,7 +1,6 @@
 package rosterrender
 
 import (
-	"regexp"
 	"strings"
 	"testing"
 )
@@ -13,115 +12,74 @@ func cardOf(t *testing.T, mutate func(r map[string]any)) planet {
 	return onlyPlanet(t, row)
 }
 
-func TestCardTextFits(t *testing.T) {
-	long := strings.Repeat("alpha beta gamma ", 20)
+func TestCardText(t *testing.T) {
 	tests := []struct {
 		name   string
 		mutate func(r map[string]any)
-		check  func(t *testing.T, c cardText)
+		check  func(t *testing.T, p planet)
 	}{
-		{"head with issue number", func(r map[string]any) {}, func(t *testing.T, c cardText) {
-			if c.rows[0] != "lime · #12" || c.state != "working" {
-				t.Errorf("head = %q state = %q", c.rows[0], c.state)
+		{"head with issue number", func(r map[string]any) {}, func(t *testing.T, p planet) {
+			if cardHead(p) != "lime · #12" || stateWord(p.state) != "working" {
+				t.Errorf("head = %q state = %q", cardHead(p), stateWord(p.state))
 			}
 		}},
-		{"head with non-numeric id", func(r map[string]any) { r["branch"], r["name"] = "feat/x", "lime·ENG-7" }, func(t *testing.T, c cardText) {
-			if c.rows[0] != "lime · ENG-7" {
-				t.Errorf("head = %q", c.rows[0])
+		{"head with non-numeric id", func(r map[string]any) { r["branch"], r["name"] = "feat/x", "lime·ENG-7" }, func(t *testing.T, p planet) {
+			if cardHead(p) != "lime · ENG-7" {
+				t.Errorf("head = %q", cardHead(p))
 			}
 		}},
-		{"head without issue", func(r map[string]any) { r["branch"] = "feat/x" }, func(t *testing.T, c cardText) {
-			if c.rows[0] != "lime" {
-				t.Errorf("head = %q", c.rows[0])
+		{"head without issue", func(r map[string]any) { r["branch"] = "feat/x" }, func(t *testing.T, p planet) {
+			if cardHead(p) != "lime" {
+				t.Errorf("head = %q", cardHead(p))
 			}
 		}},
-		{"state underscore becomes space", func(r map[string]any) { r["state"] = "pr_open" }, func(t *testing.T, c cardText) {
-			if c.state != "pr open" {
-				t.Errorf("state = %q", c.state)
+		{"state underscore becomes space", func(r map[string]any) { r["state"] = "pr_open" }, func(t *testing.T, p planet) {
+			if stateWord(p.state) != "pr open" {
+				t.Errorf("state = %q", stateWord(p.state))
 			}
 		}},
-		{"state is cleaned", func(r map[string]any) { r["state"] = "wo<rk\"ing_now" }, func(t *testing.T, c cardText) {
-			if c.state != "working now" {
-				t.Errorf("state = %q", c.state)
+		{"state is cleaned", func(r map[string]any) { r["state"] = "wo<rk\"ing_now" }, func(t *testing.T, p planet) {
+			if stateWord(p.state) != "working now" {
+				t.Errorf("state = %q", stateWord(p.state))
 			}
 		}},
-		{"tier is cleaned", func(r map[string]any) { r["tier"] = "st<an\"dard" }, func(t *testing.T, c cardText) {
-			if !strings.HasPrefix(c.rows[3], "standard·") {
-				t.Errorf("row 4 = %q", c.rows[3])
-			}
-		}},
-		{"short title leaves row 3 empty", func(r map[string]any) { r["title"] = "fix the bug" }, func(t *testing.T, c cardText) {
-			if c.rows[1] != "fix the bug" || c.rows[2] != "" {
-				t.Errorf("rows = %q %q", c.rows[1], c.rows[2])
-			}
-		}},
-		{"long title wraps then cuts", func(r map[string]any) { r["title"] = long }, func(t *testing.T, c cardText) {
-			if c.rows[1] == "" || !strings.HasSuffix(c.rows[2], "…") {
-				t.Errorf("rows = %q %q", c.rows[1], c.rows[2])
-			}
-			if strings.HasSuffix(c.rows[1], "…") || strings.HasSuffix(c.rows[1], " ") {
-				t.Errorf("row 2 = %q", c.rows[1])
-			}
-		}},
-		{"over-long word is cut by width", func(r map[string]any) { r["title"] = strings.Repeat("W", 60) + " tail" }, func(t *testing.T, c cardText) {
-			if c.rows[1] == "" || !strings.HasPrefix(c.rows[1], "W") || textWidth(c.rows[1]) < cardInner/2 {
-				t.Errorf("row 2 = %q", c.rows[1])
-			}
-			if !strings.HasSuffix(c.rows[2], "…") {
-				t.Errorf("row 3 = %q", c.rows[2])
+		{"tier is cleaned", func(r map[string]any) { r["tier"] = "st<an\"dard" }, func(t *testing.T, p planet) {
+			if !strings.HasPrefix(metaText(p), "standard·") {
+				t.Errorf("meta = %q", metaText(p))
 			}
 		}},
 		{"tier engine model", func(r map[string]any) {
 			r["tier"], r["engine"], r["model"] = "deep", "claude", "claude-opus-5-5"
-		}, func(t *testing.T, c cardText) {
-			if c.rows[3] != "deep·claude·opus" {
-				t.Errorf("row 4 = %q", c.rows[3])
+		}, func(t *testing.T, p planet) {
+			if metaText(p) != "deep·claude·opus" {
+				t.Errorf("meta = %q", metaText(p))
 			}
 		}},
-		{"missing engine and model show ?", func(r map[string]any) {}, func(t *testing.T, c cardText) {
-			if c.rows[3] != "standard·?·?" {
-				t.Errorf("row 4 = %q", c.rows[3])
-			}
-		}},
-		{"long model line is cut", func(r map[string]any) {
-			r["engine"], r["model"] = "pi", strings.Repeat("x", 80)
-		}, func(t *testing.T, c cardText) {
-			if !strings.HasSuffix(c.rows[3], "…") {
-				t.Errorf("row 4 = %q", c.rows[3])
-			}
-		}},
-		{"detail is cut to one row", func(r map[string]any) { r["detail"] = long }, func(t *testing.T, c cardText) {
-			if !strings.HasSuffix(c.rows[4], "…") {
-				t.Errorf("row 5 = %q", c.rows[4])
-			}
-		}},
-		{"null detail leaves row 5 empty", func(r map[string]any) { r["detail"] = nil }, func(t *testing.T, c cardText) {
-			if c.rows[4] != "" {
-				t.Errorf("row 5 = %q", c.rows[4])
-			}
-		}},
-		{"long head leaves room for the state", func(r map[string]any) {
-			r["state"], r["name"] = "blocked", strings.Repeat("W", 24)
-		}, func(t *testing.T, c cardText) {
-			if !strings.HasSuffix(c.rows[0], "…") {
-				t.Errorf("head = %q, want a cut one", c.rows[0])
-			}
-			if got := textWidth(c.rows[0]) + textWidth("  "+c.state) + 2*cardCellPad; got > cardInner {
-				t.Errorf("head+state width %.1f > %.1f", got, cardInner)
+		{"missing engine and model show ?", func(r map[string]any) {}, func(t *testing.T, p planet) {
+			if metaText(p) != "standard·?·?" {
+				t.Errorf("meta = %q", metaText(p))
 			}
 		}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			p := cardOf(t, tt.mutate)
-			c := cardTextOf(p)
-			for i, row := range c.rows {
-				if textWidth(row) > cardInner {
-					t.Errorf("row %d %q width %.1f > %.1f", i+1, row, textWidth(row), cardInner)
-				}
-			}
-			tt.check(t, c)
+			tt.check(t, cardOf(t, tt.mutate))
 		})
+	}
+}
+
+func TestWrapAt(t *testing.T) {
+	const w = 180.0
+	if line, rest := wrapAt("fix the bug", w, cardFont); line != "fix the bug" || rest != "" {
+		t.Errorf("short = %q, %q", line, rest)
+	}
+	line, rest := wrapAt(strings.Repeat("alpha beta gamma ", 20), w, cardFont)
+	if line == "" || rest == "" || strings.HasSuffix(line, " ") || textWidthAt(line, cardFont) > w {
+		t.Errorf("long = %q, %q", line, rest)
+	}
+	line, rest = wrapAt(strings.Repeat("W", 60)+" tail", w, cardFont)
+	if !strings.HasPrefix(line, "W") || textWidthAt(line, cardFont) > w || textWidthAt(line, cardFont) < w/2 || !strings.HasSuffix(rest, " tail") {
+		t.Errorf("over-long word = %q, %q", line, rest)
 	}
 }
 
@@ -157,54 +115,24 @@ func TestSanitizeText(t *testing.T) {
 	}
 }
 
-func TestHTMLText(t *testing.T) {
-	if got, want := htmlText(`<a&"b">`), "&lt;a&amp;&quot;b&quot;&gt;"; got != want {
-		t.Errorf("htmlText = %q, want %q", got, want)
-	}
-}
-
-func TestHTMLTextBackslashStaysLiteral(t *testing.T) {
-	tests := []struct{ in, escaped string }{
-		{`\N`, `\\N`},
-		{`\G`, `\\G`},
-		{`C:\Notes`, `C:\\Notes`},
-		{`\\`, `\\\\`},
-	}
-	for _, tt := range tests {
-		if got := htmlText(tt.in); got != tt.escaped {
-			t.Errorf("htmlText(%q) = %q, want %q", tt.in, got, tt.escaped)
-		}
-	}
-
-	neato := neatoPath(t)
-	textRe := regexp.MustCompile(`<text[^>]*>(.*?)</text>`)
-	for _, tt := range tests {
-		dot := `graph graphname { n [pos="0,0!" shape=box label=<<table><tr><td>` + htmlText(tt.in) + `</td></tr></table>>]; }`
-		m := textRe.FindSubmatch(neatoSVG(t, neato, dot))
-		if m == nil || string(m[1]) != tt.in {
-			t.Errorf("neato drew %q for %q", m, tt.in)
-		}
-	}
-}
-
-func TestTruncWidth(t *testing.T) {
-	if got := truncWidth("short", cardInner); got != "short" {
+func TestTruncAt(t *testing.T) {
+	if got := truncAt("short", 150, cardFont); got != "short" {
 		t.Errorf("fitting text changed: %q", got)
 	}
-	got := truncWidth("alpha beta gamma delta epsilon zeta eta theta iota kappa", 150)
-	if !strings.HasSuffix(got, "…") || strings.Contains(got, " …") || textWidth(got) > 150 {
-		t.Errorf("truncWidth = %q (%.1f)", got, textWidth(got))
+	got := truncAt("alpha beta gamma delta epsilon zeta eta theta iota kappa", 150, cardFont)
+	if !strings.HasSuffix(got, "…") || strings.Contains(got, " …") || textWidthAt(got, cardFont) > 150 {
+		t.Errorf("truncAt = %q (%.1f)", got, textWidthAt(got, cardFont))
 	}
 	if strings.HasSuffix(strings.TrimSuffix(got, "…"), "e") && !strings.Contains("alpha beta gamma delta epsilon zeta eta theta iota kappa", strings.TrimSuffix(got, "…")+" ") {
 		t.Errorf("cut mid-word: %q", got)
 	}
 }
 
-func TestTruncWidthCountsWideSourceSansGlyphs(t *testing.T) {
-	if got := textWidth("`"); got < 0.542*cardFont {
+func TestTruncAtCountsWideSourceSansGlyphs(t *testing.T) {
+	if got := textWidthAt("`", cardFont); got < 0.542*cardFont {
 		t.Errorf("backtick width %.2f is narrower than Source Sans 3 draws it", got)
 	}
-	// truncWidth measures with textWidth, so a narrowed table would still pass
+	// truncAt measures with textWidthAt, so a narrowed table would still pass
 	// the truncation check below; the per-glyph floor is what catches it.
 	for r, adv := range map[rune]int{'`': 542, 'J': 480, '\'': 249, '(': 303, ')': 303, '!': 289, '%': 824, '"': 426, '/': 350, '?': 425, '_': 500} {
 		if got := runeEm(r); got < float64(adv)/1000 {
@@ -212,9 +140,10 @@ func TestTruncWidthCountsWideSourceSansGlyphs(t *testing.T) {
 		}
 	}
 	row := strings.Repeat("`JJJ` `fix` `JSON` ", 6)
-	got := truncWidth(row, cardInner)
-	if !strings.HasSuffix(got, "…") || textWidth(got) > cardInner {
-		t.Errorf("truncWidth = %q (%.1f > %.1f)", got, textWidth(got), cardInner)
+	const w = 180.0
+	got := truncAt(row, w, cardFont)
+	if !strings.HasSuffix(got, "…") || textWidthAt(got, cardFont) > w {
+		t.Errorf("truncAt = %q (%.1f > %.1f)", got, textWidthAt(got, cardFont), w)
 	}
 }
 
@@ -237,11 +166,8 @@ func TestCardFieldsMatchDashBoard(t *testing.T) {
 		r["title"], r["tier"], r["engine"] = "fix the bug", "deep", "claude"
 		r["model"], r["detail"] = "claude-opus-5-5", "running tests"
 	})
-	want := cardText{
-		rows:  [cardRows]string{"lime · #12", "fix the bug", "", "deep·claude·opus", "running tests"},
-		state: "pr open",
-	}
-	if c := cardTextOf(p); c != want {
-		t.Errorf("card = %+v, want %+v", c, want)
+	got := [5]string{cardHead(p), p.title, metaText(p), p.detail, stateWord(p.state)}
+	if want := [5]string{"lime · #12", "fix the bug", "deep·claude·opus", "running tests", "pr open"}; got != want {
+		t.Errorf("card = %q, want %q", got, want)
 	}
 }

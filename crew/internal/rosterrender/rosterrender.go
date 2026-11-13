@@ -3,7 +3,6 @@ package rosterrender
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"github.com/noamsto/dispatcher/crew/internal/ascii"
 	"github.com/noamsto/dispatcher/crew/internal/bus"
@@ -62,7 +61,7 @@ type Options struct {
 	// Gh looks up the CI state of open PRs. Nil asks GitHub nothing and draws only
 	// the states already cached.
 	Gh gh.Client
-	// BudgetFile is the engine quota cache the legend's engine readings come from.
+	// BudgetFile is the engine quota cache the header's budget strip reads.
 	// Empty draws every engine as unknown.
 	BudgetFile string
 	// Budget resolves the fleet budget. Nil, or an error, draws it as unknown.
@@ -131,7 +130,7 @@ func Run(ctx context.Context, req Request, paths bus.Paths, o Options) int {
 
 	// What the daemon, and every later build hop, is started with: the arm's
 	// `rr_daemon_args`, --crew first.
-	daemon := []string{"--crew", c.crew, "--interval", c.intervalText, "--quiet", c.quietText, "--legend", string(c.legend)}
+	daemon := []string{"--crew", c.crew, "--interval", c.intervalText, "--quiet", c.quietText}
 	if c.noOpen {
 		daemon = append(daemon, "--no-open")
 	}
@@ -150,7 +149,7 @@ func Run(ctx context.Context, req Request, paths bus.Paths, o Options) int {
 	case c.once:
 		// `_rr_pass` with no role argument lists them itself.
 		roles := roleRows(o.rolePanes(ctx), paths.Dir, c.crew)
-		if _, err := pass(ctx, o, paths, cdir, c.crew, c.noOpen, c.legend, roles); err != nil {
+		if _, err := pass(ctx, o, paths, cdir, c.crew, c.noOpen, paneAspect(o.viewer(ctx, cdir)), roles); err != nil {
 			say(o.Stderr, "crew: roster-render: %v\n", err)
 			return exitFailure
 		}
@@ -160,8 +159,8 @@ func Run(ctx context.Context, req Request, paths bus.Paths, o Options) int {
 	}
 }
 
-// mapOut is `--map`'s stdout: the image's size, where it is, and each planet in
-// slot order, which is the keyboard order.
+// mapOut is `--map`'s stdout: the image's size, where it is, and each worker card
+// in board reading order, which is the keyboard order.
 type mapOut struct {
 	V       int         `json:"v"`
 	W       int         `json:"w"`
@@ -170,7 +169,7 @@ type mapOut struct {
 	Planets []mapPlanet `json:"planets"`
 }
 
-// runMap is one render of the crew's picture to a PNG, with the planets' places
+// runMap is one render of the crew's board to a PNG, with the worker cards' places
 // on stdout. It runs before the crew dir or the working directory is touched
 // and writes nothing but the PNG: no lock, no records, no publish, and the slot
 // sequence is read but not saved, so the daemon's own diagram keeps its places.
@@ -189,26 +188,18 @@ func runMap(ctx context.Context, c call, paths bus.Paths, o Options) int {
 	if err != nil {
 		return fail(err)
 	}
-	svg, err := o.Probes.Graphviz(ctx, []byte(buildDOT(fr.sc, nil, legendNone, c.selectBranch, c.selectRepo)))
-	if err != nil {
-		return fail(err)
-	}
-	svg = finishSVG(svg, fr.sc.wedges)
-	vbW, vbH, ok := viewBoxSize(svg)
-	if !ok {
-		return fail(errors.New("neato: the svg has no viewBox"))
-	}
-	png, err := o.Probes.Resvg(ctx, svg, c.pxW, c.pxH)
+	g := layoutBoard(fr.b, float64(c.pxW)/float64(c.pxH))
+	svg := renderBoardSVG(fr.b, g, headerInfo{crew: c.crew}, selection{branch: c.selectBranch, repo: c.selectRepo})
+	png, err := o.Probes.Resvg(ctx, []byte(svg), c.pxW, c.pxH)
 	if err != nil {
 		return fail(err)
 	}
 	if err := put(out, string(png), io.Discard); err != nil {
 		return fail(err)
 	}
-	halfX, halfY := mapHalf(fr.sc)
 	data, err := json.Marshal(mapOut{
 		V: 1, W: c.pxW, H: c.pxH, PNG: out,
-		Planets: mapGeometry(fr.sc, halfX, halfY, vbW, vbH, c.pxW, c.pxH),
+		Planets: mapGeometry(fr.b, g, c.pxW, c.pxH),
 	})
 	if err != nil {
 		return fail(err)

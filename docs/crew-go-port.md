@@ -385,9 +385,11 @@ output contract below), with each edit justified.
   **replaces its own process**. It is a daemon, a writer outside the bus, and a renderer
   whose output is compared byte for byte, and those three pull in different directions.
   The model fold stays jq (`model.jq`, `pending.jq`, `live.jq`); the diagram is Go.
-  Slot layout and a DOT emitter feed Graphviz `neato -n`, whose SVG is published to aeye
-  as a one-node D2 image wrapper, so `d2.jq` and `hex.json` are gone. The DOT is text a
-  `cmp -s` gates and every label is quoted against injection. Row folding is the one
+  A persisted slot sequence and a state-board layout feed a direct SVG emitter (one
+  column per lifecycle state, one lane per repo, the canvas shaped to the viewer pane),
+  and the SVG is published to aeye as a one-node D2 image wrapper, so `d2.jq` and
+  `hex.json` are gone. The SVG is text a byte comparison gates and every string is
+  XML-escaped against injection. Row folding is the one
   part that stops being a subprocess: the arm re-entered the script for `crew roster`,
   and Go calls `roster.Fold` in process on the same wall clock. The upgrade is a `syscall.Exec`, at the top of the sleep and nowhere
   else, so the pid never changes hands; the flock does not survive the exec (`O_CLOEXEC`),

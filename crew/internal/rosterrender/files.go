@@ -13,13 +13,13 @@ import (
 // Records under the crew dir, all written through put so a reader never sees a
 // half line. `pane` is what a second start retargets, `published` the pane the
 // current diagram went to, and `opened` the pane whose carousel was raised.
-// `dot` is the text the published picture was drawn from, and `slots` the seat
-// each worker keeps from one redraw to the next.
+// `dot` is the svg text last drawn, the change record (its name predates the
+// direct svg), and `slots` the seat each worker keeps from one redraw to the next.
 const (
 	filePane      = "roster-render.pane"
 	filePublished = "roster-render.published"
 	fileOpened    = "roster-render.opened"
-	fileDot       = "roster-render.dot"
+	fileDrawn     = "roster-render.dot"
 	fileSlots     = "roster-render.slots.json"
 )
 

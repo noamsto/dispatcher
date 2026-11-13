@@ -10,8 +10,8 @@ import (
 	"unicode"
 )
 
-// The four sector classes a planet's ring colour comes from. failed and exited
-// share the done sector and carry planet.failed.
+// The four worker classes a card's column and border colour come from. failed
+// and exited share the done column and carry planet.failed.
 const (
 	classWorking = "working"
 	classBlocked = "blocked"
@@ -33,7 +33,7 @@ const maxText = 24
 // maxFreeText bounds the free-text title and detail before they are wrapped.
 const maxFreeText = 200
 
-// classRank is a class's place in the ring, clockwise from 12 o'clock.
+// classRank is a class's place in the persisted sequence.
 var classRank = map[string]int{classBlocked: 0, classWorking: 1, classPROpen: 2, classDone: 3}
 
 var issueRe = regexp.MustCompile(`[0-9]+`)
@@ -42,11 +42,10 @@ var issueRe = regexp.MustCompile(`[0-9]+`)
 // `name·id`.
 var foldIDRe = regexp.MustCompile(`\A(?:[A-Za-z]+-[0-9]+|[0-9]+)\z`)
 
-// moon is one role pane of a drawn worker. x and y are set by the layout.
+// moon is one role pane of a drawn worker, drawn as a chip on its card.
 type moon struct {
 	role    string
 	working bool
-	x, y    float64
 }
 
 // planet is one drawn worker. Every field has been through clean or
@@ -89,6 +88,7 @@ type queuedHold struct {
 // compared with planets, never written into the diagram.
 type queuedTask struct {
 	id, label, repo string
+	repoLabel       string
 	after           []string
 }
 
@@ -351,7 +351,7 @@ func issueOf(branch string) string {
 }
 
 // clean reduces bus- or tmux-sourced text to `[A-Za-z0-9._·-]` and cuts it to
-// maxText runes, so no such text can carry DOT syntax past this file.
+// maxText runes, so no such text can carry markup past this file.
 func clean(s string) string {
 	var b strings.Builder
 	n := 0
@@ -385,8 +385,8 @@ func modelAlias(s string) string {
 }
 
 // sanitizeText reduces bus-sourced free text to printable runes with single
-// spaces, cut to maxFreeText runes. DOT and HTML syntax stays in place:
-// htmlText escapes it at emission.
+// spaces, cut to maxFreeText runes. Markup stays in place: the svg emitter
+// escapes it.
 func sanitizeText(s string) string {
 	var b strings.Builder
 	n := 0

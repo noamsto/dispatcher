@@ -92,8 +92,8 @@ func TestPublishOpensOncePerPaneAndRepublishesOnChange(t *testing.T) {
 	if want := "aeye publish-diagram " + file + " --pane %7"; got[1] != want {
 		t.Errorf("a change re-opened the carousel: %q, want %q", got[1], want)
 	}
-	if line := nodeLine(t, l.published(), "p1"); !strings.Contains(line, "aeye-pulse") {
-		t.Errorf("the new state never reached the diagram: %s", line)
+	if !pulses(t, l.published(), "sage · #1") {
+		t.Error("the new state never reached the diagram")
 	}
 
 	// A new pane republishes the unchanged file without rewriting it.
@@ -354,7 +354,7 @@ func TestDetachRecordsThePaneAndLeavesADaemonOnTheLock(t *testing.T) {
 	if len(l.spawns) != 1 {
 		t.Fatalf("%d children, want 1", len(l.spawns))
 	}
-	want := strings.Join([]string{self, "roster-render", "--crew", "c1", "--interval", "2", "--quiet", "1800", "--legend", "counts"}, " ")
+	want := strings.Join([]string{self, "roster-render", "--crew", "c1", "--interval", "2", "--quiet", "1800"}, " ")
 	if got := strings.Join(l.spawns[0], " "); got != want {
 		t.Errorf("spawned %q, want %q", got, want)
 	}

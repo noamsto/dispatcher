@@ -98,19 +98,39 @@ func (l *loop) clockAt() *time.Time {
 	return &at
 }
 
-func (fr frame) planet(repo, branch string) (placed, bool) {
-	for _, p := range fr.sc.planets {
+// workers is every worker card on the frame's board, in reading order.
+func (fr frame) workers() []boardCard {
+	var out []boardCard
+	for _, l := range fr.b.lanes {
+		for _, c := range l.cols {
+			for _, cd := range c.cards {
+				if cd.kind == kindPlanet {
+					out = append(out, cd)
+				}
+			}
+		}
+	}
+	return out
+}
+
+// lanes is the board's labelled lanes: none while the crew spans one repo.
+func (fr frame) lanes() []lane {
+	return slices.DeleteFunc(slices.Clone(fr.b.lanes), func(l lane) bool { return l.label == "" })
+}
+
+func (fr frame) planet(repo, branch string) (boardCard, bool) {
+	for _, p := range fr.workers() {
 		if p.repo == repo && p.branch == branch {
 			return p, true
 		}
 	}
-	return placed{}, false
+	return boardCard{}, false
 }
 
-func wedgeLabels(fr frame) []string {
+func laneLabels(fr frame) []string {
 	var out []string
-	for _, w := range fr.sc.wedges {
-		out = append(out, w.label)
+	for _, l := range fr.lanes() {
+		out = append(out, l.label)
 	}
 	slices.Sort(out)
 	return out
@@ -123,10 +143,10 @@ func TestWithoutDiscoveryOnlyTheLocalBusDraws(t *testing.T) {
 	l.windows = "feat/1-a\nfeat/9-z"
 
 	fr := l.frame(t)
-	if len(fr.sc.planets) != 1 || len(fr.sc.wedges) != 0 {
-		t.Fatalf("%d planets, %d wedges, want 1 and 0", len(fr.sc.planets), len(fr.sc.wedges))
+	if len(fr.workers()) != 1 || len(fr.lanes()) != 0 {
+		t.Fatalf("%d planets, %d lanes, want 1 and 0", len(fr.workers()), len(fr.lanes()))
 	}
-	p := fr.sc.planets[0]
+	p := fr.workers()[0]
 	if p.repo != l.paths.Common || p.repoLabel != clean(filepath.Base(l.paths.Common)) {
 		t.Errorf("planet repo = %q (%q), want the local bus", p.repo, p.repoLabel)
 	}
@@ -135,7 +155,7 @@ func TestWithoutDiscoveryOnlyTheLocalBusDraws(t *testing.T) {
 	}
 }
 
-func TestEveryRepoHoldingTheCrewGetsAWedge(t *testing.T) {
+func TestEveryRepoHoldingTheCrewGetsALane(t *testing.T) {
 	l := newLoop(t)
 	l.seed(t, workerEvents("feat/1-a")...)
 	alpha := repoAt(t, "alpha", workerEvents("feat/9-z")...)
@@ -148,8 +168,8 @@ func TestEveryRepoHoldingTheCrewGetsAWedge(t *testing.T) {
 	l.windows = "feat/1-a\nfeat/9-z\nfeat/8-y"
 
 	fr := l.frame(t)
-	if want := []string{"001", "alpha"}; !slices.Equal(wedgeLabels(fr), want) {
-		t.Fatalf("wedges = %v, want %v", wedgeLabels(fr), want)
+	if want := []string{"001", "alpha"}; !slices.Equal(laneLabels(fr), want) {
+		t.Fatalf("lanes = %v, want %v", laneLabels(fr), want)
 	}
 	if _, ok := fr.planet(l.paths.Common, "feat/1-a"); !ok {
 		t.Error("the local worker is not drawn under the local repo")
@@ -158,11 +178,11 @@ func TestEveryRepoHoldingTheCrewGetsAWedge(t *testing.T) {
 	if !ok || p.repoLabel != "alpha" {
 		t.Errorf("the second repo's worker = %+v, %v", p, ok)
 	}
-	if len(fr.sc.planets) != 2 {
-		t.Errorf("%d planets, want 2: the other crew's worker must not draw", len(fr.sc.planets))
+	if len(fr.workers()) != 2 {
+		t.Errorf("%d planets, want 2: the other crew's worker must not draw", len(fr.workers()))
 	}
-	if fr.lg.working != 2 || fr.lg.repos != 2 {
-		t.Errorf("legend working %d repos %d, want 2 and 2", fr.lg.working, fr.lg.repos)
+	if fr.b.counts.working != 2 || fr.b.counts.repos != 2 {
+		t.Errorf("legend working %d repos %d, want 2 and 2", fr.b.counts.working, fr.b.counts.repos)
 	}
 	if got := l.stderr(); got != "crew: roster-render: a note\n" {
 		t.Errorf("stderr = %q, want only discovery's note", got)
@@ -183,8 +203,8 @@ func TestAnUnreadableBusIsSkippedWithOneLine(t *testing.T) {
 	l.opts.Discover = (&discoverStub{found: okRepos(garbage, asDir)}).discover
 
 	fr := l.frame(t)
-	if len(fr.sc.planets) != 1 || len(fr.sc.wedges) != 0 {
-		t.Errorf("%d planets, %d wedges, want the local worker alone", len(fr.sc.planets), len(fr.sc.wedges))
+	if len(fr.workers()) != 1 || len(fr.lanes()) != 0 {
+		t.Errorf("%d planets, %d lanes, want the local worker alone", len(fr.workers()), len(fr.lanes()))
 	}
 	for _, p := range []bus.Paths{garbage, asDir} {
 		line := "crew: roster-render: " + p.Common + ": skipped ("
@@ -209,9 +229,9 @@ func tear(t *testing.T, p bus.Paths) {
 
 func TestABusThatBreaksAfterJoiningIsSkippedAndTheLocalOneDraws(t *testing.T) {
 	for name, tc := range map[string]struct {
-		disc                  *discovery
-		planets, wedges, live int
-		wantLastGood          bool
+		disc                 *discovery
+		planets, lanes, live int
+		wantLastGood         bool
 	}{
 		"without a discovery record the repo is skipped": {nil, 1, 0, 1, false},
 		"with one it keeps its last good frame":          {&discovery{}, 2, 2, 2, true},
@@ -223,16 +243,16 @@ func TestABusThatBreaksAfterJoiningIsSkippedAndTheLocalOneDraws(t *testing.T) {
 			l.opts.Discover = (&discoverStub{found: okRepos(alpha)}).discover
 			l.opts.disc = tc.disc
 			l.windows = "feat/1-a\nfeat/9-z"
-			if fr := l.frame(t); len(fr.sc.wedges) != 2 {
-				t.Fatalf("%d wedges before the break, want 2", len(fr.sc.wedges))
+			if fr := l.frame(t); len(fr.lanes()) != 2 {
+				t.Fatalf("%d lanes before the break, want 2", len(fr.lanes()))
 			}
 
 			tear(t, alpha)
 
 			fr := l.frame(t)
-			if len(fr.sc.planets) != tc.planets || len(fr.sc.wedges) != tc.wedges || fr.live != int64(tc.live) {
-				t.Errorf("%d planets, %d wedges, live %d, want %d, %d and %d",
-					len(fr.sc.planets), len(fr.sc.wedges), fr.live, tc.planets, tc.wedges, tc.live)
+			if len(fr.workers()) != tc.planets || len(fr.lanes()) != tc.lanes || fr.live != int64(tc.live) {
+				t.Errorf("%d planets, %d lanes, live %d, want %d, %d and %d",
+					len(fr.workers()), len(fr.lanes()), fr.live, tc.planets, tc.lanes, tc.live)
 			}
 			skip := "crew: roster-render: " + alpha.Common + ": skipped ("
 			if !strings.Contains(l.stderr(), skip) {
@@ -253,9 +273,9 @@ func TestALastGoodResultIsACopy(t *testing.T) {
 	if !ok {
 		t.Fatal("nothing recalled")
 	}
-	got.planets[0].ci, got.planets[0].moons[0].x = "fail", 7
+	got.planets[0].ci, got.planets[0].moons[0].working = "fail", true
 	again, _ := d.recall("/r")
-	if again.planets[0].ci != "" || again.planets[0].moons[0].x != 0 {
+	if again.planets[0].ci != "" || again.planets[0].moons[0].working {
 		t.Errorf("a change to the recalled planets wrote through: %+v", again.planets[0])
 	}
 	if _, ok := d.recall("/other"); ok {
@@ -296,12 +316,12 @@ func TestAJoinedBusThatBreaksDoesNotRetireTheDaemon(t *testing.T) {
 	if !strings.Contains(l.stderr(), "showing its last good frame") {
 		t.Errorf("the break never reached a pass: %q", l.stderr())
 	}
-	dot := l.dot()
-	if n := len(planetNode.FindAllString(dot, -1)); n != 2 {
-		t.Errorf("%d planets in the last dot, want 2", n)
+	svg := l.drawn()
+	if n := cardCount(svg); n != 2 {
+		t.Errorf("%d cards in the last svg, want 2", n)
 	}
-	if !strings.Contains(dot, `label="alpha"`) {
-		t.Errorf("the joined repo's wedge is gone from the dot:\n%s", dot)
+	if !strings.Contains(svg, ">alpha</text>") {
+		t.Errorf("the joined repo's lane is gone from the svg:\n%s", svg)
 	}
 }
 
@@ -317,8 +337,8 @@ func TestTheLocalRepoIsNotJoinedTwice(t *testing.T) {
 			l.opts.Discover = (&discoverStub{found: []repos.Repo{{Common: common, Status: repos.StatusOK}}}).discover
 			l.opts.Stderr = &bytes.Buffer{}
 			fr := l.frame(t)
-			if len(fr.sc.planets) != 1 || len(fr.sc.wedges) != 0 {
-				t.Errorf("%d planets, %d wedges, want 1 and 0", len(fr.sc.planets), len(fr.sc.wedges))
+			if len(fr.workers()) != 1 || len(fr.lanes()) != 0 {
+				t.Errorf("%d planets, %d lanes, want 1 and 0", len(fr.workers()), len(fr.lanes()))
 			}
 			if got := l.stderr(); got != "" {
 				t.Errorf("stderr = %q", got)
@@ -339,8 +359,8 @@ func TestTheSameBranchInTwoReposIsTwoPlanetsAndBothKeepASlot(t *testing.T) {
 		t.Fatalf("code = %d, stderr %q", code, stderr)
 	}
 	out := l.published()
-	if n := len(planetNode.FindAllString(out, -1)); n != 2 {
-		t.Errorf("%d planets drawn, want 2", n)
+	if n := cardCount(out); n != 2 {
+		t.Errorf("%d cards drawn, want 2", n)
 	}
 
 	data, err := os.ReadFile(filepath.Join(l.cdir(), fileSlots))
@@ -365,20 +385,12 @@ func TestTheSameBranchInTwoReposIsTwoPlanetsAndBothKeepASlot(t *testing.T) {
 		t.Errorf("slot repos = %v, want %v", got, want)
 	}
 
-	// The dot names each wedge by its repo.
-	dot := l.dot()
-	var labels []string
-	for _, id := range []string{"w1", "w2"} {
-		line := nodeLine(t, dot, id)
-		for _, want := range []string{"001", "alpha"} {
-			if strings.Contains(line, `label="`+want+`"`) {
-				labels = append(labels, want)
-			}
+	// The svg labels each lane by its repo.
+	svg := l.drawn()
+	for _, want := range []string{"001", "alpha"} {
+		if !strings.Contains(svg, ">"+want+"</text>") {
+			t.Errorf("no lane labelled %s", want)
 		}
-	}
-	slices.Sort(labels)
-	if want := []string{"001", "alpha"}; !slices.Equal(labels, want) {
-		t.Errorf("wedge label nodes = %v, want %v", labels, want)
 	}
 }
 
@@ -425,7 +437,7 @@ func ciLoop(t *testing.T, urls map[string]string) (*loop, *ghtest.Fake, *time.Ti
 	return l, fake, l.clockAt()
 }
 
-func ciOf(t *testing.T, fr frame, repo, branch string) placed {
+func ciOf(t *testing.T, fr frame, repo, branch string) boardCard {
 	t.Helper()
 	p, ok := fr.planet(repo, branch)
 	if !ok {
@@ -459,8 +471,8 @@ func TestOpenPRsShowTheirCIStateAndAreAskedOnceAMinute(t *testing.T) {
 	if n := len(fake.Calls()); n != 5 {
 		t.Errorf("%d gh calls, want 5: another repo's PR must not reach gh", n)
 	}
-	if fr.lg.ci != 5 || fr.lg.waiting != 1 {
-		t.Errorf("legend ci %d waiting %d, want 5 and 1", fr.lg.ci, fr.lg.waiting)
+	if fr.b.counts.ci != 5 || fr.b.counts.waiting != 1 {
+		t.Errorf("legend ci %d waiting %d, want 5 and 1", fr.b.counts.ci, fr.b.counts.waiting)
 	}
 	if _, err := os.Stat(filepath.Join(l.cdir(), fileCI)); err != nil {
 		t.Errorf("no CI cache: %v", err)
@@ -501,12 +513,11 @@ func TestMapNeverAsksGitHubAndDrawsTheCachedState(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var dots []string
-	l.opts.Probes.Graphviz = func(_ context.Context, dot []byte) ([]byte, error) {
-		dots = append(dots, string(dot))
-		return []byte(`<svg width="500pt" height="400pt" viewBox="0.00 0.00 500.00 400.00" xmlns="x"></svg>`), nil
+	var svgs []string
+	l.opts.Probes.Resvg = func(_ context.Context, svg []byte, _, _ int) ([]byte, error) {
+		svgs = append(svgs, string(svg))
+		return []byte("PNG"), nil
 	}
-	l.opts.Probes.Resvg = func(context.Context, []byte, int, int) ([]byte, error) { return []byte("PNG"), nil }
 	l.opts.Stdout = io.Discard
 	// Past the TTL, short of the max age: a daemon or --once would ask again.
 	*at = at.Add(5 * time.Minute)
@@ -531,8 +542,9 @@ func TestMapNeverAsksGitHubAndDrawsTheCachedState(t *testing.T) {
 	if got := ciOf(t, fr, l.paths.Common, "feat/ci-1").ci; got != "pass" {
 		t.Fatalf("cached ci = %q, want pass", got)
 	}
-	if len(dots) != 1 || dots[0] != buildDOT(fr.sc, nil, legendNone, "", "") {
-		t.Errorf("--map did not draw the cached frame:\n%s", dots)
+	want := renderBoardSVG(fr.b, layoutBoard(fr.b, 1.5), headerInfo{crew: l.crew}, selection{})
+	if len(svgs) != 1 || svgs[0] != want {
+		t.Errorf("--map did not draw the cached frame:\n%s", svgs)
 	}
 }
 
@@ -545,12 +557,12 @@ func TestLiveCountSumsOverTheJoinedRepos(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, err := pass(t.Context(), l.opts, l.paths, cdir, l.crew, true, legendCounts, nil)
+	got, err := pass(t.Context(), l.opts, l.paths, cdir, l.crew, true, defaultAspect, nil)
 	if err != nil || got != 0 {
 		t.Fatalf("local alone: live = %d, %v, want 0", got, err)
 	}
 	l.opts.Discover = (&discoverStub{found: okRepos(alpha)}).discover
-	got, err = pass(t.Context(), l.opts, l.paths, cdir, l.crew, true, legendCounts, nil)
+	got, err = pass(t.Context(), l.opts, l.paths, cdir, l.crew, true, defaultAspect, nil)
 	if err != nil || got != 1 {
 		t.Errorf("with the second repo: live = %d, %v, want 1", got, err)
 	}
@@ -564,13 +576,13 @@ func TestTheLoopSignatureCoversEveryJoinedRepo(t *testing.T) {
 	sig := func(panes string) string {
 		t.Helper()
 		srcs := l.opts.sources(t.Context(), l.paths, l.crew)
-		return loopSig(busSize(l.paths), cdir, roleRows(panes, l.paths.Dir, l.crew)) +
+		return loopSig(busSize(l.paths), cdir, roleRows(panes, l.paths.Dir, l.crew), defaultAspect) +
 			joinedSig(srcs[1:], panes, l.crew)
 	}
 
 	// One repo: the signature is what it always was.
 	single := sig("")
-	if want := fmt.Sprintf("%d|%s|%s", busSize(l.paths), record(cdir, filePane), ""); single != want {
+	if want := fmt.Sprintf("%d|%s|%s|%g", busSize(l.paths), record(cdir, filePane), "", defaultAspect); single != want {
 		t.Errorf("single-source signature = %q, want %q", single, want)
 	}
 
@@ -607,7 +619,12 @@ func TestTheDaemonRedrawsWhenOnlyTheSecondRepoChanges(t *testing.T) {
 
 	sleep := l.opts.Probes.Sleep
 	ticks := 0
+	// put replaces the diagram by rename, so each draw is a new file.
+	var draws []os.FileInfo
 	l.opts.Probes.Sleep = func(ctx context.Context, d time.Duration) error {
+		if st, err := os.Stat(l.diagramPath()); err == nil && (len(draws) == 0 || !os.SameFile(st, draws[len(draws)-1])) {
+			draws = append(draws, st)
+		}
 		ticks++
 		if ticks == 3 {
 			f, err := os.OpenFile(alpha.Log, os.O_APPEND|os.O_WRONLY, 0o644)
@@ -624,11 +641,11 @@ func TestTheDaemonRedrawsWhenOnlyTheSecondRepoChanges(t *testing.T) {
 	}
 	l.opts.disc = &discovery{}
 	l.run("600")
-	if got := l.graphvizCalls(); got != 2 {
+	if got := len(draws); got != 2 {
 		t.Errorf("%d draws, want the first and the one for the second repo's change", got)
 	}
-	if n := len(planetNode.FindAllString(l.dot(), -1)); n != 3 {
-		t.Errorf("%d planets in the last dot, want 3", n)
+	if n := cardCount(l.drawn()); n != 3 {
+		t.Errorf("%d cards in the last svg, want 3", n)
 	}
 }
 
@@ -642,17 +659,17 @@ func TestDiscoveryIsReusedForFiveMinutes(t *testing.T) {
 	l.windows = "feat/1-a\nfeat/9-z"
 	at := l.clockAt()
 
-	if fr := l.frame(t); len(fr.sc.wedges) != 0 || d.calls != 1 {
-		t.Fatalf("first pass: %d wedges, %d discoveries", len(fr.sc.wedges), d.calls)
+	if fr := l.frame(t); len(fr.lanes()) != 0 || d.calls != 1 {
+		t.Fatalf("first pass: %d lanes, %d discoveries", len(fr.lanes()), d.calls)
 	}
 	d.found = okRepos(alpha)
 	*at = at.Add(299 * time.Second)
-	if fr := l.frame(t); len(fr.sc.wedges) != 0 || d.calls != 1 {
-		t.Errorf("at 299 s: %d wedges, %d discoveries, want the first list again", len(fr.sc.wedges), d.calls)
+	if fr := l.frame(t); len(fr.lanes()) != 0 || d.calls != 1 {
+		t.Errorf("at 299 s: %d lanes, %d discoveries, want the first list again", len(fr.lanes()), d.calls)
 	}
 	*at = at.Add(time.Second)
-	if fr := l.frame(t); len(fr.sc.wedges) != 2 || d.calls != 2 {
-		t.Errorf("at 300 s: %d wedges, %d discoveries, want a fresh list", len(fr.sc.wedges), d.calls)
+	if fr := l.frame(t); len(fr.lanes()) != 2 || d.calls != 2 {
+		t.Errorf("at 300 s: %d lanes, %d discoveries, want a fresh list", len(fr.lanes()), d.calls)
 	}
 }
 
@@ -672,7 +689,7 @@ func TestAnOldCacheDrawsNoBadge(t *testing.T) {
 	l, _, at := ciLoop(t, map[string]string{"feat/ci-5": ciURL(5)})
 	l.frame(t)
 	l.opts.Gh = nil
-	cached := func(age time.Duration) placed {
+	cached := func(age time.Duration) boardCard {
 		t.Helper()
 		*at = at.Add(age)
 		return ciOf(t, l.frame(t), l.paths.Common, "feat/ci-5")
@@ -694,7 +711,7 @@ func sourcesOf(labels ...string) []source {
 	return out
 }
 
-func TestNameWedges(t *testing.T) {
+func TestNameLanes(t *testing.T) {
 	long := strings.Repeat("x", 30)
 	for name, tc := range map[string]struct {
 		labels []string
@@ -714,22 +731,22 @@ func TestNameWedges(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			srcs := sourcesOf(tc.labels...)
-			nameWedges(srcs)
+			nameLanes(srcs)
 			var got []string
 			for _, s := range srcs {
-				got = append(got, s.wedge)
-				if n := utf8.RuneCountInString(s.wedge); n > maxText {
-					t.Errorf("%q is %d runes, want at most %d", s.wedge, n, maxText)
+				got = append(got, s.lane)
+				if n := utf8.RuneCountInString(s.lane); n > maxText {
+					t.Errorf("%q is %d runes, want at most %d", s.lane, n, maxText)
 				}
 			}
 			if !slices.Equal(got, tc.want) {
-				t.Errorf("wedges = %q, want %q", got, tc.want)
+				t.Errorf("lanes = %q, want %q", got, tc.want)
 			}
 		})
 	}
 }
 
-func TestTwoClonesOfOneRepoGetDistinctWedgesAndKeys(t *testing.T) {
+func TestTwoClonesOfOneRepoGetDistinctLanesAndKeys(t *testing.T) {
 	l := newLoop(t)
 	x := repoAt(t, "x", workerEvents("feat/1-a")...)
 	y := repoAt(t, "y", workerEvents("feat/1-a")...)
@@ -748,11 +765,11 @@ func TestTwoClonesOfOneRepoGetDistinctWedgesAndKeys(t *testing.T) {
 	l.opts.Discover = (&discoverStub{found: okRepos(x, y)}).discover
 
 	fr := l.frame(t)
-	if want := []string{"a·tools", "a·tools·2", "b·tools"}; !slices.Equal(wedgeLabels(fr), want) {
-		t.Fatalf("wedges = %q, want %q", wedgeLabels(fr), want)
+	if want := []string{"a·tools", "a·tools·2", "b·tools"}; !slices.Equal(laneLabels(fr), want) {
+		t.Fatalf("lanes = %q, want %q", laneLabels(fr), want)
 	}
 	seen := map[[2]string]bool{}
-	for _, p := range fr.sc.planets {
+	for _, p := range fr.workers() {
 		key := [2]string{p.repoLabel, p.branch}
 		if seen[key] {
 			t.Errorf("two planets share the (repo, branch) key %q", key)
@@ -827,14 +844,14 @@ func TestARecalledFrameIsRelabelledByTheRenamedSource(t *testing.T) {
 			if _, ok := fr.planet(byName[tc.torn].Common, "feat/1-a"); !ok {
 				t.Errorf("%s: no planet drawn from its last good frame", tc.torn)
 			}
-			wedgeOf := map[string]string{}
+			laneOf := map[string]string{}
 			for _, s := range l.opts.disc.srcs {
-				wedgeOf[s.paths.Common] = s.wedge
+				laneOf[s.paths.Common] = s.lane
 			}
 			seen := map[[2]string]bool{}
-			for _, p := range fr.sc.planets {
-				if p.repoLabel != wedgeOf[p.repo] {
-					t.Errorf("planet of %s is labelled %q, want its source's wedge %q", p.repo, p.repoLabel, wedgeOf[p.repo])
+			for _, p := range fr.workers() {
+				if p.repoLabel != laneOf[p.repo] {
+					t.Errorf("planet of %s is labelled %q, want its source's lane %q", p.repo, p.repoLabel, laneOf[p.repo])
 				}
 				key := [2]string{p.repoLabel, p.branch}
 				if seen[key] {
@@ -842,9 +859,9 @@ func TestARecalledFrameIsRelabelledByTheRenamedSource(t *testing.T) {
 				}
 				seen[key] = true
 			}
-			labels := wedgeLabels(fr)
+			labels := laneLabels(fr)
 			if want := len(tc.after) + 1; len(labels) != want || len(slices.Compact(slices.Clone(labels))) != want {
-				t.Errorf("wedges = %q, want %d distinct", labels, want)
+				t.Errorf("lanes = %q, want %d distinct", labels, want)
 			}
 		})
 	}
@@ -881,10 +898,10 @@ func TestOnlyTheRenderersOwnBusPlanetsAreHome(t *testing.T) {
 				tear(t, alpha)
 				fr = l.frame(t)
 			}
-			if len(fr.sc.planets) != 2 {
-				t.Fatalf("%d planets, want 2", len(fr.sc.planets))
+			if len(fr.workers()) != 2 {
+				t.Fatalf("%d planets, want 2", len(fr.workers()))
 			}
-			geo := mapGeometry(fr.sc, 1, 1, 2, 2, 100, 100)
+			geo := mapGeometry(fr.b, layoutBoard(fr.b, 1), 100, 100)
 			if !homeOf(t, geo, "001") || homeOf(t, geo, "alpha") {
 				t.Errorf("home flags wrong: %+v", geo)
 			}
@@ -894,27 +911,29 @@ func TestOnlyTheRenderersOwnBusPlanetsAreHome(t *testing.T) {
 	l := newLoop(t)
 	l.seed(t, workerEvents("feat/1-a")...)
 	l.windows = "feat/1-a"
-	for _, g := range mapGeometry(l.frame(t).sc, 1, 1, 2, 2, 100, 100) {
+	fr := l.frame(t)
+	for _, g := range mapGeometry(fr.b, layoutBoard(fr.b, 1), 100, 100) {
 		if g.Home {
 			t.Errorf("single-repo planet flagged home: %+v", g)
 		}
 	}
 }
 
-func TestSelectRepoRingsOnlyThatWedgesPlanet(t *testing.T) {
+func TestSelectRepoRingsOnlyThatLanesWorker(t *testing.T) {
 	l := newLoop(t)
 	l.seed(t, workerEvents("feat/1-a")...)
 	alpha := repoAt(t, "alpha", workerEvents("feat/1-a")...)
 	l.opts.Discover = (&discoverStub{found: okRepos(alpha)}).discover
 	l.windows = "feat/1-a"
-	sc := l.frame(t).sc
+	b := l.frame(t).b
+	g := layoutBoard(b, defaultAspect)
 
 	for _, tc := range []struct {
 		repo string
 		want int
 	}{{"", 2}, {"alpha", 1}, {"001", 1}, {"nowhere", 0}} {
-		out := buildDOT(sc, nil, legendNone, "feat/1-a", tc.repo)
-		if n := strings.Count(out, "sel"); n != tc.want {
+		out := renderBoardSVG(b, g, headerInfo{}, selection{branch: "feat/1-a", repo: tc.repo})
+		if n := strings.Count(out, selectRing); n != tc.want {
 			t.Errorf("select-repo %q: %d rings, want %d", tc.repo, n, tc.want)
 		}
 	}

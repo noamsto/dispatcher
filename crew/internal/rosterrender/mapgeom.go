@@ -1,19 +1,16 @@
 package rosterrender
 
-import (
-	"math"
-	"strconv"
-)
+import "math"
 
-// mapPlanet is one planet of the map in pixels of the rendered PNG, y down. hw and
-// hh are the half extents of its hit rectangle; r is the circle around it, for
-// readers that predate the rectangle.
+// mapPlanet is one worker card of the map in pixels of the rendered PNG, y
+// down. hw and hh are the half extents of its card; r is the circle around it,
+// for readers that predate the rectangle.
 type mapPlanet struct {
 	Branch string `json:"branch"`
 	Name   string `json:"name"`
 	Repo   string `json:"repo,omitempty"`
-	// Home marks a planet from the bus the renderer was run in; set only when
-	// wedges exist, as Repo is.
+	// Home marks a worker from the bus the renderer was run in; set only when
+	// the board has more than one lane, as Repo is.
 	Home bool    `json:"home,omitempty"`
 	Cx   float64 `json:"cx"`
 	Cy   float64 `json:"cy"`
@@ -22,41 +19,27 @@ type mapPlanet struct {
 	R    float64 `json:"r"`
 }
 
-func viewBoxSize(svg []byte) (w, h float64, ok bool) {
-	m := svgRootRe.FindSubmatch(svg)
-	if m == nil {
-		return 0, 0, false
-	}
-	w, errW := strconv.ParseFloat(string(m[3]), 64)
-	h, errH := strconv.ParseFloat(string(m[4]), 64)
-	return w, h, errW == nil && errH == nil && w > 0 && h > 0
-}
-
-// mapGeometry places every planet of sc in a pngW x pngH image of the svg. The
-// svg's bounding box is the four corners, so a layout point lands at a constant
-// offset in the viewBox, which resvg scales to fit the image and centres.
-func mapGeometry(sc scene, halfX, halfY, vbW, vbH float64, pngW, pngH int) []mapPlanet {
-	s := min(float64(pngW)/vbW, float64(pngH)/vbH)
-	ox, oy := (float64(pngW)-vbW*s)/2, (float64(pngH)-vbH*s)/2
-	padX, padY := (vbW-2*halfX)/2, (vbH-2*halfY)/2
-	out := make([]mapPlanet, 0, len(sc.planets))
-	for _, p := range sc.planets {
-		repo, home := p.repoLabel, p.home
-		if len(sc.wedges) == 0 {
-			repo, home = "", false
+// mapGeometry places every worker card of b, laid out by g, in a pngW x pngH
+// image of its svg, in board reading order. The viewBox is exactly the canvas,
+// which resvg scales to fit the image and centres. Holds and queued tasks have
+// no worker to select, so they are left out.
+func mapGeometry(b board, g boardGeom, pngW, pngH int) []mapPlanet {
+	s := min(float64(pngW)/g.W, float64(pngH)/g.H)
+	ox, oy := (float64(pngW)-g.W*s)/2, (float64(pngH)-g.H*s)/2
+	out := []mapPlanet{}
+	for _, cg := range g.cards() {
+		c := b.lanes[cg.lane].cols[cg.col].cards[cg.card]
+		if c.kind != kindPlanet {
+			continue
 		}
-		hw, hh := hitRect(p)
-		out = append(out, mapPlanet{
-			Branch: p.branch,
-			Name:   p.name,
-			Repo:   repo,
-			Home:   home,
-			Cx:     round2(ox + (padX+halfX+p.x)*s),
-			Cy:     round2(oy + (padY+halfY-p.y)*s),
-			HW:     round2(hw * s),
-			HH:     round2(hh * s),
-			R:      round2(math.Hypot(hw, hh) * s),
-		})
+		mp := mapPlanet{Branch: c.branch, Name: c.name}
+		if len(b.lanes) > 1 {
+			mp.Repo, mp.Home = c.repoLabel, c.home
+		}
+		hw, hh := cg.w/2, cg.h/2
+		mp.Cx, mp.Cy = round2(ox+(cg.x+hw)*s), round2(oy+(cg.y+hh)*s)
+		mp.HW, mp.HH, mp.R = round2(hw*s), round2(hh*s), round2(math.Hypot(hw, hh)*s)
+		out = append(out, mp)
 	}
 	return out
 }

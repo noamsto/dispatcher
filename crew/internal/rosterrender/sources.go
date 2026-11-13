@@ -22,11 +22,11 @@ import (
 const rediscoverEvery = 300 * time.Second
 
 // source is one repo bus the crew has rows on. slug is the origin's raw
-// owner/name, empty when the origin names no GitHub repo. wedge is the name its
-// wedge is drawn and keyed by, distinct among the sources of one list.
+// owner/name, empty when the origin names no GitHub repo. lane is the name its
+// lane is drawn and keyed by, distinct among the sources of one list.
 type source struct {
-	paths              bus.Paths
-	label, slug, wedge string
+	paths             bus.Paths
+	label, slug, lane string
 }
 
 // sourceResult is one repo's planets with its legend counts and live count.
@@ -54,7 +54,7 @@ func (r sourceResult) clone() sourceResult {
 }
 
 // discovery is the daemon's memory of the last source list, and of each joined
-// repo's last good result, so a bus that tears for a pass keeps its wedge and
+// repo's last good result, so a bus that tears for a pass keeps its lane and
 // its workers in the live count.
 type discovery struct {
 	at   time.Time
@@ -129,7 +129,7 @@ func (o Options) sources(ctx context.Context, local bus.Paths, crew string) []so
 			srcs = append(srcs, o.sourceOf(ctx, p))
 		}
 	}
-	nameWedges(srcs)
+	nameLanes(srcs)
 	if d := o.disc; d != nil {
 		d.at, d.srcs = now, srcs
 		maps.DeleteFunc(d.good, func(common string, _ sourceResult) bool {
@@ -139,11 +139,11 @@ func (o Options) sources(ctx context.Context, local bus.Paths, crew string) []so
 	return srcs
 }
 
-// nameWedges sets each source's wedge name: the repo's own name, then
+// nameLanes sets each source's lane name: the repo's own name, then
 // owner·name for the repos that share one, then a ·2, ·3 suffix in source order
-// for any that still do. A wedge is named by the repo, not owner/name, because
+// for any that still do. A lane is named by the repo, not owner/name, because
 // clean would drop the slash and run the two together.
-func nameWedges(srcs []source) {
+func nameLanes(srcs []source) {
 	names := make([]string, len(srcs))
 	count := map[string]int{}
 	for i, s := range srcs {
@@ -158,14 +158,14 @@ func nameWedges(srcs []source) {
 	}
 	used := map[string]bool{}
 	for i := range srcs {
-		wedge := names[i]
-		for n := 2; used[wedge]; n++ {
+		lane := names[i]
+		for n := 2; used[lane]; n++ {
 			suffix := "·" + strconv.Itoa(n)
 			stem := []rune(names[i])
-			wedge = string(stem[:min(len(stem), maxText-utf8.RuneCountInString(suffix))]) + suffix
+			lane = string(stem[:min(len(stem), maxText-utf8.RuneCountInString(suffix))]) + suffix
 		}
-		used[wedge] = true
-		srcs[i].wedge = wedge
+		used[lane] = true
+		srcs[i].lane = lane
 	}
 }
 

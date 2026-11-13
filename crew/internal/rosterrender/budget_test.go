@@ -104,7 +104,7 @@ func TestFleetBudgetUnknownOnFailureNilResolverOrNoRecord(t *testing.T) {
 	}
 }
 
-func TestBuildFrameLegendBudgetStrip(t *testing.T) {
+func TestBuildFrameBudgetStrip(t *testing.T) {
 	l := newLoop(t)
 	holdBody := `{"id":"h1","wait":{"engine":"claude","window":"7d","resets_at":1791999999},"task":{"ref":"r1","branch":"feat/5-q","tier":"standard","title":"Q"}}`
 	l.seed(t,
@@ -118,25 +118,27 @@ func TestBuildFrameLegendBudgetStrip(t *testing.T) {
 	l.opts.disc = &discovery{}
 
 	fr := l.frame(t)
-	if fr.lg.weight != 6 {
-		t.Errorf("weight = %d, want deep 3 + trivial 1 + standard 2", fr.lg.weight)
+	if fr.b.counts.weight != 6 {
+		t.Errorf("weight = %d, want deep 3 + trivial 1 + standard 2", fr.b.counts.weight)
 	}
-	if fr.lg.budget == nil || *fr.lg.budget != 9 {
-		t.Errorf("budget = %v, want 9", fr.lg.budget)
+	if fr.b.counts.budget == nil || *fr.b.counts.budget != 9 {
+		t.Errorf("budget = %v, want 9", fr.b.counts.budget)
 	}
-	if !reflect.DeepEqual(fr.lg.engines, unknownEngines()) {
-		t.Errorf("engines = %+v, want all unknown without a cache file", fr.lg.engines)
+	if !reflect.DeepEqual(fr.b.counts.engines, unknownEngines()) {
+		t.Errorf("engines = %+v, want all unknown without a cache file", fr.b.counts.engines)
 	}
-	if want := []queuedHold{{id: "h1", label: "5", engine: "claude", window: "7d"}}; !reflect.DeepEqual(fr.holds, want) {
-		t.Errorf("holds = %+v, want %+v", fr.holds, want)
+	if q := fr.b.lanes[0].cols[0]; q.class != classQueued || len(q.cards) != 1 {
+		t.Errorf("queued column = %+v, want the one hold", q)
+	} else if h := q.cards[0]; h.kind != kindHold || h.id != "h1" || h.name != "5" || h.engine != "claude" || h.window != "7d" {
+		t.Errorf("hold card = %+v, want h1 for 5 on claude 7d", h)
 	}
-	if fr.lg.holds != 1 {
-		t.Errorf("legend holds = %d, want 1", fr.lg.holds)
+	if fr.b.counts.holds != 1 {
+		t.Errorf("hold count = %d, want 1", fr.b.counts.holds)
 	}
 
 	l.opts.BudgetFile = cacheFile(t, `{"fetched_epoch":1791359000,"engines":{"claude":{"windows":{"7d":{"used_pct":23}}}}}`)
 	fr = l.frame(t)
-	if got := fr.lg.engines[0]; got.name != "claude" || got.window != "7d" || got.pct == nil || *got.pct != 23 {
+	if got := fr.b.counts.engines[0]; got.name != "claude" || got.window != "7d" || got.pct == nil || *got.pct != 23 {
 		t.Errorf("claude reading = %+v, want 7d 23", got)
 	}
 }
@@ -150,8 +152,8 @@ func TestBuildFrameWeightSkipsRemoteWorkers(t *testing.T) {
 	)
 	l.windows = "feat/9-x\nfeat/8-y"
 	fr := l.frame(t)
-	if fr.lg.weight != 3 {
-		t.Errorf("weight = %d, want only the local deep worker's 3", fr.lg.weight)
+	if fr.b.counts.weight != 3 {
+		t.Errorf("weight = %d, want only the local deep worker's 3", fr.b.counts.weight)
 	}
 }
 
@@ -164,9 +166,6 @@ func TestMapNeverResolvesBudget(t *testing.T) {
 		return 0, nil
 	}
 	l.opts.BudgetFile = filepath.Join(t.TempDir(), "missing.json")
-	l.opts.Probes.Graphviz = func(context.Context, []byte) ([]byte, error) {
-		return []byte(`<svg width="500pt" height="400pt" viewBox="0.00 0.00 500.00 400.00" xmlns="x"></svg>`), nil
-	}
 	l.opts.Probes.Resvg = func(context.Context, []byte, int, int) ([]byte, error) { return []byte("PNG"), nil }
 	req := Request{Crew: l.crew, Map: true, Px: "300x200", Out: filepath.Join(t.TempDir(), "map.png")}
 	if code := Run(t.Context(), req, l.paths, l.opts); code != exitOK {
@@ -186,14 +185,14 @@ func TestPassDrawsTheFleetBudgetStrip(t *testing.T) {
 	if err := os.MkdirAll(cdir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pass(t.Context(), l.opts, l.paths, cdir, l.crew, true, legendFull, nil); err != nil {
+	if _, err := pass(t.Context(), l.opts, l.paths, cdir, l.crew, true, defaultAspect, nil); err != nil {
 		t.Fatal(err)
 	}
-	dot, err := os.ReadFile(filepath.Join(cdir, fileDot))
+	svg, err := os.ReadFile(filepath.Join(cdir, fileDrawn))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(dot), "fleet budget 7") {
-		t.Errorf("published DOT has no budget strip:\n%s", dot)
+	if !strings.Contains(string(svg), "fleet budget 7") {
+		t.Errorf("published svg has no budget strip:\n%s", svg)
 	}
 }

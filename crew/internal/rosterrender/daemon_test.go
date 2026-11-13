@@ -3,9 +3,10 @@ package rosterrender
 import (
 	"bytes"
 	"context"
-	"errors"
+	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -48,10 +49,10 @@ type loop struct {
 	spawns     [][]string
 	spawnEnv   []string
 
-	// graphvizRuns counts the Graphviz fake's calls; graphvizErr, when set, fails
-	// them all.
-	graphvizRuns int
-	graphvizErr  error
+	// viewer is what ViewerSize answers: the carousel pane's cols and rows, or
+	// not ok while viewerOK is false.
+	viewer   [2]int
+	viewerOK bool
 }
 
 type hop struct {
@@ -95,7 +96,11 @@ func newLoop(t *testing.T) *loop {
 			AeyePublish: func(_ context.Context, file, pane string, open bool) error {
 				return l.recordPublish(file, pane, open)
 			},
-			Graphviz:      l.recordGraphviz,
+			ViewerSize: func(context.Context, string) (int, int, bool) {
+				l.mu.Lock()
+				defer l.mu.Unlock()
+				return l.viewer[0], l.viewer[1], l.viewerOK
+			},
 			InstalledCrew: func(string) string { return "" },
 			SpawnDetached: func(argv, env []string) error {
 				l.recordSpawn(argv, env)
@@ -159,24 +164,6 @@ func (l *loop) recordPublish(file, pane string, open bool) error {
 	return l.publishErr
 }
 
-// recordGraphviz is a deterministic neato: the svg is the dot between two tags,
-// so a test reads what was drawn off the published file.
-func (l *loop) recordGraphviz(_ context.Context, dot []byte) ([]byte, error) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	l.graphvizRuns++
-	if l.graphvizErr != nil {
-		return nil, l.graphvizErr
-	}
-	return []byte("<svg>\n" + string(dot) + "</svg>\n"), nil
-}
-
-func (l *loop) graphvizCalls() int {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	return l.graphvizRuns
-}
-
 func (l *loop) recordSpawn(argv, env []string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -199,11 +186,7 @@ func (l *loop) diagramPath() string {
 	return target(l.paths.Common, l.crew, l.opts.RosterDir, l.opts.Clock.Now)
 }
 
-// legendPath is the full key's file beside the diagram, whether or not it exists.
-func (l *loop) legendPath() string { return legendTarget(l.diagramPath()) }
-
-// published is $CREW_ROSTER_DIR's file for this crew, read back as written: the
-// svg the Graphviz fake drew, which holds the dot text, finished.
+// published is $CREW_ROSTER_DIR's file for this crew, read back as written.
 func (l *loop) published() string {
 	l.t.Helper()
 	got, err := os.ReadFile(l.diagramPath())
@@ -213,10 +196,10 @@ func (l *loop) published() string {
 	return string(got)
 }
 
-// dot is the record of the text the published picture was drawn from.
-func (l *loop) dot() string {
+// drawn is the change record: the svg text last drawn.
+func (l *loop) drawn() string {
 	l.t.Helper()
-	got, err := os.ReadFile(filepath.Join(l.cdir(), fileDot))
+	got, err := os.ReadFile(filepath.Join(l.cdir(), fileDrawn))
 	if err != nil {
 		l.t.Fatal(err)
 	}
@@ -312,7 +295,7 @@ func (l *loop) runCtx(ctx context.Context, quiet string) int {
 	if err := os.MkdirAll(cdir, 0o755); err != nil {
 		l.t.Fatal(err)
 	}
-	daemon := []string{"--crew", "c1", "--interval", c.intervalText, "--quiet", c.quietText, "--legend", string(c.legend)}
+	daemon := []string{"--crew", "c1", "--interval", c.intervalText, "--quiet", c.quietText}
 	return l.opts.daemon(ctx, l.paths, cdir, c, daemon)
 }
 
@@ -427,6 +410,7 @@ func TestTheBuildHopCarriesTheFlagsTheCrewWasGiven(t *testing.T) {
 	l.opts.Probes.InstalledCrew = func(string) string { return mustReal(t, newer) }
 
 	// A live crew, so the loop is in no hurry to leave and hops on every pass.
+	// --legend is still accepted but has no effect, so the hop drops it.
 	if code, stderr := l.start(Request{Quiet: "5", NoOpen: true, Legend: "full"}); code != exitOK || !l.hitCeiling() {
 		t.Fatalf("exit=%d live=%v stderr=%s", code, l.hitCeiling(), stderr)
 	}
@@ -435,7 +419,7 @@ func TestTheBuildHopCarriesTheFlagsTheCrewWasGiven(t *testing.T) {
 	if len(l.hops) == 0 {
 		t.Fatal("a newer installed entry never made the daemon re-exec")
 	}
-	want := mustReal(t, newer) + " roster-render --crew c1 --interval 2 --quiet 5 --legend full --no-open"
+	want := mustReal(t, newer) + " roster-render --crew c1 --interval 2 --quiet 5 --no-open"
 	if got := strings.Join(l.hops[0].argv, " "); got != want {
 		t.Errorf("the build it exec'd ran %q, want %q", got, want)
 	}
@@ -543,25 +527,6 @@ func TestDaemonExitsAfterTheQuietWindow(t *testing.T) {
 		}
 		if l.slept < 5 || l.slept > 8 {
 			t.Errorf("exited after %d ticks, want the 5s window and no more", l.slept)
-		}
-	})
-	t.Run("a broken Graphviz does not hold the daemon up", func(t *testing.T) {
-		l := newLoop(t)
-		l.graphvizErr = errors.New("neato: not found")
-		if err := os.WriteFile(l.paths.Log, nil, 0o644); err != nil {
-			t.Fatal(err)
-		}
-		if code := l.run("5"); code != exitOK {
-			t.Errorf("code = %d", code)
-		}
-		if l.slept < 5 || l.slept > 8 {
-			t.Errorf("exited after %d ticks, want the 5s window and no more", l.slept)
-		}
-		if l.graphvizCalls() == 0 {
-			t.Error("Graphviz never ran, so the exit above proves nothing")
-		}
-		if errOut := l.opts.Stderr.(*bytes.Buffer).String(); !strings.Contains(errOut, "neato: not found") {
-			t.Errorf("the failure was not reported; stderr was %q", errOut)
 		}
 	})
 	t.Run("live crew outlasts it", func(t *testing.T) {
@@ -737,6 +702,20 @@ func TestDaemonReleasesOnlyItsOwnLock(t *testing.T) {
 
 // TestPassWritesOnlyWhenTheDiagramChanges is the arm's `cmp -s` gate, which is what
 // keeps the aeye carousel from re-rendering an identical frame every interval.
+// crewFiles is every file the pass writes, each with its stat.
+func (l *loop) crewFiles(t *testing.T) map[string]os.FileInfo {
+	t.Helper()
+	out := map[string]os.FileInfo{}
+	for _, path := range []string{l.diagramPath(), filepath.Join(l.cdir(), fileDrawn), filepath.Join(l.cdir(), fileSlots)} {
+		st, err := os.Stat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out[path] = st
+	}
+	return out
+}
+
 func TestPassWritesOnlyWhenTheDiagramChanges(t *testing.T) {
 	l := newLoop(t)
 	l.seed(t)
@@ -744,31 +723,61 @@ func TestPassWritesOnlyWhenTheDiagramChanges(t *testing.T) {
 	if err := os.MkdirAll(cdir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	file := func() string {
-		return target(l.paths.Common, "c1", l.opts.RosterDir, l.opts.Clock.Now)
-	}
-	if _, err := pass(context.Background(), l.opts, l.paths, cdir, "c1", true, legendCounts, nil); err != nil {
+	if _, err := pass(context.Background(), l.opts, l.paths, cdir, "c1", true, defaultAspect, nil); err != nil {
 		t.Fatal(err)
 	}
-	first, err := os.ReadFile(file())
-	if err != nil {
+	first, before := l.published(), l.crewFiles(t)
+	if l.drawn() != first {
+		t.Errorf("the change record is not the drawn svg")
+	}
+	if _, err := pass(context.Background(), l.opts, l.paths, cdir, "c1", true, defaultAspect, nil); err != nil {
 		t.Fatal(err)
 	}
-	stamp, err := os.Stat(file())
-	if err != nil {
+	// put replaces a file by rename, so a rewrite of the same bytes is a new file.
+	for path, st := range l.crewFiles(t) {
+		if !os.SameFile(st, before[path]) {
+			t.Errorf("an unchanged bus rewrote %s", path)
+		}
+	}
+
+	if _, err := pass(context.Background(), l.opts, l.paths, cdir, "c1", true, 0.5, nil); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pass(context.Background(), l.opts, l.paths, cdir, "c1", true, legendCounts, nil); err != nil {
+	if got := l.published(); got == first || l.drawn() != got {
+		t.Errorf("a new aspect did not redraw the diagram")
+	}
+}
+
+// TestDaemonRedrawsWhenTheViewerIsResized: the viewer's shape is part of the
+// loop signature, so a resized carousel redraws before the backstop would.
+func TestDaemonRedrawsWhenTheViewerIsResized(t *testing.T) {
+	l := newLoop(t)
+	l.seed(t)
+	if err := os.MkdirAll(l.cdir(), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	again, err := os.Stat(file())
-	if err != nil {
+	if err := put(filepath.Join(l.cdir(), filePane), "%1\n", io.Discard); err != nil {
 		t.Fatal(err)
 	}
-	if !stamp.ModTime().Equal(again.ModTime()) {
-		t.Errorf("an unchanged bus rewrote the diagram")
+	l.viewer, l.viewerOK = [2]int{160, 50}, true
+	var heights []string
+	l.opts.Probes.Sleep = func(ctx context.Context, d time.Duration) error {
+		root := decodeSVG(t, l.published())
+		if h := root.attr("height"); len(heights) == 0 || heights[len(heights)-1] != h {
+			heights = append(heights, h)
+		}
+		l.mu.Lock()
+		if l.slept == 2 {
+			l.viewer = [2]int{80, 80}
+		}
+		l.mu.Unlock()
+		if l.slept >= 5 {
+			return context.Canceled
+		}
+		return l.sleep(ctx, d)
 	}
-	if got, _ := os.ReadFile(file()); string(got) != string(first) {
-		t.Errorf("the diagram changed under an unchanged bus")
+	l.run("5")
+	if want := []string{"1000", "3200"}; !slices.Equal(heights, want) {
+		t.Errorf("diagram heights over the run = %v, want %v", heights, want)
 	}
 }

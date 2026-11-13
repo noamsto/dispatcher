@@ -5,14 +5,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"image"
+	"fmt"
 	"image/png"
 	"maps"
 	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -21,478 +20,197 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/drift"
 )
 
-// needTools ends the test when the real renderer is not here: a skip in the
+// needTools ends the test when the real rasterizer is not here: a skip in the
 // nix build sandbox, a failure under CREW_DRIFT_REQUIRED.
 func needTools(t *testing.T) {
 	t.Helper()
-	for _, tool := range []string{"neato", "resvg"} {
-		if _, err := exec.LookPath(tool); err != nil {
-			drift.Missing(t, tool, err)
-		}
+	if _, err := exec.LookPath("resvg"); err != nil {
+		drift.Missing(t, "resvg", err)
 	}
 	if os.Getenv("AEYE_D2_FONT_DIR") == "" {
 		drift.Missing(t, "AEYE_D2_FONT_DIR", errors.New("not set"))
 	}
 }
 
-var translateRe = regexp.MustCompile(`translate\(([-0-9.]+)[ ,]([-0-9.]+)\)`)
+// selectRing is how the selection ring is drawn: an unfilled rect in colSun.
+const selectRing = `fill="none" stroke="` + colSun + `"`
 
-// svgCentres reads each planet's centre off the real svg, in viewBox units: an
-// ellipse's cx, cy or the middle of a polygon's bounding box, under the graph's
-// translate.
-func svgCentres(t *testing.T, svg []byte, sc scene) map[string][2]float64 {
+// drawnCards reads each worker card's rect off the svg, in the map's pixels:
+// the viewBox fitted into a pngW x pngH image and centred, as resvg draws it.
+func drawnCards(t *testing.T, svg string, b board, pngW, pngH int) map[string][4]float64 {
 	t.Helper()
-	root := parseSVG(t, svg)
-	var tx, ty float64
-	byID := map[string][2]float64{}
-	root.walk(func(n svgNode) {
-		// An animated node's class is "node aeye-pulse".
-		switch strings.Fields(n.attr("class") + " -")[0] {
-		case "graph":
-			m := translateRe.FindStringSubmatch(n.attr("transform"))
-			if m == nil {
-				t.Fatalf("graph has no translate: %q", n.attr("transform"))
-			}
-			tx, _ = strconv.ParseFloat(m[1], 64)
-			ty, _ = strconv.ParseFloat(m[2], 64)
-		case "node":
-			if e, ok := n.child("ellipse"); ok {
-				cx, _ := strconv.ParseFloat(e.attr("cx"), 64)
-				cy, _ := strconv.ParseFloat(e.attr("cy"), 64)
-				byID[n.title()] = [2]float64{cx, cy}
-			}
-			// A card is a rounded box, which Graphviz draws as a path.
-			var nums []string
-			if p, ok := n.child("polygon"); ok {
-				nums = pathNumRe.FindAllString(p.attr("points"), -1)
-			} else if p, ok := n.child("path"); ok {
-				nums = pathNumRe.FindAllString(p.attr("d"), -1)
-			}
-			if len(nums) >= 2 {
-				x0, y0, x1, y1 := math.Inf(1), math.Inf(1), math.Inf(-1), math.Inf(-1)
-				for i := 0; i+1 < len(nums); i += 2 {
-					x, _ := strconv.ParseFloat(nums[i], 64)
-					y, _ := strconv.ParseFloat(nums[i+1], 64)
-					x0, x1, y0, y1 = min(x0, x), max(x1, x), min(y0, y), max(y1, y)
-				}
-				byID[n.title()] = [2]float64{(x0 + x1) / 2, (y0 + y1) / 2}
-			}
+	root := decodeSVG(t, svg)
+	vb := strings.Fields(root.attr("viewBox"))
+	if len(vb) != 4 || vb[0] != "0" || vb[1] != "0" {
+		t.Fatalf("viewBox = %q", root.attr("viewBox"))
+	}
+	w, errW := strconv.ParseFloat(vb[2], 64)
+	h, errH := strconv.ParseFloat(vb[3], 64)
+	if errW != nil || errH != nil {
+		t.Fatalf("viewBox = %q", root.attr("viewBox"))
+	}
+	s := min(float64(pngW)/w, float64(pngH)/h)
+	ox, oy := (float64(pngW)-w*s)/2, (float64(pngH)-h*s)/2
+	out := map[string][4]float64{}
+	for id, g := range cardGroups(root) {
+		var li, ci, k int
+		if _, err := fmt.Sscanf(id, "card-%d-%d-%d", &li, &ci, &k); err != nil {
+			t.Fatalf("card id %q: %v", id, err)
 		}
-	})
-	out := map[string][2]float64{}
-	for branch, id := range idOf(sc) {
-		c, ok := byID[id]
-		if !ok {
-			t.Fatalf("no node %s for %s in the svg", id, branch)
+		c := b.lanes[li].cols[ci].cards[k]
+		if c.kind != kindPlanet {
+			continue
 		}
-		out[branch] = [2]float64{c[0] + tx, c[1] + ty}
+		i := slices.IndexFunc(g.Nodes, func(n xnode) bool { return n.XMLName.Local == "rect" })
+		if i < 0 {
+			t.Fatalf("card %s has no rect", id)
+		}
+		r := g.Nodes[i]
+		out[c.repoLabel+"|"+c.branch] = [4]float64{
+			ox + r.num(t, "x")*s, oy + r.num(t, "y")*s, r.num(t, "width") * s, r.num(t, "height") * s,
+		}
 	}
 	return out
 }
 
-// mapRender is the whole map path on a hand-built roster with the real neato and
-// resvg: the geometry, the svg it came from and the decoded image.
-type mapRender struct {
-	sc      scene
-	svg     []byte
-	vbW     float64
-	vbH     float64
-	planets []mapPlanet
-	img     image.Image
-}
-
-func renderMap(t *testing.T, ws []dotWorker, w, h int, sel string) mapRender {
-	t.Helper()
-	ps, _ := buildPlanets(dotModel(ws, 0), dotNow)
-	_, sc := arrange(newSlotState(), ps)
-	return renderScene(t, sc, w, h, sel)
-}
-
-func renderScene(t *testing.T, sc scene, w, h int, sel string) mapRender {
-	t.Helper()
-	needTools(t)
-	ctx := context.Background()
-	svg, err := Default().Graphviz(ctx, []byte(buildDOT(sc, nil, legendNone, sel, "")))
-	if err != nil {
-		t.Fatal(err)
-	}
-	svg = finishSVG(svg, sc.wedges)
-	vbW, vbH, ok := viewBoxSize(svg)
-	if !ok {
-		t.Fatal("the svg has no viewBox")
-	}
-	data, err := Default().Resvg(ctx, svg, w, h)
-	if err != nil {
-		t.Fatal(err)
-	}
-	img, err := png.Decode(bytes.NewReader(data))
-	if err != nil {
-		t.Fatal(err)
-	}
-	halfX, halfY := mapHalf(sc)
-	return mapRender{sc, svg, vbW, vbH, mapGeometry(sc, halfX, halfY, vbW, vbH, w, h), img}
-}
-
-// checkCentres compares every planet's pixel centre with the one the real svg
-// puts it at, letterboxed into the w x h image the way resvg centres it.
-func checkCentres(t *testing.T, r mapRender, w, h int) {
-	t.Helper()
-	if b := r.img.Bounds(); b.Dx() != w || b.Dy() != h {
-		t.Fatalf("png is %dx%d, want %dx%d", b.Dx(), b.Dy(), w, h)
-	}
-	s := min(float64(w)/r.vbW, float64(h)/r.vbH)
-	ox, oy := (float64(w)-r.vbW*s)/2, (float64(h)-r.vbH*s)/2
-	centres := svgCentres(t, r.svg, r.sc)
-	if len(r.planets) != len(r.sc.planets) {
-		t.Fatalf("%d planets, want %d", len(r.planets), len(r.sc.planets))
-	}
-	for i, p := range r.planets {
-		if p.Branch != r.sc.planets[i].branch || p.Name != r.sc.planets[i].name {
-			t.Errorf("planet %d is %s/%s, want ring order %s/%s", i, p.Branch, p.Name, r.sc.planets[i].branch, r.sc.planets[i].name)
-		}
-		c := centres[p.Branch]
-		wantX, wantY := ox+c[0]*s, oy+c[1]*s
-		if math.Abs(p.Cx-wantX) > 1.5 || math.Abs(p.Cy-wantY) > 1.5 {
-			t.Errorf("%s at (%.2f, %.2f), the svg puts it at (%.2f, %.2f)", p.Branch, p.Cx, p.Cy, wantX, wantY)
-		}
-	}
-}
-
-// checkRings reads the rendered image at the left and right edges of each round
-// planet's ring: something other than the background is drawn there.
-func checkRings(t *testing.T, r mapRender) {
-	t.Helper()
-	bg := [3]int{0x1e, 0x1e, 0x2e}
-	for i, p := range r.planets {
-		pl := r.sc.planets[i]
-		if pl.failed {
-			continue
-		}
-		// The side borders at mid height: the card's own half width, which the
-		// hit rectangle is at least as wide as.
-		hw, _ := hitRect(pl)
-		edge := cardW * 72 / 2 * p.HW / hw
-		for _, dx := range []float64{-edge, edge} {
-			// A light tier's border is under a pixel wide, so the best of the
-			// pixels around the line is the one to judge.
-			best := 0
-			for near := -1; near <= 1; near++ {
-				cr, cg, cb, _ := r.img.At(int(math.Round(p.Cx+dx))+near, int(math.Round(p.Cy))).RGBA()
-				got := [3]int{int(cr >> 8), int(cg >> 8), int(cb >> 8)}
-				dist := 0
-				for k := range got {
-					dist += int(math.Abs(float64(got[k] - bg[k])))
+// TestMapGeometryIsTheDrawnCards: every printed rect is the card the svg draws
+// for that worker, after the same fit into the PNG resvg makes, for a wide and
+// a tall image; the order is the board's reading order; holds and queued tasks
+// are not selectable and so not printed.
+func TestMapGeometryIsTheDrawnCards(t *testing.T) {
+	for _, f := range boardFixtures() {
+		for _, px := range [][2]int{{1200, 800}, {600, 1200}} {
+			t.Run(fmt.Sprintf("%s/%dx%d", f.name, px[0], px[1]), func(t *testing.T) {
+				svg, b, g := f.render(float64(px[0]) / float64(px[1]))
+				got := mapGeometry(b, g, px[0], px[1])
+				drawn := drawnCards(t, svg, b, px[0], px[1])
+				if len(got) != len(drawn) || len(got) != len(f.ps) {
+					t.Fatalf("printed %d, drawn %d worker cards, want %d", len(got), len(drawn), len(f.ps))
 				}
-				best = max(best, dist)
-			}
-			if best < 60 {
-				t.Errorf("%s: no border pixel %.1f px from the centre", p.Branch, math.Abs(dx))
-			}
+				var order []string
+				for _, cg := range g.cards() {
+					if c := b.lanes[cg.lane].cols[cg.col].cards[cg.card]; c.kind == kindPlanet {
+						order = append(order, c.branch)
+					}
+				}
+				for i, p := range got {
+					if p.Branch != order[i] {
+						t.Errorf("planet %d is %s, want %s in reading order", i, p.Branch, order[i])
+					}
+					label := ""
+					for _, w := range f.ps {
+						if w.branch == p.Branch {
+							label = w.repoLabel
+						}
+					}
+					r, ok := drawn[label+"|"+p.Branch]
+					if !ok {
+						t.Fatalf("no drawn card for %s", p.Branch)
+					}
+					for _, c := range [][2]float64{
+						{p.Cx - p.HW, r[0]}, {p.Cy - p.HH, r[1]}, {2 * p.HW, r[2]}, {2 * p.HH, r[3]},
+					} {
+						if math.Abs(c[0]-c[1]) > 0.02 {
+							t.Errorf("%s printed %+v, drawn %v", p.Branch, p, r)
+							break
+						}
+					}
+					if c := p.Cx + p.HW; p.Cx-p.HW < 0 || c > float64(px[0]) || p.Cy-p.HH < 0 || p.Cy+p.HH > float64(px[1]) {
+						t.Errorf("%s at %+v leaves the %dx%d image", p.Branch, p, px[0], px[1])
+					}
+					if want := round2(math.Hypot(p.HW, p.HH)); math.Abs(p.R-want) > 0.02 {
+						t.Errorf("%s r %v, want %v", p.Branch, p.R, want)
+					}
+				}
+			})
 		}
 	}
 }
 
+// TestMapNamesTheRepoOnlyWithLanes: with one lane Repo and Home stay empty;
+// with several each worker names its repo label and the home bus's are Home,
+// which the dash needs to narrow --select-repo.
+func TestMapNamesTheRepoOnlyWithLanes(t *testing.T) {
+	single := inRepo(worker("feat/1-a", "working"), "a")
+	single.home = true
+	b, _ := buildBoard([]planet{single}, nil, nil, newSlotState(), legend{})
+	for _, p := range mapGeometry(b, layoutBoard(b, 1.5), 1200, 800) {
+		if p.Repo != "" || p.Home {
+			t.Errorf("single lane: %+v", p)
+		}
+	}
+
+	x, y := inRepo(worker("feat/1-a", "working"), "x"), inRepo(worker("feat/1-a", "blocked"), "y")
+	x.home = true
+	b, _ = buildBoard([]planet{x, y}, nil, nil, newSlotState(), legend{})
+	got := mapGeometry(b, layoutBoard(b, 1.5), 1200, 800)
+	if len(got) != 2 {
+		t.Fatalf("got %+v", got)
+	}
+	for _, p := range got {
+		if want := p.Repo == x.repoLabel; p.Repo == "" || p.Home != want {
+			t.Errorf("two lanes: %+v", p)
+		}
+	}
+}
+
+// TestMapGeometryMatchesTheRealRender: at each printed card's left edge the
+// rasterized PNG shows the card's border colour.
 func TestMapGeometryMatchesTheRealRender(t *testing.T) {
-	for _, tc := range []struct {
-		name string
-		w, h int
-	}{
-		{"square", 800, 800},
-		{"wide", 1200, 500},
-		{"tall", 400, 900},
-		{"small", 160, 120},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			r := renderMap(t, sixteenWorkers(), tc.w, tc.h, "")
-			checkCentres(t, r, tc.w, tc.h)
-			if tc.w == tc.h {
-				checkRings(t, r)
+	needTools(t)
+	f := boardFixtures()[1]
+	for _, px := range [][2]int{{1200, 800}, {600, 1200}} {
+		svg, b, g := f.render(float64(px[0]) / float64(px[1]))
+		data, err := Default().Resvg(t.Context(), []byte(svg), px[0], px[1])
+		if err != nil {
+			t.Fatal(err)
+		}
+		img, err := png.Decode(bytes.NewReader(data))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if bd := img.Bounds(); bd.Dx() != px[0] || bd.Dy() != px[1] {
+			t.Fatalf("png is %v, want %dx%d", bd, px[0], px[1])
+		}
+		byBranch := map[string]boardCard{}
+		for _, l := range b.lanes {
+			for _, c := range l.cols {
+				for _, cd := range c.cards {
+					byBranch[cd.branch] = cd
+				}
 			}
-		})
-	}
-}
-
-// TestMapGeometryWithWideHostLabels: every planet is remote, five on one host
-// and three on another, so the two labels sit at 3 and 9 o'clock with different
-// widths. The bounding box only equals the corners when
-// the corners hold the whole label.
-func TestMapGeometryWithWideHostLabels(t *testing.T) {
-	long, short := "alpha-host-name-24-chars", "omega-12-chr"
-	if len(long) != 24 {
-		t.Fatalf("%q is %d characters, want 24", long, len(long))
-	}
-	var ws []dotWorker
-	for i := range 8 {
-		w := dotWorker{branch: "feat/" + strconv.Itoa(i+1) + "-x", name: "w" + strconv.Itoa(i+1), tier: "standard", state: "working", age: 10, host: short}
-		if i < 5 {
-			w.host = long
 		}
-		ws = append(ws, w)
-	}
-	for _, size := range [][2]int{{900, 900}, {1000, 400}} {
-		r := renderMap(t, ws, size[0], size[1], "")
-		if len(r.sc.hosts) != 2 {
-			t.Fatalf("%d host labels, want 2", len(r.sc.hosts))
-		}
-		halfX, _ := mapHalf(r.sc)
-		if half := r.sc.extent + canvasPad; halfX <= half {
-			t.Fatalf("the labels do not widen the canvas (%v <= %v), so this case proves nothing", halfX, half)
-		}
-		checkCentres(t, r, size[0], size[1])
-	}
-}
-
-func TestMapHalfHoldsAHostLabel(t *testing.T) {
-	sc := scene{extent: 300, hosts: []hostLabel{{host: strings.Repeat("h", 24), x: 280, y: 10}}}
-	halfX, halfY := mapHalf(sc)
-	if want := 280 + (24*hostCharWidth+hostMargin)/2; halfX != want {
-		t.Errorf("halfX = %v, want %v", halfX, want)
-	}
-	if want := 300 + canvasPad; halfY != want {
-		t.Errorf("halfY = %v, want %v", halfY, want)
-	}
-	if x, y := mapHalf(scene{extent: 300}); x != y || x != 300+canvasPad {
-		t.Errorf("without hosts the canvas is square: %v x %v", x, y)
-	}
-}
-
-func TestHitRect(t *testing.T) {
-	const cw, ch = cardW * 72 / 2, cardH * 72 / 2
-	for _, tc := range []struct {
-		name   string
-		mod    func(*placed)
-		hw, hh float64
-	}{
-		{"plain", func(*placed) {}, cw + planetPenwidth/2, ch + planetPenwidth/2},
-		{"deep", func(p *placed) { p.tier = "deep" }, cw + 4.5/2, ch + 4.5/2},
-		{"trivial", func(p *placed) { p.tier = "trivial" }, cw + 1.75/2, ch + 1.75/2},
-		{"blocked is no heavier", func(p *placed) { p.class = classBlocked }, cw + planetPenwidth/2, ch + planetPenwidth/2},
-		{"waiting", func(p *placed) { p.class, p.waiting = classBlocked, true }, cw + waitGap + waitPenwidth/2, ch + waitGap + waitPenwidth/2},
-		{"ci pass", func(p *placed) { p.ci = "pass" }, cw + ciBadgeRadius, ch + ciBadgeRadius},
-		{"ci pending", func(p *placed) { p.ci = "pending" }, cw + ciBadgeRadius + 1, ch + ciBadgeRadius + 1},
-		{"ci none", func(p *placed) { p.ci = "none" }, cw + ciBadgeRadius + 0.5, ch + ciBadgeRadius + 0.5},
-		{"unknown ci", func(p *placed) { p.ci = "bogus" }, cw + planetPenwidth/2, ch + planetPenwidth/2},
-		{"round chip", func(p *placed) { p.rounds = 2 }, cw + roundBadgeW*72/2, ch + roundBadgeH*72/2},
-		{"remote host", func(p *placed) { p.host = "mbp" }, cw + hostBadgeSize*72/2 + hostBadgePen/2, ch + hostBadgeSize*72/2 + hostBadgePen/2},
-		{"waiting and ci pending", func(p *placed) { p.waiting, p.ci = true, "pending" }, cw + ciBadgeRadius + 1, ch + ciBadgeRadius + 1},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			p := placed{planet: planet{tier: "standard", class: classWorking}}
-			tc.mod(&p)
-			if hw, hh := hitRect(p); math.Abs(hw-tc.hw) > 1e-9 || math.Abs(hh-tc.hh) > 1e-9 {
-				t.Errorf("hitRect = %v x %v, want %v x %v", hw, hh, tc.hw, tc.hh)
+		for _, p := range mapGeometry(b, g, px[0], px[1]) {
+			c := byBranch[p.Branch]
+			if c.stale || c.class == classDone {
+				continue
 			}
-		})
-	}
-}
-
-// TestMapGeometryRadiusCoversTheMarkers: r reaches the outer edge of a planet's
-// waiting ring and CI badge, in pixels, and a plain planet's is what it was.
-func TestMapGeometryRadiusCoversTheMarkers(t *testing.T) {
-	ps, _ := repoPlanets(wedgeRoster())
-	_, sc := arrange(newSlotState(), ps)
-	halfX, halfY := mapHalf(sc)
-	vbW, vbH := 2*halfX+30, 2*halfY+30
-	s := min(800/vbW, 800/vbH)
-	var rings, badges, plain int
-	for i, got := range mapGeometry(sc, halfX, halfY, vbW, vbH, 800, 800) {
-		p := sc.planets[i]
-		hw, hh := cardHalf(cardPen(p.tier))
-		cw, ch := cardW*72/2, cardH*72/2
-		if p.waiting {
-			rings++
-			hw, hh = max(hw, cw+waitGap+waitPenwidth/2), max(hh, ch+waitGap+waitPenwidth/2)
-		}
-		if _, badgePen, ok := ciBadge(p.ci); ok {
-			badges++
-			hw, hh = max(hw, cw+ciBadgeRadius+badgePen/2), max(hh, ch+ciBadgeRadius+badgePen/2)
-		}
-		if p.host != "" {
-			hw, hh = max(hw, cw+hostBadgeSize*72/2), max(hh, ch+hostBadgeSize*72/2)
-		}
-		if got.HW < hw*s-0.01 || got.HH < hh*s-0.01 {
-			t.Errorf("%s: hit rect %v x %v, short of the outer edge of what is drawn, %v x %v", p.branch, got.HW, got.HH, hw*s, hh*s)
-		}
-		if want := round2(math.Hypot(got.HW, got.HH)); math.Abs(got.R-want) > 0.02 {
-			t.Errorf("%s: r = %v, want the rectangle's circumscribed circle %v", p.branch, got.R, want)
-		}
-		if !p.waiting && p.ci == "" && p.host == "" {
-			plain++
-			whw, whh := cardHalf(cardPen(p.tier))
-			if got.HW != round2(whw*s) || got.HH != round2(whh*s) {
-				t.Errorf("%s: a plain card's hit rect = %v x %v, want %v x %v", p.branch, got.HW, got.HH, round2(whw*s), round2(whh*s))
+			want := classColour(c.class, c.failed)
+			r, gr, bl, _ := img.At(int(math.Round(p.Cx-p.HW)), int(math.Round(p.Cy))).RGBA()
+			wr, _ := strconv.ParseUint(want[1:3], 16, 8)
+			wg, _ := strconv.ParseUint(want[3:5], 16, 8)
+			wb, _ := strconv.ParseUint(want[5:7], 16, 8)
+			if d := max(absDiff(r>>8, wr), absDiff(gr>>8, wg), absDiff(bl>>8, wb)); d > 40 {
+				t.Errorf("%dx%d: %s's left edge is #%02x%02x%02x, want %s", px[0], px[1], p.Branch, r>>8, gr>>8, bl>>8, want)
 			}
 		}
 	}
-	if rings == 0 || badges != 4 || plain == 0 {
-		t.Errorf("%d rings, %d badges, %d plain planets: the roster does not cover every case", rings, badges, plain)
-	}
 }
 
-func TestMapPlanetNamesItsRepoOnlyInAMultiRepoScene(t *testing.T) {
-	ps, _ := repoPlanets(wedgeRoster())
-	_, multi := arrange(newSlotState(), ps)
-	halfX, halfY := mapHalf(multi)
-	data, err := json.Marshal(mapGeometry(multi, halfX, halfY, 2*halfX, 2*halfY, 800, 800))
-	if err != nil {
-		t.Fatal(err)
+func absDiff(a uint32, b uint64) uint64 {
+	if uint64(a) > b {
+		return uint64(a) - b
 	}
-	for _, repo := range []string{"alpha", "beta"} {
-		if !strings.Contains(string(data), `"repo":"`+repo+`"`) {
-			t.Errorf("no planet names repo %s in %s", repo, data)
-		}
-	}
-
-	_, single := arrange(newSlotState(), ps[:6])
-	if len(single.wedges) != 0 {
-		t.Fatal("one repo drew wedges")
-	}
-	halfX, halfY = mapHalf(single)
-	data, err = json.Marshal(mapGeometry(single, halfX, halfY, 2*halfX, 2*halfY, 800, 800))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(data), `"repo"`) {
-		t.Errorf("a single-repo scene carries a repo: %s", data)
-	}
-	old, _ := buildPlanets(dotModel(sixteenWorkers(), 0), dotNow)
-	_, sc := arrange(newSlotState(), old)
-	halfX, halfY = mapHalf(sc)
-	data, _ = json.Marshal(mapGeometry(sc, halfX, halfY, 2*halfX, 2*halfY, 800, 800))
-	if strings.Contains(string(data), `"repo"`) {
-		t.Errorf("a plain roster carries a repo: %s", data)
-	}
+	return b - uint64(a)
 }
 
-// TestMapGeometryWithWedges: the wedge labels widen the corners and the
-// planets of every wedge still land where the real svg puts them.
-func TestMapGeometryWithWedges(t *testing.T) {
-	ws := wedgeRoster()
-	for i := range ws {
-		// The svg names a planet by branch, so a branch can be drawn once here.
-		if ws[i].repo == "beta" && ws[i].branch == "feat/1-shared" {
-			ws[i].branch = "feat/10-beta"
-		}
-		if ws[i].base == "feat/1-shared" {
-			ws[i].base = "feat/10-beta"
-		}
-	}
-	ps, _ := repoPlanets(ws)
-	_, sc := arrange(newSlotState(), ps)
-	if len(sc.wedges) != 2 {
-		t.Fatalf("%d wedges, want 2", len(sc.wedges))
-	}
-	for _, size := range [][2]int{{900, 900}, {1000, 400}} {
-		r := renderScene(t, sc, size[0], size[1], "")
-		checkCentres(t, r, size[0], size[1])
-	}
-}
-
-func TestMapGeometryIsDeterministic(t *testing.T) {
-	a := renderMap(t, sixteenWorkers(), 640, 480, "")
-	b := renderMap(t, sixteenWorkers(), 640, 480, "")
-	if !slices.Equal(a.planets, b.planets) {
-		t.Errorf("two renders of one roster placed the planets differently:\n%v\n%v", a.planets, b.planets)
-	}
-}
-
-// TestMapGeometryScalesWithTheBox: the planets keep their relative places when
-// the image is resized, and a blocked planet's radius includes its heavier ring.
 func TestMapGeometryScalesWithTheBox(t *testing.T) {
-	ps, _ := buildPlanets(dotModel(sixteenWorkers(), 0), dotNow)
-	_, sc := arrange(newSlotState(), ps)
-	halfX, halfY := mapHalf(sc)
-	vb := 2*halfX + 30
-	small := mapGeometry(sc, halfX, halfY, vb, vb, 400, 400)
-	big := mapGeometry(sc, halfX, halfY, vb, vb, 800, 800)
+	_, b, g := boardFixtures()[1].render(1.5)
+	small, big := mapGeometry(b, g, 600, 400), mapGeometry(b, g, 1200, 800)
 	for i := range small {
-		if math.Abs(big[i].Cx-2*small[i].Cx) > 0.02 || math.Abs(big[i].R-2*small[i].R) > 0.02 {
-			t.Errorf("%s: %+v at 400 and %+v at 800", small[i].Branch, small[i], big[i])
+		if math.Abs(2*small[i].Cx-big[i].Cx) > 0.02 || math.Abs(2*small[i].HW-big[i].HW) > 0.02 {
+			t.Errorf("%s: %+v at 600x400, %+v at 1200x800", small[i].Branch, small[i], big[i])
 		}
-		hw, hh := hitRect(sc.planets[i])
-		if want := math.Hypot(hw, hh) * 400 / vb; math.Abs(small[i].R-want) > 0.01 {
-			t.Errorf("%s: r = %v, want %v", small[i].Branch, small[i].R, want)
-		}
-		if want := hw * 400 / vb; math.Abs(small[i].HW-want) > 0.01 {
-			t.Errorf("%s: hw = %v, want %v", small[i].Branch, small[i].HW, want)
-		}
-	}
-}
-
-func TestSelectionRingOnlyForAKnownBranch(t *testing.T) {
-	ps, _ := buildPlanets(dotModel(sixteenWorkers(), 0), dotNow)
-	_, sc := arrange(newSlotState(), ps)
-	known := sc.planets[3]
-
-	got := buildDOT(sc, nil, legendNone, known.branch, "")
-	var ring []string
-	for line := range strings.SplitSeq(got, "\n") {
-		if strings.HasPrefix(strings.TrimSpace(line), "sel [") {
-			ring = append(ring, line)
-		}
-	}
-	if len(ring) != 1 {
-		t.Fatalf("%d ring nodes, want 1:\n%s", len(ring), got)
-	}
-	for _, want := range []string{
-		"shape=box", `style="rounded"`, `color="` + colSun + `"`, `label=""`,
-		"width=" + strconv.FormatFloat(cardW+2*selectGap/72, 'g', -1, 64),
-		"height=" + strconv.FormatFloat(cardH+2*selectGap/72, 'g', -1, 64), "pos=" + dotq(pt(known.x)+","+pt(known.y)+"!"),
-	} {
-		if !strings.Contains(ring[0], want) {
-			t.Errorf("ring %q lacks %s", ring[0], want)
-		}
-	}
-	if strings.Contains(ring[0], "fillcolor") || strings.Contains(ring[0], "filled") {
-		t.Errorf("the ring must not be filled: %q", ring[0])
-	}
-	if strings.Index(got, "sel [") < strings.LastIndex(got, "p"+strconv.Itoa(len(sc.planets))+" [") {
-		t.Errorf("the ring is declared before the last planet")
-	}
-
-	for _, sel := range []string{"", "feat/999-nobody"} {
-		if out := buildDOT(sc, nil, legendNone, sel, ""); strings.Contains(out, "sel [") {
-			t.Errorf("select %q drew a ring", sel)
-		}
-	}
-	lg := legend{}
-	if out := renderDOT(sc, lg, legendFull); strings.Contains(out, "sel [") {
-		t.Error("the legend render drew a ring")
-	}
-}
-
-func TestMapDOTHasNoLegend(t *testing.T) {
-	ps, lg := buildPlanets(dotModel(sixteenWorkers(), 2), dotNow)
-	_, sc := arrange(newSlotState(), ps)
-	if out := buildDOT(sc, nil, legendNone, "", ""); strings.Contains(out, "\n  label=<") || !strings.HasSuffix(out, "}\n") {
-		t.Errorf("the map carries a graph label:\n%s", out)
-	}
-	if out := buildDOT(sc, &lg, legendFull, "", ""); out != renderDOT(sc, lg, legendFull) || !strings.Contains(out, "\n  label=<") {
-		t.Error("a legend render is no longer renderDOT's")
-	}
-}
-
-func TestSelectionRingRendersAroundThePlanet(t *testing.T) {
-	ws := sixteenWorkers()
-	sel := "feat/101-alpha"
-	r := renderMap(t, ws, 800, 800, sel)
-	var p mapPlanet
-	for _, c := range r.planets {
-		if c.Branch == sel {
-			p = c
-		}
-	}
-	// The ring stands selectGap out from the card's side edge, scaled; its
-	// stroke is a pixel or two wide, so look at the pixels around its centre line.
-	s := min(800/r.vbW, 800/r.vbH)
-	x := p.Cx + (cardW*72/2+selectGap)*s
-	found := false
-	for _, dx := range []int{-1, 0, 1} {
-		cr, cg, cb, _ := r.img.At(int(math.Round(x))+dx, int(math.Round(p.Cy))).RGBA()
-		found = found || [3]int{int(cr >> 8), int(cg >> 8), int(cb >> 8)} == [3]int{0xf9, 0xe2, 0xaf}
-	}
-	if !found {
-		t.Errorf("no pixel of %s on the ring's side near x=%.1f", colSun, x)
 	}
 }
 
@@ -504,18 +222,15 @@ func TestResvgRewritesOnlyTheRoot(t *testing.T) {
 	}
 }
 
-func TestMapOutputShapeAndSlotOrder(t *testing.T) {
+func TestMapOutputShapeAndReadingOrder(t *testing.T) {
 	l := newLoop(t)
 	l.seedBus(t)
 	var stdout bytes.Buffer
 	var sizes [][2]int
-	var dots []string
+	var svgs []string
 	l.opts.Stdout = &stdout
-	l.opts.Probes.Graphviz = func(_ context.Context, dot []byte) ([]byte, error) {
-		dots = append(dots, string(dot))
-		return []byte(`<svg width="500pt" height="400pt" viewBox="0.00 0.00 500.00 400.00" xmlns="x"></svg>`), nil
-	}
 	l.opts.Probes.Resvg = func(_ context.Context, svg []byte, w, h int) ([]byte, error) {
+		svgs = append(svgs, string(svg))
 		sizes = append(sizes, [2]int{w, h})
 		return []byte("PNG"), nil
 	}
@@ -570,11 +285,11 @@ func TestMapOutputShapeAndSlotOrder(t *testing.T) {
 			t.Errorf("planet keys = %v", keys)
 		}
 	}
-	if strings.Contains(dots[0], "sel [") {
+	if strings.Contains(svgs[0], selectRing) {
 		t.Error("no --select, but a ring was drawn")
 	}
 
-	// A persisted sequence is the slot order, read and never rewritten.
+	// A persisted sequence orders each column, read and never rewritten.
 	fr, err := buildFrame(context.Background(), l.opts, l.paths, l.cdir(), l.crew, roleRows(l.rolePanes(), l.paths.Dir, l.crew), false)
 	if err != nil {
 		t.Fatal(err)
@@ -597,21 +312,26 @@ func TestMapOutputShapeAndSlotOrder(t *testing.T) {
 	for _, p := range decodePlanets(t, second) {
 		branches = append(branches, p.Branch)
 	}
+	// The board reads column by column, each column in the persisted order.
+	byColumn := slices.Clone(order)
+	slices.SortStableFunc(byColumn, func(x, y slotEntry) int {
+		return slices.Index(boardClasses[:], x.Class) - slices.Index(boardClasses[:], y.Class)
+	})
 	var want []string
-	for _, e := range order {
+	for _, e := range byColumn {
 		want = append(want, e.Branch)
 	}
 	if !slices.Equal(branches, want) {
-		t.Errorf("planets in order %v, want the persisted order %v", branches, want)
+		t.Errorf("planets in order %v, want the persisted order by column %v", branches, want)
 	}
 	if after, _ := os.ReadFile(slotsPath); !bytes.Equal(before, after) {
 		t.Errorf("map mode rewrote the slots file:\n%s\n%s", before, after)
 	}
-	if !strings.Contains(dots[1], "sel [") {
+	if !strings.Contains(svgs[1], selectRing) {
 		t.Error("a known --select drew no ring")
 	}
 	run("feat/9-nobody")
-	if strings.Contains(dots[2], "sel [") {
+	if strings.Contains(svgs[2], selectRing) {
 		t.Error("an unknown --select drew a ring")
 	}
 	if again := run(); again != run() {
@@ -655,9 +375,6 @@ func TestMapWritesNothingButThePNG(t *testing.T) {
 	l.seedBus(t)
 	var stdout bytes.Buffer
 	l.opts.Stdout = &stdout
-	l.opts.Probes.Graphviz = func(context.Context, []byte) ([]byte, error) {
-		return []byte(`<svg width="1pt" height="1pt" viewBox="0 0 10 10"></svg>`), nil
-	}
 	l.opts.Probes.Resvg = func(context.Context, []byte, int, int) ([]byte, error) { return []byte("PNG"), nil }
 	l.opts.Probes.AeyePublish = func(context.Context, string, string, bool) error {
 		t.Error("map mode published to aeye")
@@ -690,39 +407,27 @@ func TestMapWritesNothingButThePNG(t *testing.T) {
 	}
 }
 
-func TestMapFailuresNameTheTool(t *testing.T) {
-	for _, tc := range []struct {
-		name    string
-		graph   error
-		raster  error
-		want    string
-		outFile bool
-	}{
-		{name: "no neato", graph: errors.New(`neato: exec: "neato": executable file not found in $PATH`), want: "crew: roster-render: neato:"},
-		{name: "no resvg", raster: errors.New(`resvg: exec: "resvg": executable file not found in $PATH`), want: "crew: roster-render: resvg:"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			l := newLoop(t)
-			l.seedBus(t)
-			var stdout bytes.Buffer
-			l.opts.Stdout = &stdout
-			l.opts.Probes.Graphviz = func(context.Context, []byte) ([]byte, error) {
-				return []byte(`<svg viewBox="0 0 10 10"></svg>`), tc.graph
-			}
-			l.opts.Probes.Resvg = func(context.Context, []byte, int, int) ([]byte, error) { return nil, tc.raster }
-			out := filepath.Join(t.TempDir(), "m.png")
-			code := Run(context.Background(), Request{Crew: l.crew, Map: true, Px: "128x128", Out: out}, l.paths, l.opts)
-			stderr := l.opts.Stderr.(*bytes.Buffer).String()
-			if code != exitFailure || !strings.HasPrefix(stderr, tc.want) || strings.Count(stderr, "\n") != 1 {
-				t.Errorf("code %d, stderr %q, want exit 1 and one %q line", code, stderr, tc.want)
-			}
-			if stdout.Len() != 0 {
-				t.Errorf("stdout = %q on a failure", stdout.String())
-			}
-			if _, err := os.Stat(out); !errors.Is(err, os.ErrNotExist) {
-				t.Errorf("a failed render left a png: %v", err)
-			}
-		})
+// TestMapFailureNamesTheTool: a rasterizer that cannot run fails the map with
+// one line naming it, prints nothing and leaves no PNG.
+func TestMapFailureNamesTheTool(t *testing.T) {
+	l := newLoop(t)
+	l.seedBus(t)
+	var stdout bytes.Buffer
+	l.opts.Stdout = &stdout
+	l.opts.Probes.Resvg = func(context.Context, []byte, int, int) ([]byte, error) {
+		return nil, errors.New(`resvg: exec: "resvg": executable file not found in $PATH`)
+	}
+	out := filepath.Join(t.TempDir(), "m.png")
+	code := Run(context.Background(), Request{Crew: l.crew, Map: true, Px: "128x128", Out: out}, l.paths, l.opts)
+	stderr := l.opts.Stderr.(*bytes.Buffer).String()
+	if want := "crew: roster-render: resvg:"; code != exitFailure || !strings.HasPrefix(stderr, want) || strings.Count(stderr, "\n") != 1 {
+		t.Errorf("code %d, stderr %q, want exit 1 and one %q line", code, stderr, want)
+	}
+	if stdout.Len() != 0 {
+		t.Errorf("stdout = %q on a failure", stdout.String())
+	}
+	if _, err := os.Stat(out); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("a failed render left a png: %v", err)
 	}
 }
 

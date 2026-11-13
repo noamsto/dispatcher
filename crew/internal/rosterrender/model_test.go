@@ -122,9 +122,9 @@ func TestModelWithoutABusIsTheArmsEmptyOne(t *testing.T) {
 	}
 }
 
-// TestRenderedDOTEndsWithExactlyOneNewline: the pass compares the dot byte for
+// TestRenderedSVGEndsWithExactlyOneNewline: the pass compares the svg byte for
 // byte with the record it wrote, so the text must end as the file does.
-func TestRenderedDOTEndsWithExactlyOneNewline(t *testing.T) {
+func TestRenderedSVGEndsWithExactlyOneNewline(t *testing.T) {
 	text, _, _ := emit(decodeOne(t, `{"rows":[],"holds":[],"roles":[]}`))
 	if !strings.HasSuffix(text, "\n") || strings.HasSuffix(text, "\n\n") {
 		t.Errorf("text ends with %q", text[len(text)-2:])
@@ -292,22 +292,26 @@ func TestRoleEngineIsOnlyAKnownEngine(t *testing.T) {
 	}
 }
 
-// TestLoopSigIsTheBusSizeThePaneAndTheRoles: a part of the diagram the bus cannot
-// mention — a role pane starting, a dispatcher pane moving — has to change it.
-func TestLoopSigIsTheBusSizeThePaneAndTheRoles(t *testing.T) {
+// TestLoopSigIsTheBusSizeThePaneTheRolesAndTheAspect: a part of the diagram the
+// bus cannot mention — a role pane starting, a dispatcher pane moving, the
+// viewer resized — has to change it.
+func TestLoopSigIsTheBusSizeThePaneTheRolesAndTheAspect(t *testing.T) {
 	p, cdir := modelFixture(t, `{"ts":1,"crew_id":"c1","kind":"dispatch","branch":"b"}`)
-	base := loopSig(busSize(p), cdir, nil)
-	if got := loopSig(busSize(p)+1, cdir, nil); got == base {
+	base := loopSig(busSize(p), cdir, nil, defaultAspect)
+	if got := loopSig(busSize(p)+1, cdir, nil, defaultAspect); got == base {
 		t.Error("a bus that grew did not change the signature")
 	}
 	if err := os.WriteFile(cdir+"/roster-render.pane", []byte("%7\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if got := loopSig(busSize(p), cdir, nil); got == base {
+	if got := loopSig(busSize(p), cdir, nil, defaultAspect); got == base {
 		t.Error("a new dispatcher pane did not change the signature")
 	}
-	if got := loopSig(busSize(p), cdir, []string{"b\tspec-critic\tidle"}); got == base {
+	if got := loopSig(busSize(p), cdir, []string{"b\tspec-critic\tidle"}, defaultAspect); got == base {
 		t.Error("a role pane did not change the signature")
+	}
+	if got := loopSig(busSize(p), cdir, nil, 0.5); got == base {
+		t.Error("a resized viewer did not change the signature")
 	}
 	// A bus that does not exist yet is a zero, not an error.
 	missing := bus.Paths{Common: t.TempDir(), Log: t.TempDir() + "/events.jsonl"}

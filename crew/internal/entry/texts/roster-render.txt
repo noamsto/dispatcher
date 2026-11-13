@@ -16,23 +16,16 @@ it to the aeye carousel beside the recorded dispatcher pane.
   --quiet      Exit after S seconds with no working/blocked/dispatched worker
                and no outstanding hold (default 1800; 0 exits as soon as the
                crew drains)
-  --legend     How much legend the diagram draws (default counts):
-                 full    every key and the budget strip under the diagram
-                 counts  one row of state counts; the full key goes to
-                         <stem>.legend.svg in the roster file's directory,
-                         written only when its content changes
-                 none    no legend
-               <stem> is the roster file's name without .svg, so a viewer
-               finds the key from the roster file's name. full and none write
-               no legend file and remove a stale one an earlier run left
-  --map        Draw once to a PNG without the legend and print the cards'
+  --legend     Accepted for compatibility (full, counts or none); it has no
+               effect, as the board explains itself and draws no legend
+  --map        Draw once to a PNG with no budget strip and print the cards'
                places as one JSON line; reads the bus, writes nothing else,
                and refuses every flag above but --crew
   --px         The PNG's size, WxH, each side 64 to 4096
   --out        The PNG's path
   --select     Ring the card of this branch
   --select-repo
-               Ring only the card of that repo's wedge (the label the map
+               Ring only the card of that repo's lane (the label the map
                reports as repo); without it a branch is ringed in every repo
 
 Usage errors exit 64, like `stream`; --once and --detach together are one.

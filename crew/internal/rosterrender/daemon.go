@@ -72,12 +72,13 @@ func (o Options) daemon(ctx context.Context, paths bus.Paths, cdir string, c cal
 		now := o.clockSec()
 		panes := o.rolePanes(ctx)
 		roles := roleRows(panes, paths.Dir, c.crew)
-		newSig := loopSig(busSize(paths), cdir, roles) +
+		aspect := paneAspect(o.viewer(ctx, cdir))
+		newSig := loopSig(busSize(paths), cdir, roles, aspect) +
 			joinedSig(o.sources(ctx, paths, c.crew)[1:], panes, c.crew)
 		if newSig != sig || now-lastBuild >= rebuildBackstop {
 			// A failed pass keeps the last live count rather than reading as
 			// drained: one malformed line must not retire the renderer.
-			got, err := pass(ctx, o, paths, cdir, c.crew, c.noOpen, c.legend, roles)
+			got, err := pass(ctx, o, paths, cdir, c.crew, c.noOpen, aspect, roles)
 			if err == nil {
 				live = got
 			} else {
