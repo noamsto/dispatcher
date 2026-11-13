@@ -37,18 +37,15 @@ const (
 	defaultQuiet    = 1800
 )
 
-// legendMode is how much of the legend the diagram draws. The value is the
-// flag's own spelling, which is also what the daemon is handed.
+// legendMode is a --legend value. The board draws no legend, so the value is
+// only checked: an older daemon re-execs with its own --legend after a build
+// hop, and launchers may still pass one.
 type legendMode string
 
 const (
-	// legendFull draws every key and the budget strip under the diagram.
-	legendFull legendMode = "full"
-	// legendCounts draws the state counts alone and keeps the full key in a
-	// file beside the diagram.
+	legendFull   legendMode = "full"
 	legendCounts legendMode = "counts"
-	// legendNone draws no legend.
-	legendNone legendMode = "none"
+	legendNone   legendMode = "none"
 )
 
 // call is one parsed invocation. intervalText and quietText stay the caller's
@@ -60,7 +57,6 @@ type call struct {
 	quietText    string
 	interval     int64
 	quiet        int64
-	legend       legendMode
 	pane         string
 	noOpen, once bool
 	detach       bool
@@ -78,7 +74,7 @@ type Request struct {
 	Crew, Pane, Interval, Quiet, Legend string
 	NoOpen, Once, Detach                bool
 	// Map is the one-shot map render: Px is WxH, Out the PNG's path and Select
-	// the branch to ring, narrowed to the repo wedge SelectRepo when given.
+	// the branch to ring, narrowed to the repo lane SelectRepo when given.
 	Map                         bool
 	Px, Select, SelectRepo, Out string
 }
@@ -114,8 +110,7 @@ func check(r Request) (call, string, int) {
 	if quiet, ok = positive(quietText); !ok {
 		return c, errQuiet, exitUsage
 	}
-	legend := legendMode(cmp.Or(r.Legend, string(legendCounts)))
-	if legend != legendFull && legend != legendCounts && legend != legendNone {
+	if legend := legendMode(cmp.Or(r.Legend, string(legendCounts))); legend != legendFull && legend != legendCounts && legend != legendNone {
 		return c, errLegend, exitUsage
 	}
 	if c.crew == "" {
@@ -129,7 +124,7 @@ func check(r Request) (call, string, int) {
 		return c, errCrewID, exitUsage
 	}
 
-	c.interval, c.quiet, c.legend = interval, quiet, legend
+	c.interval, c.quiet = interval, quiet
 	c.intervalText, c.quietText = strconv.FormatInt(interval, 10), strconv.FormatInt(quiet, 10)
 	return c, "", exitOK
 }

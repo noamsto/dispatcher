@@ -8,10 +8,12 @@ import (
 	"os/exec"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
+	"github.com/noamsto/dispatcher/crew/internal/ascii"
 	"github.com/noamsto/dispatcher/crew/internal/tmux"
 )
 
@@ -29,10 +31,10 @@ type Probes struct {
 	// AeyePublish is `timeout 60 aeye publish-diagram <file> --pane <pane>
 	// [--open]` with both streams dropped; its status is the arm's.
 	AeyePublish func(ctx context.Context, file, pane string, open bool) error
-	// Graphviz is `neato -n -Tsvg`: the DOT text in, the svg out. Every node is
-	// pinned, so neato only draws; the native renderer is the one that keeps the
-	// DOT `class` attributes (see finishSVG).
-	Graphviz func(ctx context.Context, dot []byte) ([]byte, error)
+	// ViewerSize is the size in cells of the aeye carousel pane that shows pane's
+	// diagrams, or of pane itself while no carousel is open; ok is false when
+	// tmux cannot say.
+	ViewerSize func(ctx context.Context, pane string) (cols, rows int, ok bool)
 	// Resvg rasterizes the finished svg to a PNG of exactly w x h pixels: the
 	// diagram is scaled to fit and centred, the margins are transparent. It reads
 	// its fonts from $AEYE_D2_FONT_DIR when that is set, like aeye's own resvg.
@@ -64,7 +66,13 @@ func Default() Probes {
 			}
 			return exec.CommandContext(ctx, args[0], args[1:]...).Run()
 		},
-		Graphviz:      graphviz,
+		ViewerSize: func(ctx context.Context, pane string) (int, int, bool) {
+			out, err := tmux.Exec{}.Run(ctx, "list-panes", "-a", "-F", viewerFormat)
+			if err != nil {
+				return 0, 0, false
+			}
+			return viewerSize(out, pane)
+		},
 		Resvg:         resvg,
 		InstalledCrew: InstalledCrew,
 		SpawnDetached: SpawnDetached,
@@ -84,27 +92,48 @@ func Default() Probes {
 	}
 }
 
-// graphvizTimeout bounds one neato run so a hung one cannot hold the loop.
-const graphvizTimeout = 30 * time.Second
+// viewerFormat is the `list-panes -a` row viewerSize reads.
+const viewerFormat = "#{pane_id} #{pane_width} #{pane_height} #{pane_start_command}"
 
-// resvgTimeout bounds one resvg run the same way.
+// viewerSize finds pane's viewer in a viewerFormat listing: the aeye pane whose
+// start command ends in `<server-pid>-<N>` for pane `%N`, aeye's name for the
+// carousel it opens beside that pane. Without one the carousel is not open yet,
+// and pane's own size stands in for it, as the carousel splits beside it at
+// the same height. A pane the listing does not hold is not ok.
+func viewerSize(listing, pane string) (cols, rows int, ok bool) {
+	n := strings.TrimPrefix(pane, "%")
+	var own [2]int
+	found := false
+	for line := range strings.Lines(listing) {
+		f := strings.SplitN(strings.TrimRight(line, "\n"), " ", 4)
+		if len(f) < 3 {
+			continue
+		}
+		w, errW := strconv.Atoi(f[1])
+		h, errH := strconv.Atoi(f[2])
+		if errW != nil || errH != nil {
+			continue
+		}
+		if f[0] == pane {
+			own, found = [2]int{w, h}, true
+			continue
+		}
+		if len(f) == 4 && strings.Contains(f[3], "aeye") {
+			last := f[3][strings.LastIndexByte(f[3], ' ')+1:]
+			pid, id, cut := strings.Cut(strings.Trim(last, `"'`), "-")
+			if cut && id == n && ascii.IsDigits(pid) {
+				return w, h, true
+			}
+		}
+	}
+	return own[0], own[1], found
+}
+
+// resvgTimeout bounds one resvg run so a hung one cannot hold the loop.
 const resvgTimeout = 30 * time.Second
 
-func graphviz(ctx context.Context, dot []byte) ([]byte, error) {
-	ctx, cancel := context.WithTimeout(ctx, graphvizTimeout)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, "neato", "-n", "-Tsvg")
-	cmd.Stdin = bytes.NewReader(dot)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &stdout, &stderr
-	if err := cmd.Run(); err != nil {
-		if msg := strings.TrimSpace(stderr.String()); msg != "" {
-			return nil, fmt.Errorf("neato: %w: %s", err, msg)
-		}
-		return nil, fmt.Errorf("neato: %w", err)
-	}
-	return stdout.Bytes(), nil
-}
+// svgRootRe is the root element's opening tag.
+var svgRootRe = regexp.MustCompile(`<svg\b[^>]*>`)
 
 var (
 	svgWidthRe  = regexp.MustCompile(`\swidth="[^"]*"`)

@@ -115,7 +115,7 @@
             # pinned bash (the interpreter writeShellApplication gives crew);
             # `crew class` and the rate sweep run model-resolve under it too.
             ldflags = ["-s" "-w" "-X main.bashBin=${pkgs.bash}/bin/bash" "-X main.budgetGateLib=${./adapters/core/budget-gate.sh}" "-X main.publicLeakGuard=${./adapters/core/public-leak-guard.sh}" "-X main.localModelsLib=${./adapters/core/local-models.sh}" "-X main.modelResolveScript=${./adapters/core/model-resolve.sh}"];
-            nativeCheckInputs = [pkgs.git pkgs.ps pkgs.graphviz];
+            nativeCheckInputs = [pkgs.git pkgs.ps];
             postInstall = "mv $out/bin/crew $out/bin/crew-go";
           };
 
@@ -191,7 +191,7 @@
             # gnused, findutils, curl, betterleaks: the public-leak guard
             # `crew retro --sweep` runs on issue text; betterleaks is what scans for
             # secrets, so dropping it silently weakens the guard.
-            runtimeInputs = (with pkgs; [git jq coreutils gnugrep tmux gtrash procps graphviz resvg gnused findutils curl betterleaks]) ++ [pr-watch dispatch-config crew-dash refresh-budget];
+            runtimeInputs = (with pkgs; [git jq coreutils gnugrep tmux gtrash procps resvg gnused findutils curl betterleaks]) ++ [pr-watch dispatch-config crew-dash refresh-budget];
           in
             pkgs.runCommand "crew" {nativeBuildInputs = [pkgs.makeWrapper];} ''
               mkdir -p $out/bin
@@ -454,14 +454,11 @@
               # silently uses whatever yq leaks in from the user profile and
               # fails in CI.
               pkgs.yq-go
-              # resvg, source-sans: TestRenderedSVGText rasterizes the roster svg
-              # with resvg under aeye's font setup (AEYE_D2_FONT_DIR) and skips
+              # resvg, source-sans: the rosterrender resvg tests rasterize the
+              # roster board under aeye's font setup (AEYE_D2_FONT_DIR) and skip
               # when either is missing.
               pkgs.resvg
               pkgs.source-sans
-              # graphviz: `neato` renders the roster diagram (the rosterrender
-              # SVG golden/render tests).
-              pkgs.graphviz
               pkgs.git
               pkgs.tmux
               pkgs.gh

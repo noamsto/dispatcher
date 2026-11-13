@@ -92,8 +92,8 @@ func TestPublishOpensOncePerPaneAndRepublishesOnChange(t *testing.T) {
 	if want := "aeye publish-diagram " + file + " --pane %7"; got[1] != want {
 		t.Errorf("a change re-opened the carousel: %q, want %q", got[1], want)
 	}
-	if line := nodeLine(t, l.published(), "p1"); !strings.Contains(line, "aeye-pulse") {
-		t.Errorf("the new state never reached the diagram: %s", line)
+	if !pulses(t, l.published(), "sage · #1") {
+		t.Error("the new state never reached the diagram")
 	}
 
 	// A new pane republishes the unchanged file without rewriting it.
@@ -354,7 +354,7 @@ func TestDetachRecordsThePaneAndLeavesADaemonOnTheLock(t *testing.T) {
 	if len(l.spawns) != 1 {
 		t.Fatalf("%d children, want 1", len(l.spawns))
 	}
-	want := strings.Join([]string{self, "roster-render", "--crew", "c1", "--interval", "2", "--quiet", "1800", "--legend", "counts"}, " ")
+	want := strings.Join([]string{self, "roster-render", "--crew", "c1", "--interval", "2", "--quiet", "1800"}, " ")
 	if got := strings.Join(l.spawns[0], " "); got != want {
 		t.Errorf("spawned %q, want %q", got, want)
 	}
@@ -384,4 +384,26 @@ func rewind(t *testing.T, path string) string {
 		t.Fatal(err)
 	}
 	return stampOf(t, path)
+}
+
+// TestAnEarlierBuildsLegendFileIsRemovedOnTheNextDraw: the key a legend-drawing
+// build left beside the diagram would otherwise stay frozen in the carousel's
+// watched directory.
+func TestAnEarlierBuildsLegendFileIsRemovedOnTheNextDraw(t *testing.T) {
+	l := newLoop(t)
+	l.seedBus(t)
+	legacy := strings.TrimSuffix(l.diagramPath(), ".svg") + ".legend.svg"
+	if err := os.MkdirAll(filepath.Dir(legacy), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(legacy, []byte("<svg/>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if code, stderr := l.once(Request{}); code != exitOK {
+		t.Fatalf("code = %d, stderr %q", code, stderr)
+	}
+	if _, err := os.Lstat(legacy); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("the old legend file is still there: %v", err)
+	}
 }

@@ -43,19 +43,16 @@ func TestPlanetCardHeadIsNameAndIssue(t *testing.T) {
 		"feat/no-number":   "lime",
 		"main":             "lime",
 	} {
-		if got := head(onlyPlanet(t, planetRow(branch, "working"))); got != want {
+		if got := cardHead(onlyPlanet(t, planetRow(branch, "working"))); got != want {
 			t.Errorf("%s head = %q, want %q", branch, got, want)
 		}
 	}
 	row := planetRow("feat/7-x", "working")
 	row["name"] = ""
-	if got := head(onlyPlanet(t, row)); got != "? · #7" {
+	if got := cardHead(onlyPlanet(t, row)); got != "? · #7" {
 		t.Errorf("empty name head = %q, want %q", got, "? · #7")
 	}
 }
-
-// head is the first text row of p's card, without the state.
-func head(p planet) string { return cardTextOf(p).rows[0] }
 
 func TestPlanetTierPens(t *testing.T) {
 	for tier, want := range map[string]float64{
@@ -87,8 +84,8 @@ func TestPlanetHostileTextIsReduced(t *testing.T) {
 	if !safeText.MatchString(p.host) {
 		t.Errorf("host = %q is not reduced", p.host)
 	}
-	if strings.ContainsAny(head(p), "\"\\$`;<>") {
-		t.Errorf("head = %q leaks hostile text", head(p))
+	if strings.ContainsAny(cardHead(p), "\"\\$`;<>") {
+		t.Errorf("head = %q leaks hostile text", cardHead(p))
 	}
 	if n := utf8.RuneCountInString(p.name); n > 24 {
 		t.Errorf("name is %d runes, want <= 24", n)
@@ -119,8 +116,8 @@ func TestPlanetCodenameDropsFoldSuffix(t *testing.T) {
 		row := planetRow(tc.branch, "working")
 		row["name"] = tc.name
 		p := onlyPlanet(t, row)
-		if head(p) != tc.label {
-			t.Errorf("name %q branch %q: head = %q, want %q", tc.name, tc.branch, head(p), tc.label)
+		if cardHead(p) != tc.label {
+			t.Errorf("name %q branch %q: head = %q, want %q", tc.name, tc.branch, cardHead(p), tc.label)
 		}
 		if strings.Contains(p.name, "·") {
 			t.Errorf("name %q kept the suffix: %q", tc.name, p.name)

@@ -3,62 +3,19 @@ package rosterrender
 import (
 	"encoding/json"
 	"io"
-	"math"
 	"os"
 	"slices"
 	"sort"
 )
 
-// Geometry. Planets sit evenly around the dispatcher, clockwise from 12
-// o'clock, in a persisted sequence; coordinates are points with y up. A ring
-// holds at most ringCap planets, and a roster past that spreads over more rings,
-// each evenly spaced too. A ring's radius grows with its count so the cards
-// keep arcPerPlanet of room, and never drops below minRadius.
-//
-// Every card is one size, so these follow from its reach, the distance from its
-// centre to a corner at the heaviest pen (about 108): arcPerPlanet is twice that
-// and a gap, minRadius clears the dispatcher at 3 and 9 o'clock, and ringStep
-// adds the reach of a moon.
 const (
-	ringCap      = 16
-	arcPerPlanet = 240.0
-	minRadius    = 170.0
-	ringStep     = 250.0
-
-	moonGap    = 14.0
-	moonStep   = 14.0
-	moonRadius = 6.0
-
-	// cornerBadgeHalfW and cornerBadgeHalfH bound the badges centred on a card's
-	// corners: the round chip is the widest, the host hexagon with its pen the
-	// tallest.
-	cornerBadgeHalfW = roundBadgeW * 72 / 2
-	cornerBadgeHalfH = hostBadgeSize*72/2 + hostBadgePen/2
-
-	hostLabelGap  = 55.0
-	hostLabelHalf = 20.0
-
-	// With two or more repos each gets a wedge: its outer arc sits wedgeRimGap
-	// past the wedge's outermost ring and its name's box stands wedgeLabelGap
-	// clear of the arc; wedgeLabelHalfH is half the name's drawn height.
-	wedgeRimGap     = 40.0
-	wedgeLabelGap   = 10.0
-	wedgeLabelHalfH = 8.0
-
-	minExtent = minRadius + 40
-
-	// Queued holds sit on one orbit holdOrbitGap beyond every label; a hold that
-	// names a quota window hangs off a label holdAnchorGap past its own edge.
-	maxHolds      = 16
-	holdSize      = 0.5
-	holdRadius    = holdSize*72/2 + planetPenwidth/2
-	holdOrbitGap  = 40.0
-	holdAnchorGap = 45.0
-	slotsVer      = 2
+	// maxHolds bounds the queued holds and tasks drawn, holds first.
+	maxHolds = 16
+	slotsVer = 2
 
 	// maxPlanets bounds the picture, so a bad state file or a runaway roster
-	// cannot push planets out of frame.
-	maxPlanets = 4 * ringCap
+	// cannot push the board past any readable scale.
+	maxPlanets = 64
 )
 
 // slotEntry is one worker in the persisted sequence, with the class and host it
@@ -70,9 +27,8 @@ type slotEntry struct {
 	Repo   string `json:"repo,omitempty"`
 }
 
-// slotState is roster-render.slots.json: the ring sequence, which is what makes
-// a redraw keep every worker's place relative to the others. Angles are not
-// stored; they follow from the sequence length.
+// slotState is roster-render.slots.json: the card sequence, which is what makes
+// a redraw keep every worker's place relative to the others.
 type slotState struct {
 	V     int         `json:"v"`
 	Order []slotEntry `json:"order"`
@@ -121,12 +77,12 @@ func saveSlots(path string, s slotState, stderr io.Writer) error {
 type sequencer struct {
 	ps       []planet
 	byName   map[string]int
-	seq      []int // indexes into ps, in ring order
+	seq      []int // indexes into ps, in sequence order
 	inSeq    map[int]bool
 	visiting map[int]bool
 }
 
-// sequence is the ring order of the drawn planets, as indexes into ps. A planet
+// sequence is the order of the drawn planets, as indexes into ps. A planet
 // keeps its persisted place unless it is new or its class changed (a remote
 // planet ignores class); those are inserted afresh, a stacked planet right after
 // its base, a local one before the first planet of a later class, a
@@ -269,308 +225,9 @@ func (a *sequencer) afterBlock(at int) int {
 	return pos
 }
 
-// placed is a planet with its ring, angle (degrees clockwise from 12 o'clock)
-// and position in points.
-type placed struct {
-	planet
-	ring  int
-	angle float64
-	x, y  float64
-}
-
-// hostLabel is where a remote host's name goes.
-type hostLabel struct {
-	host string
-	x, y float64
-}
-
-// wedge is one repo's sector: start and span in degrees clockwise from 12
-// o'clock, rim the radius of its outer arc, and x, y the centre of its label.
-type wedge struct {
-	repo, label string
-	start, span float64
-	rim         float64
-	x, y        float64
-}
-
-// scene is the whole layout: planets in ring order, a label per drawn remote
-// host in first-seen order, the repo wedges (none for a single repo), and
-// extent, the radius of the smallest circle around everything (the emitter fits
-// the canvas to it).
-type scene struct {
-	planets []placed
-	hosts   []hostLabel
-	wedges  []wedge
-	extent  float64
-	holds   []placedHold
-	queued  []placedTask
-	anchors []holdAnchor
-}
-
-// placedHold is a queued hold drawn as a faint planet on the outer orbit.
-type placedHold struct {
-	queuedHold
-	x, y float64
-}
-
-// placedTask is a queued task drawn as a dotted planet on the hold orbit.
-type placedTask struct {
-	queuedTask
-	x, y float64
-}
-
-// holdAnchor is the engine and window text a quota hold hangs off.
-type holdAnchor struct {
-	text string
-	x, y float64
-}
-
-// cardReach is the distance from a card's centre to its corner at the heaviest
-// pen, which the rings and the extent are measured by.
-var cardReach = func() float64 {
-	hw, hh := cardHalf(cardPen("deep"))
-	return math.Hypot(hw, hh)
-}()
-
-// place puts p on ring at radius r and angle, with its moons pushed outward from
-// the card's edge, and grows the extent over both.
-func (sc *scene) place(p planet, ring int, r, angle float64) {
-	pl := placed{planet: p, ring: ring, angle: angle}
-	pl.x, pl.y = polar(r, angle)
-	sc.extent = max(sc.extent, r+cardReach)
-
-	pl.moons = make([]moon, len(p.moons))
-	for m, mn := range p.moons {
-		dx, dy := moonOffset(cardPen(p.tier), angle, m, len(p.moons))
-		mn.x, mn.y = pl.x+dx, pl.y+dy
-		pl.moons[m] = mn
-		sc.extent = max(sc.extent, math.Hypot(mn.x, mn.y)+moonRadius)
-	}
-	sc.planets = append(sc.planets, pl)
-}
-
-// moonOffset is where moon m of n sits from its card's centre: moonGap off the
-// side the outward ray leaves through, spread along that side clockwise, and
-// kept clear of the corner badges, which are reserved whether drawn or not so a
-// moon never moves when a badge appears.
-func moonOffset(pen, angle float64, m, n int) (dx, dy float64) {
-	hw, hh := cardHalf(pen)
-	cw, ch := cardW*72/2, cardH*72/2
-	ux, uy := polar(1, angle)
-	rel := (float64(m) - float64(n-1)/2) * moonStep
-	half := float64(n-1) / 2 * moonStep
-	if hh*math.Abs(ux) <= hw*math.Abs(uy) {
-		lim := max(cw-cornerBadgeHalfW-moonRadius-half, 0)
-		c := math.Max(-lim, math.Min(lim, ux*hh/math.Abs(uy)))
-		return c + rel*math.Copysign(1, uy), math.Copysign(hh+moonGap, uy)
-	}
-	lim := max(ch-cornerBadgeHalfH-moonRadius-half, 0)
-	c := math.Max(-lim, math.Min(lim, uy*hw/math.Abs(ux)))
-	return math.Copysign(hw+moonGap, ux), c - rel*math.Copysign(1, ux)
-}
-
-// hostRun sums the unit vectors of one host's planets, so its label can sit in
-// their mean direction.
-type hostRun struct{ x, y, first float64 }
-
-func (h *hostRun) add(angle float64) {
-	u, v := polar(1, angle)
-	h.x += u
-	h.y += v
-}
-
-// direction is the mean angle of the run, or its first planet's when they
-// cancel out.
-func (h *hostRun) direction() float64 {
-	if math.Hypot(h.x, h.y) > 1e-9 {
-		return math.Atan2(h.x, h.y) * 180 / math.Pi
-	}
-	return h.first
-}
-
-func polar(r, deg float64) (x, y float64) {
-	rad := deg * math.Pi / 180
-	return r * math.Sin(rad), r * math.Cos(rad)
-}
-
-// ringSizes splits n planets over as few rings as fit, as evenly as possible.
-func ringSizes(n int) []int {
-	rings := (n + ringCap - 1) / ringCap
-	sizes := make([]int, rings)
-	for k := range sizes {
-		sizes[k] = n / rings
-		if k < n%rings {
-			sizes[k]++
-		}
-	}
-	return sizes
-}
-
-// arrange lays the planets out: on shared rings, or in one wedge per repo when
-// they span two or more.
-func arrange(prev slotState, ps []planet) (slotState, scene) {
-	repos := map[string]bool{}
-	for _, p := range ps {
-		repos[p.repo] = true
-	}
-	if len(repos) < 2 {
-		return arrangeRings(prev, ps)
-	}
-	return arrangeWedges(prev, ps)
-}
-
-// arrangeRings orders the planets, spaces them evenly and turns that into
-// coordinates. Every second ring is turned half a step, so its spokes do not run
-// under an inner planet.
-func arrangeRings(prev slotState, ps []planet) (slotState, scene) {
-	seq := sequence(prev, ps)
-	next := newSlotState()
-	sc := scene{extent: minExtent}
-
-	runs := map[string]*hostRun{}
-	var hostOrder []string
-	outer, k := 0.0, 0
-	for ring, n := range ringSizes(len(seq)) {
-		r := max(minRadius, float64(n)*arcPerPlanet/(2*math.Pi))
-		if ring > 0 {
-			r = max(r, outer+ringStep)
-		}
-		outer = r
-		turn := 0.0
-		if ring%2 == 1 {
-			turn = 180 / float64(n)
-		}
-		for j := range n {
-			i := seq[k]
-			k++
-			angle := math.Mod(float64(j)*360/float64(n)+turn, 360)
-			sc.place(ps[i], ring, r, angle)
-			next.Order = append(next.Order, slotEntry{Branch: ps[i].branch, Class: ps[i].class, Host: ps[i].host, Repo: ps[i].repo})
-
-			if h := ps[i].host; h != "" {
-				if runs[h] == nil {
-					runs[h] = &hostRun{first: angle}
-					hostOrder = append(hostOrder, h)
-				}
-				runs[h].add(angle)
-			}
-		}
-	}
-
-	for _, h := range hostOrder {
-		r := outer + cardReach + hostLabelGap
-		x, y := polar(r, runs[h].direction())
-		sc.hosts = append(sc.hosts, hostLabel{host: h, x: x, y: y})
-		sc.extent = max(sc.extent, r+hostLabelHalf)
-	}
-	return next, sc
-}
-
-// wedgeSector is one repo's planets with their sequence.
-type wedgeSector struct {
-	repo, label string
-	ps          []planet
-	seq         []int
-}
-
-// arrangeWedges gives each repo an angular sector, clockwise from 12 o'clock in
-// the order the repos first appear in the persisted sequence (new ones after,
-// by label), and lays its planets out inside it. A sector's span follows its
-// planet count, with a floor of two so a lone worker's wedge still has room.
-// Planets fill the shared ring radii from the inside out, each ring spread
-// evenly across the sector's arc; a ring too short for one card in the sector
-// is skipped, so a narrow wedge's cards move outward rather than into the
-// neighbour.
-//
-// maxPlanets bounds the total: repos are filled in wedge order, so a new
-// planet in an earlier repo can leave a later repo's last planets undrawn.
-func arrangeWedges(prev slotState, ps []planet) (slotState, scene) {
-	groups := map[string][]planet{}
-	labels := map[string]string{}
-	for _, p := range ps {
-		groups[p.repo] = append(groups[p.repo], p)
-		if l, ok := labels[p.repo]; !ok || p.repoLabel < l {
-			labels[p.repo] = p.repoLabel
-		}
-	}
-
-	var sectors []wedgeSector
-	weights, room := 0, maxPlanets
-	for _, repo := range wedgeOrder(prev, groups, labels) {
-		g := groups[repo]
-		seq := sequence(repoSlots(prev, repo), g)
-		seq = seq[:min(len(seq), room)]
-		if len(seq) == 0 {
-			continue
-		}
-		room -= len(seq)
-		weights += max(len(seq), 2)
-		sectors = append(sectors, wedgeSector{repo: repo, label: labels[repo], ps: g, seq: seq})
-	}
-
-	next := newSlotState()
-	sc := scene{extent: minExtent}
-	start := 0.0
-	for _, s := range sectors {
-		span := 360 * float64(max(len(s.seq), 2)) / float64(weights)
-		w := wedge{repo: s.repo, label: s.label, start: start, span: span}
-		hosts := map[string]*hostRun{}
-		var hostOrder []string
-
-		outer, k := 0.0, 0
-		for ring := 0; k < len(s.seq); ring++ {
-			r := minRadius + float64(ring)*ringStep
-			fit := int(r * span * math.Pi / 180 / arcPerPlanet)
-			if fit == 0 {
-				continue
-			}
-			m := min(fit, len(s.seq)-k)
-			outer = r
-			for j := range m {
-				i := s.seq[k]
-				k++
-				angle := start + span*(float64(j)+0.5)/float64(m)
-				sc.place(s.ps[i], ring, r, angle)
-				next.Order = append(next.Order, slotEntry{Branch: s.ps[i].branch, Class: s.ps[i].class, Host: s.ps[i].host, Repo: s.repo})
-
-				if h := s.ps[i].host; h != "" {
-					if hosts[h] == nil {
-						hosts[h] = &hostRun{first: angle}
-						hostOrder = append(hostOrder, h)
-					}
-					hosts[h].add(angle)
-				}
-			}
-		}
-
-		w.rim = outer + cardReach + wedgeRimGap
-		labelR := wedgeLabelRadius(w.rim, start+span/2, w.label)
-		w.x, w.y = polar(labelR, start+span/2)
-		sc.extent = max(sc.extent, labelR+hostLabelHalf)
-		sc.wedges = append(sc.wedges, w)
-
-		hostR := labelR + 2*hostLabelHalf + 6
-		for _, h := range hostOrder {
-			x, y := polar(hostR, hosts[h].direction())
-			sc.hosts = append(sc.hosts, hostLabel{host: h, x: x, y: y})
-			sc.extent = max(sc.extent, hostR+hostLabelHalf)
-		}
-		start += span
-	}
-	return next, sc
-}
-
-// wedgeLabelRadius is how far along the wedge's bisector (deg) the centre of its
-// name goes: past the rim by the name's half extent in that direction, so the
-// whole box, not just its centre, stands wedgeLabelGap clear of the arc.
-func wedgeLabelRadius(rim, deg float64, label string) float64 {
-	ux, uy := polar(1, deg)
-	return rim + wedgeLabelGap + math.Abs(ux)*labelWidth(label)/2 + math.Abs(uy)*wedgeLabelHalfH
-}
-
-// wedgeOrder is the repos in wedge order: those already in the persisted
+// laneOrder is the repos in lane order: those already in the persisted
 // sequence first, by their first entry, then the rest by label.
-func wedgeOrder(prev slotState, groups map[string][]planet, labels map[string]string) []string {
+func laneOrder(prev slotState, groups map[string][]planet, labels map[string]string) []string {
 	var repos []string
 	for _, e := range prev.Order {
 		if _, ok := groups[e.Repo]; ok && e.Repo != "" && !slices.Contains(repos, e.Repo) {
@@ -601,55 +258,4 @@ func repoSlots(prev slotState, repo string) slotState {
 		}
 	}
 	return out
-}
-
-// placeHolds draws holds, then queued tasks, up to maxHolds in all (holds keep
-// priority), evenly spaced clockwise from 12 o'clock on an orbit clear of every
-// planet, moon and label, and grows the extent over them and the holds' anchors.
-func placeHolds(sc *scene, holds []queuedHold, tasks []queuedTask) {
-	holds = holds[:min(len(holds), maxHolds)]
-	tasks = tasks[:min(len(tasks), maxHolds-len(holds))]
-	total := len(holds) + len(tasks)
-	if total == 0 {
-		return
-	}
-	base := sc.extent
-	for _, h := range sc.hosts {
-		base = max(base, math.Hypot(math.Abs(h.x)+labelWidth(h.host)/2, math.Abs(h.y)+hostLabelHalf))
-	}
-	for _, w := range sc.wedges {
-		base = max(base, math.Hypot(math.Abs(w.x)+labelWidth(w.label)/2, math.Abs(w.y)+hostLabelHalf))
-	}
-	orbit := base + holdOrbitGap + holdRadius
-
-	runs := map[string]*hostRun{}
-	var order []string
-	for i, h := range holds {
-		angle := float64(i) * 360 / float64(total)
-		x, y := polar(orbit, angle)
-		sc.holds = append(sc.holds, placedHold{queuedHold: h, x: x, y: y})
-		sc.extent = max(sc.extent, orbit+holdRadius)
-		if h.engine == "" || h.window == "" {
-			continue
-		}
-		text := h.engine + " · " + h.window
-		if runs[text] == nil {
-			runs[text] = &hostRun{first: angle}
-			order = append(order, text)
-		}
-		runs[text].add(angle)
-	}
-	for i, t := range tasks {
-		x, y := polar(orbit, float64(len(holds)+i)*360/float64(total))
-		sc.queued = append(sc.queued, placedTask{queuedTask: t, x: x, y: y})
-		sc.extent = max(sc.extent, orbit+holdRadius)
-	}
-	for _, text := range order {
-		deg := runs[text].direction()
-		ux, uy := polar(1, deg)
-		reach := math.Abs(ux)*labelWidth(text)/2 + math.Abs(uy)*hostLabelHalf
-		x, y := polar(orbit+holdAnchorGap+reach, deg)
-		sc.anchors = append(sc.anchors, holdAnchor{text: text, x: x, y: y})
-		sc.extent = max(sc.extent, math.Hypot(x, y)+labelWidth(text)/2)
-	}
 }

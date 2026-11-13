@@ -2,8 +2,8 @@ usage: crew queue add [--crew ID] [--ref R] [--branch B] [--after T]... <title..
        crew queue list [--crew ID] [--json]
        crew queue drop <id> [--crew ID]
 
-Record a task you have filed but not yet dispatched, so the roster draws it on
-the outer orbit. Do not queue a held task (its hold already draws it); drop the
+Record a task you have filed but not yet dispatched, so the roster draws it in
+the queued column. Do not queue a held task (its hold already draws it); drop the
 entry when you hold a queued one. A dispatch on the same branch, or one closing
 the issue or Linear id that --ref names (through its branch or --also-closes),
 clears it. Add of a task already queued prints the existing id and appends

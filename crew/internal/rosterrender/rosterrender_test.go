@@ -136,24 +136,10 @@ func TestCheckIsTheArmInItsOrder(t *testing.T) {
 		{name: "quiet overflows", req: Request{Crew: "c1", Quiet: "99999999999999999999"},
 			msg: errQuiet, code: exitUsage},
 		{name: "quiet negative", req: Request{Crew: "c1", Quiet: "-1"}, msg: errQuiet, code: exitUsage},
-		{name: "legend defaults to counts", req: Request{Crew: "c1"},
-			check: func(t *testing.T, c call) {
-				if c.legend != legendCounts {
-					t.Errorf("legend = %q, want counts", c.legend)
-				}
-			}},
-		{name: "legend full", req: Request{Crew: "c1", Legend: "full"},
-			check: func(t *testing.T, c call) {
-				if c.legend != legendFull {
-					t.Errorf("legend = %q, want full", c.legend)
-				}
-			}},
-		{name: "legend none", req: Request{Crew: "c1", Legend: "none"},
-			check: func(t *testing.T, c call) {
-				if c.legend != legendNone {
-					t.Errorf("legend = %q, want none", c.legend)
-				}
-			}},
+		// Every legend value is accepted and ignored: the board draws none.
+		{name: "legend full", req: Request{Crew: "c1", Legend: "full"}, check: func(*testing.T, call) {}},
+		{name: "legend counts", req: Request{Crew: "c1", Legend: "counts"}, check: func(*testing.T, call) {}},
+		{name: "legend none", req: Request{Crew: "c1", Legend: "none"}, check: func(*testing.T, call) {}},
 		{name: "legend unknown", req: Request{Crew: "c1", Legend: "all"}, msg: errLegend, code: exitUsage},
 		{name: "legend is case sensitive", req: Request{Crew: "c1", Legend: "Full"}, msg: errLegend, code: exitUsage},
 		// The legend follows the quiet window and precedes the crew checks.
@@ -316,10 +302,10 @@ func TestPanePIDMatchesIsTheArmsShapeCheck(t *testing.T) {
 	}
 }
 
-func TestReapedRowIsDoneInTheLegend(t *testing.T) {
+func TestReapedRowIsDone(t *testing.T) {
 	text, _, lg := emit(decodeOne(t, `{"rows":[{"branch":"feat/7-x","state":"reaped","name":"n","ts":1800000000000}],"holds":[],"roles":[]}`))
-	if lg.done != 1 || !strings.Contains(text, "done 1") {
-		t.Errorf("legend does not count reaped as done: %+v\n%s", lg, text)
+	if lg.done != 1 || !strings.Contains(text, ">DONE 1<") {
+		t.Errorf("reaped is not counted as done: %+v\n%s", lg, text)
 	}
 	if !strings.Contains(text, "n · #7") {
 		t.Errorf("a fresh reaped row is not drawn:\n%s", text)
