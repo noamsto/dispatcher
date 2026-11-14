@@ -215,10 +215,12 @@ func alsoCloses(v any) []string {
 
 // keys is what identifies a task: the branch it is or will be on, its issue
 // number and its lowercased Linear id. Empty means unknown. named marks an id
-// the task's ref gave, as opposed to one read off its branch.
+// the task's ref gave, as opposed to one read off its branch. refBranch is the
+// entry's branch-shaped ref kept when it came alongside an explicit branch; it
+// is empty when the ref was the entry's only branch or when the ref was an id.
 type keys struct {
-	branch, issue, linear string
-	named                 bool
+	branch, refBranch, issue, linear string
+	named                            bool
 }
 
 // BranchIssue is the leading digit run of the segment after a branch's first
@@ -263,6 +265,8 @@ func taskKeys(e Entry) keys {
 		k.linear, k.named = strings.ToLower(ref), true
 	case branch == "":
 		branch = ref
+	default:
+		k.refBranch = ref
 	}
 	b := branchKeys(branch)
 	k.branch = b.branch
@@ -272,14 +276,24 @@ func taskKeys(e Entry) keys {
 	if k.linear == "" {
 		k.linear = b.linear
 	}
+	rb := branchKeys(k.refBranch)
+	if k.issue == "" {
+		k.issue = rb.issue
+	}
+	if k.linear == "" {
+		k.linear = rb.linear
+	}
 	return k
 }
 
-// matches reports a shared branch, or a shared issue or Linear id. Two tasks on
-// different explicit branches share an id only when one of them named it, so
-// `feat/5-x` and `feat/5-y` stay distinct tasks.
+// matches reports a shared branch or either branch identity, or a shared issue
+// or Linear id. Two tasks on different explicit branches share an id only when
+// one of them named it, so `feat/5-x` and `feat/5-y` stay distinct tasks.
 func (a keys) matches(b keys) bool {
-	if a.branch != "" && a.branch == b.branch {
+	if a.branch != "" && (a.branch == b.branch || a.branch == b.refBranch) {
+		return true
+	}
+	if a.refBranch != "" && (a.refBranch == b.branch || a.refBranch == b.refBranch) {
 		return true
 	}
 	if a.branch != "" && b.branch != "" && !a.named && !b.named {
@@ -295,9 +309,17 @@ func deref(s *string) string {
 	return *s
 }
 
+// dispatchClears reports whether a dispatch clears an entry: they share a branch
+// identity, or the dispatch's branch or --also-closes carries the entry's
+// issue/Linear id. Unlike matches there is no named gate, because a dispatch of
+// `feat/5-<slug>` IS the dispatch of issue 5.
 func dispatchClears(e Entry, d dispatch) bool {
 	k := taskKeys(e)
-	if k.matches(branchKeys(d.branch)) {
+	if k.branch != "" && k.branch == d.branch || k.refBranch != "" && k.refBranch == d.branch {
+		return true
+	}
+	dk := branchKeys(d.branch)
+	if dk.issue != "" && dk.issue == k.issue || dk.linear != "" && dk.linear == k.linear {
 		return true
 	}
 	return slices.ContainsFunc(d.closes, func(c string) bool {

@@ -107,6 +107,14 @@ func TestOutstanding(t *testing.T) {
 		{"linear ref cleared by also_closes", []string{addRowText(10, d, "a", "ENG-12", ""), dispatchRowText(11, crew, "feat/3-x", `["ENG-12"]`)}, []string{}},
 		{"linear ref not cleared by a longer id", []string{addRowText(10, d, "a", "ENG-12", ""), dispatchRowText(11, crew, "eng-120-x", "")}, []string{"a"}},
 		{"issue is anchored", []string{addRowText(10, d, "a", "#4", ""), dispatchRowText(11, crew, "feat/grok-4-7-cursor-ladder", "")}, []string{"a"}},
+		{"ref branch cleared by the ref's branch", []string{addRowText(10, d, "a", "feat/12-x", "feat/12-x-wt"), dispatchRowText(11, crew, "feat/12-x", "")}, []string{}},
+		{"ref branch cleared by the explicit branch", []string{addRowText(10, d, "a", "feat/12-x", "feat/12-x-wt"), dispatchRowText(11, crew, "feat/12-x-wt", "")}, []string{}},
+		{"ref branch kept by an unrelated dispatch", []string{addRowText(10, d, "a", "feat/12-x", "feat/12-x-wt"), dispatchRowText(11, crew, "feat/13-y", "")}, []string{"a"}},
+		{"ref issue clears when the branch has none", []string{addRowText(10, d, "a", "feat/12-x", "scratch-work"), dispatchRowText(11, crew, "feat/12-y", "")}, []string{}},
+		{"branch entry cleared by another slug on the issue", []string{addRowText(10, d, "a", "", "feat/5-x"), dispatchRowText(11, crew, "feat/5-other", "")}, []string{}},
+		{"linear branch entry cleared by another slug", []string{addRowText(10, d, "a", "", "eng-12-guess"), dispatchRowText(11, crew, "eng-12-real", "")}, []string{}},
+		{"dispatch on another issue keeps a branch entry", []string{addRowText(10, d, "a", "", "feat/5-x"), dispatchRowText(11, crew, "feat/6-x", "")}, []string{"a"}},
+		{"dispatch on another issue keeps a named issue", []string{addRowText(10, d, "a", "#5", ""), dispatchRowText(11, crew, "feat/6-x", "")}, []string{"a"}},
 		{"oldest add first", []string{addRowText(10, d, "a", "#1", ""), addRowText(11, d, "b", "#2", ""), addRowText(12, d, "c", "#3", "")}, []string{"a", "b", "c"}},
 		{"other crew's sink", []string{strings.Replace(addRowText(10, d, "a", "#1", ""), "queue:c1", "queue:c2", 1)}, []string{}},
 	}
@@ -156,6 +164,11 @@ func TestSameTask(t *testing.T) {
 		{"lower linear ref equals linear branch", e("eng-5", ""), e("", "eng-5-slug"), true},
 		{"linear ids differ", e("ENG-5", ""), e("ENG-50", ""), false},
 		{"linear ref vs longer branch id", e("ENG-5", ""), e("", "eng-50-slug"), false},
+		{"same issue, different explicit branches", e("", "feat/5-x"), e("", "feat/5-y"), false},
+		{"ref branch entry equals a later ref alone", e("feat/12-x", "feat/12-x-wt"), e("feat/12-x", ""), true},
+		{"ref alone equals a ref branch entry", e("feat/12-x", ""), e("feat/12-x", "feat/12-x-wt"), true},
+		{"explicit branch equals a ref branch entry", e("", "feat/12-x-wt"), e("feat/12-x", "feat/12-x-wt"), true},
+		{"ref branch entries on different issues differ", e("feat/12-x", "feat/12-x-wt"), e("feat/13-x", "feat/13-x-wt"), false},
 		{"grok is not issue 4", e("#4", ""), e("", "feat/grok-4-7-x"), false},
 	}
 	for _, tc := range cases {
@@ -259,6 +272,53 @@ func TestRunAddRefusesAnAlreadyDispatchedTask(t *testing.T) {
 	}
 	out, errb, code := r.run(Options{}, addReq("#12", "", "late"))
 	if code != 0 || out != "" || !strings.Contains(errb, "crew: queue add: already dispatched as feat/12-x; not queued") {
+		t.Errorf("code %d, out %q, err %q", code, out, errb)
+	}
+	if n := len(r.lines(t)); n != 1 {
+		t.Errorf("log has %d lines, want the dispatch row only", n)
+	}
+}
+
+func TestRunAddDedupesABranchShapedRefWithABranch(t *testing.T) {
+	r := newRig(t)
+	first, _, code := r.run(Options{}, addReq("feat/12-x", "feat/12-x-wt", "filed", "it"))
+	if code != 0 || strings.TrimSpace(first) == "" {
+		t.Fatalf("first add: code %d, out %q", code, first)
+	}
+	again, _, code := r.run(Options{}, addReq("feat/12-x", "", "same", "task"))
+	if code != 0 || again != first {
+		t.Errorf("second add = %q (code %d), want %q", again, code, first)
+	}
+	if n := len(r.lines(t)); n != 1 {
+		t.Errorf("log has %d lines, want 1", n)
+	}
+}
+
+func TestRunAddKeepsTwoBranchesOfOneIssueApart(t *testing.T) {
+	r := newRig(t)
+	first, _, code := r.run(Options{}, addReq("", "feat/5-x", "first"))
+	if code != 0 || strings.TrimSpace(first) == "" {
+		t.Fatalf("first add: code %d, out %q", code, first)
+	}
+	second, _, code := r.run(Options{}, addReq("", "feat/5-y", "second"))
+	if code != 0 || strings.TrimSpace(second) == "" {
+		t.Errorf("second add = %q (code %d)", second, code)
+	}
+	if n := len(r.lines(t)); n != 2 {
+		t.Errorf("log has %d lines, want 2", n)
+	}
+}
+
+func TestRunAddRefusesADispatchOnTheEntryIssue(t *testing.T) {
+	r := newRig(t)
+	if err := os.MkdirAll(r.paths.Dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(r.paths.Log, []byte(dispatchRowText(1, crew, "feat/5-real", "")+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, errb, code := r.run(Options{}, addReq("", "feat/5-guess", "late"))
+	if code != 0 || out != "" || !strings.Contains(errb, "crew: queue add: already dispatched as feat/5-real; not queued") {
 		t.Errorf("code %d, out %q, err %q", code, out, errb)
 	}
 	if n := len(r.lines(t)); n != 1 {
