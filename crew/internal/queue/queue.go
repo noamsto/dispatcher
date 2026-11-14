@@ -221,9 +221,11 @@ type keys struct {
 	named                 bool
 }
 
-// anchoredIssue is the leading digit run of the segment after a branch's first
-// `/`, when `-` or the end follows it.
-func anchoredIssue(branch string) string {
+// BranchIssue is the leading digit run of the segment after a branch's first
+// `/`, when `-` or the end follows it: `feat/12-x` is 12, `feat/grok-4-7-x` none.
+// It is the single rule every call site in the repo uses to read an issue number
+// off a branch name.
+func BranchIssue(branch string) string {
 	if _, rest, ok := strings.Cut(branch, "/"); ok {
 		branch = rest
 	}
@@ -248,7 +250,7 @@ func branchLinear(branch string) string {
 }
 
 func branchKeys(branch string) keys {
-	return keys{branch: branch, issue: anchoredIssue(branch), linear: branchLinear(branch)}
+	return keys{branch: branch, issue: BranchIssue(branch), linear: branchLinear(branch)}
 }
 
 func taskKeys(e Entry) keys {

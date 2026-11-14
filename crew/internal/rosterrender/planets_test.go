@@ -38,7 +38,9 @@ func onlyPlanet(t *testing.T, rows ...map[string]any) planet {
 func TestPlanetCardHeadIsNameAndIssue(t *testing.T) {
 	for branch, want := range map[string]string{
 		"feat/1451-roster": "lime · #1451",
-		"fix/x-12-y":       "lime · #12",
+		"fix/x-12-y":       "lime",
+		"feat/grok-4-7-x":  "lime",
+		"feat/7-x":         "lime · #7",
 		"1451-bare":        "lime · #1451",
 		"feat/no-number":   "lime",
 		"main":             "lime",

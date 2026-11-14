@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/noamsto/dispatcher/crew/internal/ascii"
+	"github.com/noamsto/dispatcher/crew/internal/queue"
 )
 
 // classQueued is the board's first column: holds and filed tasks, which have
@@ -195,7 +196,7 @@ func refLabel(p planet) string {
 	if n := prNumber(p.prURL); n != "" {
 		return "#" + n
 	}
-	if n := branchIssue(p.branch); n != "" {
+	if n := queue.BranchIssue(p.branch); n != "" {
 		return "#" + n
 	}
 	return p.name
@@ -216,7 +217,7 @@ func afterRefs(byKey map[planetKey]planet, t queuedTask) []string {
 	var out []string
 	for _, k := range keys {
 		p := byKey[k]
-		pr, issue := prNumber(p.prURL), branchIssue(p.branch)
+		pr, issue := prNumber(p.prURL), queue.BranchIssue(p.branch)
 		for _, a := range t.after {
 			n := strings.TrimPrefix(a, "#")
 			if a == p.branch || (ascii.IsDigits(n) && (n == issue || n == pr)) || linearTarget(a, p.branch) {

@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 	"unicode"
+
+	"github.com/noamsto/dispatcher/crew/internal/queue"
 )
 
 // The four worker classes a card's column and border colour come from. failed
@@ -35,8 +37,6 @@ const maxFreeText = 200
 
 // classRank is a class's place in the persisted sequence.
 var classRank = map[string]int{classBlocked: 0, classWorking: 1, classPROpen: 2, classDone: 3}
-
-var issueRe = regexp.MustCompile(`[0-9]+`)
 
 // foldIDRe is the id shape the roster fold appends to a colliding codename as
 // `name·id`.
@@ -158,7 +158,7 @@ func buildPlanets(m map[string]any, now float64) ([]planet, legend) {
 		model, _ := row["model"].(string)
 		detail, _ := row["detail"].(string)
 		codename, suffix, _ := strings.Cut(name, "·")
-		issue := issueOf(branch)
+		issue := queue.BranchIssue(branch)
 		if issue == "" && foldIDRe.MatchString(suffix) {
 			issue = suffix
 		}
@@ -213,7 +213,7 @@ func buildHolds(m map[string]any) []queuedHold {
 		id, _ := row["id"].(string)
 		branch, _ := task["branch"].(string)
 		ref, _ := task["ref"].(string)
-		q := queuedHold{id: clean(id), label: clean(issueOf(branch))}
+		q := queuedHold{id: clean(id), label: clean(queue.BranchIssue(branch))}
 		if q.label == "" {
 			q.label = clean(ref)
 		}
@@ -244,7 +244,7 @@ func buildQueued(m map[string]any) []queuedTask {
 		id, _ := row["id"].(string)
 		branch, _ := task["branch"].(string)
 		ref, _ := task["ref"].(string)
-		q := queuedTask{id: clean(id), label: clean(issueOf(branch))}
+		q := queuedTask{id: clean(id), label: clean(queue.BranchIssue(branch))}
 		if q.label == "" {
 			q.label = clean(ref)
 		}
@@ -340,14 +340,6 @@ func roleMoons(roles any) map[string][]moon {
 		slices.SortStableFunc(ms, func(a, b moon) int { return cmp.Compare(a.role, b.role) })
 	}
 	return out
-}
-
-// issueOf is the first digit run of the branch after an optional `type/` prefix.
-func issueOf(branch string) string {
-	if _, rest, ok := strings.Cut(branch, "/"); ok {
-		branch = rest
-	}
-	return issueRe.FindString(branch)
 }
 
 // clean reduces bus- or tmux-sourced text to `[A-Za-z0-9._·-]` and cuts it to

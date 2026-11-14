@@ -167,6 +167,27 @@ func TestSameTask(t *testing.T) {
 	}
 }
 
+func TestBranchIssue(t *testing.T) {
+	cases := []struct {
+		name, branch, want string
+	}{
+		{"issue in branch", "feat/12-x", "12"},
+		{"issue at branch end", "feat/12", "12"},
+		{"slashless branch", "12-x", "12"},
+		{"grok is not an issue", "feat/grok-4-7-x", ""},
+		{"digit run not leading", "feat/x-12", ""},
+		{"default branch", "main", ""},
+		{"linear branch is not an issue", "eng-12-x", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := BranchIssue(tc.branch); got != tc.want {
+				t.Errorf("BranchIssue(%q) = %q, want %q", tc.branch, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestSanitize(t *testing.T) {
 	if got, want := sanitize("a\tb\nc\x1bd\x7fe\u0085f é日本"), "a b c d e f é日本"; got != want {
 		t.Errorf("sanitize = %q, want %q", got, want)
