@@ -66,23 +66,7 @@ func stripText(lg legend) string {
 	return strings.Join(parts, " · ")
 }
 
-var (
-	issuePrefixRe = regexp.MustCompile(`^([0-9]+)(?:-|$)`)
-	linearIDRe    = regexp.MustCompile(`^[A-Za-z]+-[0-9]+$`)
-)
-
-// branchIssue is the leading digit run of the segment after a branch's first
-// `/`, when `-` or the end follows it: `feat/12-x` is 12, `feat/grok-4-7-x` none.
-func branchIssue(branch string) string {
-	if _, rest, ok := strings.Cut(branch, "/"); ok {
-		branch = rest
-	}
-	m := issuePrefixRe.FindStringSubmatch(branch)
-	if m == nil {
-		return ""
-	}
-	return m[1]
-}
+var linearIDRe = regexp.MustCompile(`^[A-Za-z]+-[0-9]+$`)
 
 // linearTarget reports whether a is a Linear id and branch is the one
 // `dispatch <id>` names: the lowercased id, or that and `-<slug>`.

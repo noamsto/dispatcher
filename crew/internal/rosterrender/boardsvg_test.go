@@ -12,12 +12,14 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/noamsto/dispatcher/crew/internal/queue"
 )
 
 // crewWorker is a fully described worker for the SVG fixtures.
 func crewWorker(branch, name, state string, ts float64) planet {
 	p := worker(branch, state)
-	p.name, p.issue, p.ts = name, issueOf(branch), ts
+	p.name, p.issue, p.ts = name, queue.BranchIssue(branch), ts
 	p.tier, p.engine, p.model = "standard", "claude", "opus"
 	p.title = "Roster diagram: state board that fills the pane"
 	p.detail = "editing boardsvg.go"

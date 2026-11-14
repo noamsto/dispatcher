@@ -38,7 +38,9 @@ func onlyPlanet(t *testing.T, rows ...map[string]any) planet {
 func TestPlanetCardHeadIsNameAndIssue(t *testing.T) {
 	for branch, want := range map[string]string{
 		"feat/1451-roster": "lime · #1451",
-		"fix/x-12-y":       "lime · #12",
+		"fix/x-12-y":       "lime",
+		"feat/grok-4-7-x":  "lime",
+		"feat/7-x":         "lime · #7",
 		"1451-bare":        "lime · #1451",
 		"feat/no-number":   "lime",
 		"main":             "lime",
@@ -217,12 +219,18 @@ func TestBuildHolds(t *testing.T) {
 		"task": map[string]any{"ref": "gh#77;{evil}"},
 	}
 	bare := map[string]any{"id": "h3", "wait": map[string]any{"engine": "a\"b", "window": "5h]"}}
+	noIssueBranch := map[string]any{
+		"id":   "h4",
+		"wait": map[string]any{"engine": "claude", "window": "7d", "resets_at": 1},
+		"task": map[string]any{"branch": "feat/grok-4-7-x", "ref": "r1"},
+	}
 	m := emptyModel()
-	m["holds"] = []any{quota, fleetHold, bare}
+	m["holds"] = []any{quota, fleetHold, bare, noIssueBranch}
 	want := []queuedHold{
 		{id: "h1", label: "1458", engine: "claude", window: "7d"},
 		{id: "h2", label: "gh77evil"},
 		{id: "h3", label: "hold", engine: "ab", window: "5h"},
+		{id: "h4", label: "r1", engine: "claude", window: "7d"},
 	}
 	if got := buildHolds(m); !reflect.DeepEqual(got, want) {
 		t.Fatalf("holds = %+v, want %+v", got, want)
