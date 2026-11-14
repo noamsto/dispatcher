@@ -7,9 +7,9 @@ the queued column. Do not queue a held task (its hold already draws it); drop th
 entry when you hold a queued one. A dispatch clears the entry when it runs on
 either branch the entry names, or when the dispatch's branch or --also-closes
 carries the entry's issue or Linear id. Add of a task already queued prints the
-existing id and appends nothing. Add of a task already dispatched on this bus is
-refused with a note on stderr (exit 0): a failed attempt is re-dispatched
-directly, not queued.
+existing id and appends nothing. Add of a task whose branch, issue or Linear id
+a past dispatch carries is refused with a note on stderr (exit 0): re-dispatch
+that task directly, not queued.
 Rows are written as dispatcher:<crew>, so a worker or role session is refused.
 
   --ref     What you would pass to dispatch: #N, N, a Linear id (ENG-N) or a

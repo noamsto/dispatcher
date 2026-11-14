@@ -111,6 +111,7 @@ func TestOutstanding(t *testing.T) {
 		{"ref branch cleared by the explicit branch", []string{addRowText(10, d, "a", "feat/12-x", "feat/12-x-wt"), dispatchRowText(11, crew, "feat/12-x-wt", "")}, []string{}},
 		{"ref branch kept by an unrelated dispatch", []string{addRowText(10, d, "a", "feat/12-x", "feat/12-x-wt"), dispatchRowText(11, crew, "feat/13-y", "")}, []string{"a"}},
 		{"ref issue clears when the branch has none", []string{addRowText(10, d, "a", "feat/12-x", "scratch-work"), dispatchRowText(11, crew, "feat/12-y", "")}, []string{}},
+		{"ref linear clears when the branch has none", []string{addRowText(10, d, "a", "eng-12-guess", "feat/3-x"), dispatchRowText(11, crew, "eng-12-real", "")}, []string{}},
 		{"branch entry cleared by another slug on the issue", []string{addRowText(10, d, "a", "", "feat/5-x"), dispatchRowText(11, crew, "feat/5-other", "")}, []string{}},
 		{"linear branch entry cleared by another slug", []string{addRowText(10, d, "a", "", "eng-12-guess"), dispatchRowText(11, crew, "eng-12-real", "")}, []string{}},
 		{"dispatch on another issue keeps a branch entry", []string{addRowText(10, d, "a", "", "feat/5-x"), dispatchRowText(11, crew, "feat/6-x", "")}, []string{"a"}},
@@ -169,6 +170,7 @@ func TestSameTask(t *testing.T) {
 		{"ref alone equals a ref branch entry", e("feat/12-x", ""), e("feat/12-x", "feat/12-x-wt"), true},
 		{"explicit branch equals a ref branch entry", e("", "feat/12-x-wt"), e("feat/12-x", "feat/12-x-wt"), true},
 		{"ref branch entries on different issues differ", e("feat/12-x", "feat/12-x-wt"), e("feat/13-x", "feat/13-x-wt"), false},
+		{"same ref branch, different worktree branches", e("feat/12-x", "feat/12-x-a"), e("feat/12-x", "feat/12-x-b"), true},
 		{"grok is not issue 4", e("#4", ""), e("", "feat/grok-4-7-x"), false},
 	}
 	for _, tc := range cases {
