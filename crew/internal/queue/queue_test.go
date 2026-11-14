@@ -112,6 +112,8 @@ func TestOutstanding(t *testing.T) {
 		{"ref branch kept by an unrelated dispatch", []string{addRowText(10, d, "a", "feat/12-x", "feat/12-x-wt"), dispatchRowText(11, crew, "feat/13-y", "")}, []string{"a"}},
 		{"ref issue clears when the branch has none", []string{addRowText(10, d, "a", "feat/12-x", "scratch-work"), dispatchRowText(11, crew, "feat/12-y", "")}, []string{}},
 		{"ref linear clears when the branch has none", []string{addRowText(10, d, "a", "eng-12-guess", "feat/3-x"), dispatchRowText(11, crew, "eng-12-real", "")}, []string{}},
+		{"named issue cleared by the entry's own branch", []string{addRowText(10, d, "a", "#12", "feat/13-y"), dispatchRowText(11, crew, "feat/13-y", "")}, []string{}},
+		{"ref branch cleared despite the other branch's issue", []string{addRowText(10, d, "a", "feat/12-x", "feat/13-y"), dispatchRowText(11, crew, "feat/12-x", "")}, []string{}},
 		{"branch entry cleared by another slug on the issue", []string{addRowText(10, d, "a", "", "feat/5-x"), dispatchRowText(11, crew, "feat/5-other", "")}, []string{}},
 		{"linear branch entry cleared by another slug", []string{addRowText(10, d, "a", "", "eng-12-guess"), dispatchRowText(11, crew, "eng-12-real", "")}, []string{}},
 		{"dispatch on another issue keeps a branch entry", []string{addRowText(10, d, "a", "", "feat/5-x"), dispatchRowText(11, crew, "feat/6-x", "")}, []string{"a"}},
