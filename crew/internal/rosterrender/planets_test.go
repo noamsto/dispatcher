@@ -219,13 +219,13 @@ func TestBuildHolds(t *testing.T) {
 		"task": map[string]any{"ref": "gh#77;{evil}"},
 	}
 	bare := map[string]any{"id": "h3", "wait": map[string]any{"engine": "a\"b", "window": "5h]"}}
-	looseBranch := map[string]any{
+	noIssueBranch := map[string]any{
 		"id":   "h4",
 		"wait": map[string]any{"engine": "claude", "window": "7d", "resets_at": 1},
 		"task": map[string]any{"branch": "feat/grok-4-7-x", "ref": "r1"},
 	}
 	m := emptyModel()
-	m["holds"] = []any{quota, fleetHold, bare, looseBranch}
+	m["holds"] = []any{quota, fleetHold, bare, noIssueBranch}
 	want := []queuedHold{
 		{id: "h1", label: "1458", engine: "claude", window: "7d"},
 		{id: "h2", label: "gh77evil"},
