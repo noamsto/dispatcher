@@ -67,12 +67,13 @@ func TestBuildQueued(t *testing.T) {
 		{"id":"a","task":{"ref":null,"branch":"feat/12-x","title":"Secret Title"},"after":["feat/12-x"," #7 ",""]},
 		{"id":"b","task":{"ref":"#40","branch":null,"title":"t"},"after":[]},
 		{"id":"c","task":{"ref":null,"branch":null,"title":"t"},"after":[]},
-		{"id":"d","task":{"ref":"a\"];x","branch":null,"title":"t"},"after":[]}]`)
+		{"id":"d","task":{"ref":"a\"];x","branch":null,"title":"t"},"after":[]},
+		{"id":"e","task":{"ref":"r1","branch":"feat/grok-4-7-x","title":"t"},"after":[]}]`)
 	got := buildQueued(m)
-	if len(got) != 4 {
+	if len(got) != 5 {
 		t.Fatalf("got %+v", got)
 	}
-	for i, want := range []string{"12", "40", "queued", "ax"} {
+	for i, want := range []string{"12", "40", "queued", "ax", "r1"} {
 		if got[i].label != want {
 			t.Errorf("task %d label %q, want %q", i, got[i].label, want)
 		}
@@ -84,8 +85,8 @@ func TestBuildQueued(t *testing.T) {
 		t.Errorf("a title reached the result: %+v", got)
 	}
 	_, lg := buildPlanets(m, modelNow)
-	if lg.queued != 4 {
-		t.Errorf("lg.queued = %d, want 4", lg.queued)
+	if lg.queued != 5 {
+		t.Errorf("lg.queued = %d, want 5", lg.queued)
 	}
 }
 
