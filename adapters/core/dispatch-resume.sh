@@ -467,6 +467,26 @@ agent_name="$(_hdr agent_name)"
 prev_worker_id="$(_hdr worker_id)"
 grid_roles="$(_hdr roles)"
 
+# Code Mode is carried from the bus, never the worker-writable header: the
+# newest dispatch row for this branch says whether the owner opted this lead in.
+code_mode=""
+code_mode_dropped=""
+code_mode_prev=false
+if [ -e "$crew_dir/events.jsonl" ]; then
+  code_mode_prev="$(jq -nrR --arg b "$branch" '[inputs | fromjson? | objects | select(.kind == "dispatch" and .branch == $b)] | (.[-1].code_mode // false)' "$crew_dir/events.jsonl")" || {
+    echo "dispatch resume: could not read $crew_dir/events.jsonl — treating --code-mode as off" >&2
+    code_mode_prev=false
+  }
+fi
+if [ "$code_mode_prev" = true ]; then
+  if [ "$agent" = claude ]; then
+    code_mode=1
+  else
+    echo "dispatch resume: dropping --code-mode — the lead now runs $agent" >&2
+    code_mode_dropped="resumed on $agent"
+  fi
+fi
+
 # The launch tuple is what makes a resume faithful; without it we would be
 # guessing at a model and effort the first dispatch already decided.
 missing=""
@@ -587,6 +607,17 @@ precheck=(--effort "$effort" --agent "$agent" --crew-id "$crew_id")
 [ -n "$ignore_budget" ] && precheck+=(--ignore-budget)
 # dispatch's precheck owns the --chrome refusals and the holder gate.
 [ -z "$chrome" ] || precheck+=(--chrome)
+if [ -n "$code_mode" ]; then
+  if [ -n "$chrome" ]; then
+    echo "dispatch resume: --code-mode cannot be combined with --chrome" >&2
+    exit 1
+  fi
+  code_mode_refusal="$(code_mode_optin_refusal)"
+  if [ -n "$code_mode_refusal" ]; then
+    echo "$code_mode_refusal" >&2
+    exit 1
+  fi
+fi
 # The tier↔model pair was adjudicated when this worker was first dispatched;
 # only an explicit --model is a fresh choice that deserves re-gating.
 # Escalation: if a prior session failed and --model is one rung up, allow it.
@@ -1047,6 +1078,11 @@ _hdr_set worker_id "$worker_id"
 _hdr_set resume true
 _hdr_set protocol_dir "$PROTOCOL_DIR"
 _hdr_set chrome "$([ -n "$chrome" ] && echo true || echo false)"
+if [ -n "$code_mode" ]; then
+  _hdr_set code_mode true
+else
+  awk '!past && /^$/ { past = 1 } !(!past && /^code_mode: /) { print }' "$task_doc" >"$task_doc.tmp" && mv "$task_doc.tmp" "$task_doc"
+fi
 # The seam relaunch loop runs only under dispatch's own launch; a resumed lead
 # runs without it, so it must not try the trigger.
 [ "$(_hdr fresh_seams)" != true ] || _hdr_set fresh_seams false
@@ -1091,12 +1127,14 @@ line=$(jq -nc --arg crew "$crew_id" --arg branch "$branch" \
   --arg engine_session "${lead_sid:-${lead_session#-}}" \
   --arg escalated_from "$escalated_from_event" \
   --argjson chrome "$([ -n "$chrome" ] && echo true || echo false)" \
+  --argjson code_mode "$([ -n "$code_mode" ] && echo true || echo false)" \
   '{ts:(now*1000|floor), crew_id:$crew, kind:"resume", branch:$branch,
      worker_id:$worker, prev_worker_id:$prev, engine:$engine, model:$model,
      session:$session, continued:$continued,
      engine_session:(if $engine_session == "" then null else $engine_session end)}
    + if $escalated_from != "" then {escalated_from:$escalated_from} else {} end
-   + if $chrome then {chrome:true} else {} end')
+   + if $chrome then {chrome:true} else {} end
+   + if $code_mode then {code_mode:true} else {} end')
 _bus_append "$crew_dir/events.jsonl" "$line"
 
 # Clears a stale exited/failed/done roster row so the crew reads as live again.
@@ -1217,7 +1255,7 @@ else
   # Re-passing --append-system-prompt-file matters on a continue: it forces
   # --system-prompt-snapshot off, so the worker protocol is applied fresh rather
   # than replayed from the conversation's recorded prompt.
-  launch_cmd="GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: $(worker_browser_env "$branch" "$wt_path" "$agent_browser_worker_config")CREW_WORKER_ID=$q_worker_id CREW_ID=$q_crew_id $(claude_lean_env)claude $cont --name $q_agent_name --model $q_model --effort $q_effort$claude_sid $mcp_arg$mcp_args $xreview_mcp --settings $(claude_worker_plugin_settings "$settings" "$chrome")$(launch_dir_args claude "$branch") --append-system-prompt-file $PROTOCOL_DIR/WORKER_PROTOCOL.claude.md --permission-mode auto$(claude_chrome_flag "$chrome") 'Read WORKER_TASK.md and continue it.${push_mandate}${plan_note}${reorient}${grid_note}${protocol_note}'"
+  launch_cmd="GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: $(worker_browser_env "$branch" "$wt_path" "$agent_browser_worker_config")CREW_WORKER_ID=$q_worker_id CREW_ID=$q_crew_id $(claude_lean_env)claude $cont --name $q_agent_name --model $q_model --effort $q_effort$claude_sid $mcp_arg$mcp_args $xreview_mcp --settings $(claude_worker_plugin_settings "$settings" "$chrome" "$code_mode")$(launch_dir_args claude "$branch") --append-system-prompt-file $PROTOCOL_DIR/WORKER_PROTOCOL.claude.md --permission-mode auto$(claude_chrome_flag "$chrome") 'Read WORKER_TASK.md and continue it.${push_mandate}${plan_note}${reorient}${grid_note}${protocol_note}'"
 fi
 write_launch_script launch_line "$launch_cmd"
 # dispatch's localModels slot count reads this off the lead pane.
@@ -1238,6 +1276,8 @@ tmux send-keys -t "$pane" "$launch_line" Enter
 stall_flags=()
 [ -n "$ignore_budget" ] && stall_flags+=(--no-budget)
 (CREW_ID="$crew_id" nohup crew stall-watch "$worker_id" --pane "$pane" --engine "$agent" "${stall_flags[@]}" >/dev/null 2>&1 &)
+[ -z "$code_mode" ] || spawn_code_mode_watch "$worker_id" "$crew_id" "$pane" "$launch_line"
+[ -z "$code_mode_dropped" ] || spawn_code_mode_post "$worker_id" "$crew_id" off "$code_mode_dropped"
 # A human resuming from a worker's own pane must not retarget the renderer
 # there; only the registered dispatcher's pane may move it.
 rr_pane="${TMUX_PANE:-}"

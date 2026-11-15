@@ -1,0 +1,44 @@
+
+ ▐▛███▛█   Claude Code v2.1.325
+▝▜██████▀  Opus 5.5 with low effort · Claude Ultra
+ ▝▝   ▝▝   ~/git/.worktrees/noamsto/dispatcher/feat-1565-spike-opt-in-claude-code-mode-for-claude
+
+⚠ Code Mode (experimental) is on · this session can be resumed only with Code Mode on
+⚠ Deny rule Write(//home/noams/git/noamsto/dispatcher/**) never matches · use
+  Edit(//home/noams/git/noamsto/dispatcher/**)
+
+❯ Use code to run these in parallel, then summarize in one line: (1) the shell command sleep 25; echo a, (2) git log
+  --oneline -3, (3) count lines of README.md. Do not edit any file.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+✶ Kneading… (11s · ↓ 115 tokens)
+
+───────────────────────────────────────────────────────────────────────────────────────────────────────────── cm-probe ─
+❯ 
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  🤖 Opus 5.5 🧠 low | 📊 40k/1M | ⚡ 7d 6% (6d20h)
+  -- INSERT -- ⏵⏵ auto mode on · 1 background task · ← 1 agent

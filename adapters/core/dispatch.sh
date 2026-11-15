@@ -43,6 +43,8 @@ Engine and roles
                           comma-separated or repeated (none: no catalog server)
   --chrome                Claude in Chrome for the claude lead (owner's browser; one per
                           machine; with --host, only to a hosts.NAME.chrome host)
+  --code-mode             Claude Code Mode for the claude lead (trial lane; needs the
+                          owner's one-time opt-in)
   --grid                  Role grid derived from the tier (critics, reviewer)
   --no-grid               No role grid (suppresses the deep critics default)
   --roles LIST            Grid as name[,name=<model>|name=<agent>:<model>[@effort]]; a model may be @class
@@ -2682,6 +2684,10 @@ _dispatch_remote() {
   if _fresh_seams_requested; then
     echo "dispatch: --fresh-seams not armed — --host runs the worker on another machine; the flag is not forwarded" >&2
   fi
+  if [ -n "$code_mode" ]; then
+    echo "dispatch: --code-mode is local-only in this trial — drop --host" >&2
+    exit 1
+  fi
   # The remote runs its own claude-only check, ban and holder scan against its
   # machine; these guard what it cannot see (the caller's pane), the opt-in and
   # this machine's ban. An unknown host passes the opt-in so the --engines
@@ -2908,6 +2914,7 @@ owner_auth_set=""
 kind=implement
 mcp_profile=""
 chrome=""
+code_mode=""
 grid_roles=""
 grid_flag=""
 grid_lazy=""
@@ -2984,6 +2991,10 @@ while [ $# -gt 0 ]; do
     ;;
   --grid)
     grid_flag=1
+    shift
+    ;;
+  --code-mode)
+    code_mode=1
     shift
     ;;
   --chrome)
@@ -3580,6 +3591,21 @@ fi
 if [ -n "$chrome" ] && [ "$agent" != claude ]; then
   echo "dispatch: --chrome is claude-only (Claude in Chrome) — codex/cursor/pi workers check UI with agent-browser" >&2
   exit 1
+fi
+if [ -n "$code_mode" ]; then
+  if [ "$agent" != claude ]; then
+    echo "dispatch: --code-mode is claude-only (Claude Code Mode) — codex/cursor/pi have no such mode" >&2
+    exit 1
+  fi
+  if [ -n "$chrome" ]; then
+    echo "dispatch: --code-mode cannot be combined with --chrome" >&2
+    exit 1
+  fi
+  code_mode_refusal="$(code_mode_optin_refusal)"
+  if [ -n "$code_mode_refusal" ]; then
+    echo "$code_mode_refusal" >&2
+    exit 1
+  fi
 fi
 [ -z "$chrome" ] || _refuse_chrome_from_worker
 if [ -n "$chrome" ] && jq -e --arg c "$CLAUDE_CHROME_MCP_SERVER" '(.workerDeniedMcpServers // []) | index($c)' <<<"$settings" >/dev/null; then
@@ -4723,6 +4749,7 @@ line=$(jq -nc --arg crew "$crew_id" --arg branch "$branch" --arg session "$sessi
   --argjson also_closes "$(jq -nc '$ARGS.positional | map(tonumber? // .)' --args ${also_closes[@]+"${also_closes[@]}"})" \
   --argjson also_closes_explicit "$also_closes_explicit_empty" \
   --argjson chrome "$([ -n "$chrome" ] && echo true || echo false)" \
+  --argjson code_mode "$([ -n "$code_mode" ] && echo true || echo false)" \
   --argjson fresh_seams "$fresh_seams" \
   --arg pushed_oid "$pushed_oid" \
   --arg task_profile "$task_profile" \
@@ -4731,6 +4758,7 @@ line=$(jq -nc --arg crew "$crew_id" --arg branch "$branch" --arg session "$sessi
    + if $base != "" then {base:$base, base_oid:(if $base_oid == "" then null else $base_oid end)} else {} end
    + if (($also_closes | length) > 0 or $also_closes_explicit) then {also_closes:$also_closes} else {} end
    + if $chrome then {chrome:true} else {} end
+   + if $code_mode then {code_mode:true} else {} end
    + if $fresh_seams then {fresh_seams:true} else {} end
    + if $pushed_oid != "" then {pushed_oid:$pushed_oid} else {} end
    + if $task_profile != "" then {task_profile:$task_profile} else {} end')
@@ -4904,6 +4932,7 @@ task_dispatcher_host="${DISPATCH_ORIGIN_HOST:-}"
   printf 'tier: %s\nkind: %s\ndraft: %s\nengine: %s\nmodel: %s\neffort: %s\n' \
     "$tier" "$kind" "$draft" "$agent" "$model" "$effort"
   [ -z "$task_profile" ] || printf 'task_profile: %s\n' "$task_profile"
+  [ -z "$code_mode" ] || printf 'code_mode: true\n'
   [ -n "${escalated_from:-}" ] && printf 'escalated_from: %s\n' "$escalated_from"
   printf 'mcp: %s\nchrome: %s\nplan: %s\ntitle: %s\n%s\n' \
     "$mcp_profile" "$([ -n "$chrome" ] && echo true || echo false)" "$plan_val" "$title" "$closes"
@@ -5307,7 +5336,7 @@ else
   else
     lead_prompt_arg=" $quoted_prompt"
   fi
-  launch_cmd="${git_env}$(worker_browser_env "$branch" "$wt_path" "$agent_browser_worker_config")$(claude_lean_env)${fresh_prefix}claude --name $q_agent_name --model $model --effort $effort$lead_sid_args $mcp_flag$mcp_args $xreview_mcp --settings $(claude_worker_plugin_settings "$settings" "$chrome")$(launch_dir_args claude "$branch") --append-system-prompt-file $PROTOCOL_DIR/WORKER_PROTOCOL.claude.md --permission-mode auto$(claude_chrome_flag "$chrome")$lead_prompt_arg"
+  launch_cmd="${git_env}$(worker_browser_env "$branch" "$wt_path" "$agent_browser_worker_config")$(claude_lean_env)${fresh_prefix}claude --name $q_agent_name --model $model --effort $effort$lead_sid_args $mcp_flag$mcp_args $xreview_mcp --settings $(claude_worker_plugin_settings "$settings" "$chrome" "$code_mode")$(launch_dir_args claude "$branch") --append-system-prompt-file $PROTOCOL_DIR/WORKER_PROTOCOL.claude.md --permission-mode auto$(claude_chrome_flag "$chrome")$lead_prompt_arg"
 fi
 write_launch_script launch_line "$launch_cmd"
 # Role grid: split the task window into one pane per role. Each role pane parks
@@ -5365,6 +5394,7 @@ fi
 stall_flags=()
 [ -n "$ignore_budget" ] && stall_flags+=(--no-budget)
 (CREW_ID="$crew_id" nohup crew stall-watch "$worker_id" --pane "$pane" --engine "$agent" "${stall_flags[@]}" >/dev/null 2>&1 &)
+[ -z "$code_mode" ] || spawn_code_mode_watch "$worker_id" "$crew_id" "$pane" "$launch_line"
 # A human dispatching from an exited worker's pane (its env carries CREW_ID)
 # must not retarget the renderer there while the crew's dispatcher is live;
 # only the registered dispatcher's pane may move it.

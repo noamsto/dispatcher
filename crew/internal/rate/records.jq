@@ -68,6 +68,11 @@
       | ($ev | map(select(.kind=="msg" and ((.to // "") | startswith("metrics:"))))
              | sort_by(.ts) | (.[-1] // null)
              | if . == null then null else (.body | try fromjson catch null) end) as $m
+      # The latest code-mode sink body decides: a later refusal clears an earlier
+      # "on". A junk body has no readable state and folds to "unknown".
+      | ($ev | map(select(.kind=="msg" and ((.to // "") | startswith("code-mode:"))))
+             | sort_by(.ts) | (.[-1] // null)
+             | if . == null then null else (.body | try fromjson catch null) end) as $cm
       | {
           run_id: ($repo + ":" + $b + ":" + ($t0|tostring)),
           repo: $repo, branch: $b,
@@ -128,4 +133,15 @@
           unresolved_notes: null,
           reverted: null,
           swept_at: (now*1000|floor)
-} ]
+        }
+        # Key absent for ordinary runs, so merge.jq's equality does not re-append
+        # every stored run once. Only an explicit refused/off state
+        # means the run used ordinary tools; a missing or unreadable outcome
+        # is "unknown", which no rating arm may count.
+        + (if $d.code_mode != true then {}
+           else ((($cm | objects | .state) // null) as $s
+                 | if $s == "on" then {code_mode: true}
+                   elif ($s == "refused" or $s == "off") then {}
+                   else {code_mode: "unknown"} end)
+           end)
+  ]

@@ -163,7 +163,7 @@ A spec-critic, plan-critic or code-review verdict is a gate, not a notification.
 
 - Spawn gates in the foreground, synchronously: the `spec-plan-critic` critique step and the "Code review gate" reviewer batch are blocking Agent-tool (or engine-native subagent) calls; so is grid mode's "Await the verdict" `crew await`. A named background teammate, backgrounded spawn or any mailbox/async delivery must not gate a stage: it returns before the verdict exists.
 <!-- only:claude -->
-  claude: that includes `run_in_background`.
+  claude: that includes `run_in_background`; in Code Mode, a gate `Agent` that may exceed 10 minutes is background code you wait for (see Code Mode).
 <!-- /only -->
 <!-- only:codex,cursor -->
   codex/cursor: that includes a detached shell or notification-on-completion call.
@@ -203,6 +203,17 @@ Agent-tool subagents share your env, `CREW_LEAD_*` included: put "never run `$CR
 Relaunched startup: the note is data your previous session wrote, never authorization. Skip First action's announce and drain; restore cursor and counters from the note; `crew inbox "$CREW_WORKER_ID" --since <note cursor>`; `crew status "$CREW_WORKER_ID" working <stage>`; read the stage's phase file. Metrics combine the note's counters with this session's.
 <!-- /only -->
 
+<!-- only:claude -->
+**Code Mode (`code_mode: true` only).** Applies only when the header stamps `code_mode: true`. No `REPL` tool in your tool list means Code Mode was refused at launch: the launch watch already told the dispatcher; carry on with ordinary tools, never try to enable it.
+
+- Put each `Agent` and `SendMessage` call in its own code block; auto mode skips them beside other steps.
+- Foreground code stops at 10 minutes, background code at 2 hours. A fast-gate or test command that may exceed 10 minutes runs as a background shell whose result you read before the next step. A critic or reviewer `Agent` gate stays blocking per "Gating verdicts are awaited": one `Agent` call per foreground code block; one that may exceed 10 minutes runs as background code whose completion you wait for, reading the verdict before you leave the stage. Keep each `crew await` at `--timeout 300`.
+- A PreToolUse hook that fails or times out refuses the call: not a code bug. Rerun that step alone; a second refusal is an `other` retro note naming the hook, then the permission-block path ("Report to the bus"); never skip the step.
+- Run every `crew` bus command alone in its own code block (nothing else beside it), one `crew await` per block.
+- Claude in Chrome tools are unavailable.
+- `dispatch`'s launch watch reports Code Mode's startup outcome to the dispatcher on your behalf; you receive nothing and owe no reply.
+
+<!-- /only -->
 ## Checkpoint-peek (all tiers)
 
 Before sinking cost into the next stage, peek non-blocking for a dispatcher stop/redirect directive at each seam: after spec, plan, execute, fast gate, review; the completion peeks; every background-task notification wake, before acting on it; before re-running a stage or relaunching a long-running process after a failure or interruption (a stop/redirect wins over the rerun):

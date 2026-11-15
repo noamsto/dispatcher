@@ -17172,3 +17172,139 @@ EOF
   [ -e "$stall_env" ]
   [ ! -s "$stall_env" ]
 }
+
+# code_mode_config [keys-json] — a CLAUDE_CONFIG_DIR holding the owner's
+# .claude.json; the default accepts both Code Mode opt-in dialogs.
+code_mode_config() {
+  local dir="$BATS_TEST_TMPDIR/cc"
+  mkdir -p "$dir"
+  printf '%s\n' "${1:-{\"codeModeCaveatsAcceptedV1\":true,\"codeModeAutoModeCaveatAcceptedV1\":true\}}" >"$dir/.claude.json"
+  export CLAUDE_CONFIG_DIR="$dir"
+  export DISPATCH_CODE_MODE_WATCH_SECS=0
+}
+
+assert_no_code_mode_scaffold() {
+  [ ! -d "$TEST_REPO/.dispatch-wt" ] || [ -z "$(ls -A "$TEST_REPO/.dispatch-wt")" ]
+  [ ! -e "$TEST_REPO/.git/crew/events.jsonl" ] || ! grep -q '"kind":"dispatch"' "$TEST_REPO/.git/crew/events.jsonl"
+}
+
+@test "code-mode: plugin settings carry the overlay only with the third argument" {
+  # shellcheck source=/dev/null
+  . "$CLAUDE_WORKER_SETTINGS_LIB"
+  run claude_worker_plugin_settings '{}' "" 1
+  [ "$status" -eq 0 ]
+  eval "json=$output"
+  jq -e '.env == {"CLAUDE_CODE_EXPERIMENTAL_CODE_MODE":"1","CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS":"0"}' <<<"$json"
+  run claude_worker_plugin_settings '{}' ""
+  [ "$status" -eq 0 ]
+  eval "json=$output"
+  jq -e 'has("env") | not' <<<"$json"
+}
+
+@test "code-mode: --code-mode is refused for codex, cursor and pi before scaffolding" {
+  stub_launch_bins
+  code_mode_config
+  local spec
+  for spec in codex:gpt-5.6-terra cursor:composer-2.5 pi:openrouter/deepseek/deepseek-v4-flash; do
+    DISPATCH_PROFILE=personal DISPATCH_ENGINES="claude codex cursor pi" DISPATCH_PRECHECK=1 \
+      run run_dispatch standard "${spec#*:}" --agent "${spec%%:*}" --effort medium --no-grid --crew-id c1 --code-mode "t"
+    [ "$status" -eq 1 ] || return 1
+    [[ "$output" == *"--code-mode is claude-only"* ]] || return 1
+    assert_no_code_mode_scaffold || return 1
+  done
+}
+
+@test "code-mode: --code-mode with --chrome is refused before scaffolding" {
+  stub_launch_bins
+  code_mode_config
+  run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 --code-mode --chrome "t"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"--code-mode cannot be combined with --chrome"* ]]
+  assert_no_code_mode_scaffold
+}
+
+@test "code-mode: --code-mode is refused with --host" {
+  stub_launch_bins
+  code_mode_config
+  run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 --host h1 --code-mode "t"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"--code-mode is local-only"* ]]
+  assert_no_code_mode_scaffold
+}
+
+@test "code-mode: the opt-in guard refuses without both accepted keys and never writes the file" {
+  stub_launch_bins
+  local keys
+  for keys in '{}' '{"codeModeCaveatsAcceptedV1":true}' '{"codeModeCaveatsAcceptedV1":true,"codeModeAutoModeCaveatAcceptedV1":false}'; do
+    code_mode_config "$keys"
+    cp "$CLAUDE_CONFIG_DIR/.claude.json" "$BATS_TEST_TMPDIR/before.json"
+    run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 --code-mode "t"
+    [ "$status" -eq 1 ] || return 1
+    [[ "$output" == *"Yes, turn on Code Mode"* ]] || return 1
+    [[ "$output" == *"CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=0"* ]] || return 1
+    assert_no_code_mode_scaffold || return 1
+    cmp "$CLAUDE_CONFIG_DIR/.claude.json" "$BATS_TEST_TMPDIR/before.json" || return 1
+  done
+}
+
+@test "code-mode: the opt-in guard falls back to HOME when CLAUDE_CONFIG_DIR is unset" {
+  stub_launch_bins
+  unset CLAUDE_CONFIG_DIR
+  export DISPATCH_CODE_MODE_WATCH_SECS=0
+  export HOME="$BATS_TEST_TMPDIR/home"
+  mkdir -p "$HOME"
+  printf '{"codeModeCaveatsAcceptedV1":true,"codeModeAutoModeCaveatAcceptedV1":true}\n' >"$HOME/.claude.json"
+  DISPATCH_PRECHECK=1 run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 --code-mode "t"
+  [ "$status" -eq 0 ]
+}
+
+@test "code-mode: --code-mode records the header line and row field and launches the lead with the overlay" {
+  stub_launch_bins
+  code_mode_config
+  run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 --code-mode 42 "cm"
+  [ "$status" -eq 0 ]
+  grep -qx 'code_mode: true' "$TEST_REPO/.dispatch-wt/feat-42-cm/WORKER_TASK.md"
+  jq -e 'select(.kind == "dispatch") | .code_mode == true' "$TEST_REPO/.git/crew/events.jsonl"
+  line="$(grep -F 'claude --name iris ' <(launch_log))"
+  [[ "$line" == *CLAUDE_CODE_EXPERIMENTAL_CODE_MODE*CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS* ]]
+  assert_add_dir_terminated "$line"
+}
+
+@test "code-mode: without --code-mode there is no header line, row field or overlay" {
+  stub_launch_bins
+  code_mode_config
+  run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 42 "cm"
+  [ "$status" -eq 0 ]
+  run ! grep -q '^code_mode:' "$TEST_REPO/.dispatch-wt/feat-42-cm/WORKER_TASK.md"
+  jq -e 'select(.kind == "dispatch") | has("code_mode") | not' "$TEST_REPO/.git/crew/events.jsonl"
+  run ! grep -q CLAUDE_CODE_EXPERIMENTAL_CODE_MODE <(launch_log)
+}
+
+@test "code-mode: a deep grid dispatch leaves every role-pane launch without the overlay" {
+  stub_launch_bins
+  code_mode_config
+  DISPATCH_PROFILE=work run run_dispatch deep opus --agent claude --effort high --crew-id c1 --code-mode 42 "cm grid"
+  [ "$status" -eq 0 ]
+  grep -Fq 'spec-critic' "$STUB_LOG"
+  [ "$(launch_log | grep -c 'claude --name ')" -ge 2 ]
+  [ "$(launch_log | grep -c CLAUDE_CODE_EXPERIMENTAL_CODE_MODE)" -eq 1 ]
+}
+
+@test "code-mode: --code-mode spawns the launch watch on the lead pane, and a plain dispatch does not" {
+  stub_launch_bins
+  code_mode_config
+  export DISPATCH_CODE_MODE_WATCH_SECS=1
+  run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 42 "plain"
+  [ "$status" -eq 0 ]
+  sleep 1
+  run ! grep -q 'capture-pane' "$STUB_LOG"
+  run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 --code-mode 43 "cm"
+  [ "$status" -eq 0 ]
+  for _ in $(seq 50); do
+    grep -q 'capture-pane .*-t %1' "$STUB_LOG" && break
+    sleep 0.1
+  done
+  grep -q 'capture-pane .*-t %1' "$STUB_LOG"
+  # let the 1s watch finish so no process outlives the test
+  sleep 3
+}

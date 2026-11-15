@@ -74,9 +74,11 @@ var (
 	// command`, no `· from the <agent>` suffix), a `Tip:` hint and a
 	// description sit under it, and the request is boxed between two U+254C
 	// rules. The title is read only on a frame that carries such a rule, and
-	// only when its next non-blank line is the hint.
+	// only when its next non-blank line is the hint, or when a single
+	// description row sits directly above the box (Code Mode's inner-tool
+	// dialog).
 	rePermTip       = regexp.MustCompile(`^[` + space + `]*Tip:`)
-	rePermCountdown = regexp.MustCompile(`^[` + space + `]*⚠[` + space + `]+Claude Code will automatically deny this request in `)
+	rePermCountdown = regexp.MustCompile(`^[` + space + `]*⚠[` + space + `]+Claude Code will automatically (?:deny|block) this request in `)
 	rePermSeparator = regexp.MustCompile(`^[` + space + `]*\x{2500}{4,}[` + space + `]*$`)
 	rePermRule      = regexp.MustCompile(`^[` + space + `]*\x{254C}{4,}[` + space + `]*$`)
 	reLeadSpace     = regexp.MustCompile(`^[` + space + `]+`)
@@ -657,8 +659,9 @@ func holdsEpisode(detail string) bool {
 // scrolled into the transcript must not make the relay report its stale
 // tool/request while the live dialog is parked at the bottom. A top-level
 // dialog has one of two headers: that same `· from the …` line, or the bare
-// tool title whose next non-blank line is the `Tip:` hint; the last of either
-// wins, and its request is the first non-blank line inside the U+254C rule box
+// tool title whose next non-blank line is the `Tip:` hint (or, for Code Mode's
+// inner-tool dialog, a single description row directly above the box); the
+// last of either wins, and its request is the first non-blank line inside the U+254C rule box
 // that follows it. A dialog carrying the auto-deny countdown line is parsed by
 // countdownDialog instead, whatever rows sit between its title and its box.
 func permissionDetail(text, pane string) string {
@@ -676,18 +679,29 @@ func permissionDetail(text, pane string) string {
 		}
 	}
 	// topTitle reports whether lines[i] opens a boxed top-level dialog: a
-	// non-blank, non-rule line whose next non-blank line is the `Tip:` hint. A
+	// non-blank, non-rule line whose next non-blank line is the `Tip:` hint, or a
+	// description row directly above the request box. A
 	// version may label the tool with digits, punctuation or non-ASCII, so the
 	// line itself is not character-restricted.
 	topTitle := func(i int) bool {
-		if reBlank.MatchString(lines[i]) || rePermRule.MatchString(lines[i]) {
+		if reBlank.MatchString(lines[i]) || rePermRule.MatchString(lines[i]) || rePermTip.MatchString(lines[i]) {
 			return false
 		}
 		for j := i + 1; j < len(lines); j++ {
 			if reBlank.MatchString(lines[j]) {
 				continue
 			}
-			return rePermTip.MatchString(lines[j])
+			if rePermTip.MatchString(lines[j]) {
+				return true
+			}
+			// Code Mode's inner-tool dialog has a one-row description
+			// (`Run shell command`) where the others have the Tip.
+			for k := j + 1; k < len(lines); k++ {
+				if !reBlank.MatchString(lines[k]) {
+					return rePermRule.MatchString(lines[k])
+				}
+			}
+			return false
 		}
 		return false
 	}

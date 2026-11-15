@@ -3724,3 +3724,178 @@ EOF2
   [ "$(cksum "$WT/WORKER_TASK.md")" = "$before" ]
   run ! grep -qE '^standard sonnet |send-keys' "$STUB_LOG"
 }
+
+# A bus row recording a dispatch, with or without Code Mode. The resume reads
+# Code Mode from the newest such row, never from the header.
+_cm_dispatch_row() { # <true|false>
+  mkdir -p "$TEST_REPO/.git/crew"
+  jq -nc --argjson cm "$1" '{ts: 1, crew_id: "c1", kind: "dispatch", branch: "feat/7-a-thing", name: "iris", session: "s1-99"} + if $cm then {code_mode: true} else {} end' \
+    >>"$TEST_REPO/.git/crew/events.jsonl"
+}
+
+# _cm_config [keys-json] — an owner .claude.json for the opt-in guard; the
+# default accepts both dialogs. The launch watch is told not to wait.
+_cm_config() {
+  local dir="$BATS_TEST_TMPDIR/cc"
+  mkdir -p "$dir"
+  printf '%s\n' "${1:-{\"codeModeCaveatsAcceptedV1\":true,\"codeModeAutoModeCaveatAcceptedV1\":true\}}" >"$dir/.claude.json"
+  export CLAUDE_CONFIG_DIR="$dir"
+  export DISPATCH_CODE_MODE_WATCH_SECS=0
+}
+
+# _cm_wait_post — the 0s launch watch posts from a background process.
+_cm_wait_post() {
+  for _ in $(seq 50); do
+    grep -q 'msg .* code-mode:c1 ' "$STUB_LOG" && return 0
+    sleep 0.1
+  done
+  return 1
+}
+
+@test "code-mode: claude resume carries a recorded Code Mode and watches the lead" {
+  setup_worker_wt
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  _cm_config
+  _cm_dispatch_row true
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 0 ]
+  line="$(grep -F 'claude --continue' <(launch_log))"
+  [[ "$line" == *CLAUDE_CODE_EXPERIMENTAL_CODE_MODE*CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS* ]]
+  grep -qx 'code_mode: true' "$WT/WORKER_TASK.md"
+  [ "$(jq -r 'select(.kind == "resume") | .code_mode' "$TEST_REPO/.git/crew/events.jsonl" | tail -1)" = true ]
+  _cm_wait_post
+  grep -q 'capture-pane .*-t %8' "$STUB_LOG"
+  sleep 1
+}
+
+@test "code-mode: a header-only code_mode is not carried and the line is removed" {
+  setup_worker_wt 'code_mode: true'
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  _cm_config
+  _cm_dispatch_row false
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 0 ]
+  line="$(grep -F 'claude --continue' <(launch_log))"
+  [[ "$line" != *CLAUDE_CODE_EXPERIMENTAL_CODE_MODE* ]]
+  run ! grep -q '^code_mode:' "$WT/WORKER_TASK.md"
+  [ "$(jq -r 'select(.kind == "resume") | has("code_mode")' "$TEST_REPO/.git/crew/events.jsonl" | tail -1)" = false ]
+  run ! grep -q 'capture-pane' "$STUB_LOG"
+}
+
+@test "code-mode: the newest dispatch row decides, so a later plain dispatch drops it" {
+  setup_worker_wt
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  _cm_config
+  _cm_dispatch_row true
+  _cm_dispatch_row false
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 0 ]
+  line="$(grep -F 'claude --continue' <(launch_log))"
+  [[ "$line" != *CLAUDE_CODE_EXPERIMENTAL_CODE_MODE* ]]
+  run ! grep -q '^code_mode:' "$WT/WORKER_TASK.md"
+}
+
+@test "code-mode: resume --chrome with a carried Code Mode is refused before relaunch" {
+  setup_worker_wt
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  _cm_config
+  _cm_dispatch_row true
+  cd "$WT"
+  run run_resume --chrome
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"--code-mode cannot be combined with --chrome"* ]]
+  run ! grep -qF 'send-keys' "$STUB_LOG"
+}
+
+@test "code-mode: --agent codex drops a carried Code Mode, says so and posts off" {
+  setup_worker_wt
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  _cm_config
+  _cm_dispatch_row true
+  cd "$WT"
+  run run_resume --agent codex
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"dispatch resume: dropping --code-mode — the lead now runs codex"* ]]
+  line="$(grep -F 'codex ' <(launch_log) | head -1)"
+  [[ "$line" != *CLAUDE_CODE_EXPERIMENTAL_CODE_MODE* ]]
+  run ! grep -q '^code_mode:' "$WT/WORKER_TASK.md"
+  _cm_wait_post
+  grep -qF 'code-mode:c1 {"state":"off","why":"resumed on codex"}' "$STUB_LOG"
+  run ! grep -q 'capture-pane' "$STUB_LOG"
+}
+
+@test "code-mode: a carried Code Mode without the owner's opt-in is refused" {
+  setup_worker_wt
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  _cm_config '{}'
+  _cm_dispatch_row true
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"one-time opt-in"* ]]
+  run ! grep -qF 'send-keys' "$STUB_LOG"
+}
+
+@test "code-mode: --fresh keeps a carried Code Mode" {
+  setup_worker_wt
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  _cm_config
+  _cm_dispatch_row true
+  cd "$WT"
+  run run_resume --fresh
+  [ "$status" -eq 0 ]
+  line="$(grep -F 'claude ' <(launch_log) | grep -F -- '--name' | head -1)"
+  [[ "$line" == *CLAUDE_CODE_EXPERIMENTAL_CODE_MODE* ]]
+  grep -qx 'code_mode: true' "$WT/WORKER_TASK.md"
+  _cm_wait_post
+  sleep 1
+}
+
+@test "code-mode: a truncated bus line does not drop a recorded Code Mode" {
+  setup_worker_wt
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  _cm_config
+  _cm_dispatch_row true
+  printf '{"ts": 2, "kind": "sta' >>"$TEST_REPO/.git/crew/events.jsonl"
+  printf '\n' >>"$TEST_REPO/.git/crew/events.jsonl"
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 0 ]
+  line="$(grep -F 'claude --continue' <(launch_log))"
+  [[ "$line" == *CLAUDE_CODE_EXPERIMENTAL_CODE_MODE* ]]
+  grep -qx 'code_mode: true' "$WT/WORKER_TASK.md"
+  _cm_wait_post
+  sleep 1
+}
+
+@test "code-mode: an unreadable bus warns and resumes without Code Mode" {
+  setup_worker_wt
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  _cm_config
+  _cm_dispatch_row true
+  chmod 200 "$TEST_REPO/.git/crew/events.jsonl"
+  [ ! -r "$TEST_REPO/.git/crew/events.jsonl" ] || skip "events file stays readable (running as root)"
+  cd "$WT"
+  run --separate-stderr run_resume
+  [ "$status" -eq 0 ]
+  [[ "$stderr" == *"could not read "*"events.jsonl — treating --code-mode as off"* ]]
+  line="$(grep -F 'claude --continue' <(launch_log))"
+  [[ "$line" != *CLAUDE_CODE_EXPERIMENTAL_CODE_MODE* ]]
+}
+
+@test "code-mode: dropping the header line leaves a column-0 code_mode line in the task body" {
+  setup_worker_wt 'code_mode: true'
+  printf 'code_mode: true\n' >>"$WT/WORKER_TASK.md"
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  _cm_config
+  _cm_dispatch_row false
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 0 ]
+  [ "$(grep -c '^code_mode: true$' "$WT/WORKER_TASK.md")" -eq 1 ]
+  [ "$(sed -n '/^$/q;/^code_mode:/p' "$WT/WORKER_TASK.md")" = "" ]
+  tail -n 1 "$WT/WORKER_TASK.md" | grep -qx 'code_mode: true'
+}

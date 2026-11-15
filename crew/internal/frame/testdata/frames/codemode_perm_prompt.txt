@@ -1,0 +1,44 @@
+
+ ▐▛███▛█   Claude Code v2.1.325
+▝▜██████▀  Opus 5.5 with low effort · Claude Ultra
+ ▝▝   ▝▝   ~/git/.worktrees/noamsto/dispatcher/feat-1565-spike-opt-in-claude-code-mode-for-claude
+
+⚠ Code Mode (experimental) is on · this session can be resumed only with Code Mode on
+⚠ Deny rule Write(//home/noams/git/noamsto/dispatcher/**) never matches · use
+  Edit(//home/noams/git/noamsto/dispatcher/**)
+
+❯ Use code to run exactly this shell command: echo cmp-ask-probe hello. Do nothing else.
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Bash command
+ Run shell command
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+ echo cmp-ask-probe hello
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+ Ask rule Bash(echo cmp-ask-probe*) overrides auto mode for this command.
+ /permissions to let auto mode decide
+
+ Do you want to proceed?
+ ❯ 1. Yes
+   2. No
+
+ Esc to cancel · Tab to amend
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+─────────────────────────────────────────────────────────────────────────────────────────────────────────────── cm-ask ─

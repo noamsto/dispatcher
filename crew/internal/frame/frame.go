@@ -33,17 +33,18 @@ func posixLongest(pattern string) *regexp.Regexp {
 }
 
 var (
-	reBlank   = posix(`^[[:space:]]*$`)
-	reOption  = posix(`^[[:space:]]*(>|❯|\*)?[[:space:]]*[0-9]+\.[[:space:]]+[^[:space:]]`)
-	reMeter   = posix(`^[^[:alnum:]]*[A-Za-z]+…[[:space:]]\(([0-9]+h([[:space:]][0-9]+m)?([[:space:]][0-9]+s)?|[0-9]+m([[:space:]][0-9]+s)?|[0-9]+s)[[:space:]]·[[:space:]]↓[[:space:]][0-9.]+k?[[:space:]]tokens`)
-	reSubrow  = posix(`^[[:space:]]*[^[:alnum:][:space:]]+[[:space:]]+[a-z][a-z-]+[[:space:]][[:space:]]+.*[[:space:]](([0-9]+h[[:space:]])?([0-9]+m[[:space:]])?[0-9]+s)[[:space:]]·[[:space:]]↓`)
-	reSpinner = posix(`^[^[:alnum:]]*[A-Za-z]+…`)
-	reLiveish = posix(`^[^[:alnum:]]*[^[:space:]]+…|…[[:space:]]*\(`)
-	reDone    = posix(`·[[:space:]]done[[:space:]]+[0-9]{1,2}:[0-9]{2}`)
-	reShells  = posix(`(^|[^0-9])[1-9][0-9]*[[:space:]]shells?([[:space:]]still running|[[:space:]]·|$)`)
-	reBgWork  = posix(`(^|[^0-9])[1-9][0-9]*[[:space:]](shells?|monitors?)([[:space:]]still running|[[:space:]]·|$)`)
-	reDraft   = posixLongest("^[[:space:]]*❯([[:space:]]|\u00a0)*")
-	reCSI     = regexp.MustCompile(`\x1b\[[0-9;]*m`)
+	reBlank    = posix(`^[[:space:]]*$`)
+	reOption   = posix(`^[[:space:]]*(>|❯|\*)?[[:space:]]*[0-9]+\.[[:space:]]+[^[:space:]]`)
+	reMeter    = posix(`^[^[:alnum:]]*[A-Za-z]+…[[:space:]]\(([0-9]+h([[:space:]][0-9]+m)?([[:space:]][0-9]+s)?|[0-9]+m([[:space:]][0-9]+s)?|[0-9]+s)[[:space:]]·[[:space:]]↓[[:space:]][0-9.]+k?[[:space:]]tokens`)
+	reSubrow   = posix(`^[[:space:]]*[^[:alnum:][:space:]]+[[:space:]]+[a-z][a-z-]+[[:space:]][[:space:]]+.*[[:space:]](([0-9]+h[[:space:]])?([0-9]+m[[:space:]])?[0-9]+s)[[:space:]]·[[:space:]]↓`)
+	reSpinner  = posix(`^[^[:alnum:]]*[A-Za-z]+…`)
+	reLiveish  = posix(`^[^[:alnum:]]*[^[:space:]]+…|…[[:space:]]*\(`)
+	reDone     = posix(`·[[:space:]]done[[:space:]]+[0-9]{1,2}:[0-9]{2}`)
+	reShells   = posix(`(^|[^0-9])[1-9][0-9]*[[:space:]](shells?|background[[:space:]]tasks?)([[:space:]]still running|[[:space:]]·|$)`)
+	reBgWork   = posix(`(^|[^0-9])[1-9][0-9]*[[:space:]](shells?|background[[:space:]]tasks?|monitors?)([[:space:]]still running|[[:space:]]·|$)`)
+	reNameRule = posix(`^─+[[:space:]][^[:space:]].*[[:space:]]─+$`)
+	reDraft    = posixLongest("^[[:space:]]*❯([[:space:]]|\u00a0)*")
+	reCSI      = regexp.MustCompile(`\x1b\[[0-9;]*m`)
 
 	// The post-turn lines claude can print under the finished-turn marker.
 	reClearHint  = posix(`^[[:space:]]*new task\?[[:space:]]+/clear[[:space:]]`)
@@ -128,7 +129,12 @@ func IsPermissionPrompt(engine, text string) bool {
 	if engine != "claude" {
 		return false
 	}
-	t := Tail(text, 10)
+	// A named session paints its `── <name> ─` rule below the dialog.
+	t := Tail(text, 11)
+	if n := len(t); n > 0 && reNameRule.MatchString(t[n-1]) {
+		t = t[:n-1]
+	}
+	t = t[max(len(t)-10, 0):]
 	if len(t) == 0 || !strings.Contains(t[len(t)-1], "Esc to cancel · Tab to amend") {
 		return false
 	}
@@ -146,6 +152,10 @@ func IsPrompt(engine, text string) bool {
 		return false
 	}
 	last := t[len(t)-1]
+	// The Code Mode first-use opt-in has unnumbered options, so reOption misses it.
+	if engine == "claude" && strings.Contains(last, "Esc to start without it") && anyContains(t[:len(t)-1], "Yes, turn on Code Mode") {
+		return true
+	}
 	if !strings.Contains(last, "Enter to select") && !strings.Contains(last, "Enter to confirm") {
 		return false
 	}

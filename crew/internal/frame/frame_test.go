@@ -170,9 +170,17 @@ func rows() []row {
 	add("prompt: codex hook review", "codex", "prompt", hookReview, "", "1")
 	add("prompt: pi uses the claude shape", "pi", "prompt", trust, "", "1")
 
+	optin := "  ❯ No, start without it\n    Yes, turn on Code Mode\n\n  Tell us how it goes with /feedback\n\n  Enter to confirm · Esc to start without it"
+	add("prompt: Code Mode opt-in dialog", claude, "prompt", optin, "", "1")
+	add("prompt: Code Mode opt-in footer without the Yes option", claude, "prompt", "  ❯ No, start without it\n  Enter to confirm · Esc to start without it", "", "0")
+	add("prompt: Code Mode opt-in footer not last", claude, "prompt", optin+"\n"+modeRow, "", "0")
+	add("prompt: Code Mode opt-in is claude only", "pi", "prompt", optin, "", "0")
+
 	add("permission: claude dialog", claude, "permission_prompt", permAsk, "", "1")
 	add("permission: other engines never match", "pi", "permission_prompt", permAsk, "", "0")
 	add("permission: footer scrolled up", claude, "permission_prompt", permAsk+"\n"+modeRow, "", "0")
+	add("permission: session-name rule under the footer", claude, "permission_prompt", permAsk+"\n"+rule+" cm-ask ─", "", "1")
+	add("permission: bare rule under the footer is not a name rule", claude, "permission_prompt", permAsk+"\n"+rule, "", "0")
 	add("permission: question 9 rows above the footer", claude, "permission_prompt",
 		lines(append(append([]string{"Do you want to proceed?"}, filler("line", 7)...), " ❯ 1. Yes", " Esc to cancel · Tab to amend")...), "", "1")
 	add("permission: question 10 rows above the footer", claude, "permission_prompt",
@@ -202,6 +210,9 @@ func rows() []row {
 	add("bg wait: done marker with a running shell", claude, "bg_wait", "✻ Crunched for 1m 12s · done 11:16 AM · 1 shell still running", "", "1")
 	add("bg wait: single-digit hour", claude, "bg_wait", "✻ Crunched for 1m · done 9:05 AM · 2 shells still running", "", "1")
 	add("bg wait: shell count in the mode line", claude, "bg_wait", lines(doneRow, "  -- INSERT -- ⏵⏵ auto mode on · 1 shell · ← for agents"), "", "1")
+	add("bg wait: Code Mode background task in the done row", claude, "bg_wait", "✻ Cogitated for 6s · done 2:24 PM · 1 background task still running", "", "1")
+	add("bg wait: Code Mode background tasks in the mode line", claude, "bg_wait", lines(doneRow, "  -- INSERT -- ⏵⏵ auto mode on · 2 background tasks · ← 1 agent"), "", "1")
+	add("bg wait: zero background tasks", claude, "bg_wait", "✻ Cogitated for 6s · done 2:24 PM · 0 background tasks still running", "", "0")
 	add("bg wait: zero shells", claude, "bg_wait", "✻ Crunched for 1m · done 11:16 AM · 0 shells still running", "", "0")
 	add("bg wait: leading-zero count", claude, "bg_wait", "✻ Crunched for 1m · done 11:16 AM · 01 shell still running", "", "0")
 	add("bg wait: ten shells", claude, "bg_wait", "✻ Crunched for 1m · done 11:16 AM · 10 shells still running", "", "1")
