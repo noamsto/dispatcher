@@ -5336,7 +5336,7 @@ else
   else
     lead_prompt_arg=" $quoted_prompt"
   fi
-  launch_cmd="${git_env}$(worker_browser_env "$branch" "$wt_path" "$agent_browser_worker_config")$(claude_lean_env)${fresh_prefix}claude --name $q_agent_name --model $model --effort $effort$lead_sid_args $mcp_flag$mcp_args $xreview_mcp --settings $(claude_worker_plugin_settings "$settings" "$chrome" "$code_mode")$(launch_dir_args claude "$branch") --append-system-prompt-file $PROTOCOL_DIR/WORKER_PROTOCOL.claude.md --permission-mode auto$(claude_chrome_flag "$chrome")$lead_prompt_arg"
+  launch_cmd="${git_env}$(worker_browser_env "$branch" "$wt_path" "$agent_browser_worker_config")$(claude_lean_env)$(claude_subagent_effort_env "$effort")${fresh_prefix}claude --name $q_agent_name --model $model --effort $effort$lead_sid_args $mcp_flag$mcp_args $xreview_mcp --settings $(claude_worker_plugin_settings "$settings" "$chrome" "$code_mode")$(launch_dir_args claude "$branch") --append-system-prompt-file $PROTOCOL_DIR/WORKER_PROTOCOL.claude.md --permission-mode auto$(claude_chrome_flag "$chrome")$lead_prompt_arg"
 fi
 write_launch_script launch_line "$launch_cmd"
 # Role grid: split the task window into one pane per role. Each role pane parks

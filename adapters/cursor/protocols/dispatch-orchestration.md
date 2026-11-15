@@ -154,6 +154,10 @@ orchestration layer: `dispatch` still enables `agents.*` but pins
 The worker must not add a second harness execute-subagent orchestration on top
 of ultra's built-in delegation. See `WORKER_PROTOCOL.md` rule 1.
 
+Claude leads get the same pin as `CLAUDE_CODE_SUBAGENT_EFFORT` on the launch
+command: one rung below the session, floor `low`, capped at `high`. Reviewer and
+critic spawns name the session effort explicitly, so review strength holds.
+
 Both codex launch paths (`dispatch` workers and the `dispatcher --agent codex`
 orchestrator) pin `service_tier="default"` — the interactive `/fast` toggle
 persists locally and would otherwise leak into unattended runs, burning ChatGPT

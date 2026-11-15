@@ -4632,6 +4632,39 @@ _pinned_store_bin() {
   [[ "$launch" == *'do not add a second harness'* ]]
 }
 
+@test "claude lead pins the subagent effort one rung below the session" {
+  stub_launch_bins
+  DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --crew-id c1 42 "title"
+  [ "$status" -eq 0 ]
+  launch="$(grep 'send-keys' <(launch_log))"
+  [[ "$launch" == *'CLAUDE_CODE_SUBAGENT_EFFORT=low claude --name'* ]]
+  [[ "$launch" == *'--effort medium'* ]]
+}
+
+@test "claude subagent effort helper maps every session rung" {
+  source "$BATS_TEST_DIRNAME/../adapters/core/launcher-common.sh"
+  for pair in max:high xhigh:high high:medium medium:low low:low; do
+    [ "$(claude_subagent_effort_env "${pair%%:*}")" = "CLAUDE_CODE_SUBAGENT_EFFORT=${pair##*:} " ]
+  done
+}
+
+@test "claude xhigh lead caps the subagent effort at high" {
+  stub_launch_bins
+  DISPATCH_PROFILE=work run run_dispatch deep opus --agent claude --effort xhigh --crew-id c1 42 "title"
+  [ "$status" -eq 0 ]
+  launch="$(grep 'send-keys' <(launch_log))"
+  [[ "$launch" == *'CLAUDE_CODE_SUBAGENT_EFFORT=high claude --name'* ]]
+}
+
+@test "claude role pane launch carries no subagent effort pin" {
+  stub_launch_bins
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --agent claude --roles "reviewer=claude:opus" --effort high --crew-id c1 42 "claude lead with claude reviewer role"
+  [ "$status" -eq 0 ]
+  role_line=$(grep -E -- 'claude --name [a-z]+-reviewer ' <(launch_log))
+  [ -n "$role_line" ]
+  [[ "$role_line" != *CLAUDE_CODE_SUBAGENT_EFFORT* ]]
+}
+
 @test "cursor launch includes process authority" {
   stub_launch_bins
   DISPATCH_PROFILE=work run run_dispatch deep kimi-k3-high --agent cursor --effort high --crew-id c1 42 "title"
@@ -15092,7 +15125,7 @@ setup_bundle_resume() {
   DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 42 "lean"
   [ "$status" -eq 0 ]
   line="$(grep -F 'claude --name iris ' <(launch_log))"
-  [[ "$line" == *"ENABLE_CLAUDEAI_MCP_SERVERS=false CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false claude --name iris "* ]]
+  [[ "$line" == *"ENABLE_CLAUDEAI_MCP_SERVERS=false CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false CLAUDE_CODE_SUBAGENT_EFFORT="*" claude --name iris "* ]]
   [[ "$line" == *"--permission-mode auto --no-chrome "* ]]
 }
 
@@ -15206,7 +15239,7 @@ browser_env_prefix='env -u AGENT_BROWSER_AUTO_CONNECT -u AGENT_BROWSER_CDP -u AG
   [ "$status" -eq 0 ]
   line="$(grep -F 'claude --name iris ' <(launch_log))"
   [[ "$line" != *"ENABLE_CLAUDEAI_MCP_SERVERS"* ]]
-  [[ "$line" == *"DISPATCH_CLAUDE_CONNECTORS=1 CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false claude --name iris "* ]]
+  [[ "$line" == *"DISPATCH_CLAUDE_CONNECTORS=1 CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false CLAUDE_CODE_SUBAGENT_EFFORT="*" claude --name iris "* ]]
 }
 
 @test "lean: --mcp profile composes with the lean env" {
@@ -15216,7 +15249,7 @@ browser_env_prefix='env -u AGENT_BROWSER_AUTO_CONNECT -u AGENT_BROWSER_CDP -u AG
   DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --mcp analytics --crew-id c1 42 "lean"
   [ "$status" -eq 0 ]
   line="$(grep -F 'claude --name iris ' <(launch_log))"
-  [[ "$line" == *"ENABLE_CLAUDEAI_MCP_SERVERS=false CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false claude --name iris "* ]]
+  [[ "$line" == *"ENABLE_CLAUDEAI_MCP_SERVERS=false CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false CLAUDE_CODE_SUBAGENT_EFFORT="*" claude --name iris "* ]]
   [[ "$line" == *"--mcp-config $HOME/.config/claude-code/mcp-posthog.json"* ]]
 }
 

@@ -22,8 +22,8 @@ Unless resuming (check Resuming a killed run first), decide once before the plan
 
    | consultant | mechanism | lean |
    | ---------- | --------- | ---- |
-   | opus (default; `claude`) | claude one-shot `--model opus`; claude lead: ephemeral Agent-tool subagent, `model: opus` | neutral fit |
-   | fable (`claude`) | claude one-shot `--model fable`; claude lead: ephemeral Agent-tool subagent, `model: fable`, in this worktree (only form with in-worktree write access) | architecture-heavy decompositions |
+   | opus (default; `claude`) | claude one-shot `--model opus`; claude lead: ephemeral Agent-tool subagent, `model: opus`, `effort: <session effort>` | neutral fit |
+   | fable (`claude`) | claude one-shot `--model fable`; claude lead: ephemeral Agent-tool subagent, `model: fable`, `effort: <session effort>`, in this worktree (only form with in-worktree write access) | architecture-heavy decompositions |
    | codex premium (`codex`) | codex one-shot; claude lead: read-only codex MCP injected into claude deep work-profile workers | non-claude-family decomposition, diverse from the opus planner |
    | cursor Grok premium (`cursor`) | cursor one-shot | third-family perspective |
 
