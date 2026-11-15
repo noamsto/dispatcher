@@ -42,7 +42,7 @@ Both planning transitions share this budget: take at most one autonomously. Afte
 
 Three amendments: one fresh planning-only context strictly above `WORKER_TASK.md`'s authoritative engine/model/effort tuple; never change engine, skip a rung or guess an unlisted tuple. Top or unavailable rung blocks unlaunched. `replanned` stays false only if no earlier execute-time planning episode began. Any engine may use its bounded critic within this single episode (harness-shipped roster; per-engine rung/mechanism: `spec-plan-critic` critic table).
 
-- Claude: Agent model override `haiku → sonnet → opus → fable`; `opus → fable` keeps the hard, well-specified, long-horizon eligibility check. Fable, ineligible opus, unknown full ids, unavailable launches block. Effort is metadata only.
+- Claude: Agent model override `haiku → sonnet → opus → fable`; `opus → fable` keeps the hard, well-specified, long-horizon eligibility check. Fable, ineligible opus, unknown full ids, unavailable launches block. Recovery-planner spawns pass `effort: <session effort>`.
 
 Viable replacement: covers all three ledger rows, names allowed files/components, gives finite ordered implementation steps + deterministic validation commands, leaves nothing to improvise at execute. Refusal, timeout, failed extraction/critic, unavailable launch or non-viable output blocks (no fallback to original plan or a second planner) → `rung_blocked` retro note naming rung and reason.
 
