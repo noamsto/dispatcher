@@ -1548,37 +1548,6 @@ permission_bash_guard.txt	quota_cursor_limit	0
 permission_bash_guard.txt	quota_prompt	0
 permission_bash_guard.txt	quota_session_limit	0
 permission_bash_guard.txt	subrow	0
-permission_countdown_block.txt	bg_wait	0
-permission_countdown_block.txt	box_any.out	
-permission_countdown_block.txt	box_any.rc	1
-permission_countdown_block.txt	box_claude.out	
-permission_countdown_block.txt	box_claude.rc	1
-permission_countdown_block.txt	claude_idle_box.own0.color	0
-permission_countdown_block.txt	claude_idle_box.own0.plain	0
-permission_countdown_block.txt	claude_idle_box.own1.color	0
-permission_countdown_block.txt	claude_idle_box.own1.plain	0
-permission_countdown_block.txt	codex_hook_review	0
-permission_countdown_block.txt	idle_reason.skip0.color	rc=1 reason=prompt on screen
-permission_countdown_block.txt	idle_reason.skip0.plain	rc=1 reason=prompt on screen
-permission_countdown_block.txt	idle_reason.skip1.color	rc=1 reason=prompt on screen
-permission_countdown_block.txt	idle_reason.skip1.plain	rc=1 reason=prompt on screen
-permission_countdown_block.txt	meter	
-permission_countdown_block.txt	permission_prompt@claude	1
-permission_countdown_block.txt	permission_prompt@codex	0
-permission_countdown_block.txt	permission_prompt@cursor	0
-permission_countdown_block.txt	permission_prompt@pi	0
-permission_countdown_block.txt	pi_idle_box	0
-permission_countdown_block.txt	pi_live_turn	0
-permission_countdown_block.txt	pi_working_label	0
-permission_countdown_block.txt	pi_working_row	0
-permission_countdown_block.txt	prompt@claude	0
-permission_countdown_block.txt	prompt@codex	0
-permission_countdown_block.txt	prompt@cursor	0
-permission_countdown_block.txt	prompt@pi	0
-permission_countdown_block.txt	quota_cursor_limit	0
-permission_countdown_block.txt	quota_prompt	0
-permission_countdown_block.txt	quota_session_limit	0
-permission_countdown_block.txt	subrow	0
 permission_sanitize.txt	bg_wait	0
 permission_sanitize.txt	box_any.out	
 permission_sanitize.txt	box_any.rc	1
@@ -4699,3 +4668,194 @@ post_turn_hook_only.txt	quota_cursor_limit	0
 post_turn_hook_only.txt	quota_prompt	0
 post_turn_hook_only.txt	quota_session_limit	0
 post_turn_hook_only.txt	subrow	0
+row:bg wait: Code Mode background task in the done row	bg_wait	1
+row:bg wait: Code Mode background tasks in the mode line	bg_wait	1
+row:bg wait: zero background tasks	bg_wait	0
+row:permission: session-name rule under the footer	permission_prompt	1
+row:permission: bare rule under the footer is not a name rule	permission_prompt	0
+codemode_startup.txt	codex_hook_review	0
+codemode_startup.txt	permission_prompt@claude	0
+codemode_startup.txt	permission_prompt@codex	0
+codemode_startup.txt	permission_prompt@pi	0
+codemode_startup.txt	permission_prompt@cursor	0
+codemode_startup.txt	prompt@claude	0
+codemode_startup.txt	prompt@codex	0
+codemode_startup.txt	prompt@pi	0
+codemode_startup.txt	prompt@cursor	0
+codemode_startup.txt	quota_prompt	0
+codemode_startup.txt	quota_session_limit	0
+codemode_startup.txt	quota_cursor_limit	0
+codemode_startup.txt	bg_wait	0
+codemode_startup.txt	meter	
+codemode_startup.txt	subrow	0
+codemode_startup.txt	pi_live_turn	1
+codemode_startup.txt	pi_working_row	0
+codemode_startup.txt	pi_working_label	0
+codemode_startup.txt	pi_idle_box	0
+codemode_startup.txt	box_claude.rc	0
+codemode_startup.txt	box_claude.out	❯ \n  Edit(//home/noams/git/noamsto/dispatcher/**)\n⚠ Deny rule Write(//home/noams/git/noamsto/dispatcher/**) never matches · use\n⚠ Code Mode (experimental) is on · this session can be resumed only with Code Mode on\n ▝▝   ▝▝   ~/git/.worktrees/noamsto/dispatcher/feat-1565-spike-opt-in-claude-code-mode-for-claude\n▝▜██████▀  Opus 5.5 with low effort · Claude Ultra\n ▐▛███▛█   Claude Code v2.1.325
+codemode_startup.txt	box_any.rc	0
+codemode_startup.txt	box_any.out	❯ \n  Edit(//home/noams/git/noamsto/dispatcher/**)\n⚠ Deny rule Write(//home/noams/git/noamsto/dispatcher/**) never matches · use\n⚠ Code Mode (experimental) is on · this session can be resumed only with Code Mode on\n ▝▝   ▝▝   ~/git/.worktrees/noamsto/dispatcher/feat-1565-spike-opt-in-claude-code-mode-for-claude\n▝▜██████▀  Opus 5.5 with low effort · Claude Ultra\n ▐▛███▛█   Claude Code v2.1.325
+codemode_startup.txt	claude_idle_box.own0.plain	1
+codemode_startup.txt	claude_idle_box.own0.color	1
+codemode_startup.txt	claude_idle_box.own1.plain	1
+codemode_startup.txt	claude_idle_box.own1.color	1
+codemode_startup.txt	idle_reason.skip0.plain	rc=1 reason=no finished-turn marker above the input box
+codemode_startup.txt	idle_reason.skip0.color	rc=1 reason=no finished-turn marker above the input box
+codemode_startup.txt	idle_reason.skip1.plain	rc=1 reason=no finished-turn marker above the input box
+codemode_startup.txt	idle_reason.skip1.color	rc=1 reason=no finished-turn marker above the input box
+codemode_working_early.txt	codex_hook_review	0
+codemode_working_early.txt	permission_prompt@claude	0
+codemode_working_early.txt	permission_prompt@codex	0
+codemode_working_early.txt	permission_prompt@pi	0
+codemode_working_early.txt	permission_prompt@cursor	0
+codemode_working_early.txt	prompt@claude	0
+codemode_working_early.txt	prompt@codex	0
+codemode_working_early.txt	prompt@pi	0
+codemode_working_early.txt	prompt@cursor	0
+codemode_working_early.txt	quota_prompt	0
+codemode_working_early.txt	quota_session_limit	0
+codemode_working_early.txt	quota_cursor_limit	0
+codemode_working_early.txt	bg_wait	0
+codemode_working_early.txt	meter	✶ Kneading… (11s · ↓ 115 tokens)
+codemode_working_early.txt	subrow	0
+codemode_working_early.txt	pi_live_turn	1
+codemode_working_early.txt	pi_working_row	0
+codemode_working_early.txt	pi_working_label	0
+codemode_working_early.txt	pi_idle_box	0
+codemode_working_early.txt	box_claude.rc	0
+codemode_working_early.txt	box_claude.out	❯ \n✶ Kneading… (11s · ↓ 115 tokens)\n  --oneline -3, (3) count lines of README.md. Do not edit any file.\n❯ Use code to run these in parallel, then summarize in one line: (1) the shell command sleep 25; echo a, (2) git log\n  Edit(//home/noams/git/noamsto/dispatcher/**)\n⚠ Deny rule Write(//home/noams/git/noamsto/dispatcher/**) never matches · use\n⚠ Code Mode (experimental) is on · this session can be resumed only with Code Mode on\n ▝▝   ▝▝   ~/git/.worktrees/noamsto/dispatcher/feat-1565-spike-opt-in-claude-code-mode-for-claude
+codemode_working_early.txt	box_any.rc	0
+codemode_working_early.txt	box_any.out	❯ \n✶ Kneading… (11s · ↓ 115 tokens)\n  --oneline -3, (3) count lines of README.md. Do not edit any file.\n❯ Use code to run these in parallel, then summarize in one line: (1) the shell command sleep 25; echo a, (2) git log\n  Edit(//home/noams/git/noamsto/dispatcher/**)\n⚠ Deny rule Write(//home/noams/git/noamsto/dispatcher/**) never matches · use\n⚠ Code Mode (experimental) is on · this session can be resumed only with Code Mode on\n ▝▝   ▝▝   ~/git/.worktrees/noamsto/dispatcher/feat-1565-spike-opt-in-claude-code-mode-for-claude
+codemode_working_early.txt	claude_idle_box.own0.plain	0
+codemode_working_early.txt	claude_idle_box.own0.color	0
+codemode_working_early.txt	claude_idle_box.own1.plain	0
+codemode_working_early.txt	claude_idle_box.own1.color	0
+codemode_working_early.txt	idle_reason.skip0.plain	rc=1 reason=background shell or monitor still running
+codemode_working_early.txt	idle_reason.skip0.color	rc=1 reason=background shell or monitor still running
+codemode_working_early.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+codemode_working_early.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+codemode_working_late.txt	codex_hook_review	0
+codemode_working_late.txt	permission_prompt@claude	0
+codemode_working_late.txt	permission_prompt@codex	0
+codemode_working_late.txt	permission_prompt@pi	0
+codemode_working_late.txt	permission_prompt@cursor	0
+codemode_working_late.txt	prompt@claude	0
+codemode_working_late.txt	prompt@codex	0
+codemode_working_late.txt	prompt@pi	0
+codemode_working_late.txt	prompt@cursor	0
+codemode_working_late.txt	quota_prompt	0
+codemode_working_late.txt	quota_session_limit	0
+codemode_working_late.txt	quota_cursor_limit	0
+codemode_working_late.txt	bg_wait	0
+codemode_working_late.txt	meter	✽ Kneading… (27s · ↓ 115 tokens)
+codemode_working_late.txt	subrow	0
+codemode_working_late.txt	pi_live_turn	1
+codemode_working_late.txt	pi_working_row	0
+codemode_working_late.txt	pi_working_label	0
+codemode_working_late.txt	pi_idle_box	0
+codemode_working_late.txt	box_claude.rc	0
+codemode_working_late.txt	box_claude.out	❯ \n✽ Kneading… (27s · ↓ 115 tokens)\n  --oneline -3, (3) count lines of README.md. Do not edit any file.\n❯ Use code to run these in parallel, then summarize in one line: (1) the shell command sleep 25; echo a, (2) git log\n  Edit(//home/noams/git/noamsto/dispatcher/**)\n⚠ Deny rule Write(//home/noams/git/noamsto/dispatcher/**) never matches · use\n⚠ Code Mode (experimental) is on · this session can be resumed only with Code Mode on\n ▝▝   ▝▝   ~/git/.worktrees/noamsto/dispatcher/feat-1565-spike-opt-in-claude-code-mode-for-claude
+codemode_working_late.txt	box_any.rc	0
+codemode_working_late.txt	box_any.out	❯ \n✽ Kneading… (27s · ↓ 115 tokens)\n  --oneline -3, (3) count lines of README.md. Do not edit any file.\n❯ Use code to run these in parallel, then summarize in one line: (1) the shell command sleep 25; echo a, (2) git log\n  Edit(//home/noams/git/noamsto/dispatcher/**)\n⚠ Deny rule Write(//home/noams/git/noamsto/dispatcher/**) never matches · use\n⚠ Code Mode (experimental) is on · this session can be resumed only with Code Mode on\n ▝▝   ▝▝   ~/git/.worktrees/noamsto/dispatcher/feat-1565-spike-opt-in-claude-code-mode-for-claude
+codemode_working_late.txt	claude_idle_box.own0.plain	0
+codemode_working_late.txt	claude_idle_box.own0.color	0
+codemode_working_late.txt	claude_idle_box.own1.plain	0
+codemode_working_late.txt	claude_idle_box.own1.color	0
+codemode_working_late.txt	idle_reason.skip0.plain	rc=1 reason=background shell or monitor still running
+codemode_working_late.txt	idle_reason.skip0.color	rc=1 reason=background shell or monitor still running
+codemode_working_late.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+codemode_working_late.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+codemode_idle_done.txt	codex_hook_review	0
+codemode_idle_done.txt	permission_prompt@claude	0
+codemode_idle_done.txt	permission_prompt@codex	0
+codemode_idle_done.txt	permission_prompt@pi	0
+codemode_idle_done.txt	permission_prompt@cursor	0
+codemode_idle_done.txt	prompt@claude	0
+codemode_idle_done.txt	prompt@codex	0
+codemode_idle_done.txt	prompt@pi	0
+codemode_idle_done.txt	prompt@cursor	0
+codemode_idle_done.txt	quota_prompt	0
+codemode_idle_done.txt	quota_session_limit	0
+codemode_idle_done.txt	quota_cursor_limit	0
+codemode_idle_done.txt	bg_wait	0
+codemode_idle_done.txt	meter	
+codemode_idle_done.txt	subrow	0
+codemode_idle_done.txt	pi_live_turn	1
+codemode_idle_done.txt	pi_working_row	0
+codemode_idle_done.txt	pi_working_label	0
+codemode_idle_done.txt	pi_idle_box	0
+codemode_idle_done.txt	box_claude.rc	0
+codemode_idle_done.txt	box_claude.out	❯ \n✻ Brewed for 32s · done 2:23 PM\n  eb00521, 535c163 and 623dd46 (all the --code-mode work), and README.md has 1082 lines.\n● All three ran together in about 25.5 s and no files were changed: the sleep printed a, the last three commits are\n  Read 1 file, ran 2 shell commands\n  --oneline -3, (3) count lines of README.md. Do not edit any file.\n❯ Use code to run these in parallel, then summarize in one line: (1) the shell command sleep 25; echo a, (2) git log\n  Edit(//home/noams/git/noamsto/dispatcher/**)
+codemode_idle_done.txt	box_any.rc	0
+codemode_idle_done.txt	box_any.out	❯ \n✻ Brewed for 32s · done 2:23 PM\n  eb00521, 535c163 and 623dd46 (all the --code-mode work), and README.md has 1082 lines.\n● All three ran together in about 25.5 s and no files were changed: the sleep printed a, the last three commits are\n  Read 1 file, ran 2 shell commands\n  --oneline -3, (3) count lines of README.md. Do not edit any file.\n❯ Use code to run these in parallel, then summarize in one line: (1) the shell command sleep 25; echo a, (2) git log\n  Edit(//home/noams/git/noamsto/dispatcher/**)
+codemode_idle_done.txt	claude_idle_box.own0.plain	1
+codemode_idle_done.txt	claude_idle_box.own0.color	1
+codemode_idle_done.txt	claude_idle_box.own1.plain	1
+codemode_idle_done.txt	claude_idle_box.own1.color	1
+codemode_idle_done.txt	idle_reason.skip0.plain	rc=0 reason=
+codemode_idle_done.txt	idle_reason.skip0.color	rc=0 reason=
+codemode_idle_done.txt	idle_reason.skip1.plain	rc=0 reason=
+codemode_idle_done.txt	idle_reason.skip1.color	rc=0 reason=
+codemode_bgcode_idle.txt	codex_hook_review	0
+codemode_bgcode_idle.txt	permission_prompt@claude	0
+codemode_bgcode_idle.txt	permission_prompt@codex	0
+codemode_bgcode_idle.txt	permission_prompt@pi	0
+codemode_bgcode_idle.txt	permission_prompt@cursor	0
+codemode_bgcode_idle.txt	prompt@claude	0
+codemode_bgcode_idle.txt	prompt@codex	0
+codemode_bgcode_idle.txt	prompt@pi	0
+codemode_bgcode_idle.txt	prompt@cursor	0
+codemode_bgcode_idle.txt	quota_prompt	0
+codemode_bgcode_idle.txt	quota_session_limit	0
+codemode_bgcode_idle.txt	quota_cursor_limit	0
+codemode_bgcode_idle.txt	bg_wait	1
+codemode_bgcode_idle.txt	meter	
+codemode_bgcode_idle.txt	subrow	0
+codemode_bgcode_idle.txt	pi_live_turn	1
+codemode_bgcode_idle.txt	pi_working_row	0
+codemode_bgcode_idle.txt	pi_working_label	0
+codemode_bgcode_idle.txt	pi_idle_box	0
+codemode_bgcode_idle.txt	box_claude.rc	0
+codemode_bgcode_idle.txt	box_claude.out	❯ \n✻ Cogitated for 6s · done 2:24 PM · 1 background task still running\n  bgdone will show up as late output from script #2.\n● sleep 150; echo bgdone is running in the background and no files were changed. When it finishes, in about 2.5 minutes,\n  waiting for it. Do not edit any file.\n❯ Start background code that runs the shell command sleep 150; echo bgdone and end your turn immediately without\n✻ Brewed for 32s · done 2:23 PM · 1 background task still running\n  eb00521, 535c163 and 623dd46 (all the --code-mode work), and README.md has 1082 lines.
+codemode_bgcode_idle.txt	box_any.rc	0
+codemode_bgcode_idle.txt	box_any.out	❯ \n✻ Cogitated for 6s · done 2:24 PM · 1 background task still running\n  bgdone will show up as late output from script #2.\n● sleep 150; echo bgdone is running in the background and no files were changed. When it finishes, in about 2.5 minutes,\n  waiting for it. Do not edit any file.\n❯ Start background code that runs the shell command sleep 150; echo bgdone and end your turn immediately without\n✻ Brewed for 32s · done 2:23 PM · 1 background task still running\n  eb00521, 535c163 and 623dd46 (all the --code-mode work), and README.md has 1082 lines.
+codemode_bgcode_idle.txt	claude_idle_box.own0.plain	1
+codemode_bgcode_idle.txt	claude_idle_box.own0.color	1
+codemode_bgcode_idle.txt	claude_idle_box.own1.plain	1
+codemode_bgcode_idle.txt	claude_idle_box.own1.color	1
+codemode_bgcode_idle.txt	idle_reason.skip0.plain	rc=1 reason=background shell or monitor still running
+codemode_bgcode_idle.txt	idle_reason.skip0.color	rc=1 reason=background shell or monitor still running
+codemode_bgcode_idle.txt	idle_reason.skip1.plain	rc=0 reason=
+codemode_bgcode_idle.txt	idle_reason.skip1.color	rc=0 reason=
+codemode_perm_prompt.txt	codex_hook_review	0
+codemode_perm_prompt.txt	permission_prompt@claude	1
+codemode_perm_prompt.txt	permission_prompt@codex	0
+codemode_perm_prompt.txt	permission_prompt@pi	0
+codemode_perm_prompt.txt	permission_prompt@cursor	0
+codemode_perm_prompt.txt	prompt@claude	0
+codemode_perm_prompt.txt	prompt@codex	0
+codemode_perm_prompt.txt	prompt@pi	0
+codemode_perm_prompt.txt	prompt@cursor	0
+codemode_perm_prompt.txt	quota_prompt	0
+codemode_perm_prompt.txt	quota_session_limit	0
+codemode_perm_prompt.txt	quota_cursor_limit	0
+codemode_perm_prompt.txt	bg_wait	0
+codemode_perm_prompt.txt	meter	
+codemode_perm_prompt.txt	subrow	0
+codemode_perm_prompt.txt	pi_live_turn	1
+codemode_perm_prompt.txt	pi_working_row	0
+codemode_perm_prompt.txt	pi_working_label	0
+codemode_perm_prompt.txt	pi_idle_box	0
+codemode_perm_prompt.txt	box_claude.rc	1
+codemode_perm_prompt.txt	box_claude.out	
+codemode_perm_prompt.txt	box_any.rc	1
+codemode_perm_prompt.txt	box_any.out	
+codemode_perm_prompt.txt	claude_idle_box.own0.plain	0
+codemode_perm_prompt.txt	claude_idle_box.own0.color	0
+codemode_perm_prompt.txt	claude_idle_box.own1.plain	0
+codemode_perm_prompt.txt	claude_idle_box.own1.color	0
+codemode_perm_prompt.txt	idle_reason.skip0.plain	rc=1 reason=prompt on screen
+codemode_perm_prompt.txt	idle_reason.skip0.color	rc=1 reason=prompt on screen
+codemode_perm_prompt.txt	idle_reason.skip1.plain	rc=1 reason=prompt on screen
+codemode_perm_prompt.txt	idle_reason.skip1.color	rc=1 reason=prompt on screen

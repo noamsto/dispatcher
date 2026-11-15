@@ -471,7 +471,14 @@ grid_roles="$(_hdr roles)"
 # newest dispatch row for this branch says whether the owner opted this lead in.
 code_mode=""
 code_mode_dropped=""
-if [ "$(jq -rs --arg b "$branch" '[.[] | select(.kind == "dispatch" and .branch == $b)] | (.[-1].code_mode // false)' "$crew_dir/events.jsonl" 2>/dev/null)" = true ]; then
+code_mode_prev=false
+if [ -e "$crew_dir/events.jsonl" ]; then
+  code_mode_prev="$(jq -nrR --arg b "$branch" '[inputs | fromjson? | objects | select(.kind == "dispatch" and .branch == $b)] | (.[-1].code_mode // false)' "$crew_dir/events.jsonl")" || {
+    echo "dispatch resume: could not read $crew_dir/events.jsonl — treating --code-mode as off" >&2
+    code_mode_prev=false
+  }
+fi
+if [ "$code_mode_prev" = true ]; then
   if [ "$agent" = claude ]; then
     code_mode=1
   else
@@ -1074,7 +1081,7 @@ _hdr_set chrome "$([ -n "$chrome" ] && echo true || echo false)"
 if [ -n "$code_mode" ]; then
   _hdr_set code_mode true
 else
-  sed -i '/^code_mode: /d' "$task_doc"
+  awk '!past && /^$/ { past = 1 } !(!past && /^code_mode: /) { print }' "$task_doc" >"$task_doc.tmp" && mv "$task_doc.tmp" "$task_doc"
 fi
 # The seam relaunch loop runs only under dispatch's own launch; a resumed lead
 # runs without it, so it must not try the trigger.
@@ -1269,8 +1276,8 @@ tmux send-keys -t "$pane" "$launch_line" Enter
 stall_flags=()
 [ -n "$ignore_budget" ] && stall_flags+=(--no-budget)
 (CREW_ID="$crew_id" nohup crew stall-watch "$worker_id" --pane "$pane" --engine "$agent" "${stall_flags[@]}" >/dev/null 2>&1 &)
-[ -z "$code_mode" ] || spawn_code_mode_watch "$worker_id" "$crew_id" "$pane"
-[ -z "$code_mode_dropped" ] || _code_mode_post "$worker_id" "$crew_id" off "$code_mode_dropped"
+[ -z "$code_mode" ] || spawn_code_mode_watch "$worker_id" "$crew_id" "$pane" "$launch_line"
+[ -z "$code_mode_dropped" ] || spawn_code_mode_post "$worker_id" "$crew_id" off "$code_mode_dropped"
 # A human resuming from a worker's own pane must not retarget the renderer
 # there; only the registered dispatcher's pane may move it.
 rr_pane="${TMUX_PANE:-}"

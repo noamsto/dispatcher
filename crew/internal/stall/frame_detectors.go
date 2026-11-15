@@ -676,18 +676,29 @@ func permissionDetail(text, pane string) string {
 		}
 	}
 	// topTitle reports whether lines[i] opens a boxed top-level dialog: a
-	// non-blank, non-rule line whose next non-blank line is the `Tip:` hint. A
+	// non-blank, non-rule line whose next non-blank line is the `Tip:` hint, or a
+	// description row directly above the request box. A
 	// version may label the tool with digits, punctuation or non-ASCII, so the
 	// line itself is not character-restricted.
 	topTitle := func(i int) bool {
-		if reBlank.MatchString(lines[i]) || rePermRule.MatchString(lines[i]) {
+		if reBlank.MatchString(lines[i]) || rePermRule.MatchString(lines[i]) || rePermTip.MatchString(lines[i]) {
 			return false
 		}
 		for j := i + 1; j < len(lines); j++ {
 			if reBlank.MatchString(lines[j]) {
 				continue
 			}
-			return rePermTip.MatchString(lines[j])
+			if rePermTip.MatchString(lines[j]) {
+				return true
+			}
+			// Code Mode's inner-tool dialog has a one-row description
+			// (`Run shell command`) where the others have the Tip.
+			for k := j + 1; k < len(lines); k++ {
+				if !reBlank.MatchString(lines[k]) {
+					return rePermRule.MatchString(lines[k])
+				}
+			}
+			return false
 		}
 		return false
 	}

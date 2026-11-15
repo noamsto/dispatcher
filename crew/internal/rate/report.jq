@@ -110,14 +110,14 @@
 
       def stats:
         $recs
-        | group_by([.engine, .model, .tier, (.code_mode == true)])
+        | group_by([.engine, .model, .tier, (.code_mode // false)])
         | map(
             . as $g
             | ($g | nrows) as $n
             | ($n | length) as $ncount
             | {
                 engine: $g[0].engine,
-                model: (if $g[0].code_mode == true then $g[0].model + "+cm" else $g[0].model end),
+                model: ($g[0].code_mode // false | if . == true then "+cm" elif . == "unknown" then "+cm?" else "" end | $g[0].model + .),
                 tier: $g[0].tier,
                 n: agg($ncount; $ncount; $ncount),
                 inc: ($g | map(select(.outcome == "incomplete")) | length),

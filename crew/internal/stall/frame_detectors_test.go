@@ -182,6 +182,10 @@ const topPermission = "prompt: permission — Bash command: printf hi > ./out.tx
 
 // guardPermission is permission_bash_guard.txt's relay row: the guard and
 // countdown lines are not the request.
+// codeModePermission is codemode_perm_prompt.txt's relay row: Code Mode's
+// inner-tool dialog has a `Run shell command` row where the others have the Tip.
+const codeModePermission = "prompt: permission — Bash command: echo cmp-ask-probe hello — pane %1"
+
 const guardPermission = "prompt: permission — Bash command: rm -f \"$S\"/*.log — pane %1"
 
 func wd(detail string) string { return fmt.Sprintf(wdBlock, detail) }
@@ -238,9 +242,11 @@ func TestD1Prompt(t *testing.T) {
 			want:  map[int64][]string{15: {"blocked|" + topPermission}},
 		}},
 		{"countdown block-wording dialog", fdScript{
-			end:   60,
-			frame: static(fixture(t, "permission_countdown_block.txt")),
-			want:  map[int64][]string{15: {"blocked|" + guardPermission}},
+			end: 60,
+			frame: static(strings.Replace(fixture(t, "permission_bash_guard.txt"),
+				"will automatically deny this request in 1:30, to avoid blocking progress on",
+				"will automatically block this request in 1:30, to avoid holding up", 1)),
+			want: map[int64][]string{15: {"blocked|" + guardPermission}},
 		}},
 		{"Code Mode opt-in dialog", fdScript{
 			end:   60,
@@ -365,6 +371,74 @@ func TestD1PermissionDetailOnTheBus(t *testing.T) {
 			}
 		}
 	}
+}
+
+// TestCodeModeFrames runs the detectors over live Code Mode captures: the
+// permission dialog of an inner tool call, the working meter, and the idle
+// frames.
+func TestCodeModeFrames(t *testing.T) {
+	startup := fixture(t, "codemode_startup.txt")
+	early := fixture(t, "codemode_working_early.txt")
+	late := fixture(t, "codemode_working_late.txt")
+	done := fixture(t, "codemode_idle_done.txt")
+	bg := fixture(t, "codemode_bgcode_idle.txt")
+	perm := fixture(t, "codemode_perm_prompt.txt")
+
+	if !frame.IsPermissionPrompt("claude", perm) || frame.IsPrompt("claude", perm) {
+		t.Error("perm dialog: want a permission prompt that is not an opt-in-style prompt")
+	}
+	for name, text := range map[string]string{"startup": startup, "early": early, "late": late, "done": done, "bg": bg} {
+		if frame.IsPermissionPrompt("claude", text) || frame.IsPrompt("claude", text) {
+			t.Errorf("%s: read as a prompt", name)
+		}
+	}
+	for name, text := range map[string]string{"startup": startup, "done": done} {
+		if !frame.ClaudeIdleBox(text, "", false) || frame.MeterLine(text) != "" {
+			t.Errorf("%s: not an idle input box", name)
+		}
+	}
+	if reason, idle := frame.PaneIdleReason(done, "", false); !idle {
+		t.Errorf("done frame not idle: %s", reason)
+	}
+	if _, idle := frame.PaneIdleReason(bg, "", false); idle {
+		t.Error("idle prompt with a background task running read as idle")
+	}
+
+	// The meter clock advances over static tokens with no tool sub-row, the
+	// d2 signature. Foreground code stops at 10 minutes, below cfg.idle's 1800s
+	// default, so one foreground run cannot reach the d2 threshold; the
+	// captures' span (16s) must not fire it.
+	for name, c := range map[string]struct{ text, clock string }{"early": {early, "11s "}, "late": {late, "27s "}} {
+		line := frame.MeterLine(c.text)
+		if meterClock(line) != c.clock || meterTokens(line) != "115" || frame.HasSubrow(c.text) {
+			t.Errorf("%s meter %q: clock %q tokens %q", name, line, meterClock(line), meterTokens(line))
+		}
+	}
+	runScript(t, fdScript{
+		end: 90,
+		frame: func(at int64) string {
+			if at < 15 {
+				return early
+			}
+			return late
+		},
+	})
+
+	t.Run("perm dialog posts the tool and request", func(t *testing.T) {
+		runScript(t, fdScript{end: 60, frame: static(perm), want: map[int64][]string{15: {"blocked|" + codeModePermission}}})
+	})
+	t.Run("idle code-mode frames post nothing as a prompt", func(t *testing.T) {
+		for _, text := range []string{startup, done} {
+			runScript(t, fdScript{req: Request{Idle: ptr("9999"), Stall: ptr("9999")}, end: 60, frame: static(text)})
+		}
+	})
+	t.Run("a background-code wait is silent up to --bg-wait", func(t *testing.T) {
+		runScript(t, fdScript{
+			req: Request{Idle: ptr("60"), Stall: ptr("30"), Window: ptr("100"), BgWait: ptr("120")}, end: 135,
+			frame: static(bg),
+			want:  map[int64][]string{120: {"blocked|quiet: pane unchanged for 120s"}},
+		})
+	})
 }
 
 func TestD1bQuotaRefusal(t *testing.T) {
@@ -980,8 +1054,8 @@ func TestPermissionDetailFixtures(t *testing.T) {
 		"permission_bash.txt":                  topPermission,
 		"permission_bash_guard.txt":            guardPermission,
 		"permission_bash_guard.color.txt":      guardPermission,
-		"permission_countdown_block.txt":       guardPermission,
 		"permission_subagent.txt":              subagentPermission,
+		"codemode_perm_prompt.txt":             codeModePermission,
 	}
 	for name, prefix := range cases {
 		got := permissionDetail(fixture(t, name), "%1")

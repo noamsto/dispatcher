@@ -1,0 +1,39 @@
+
+ ▐▛███▛█   Claude Code v2.1.325
+▝▜██████▀  Opus 5.5 with low effort · Claude Ultra
+ ▝▝   ▝▝   ~/…/.worktrees/noamsto/dispatcher/feat-1565-spike-opt-in-claude-code-mode-for-claude
+
+⚠ Code Mode (experimental) is on · this session can be resumed only with Code Mode on
+⚠ Deny rule Write(//home/noams/git/noamsto/dispatcher/**) never matches · use
+  Edit(//home/noams/git/noamsto/dispatcher/**)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  No Chrome or computer use: exit and run CLAUDE_CODE_EXPERIMENTAL_CODE_MODE=0 claude for a new s…
+───────────────────────────────────────────────────────────────────────────────────────── cm-probe ─
+❯ 
+────────────────────────────────────────────────────────────────────────────────────────────────────
+  🤖 Opus 5.5 🧠 low | 📊 0k/1M
+  -- INSERT -- ⏵⏵ auto mode on (shift+tab to cycle) · ← 1 agent

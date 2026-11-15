@@ -173,20 +173,26 @@ func TestRecordsCodeMode(t *testing.T) {
 	}
 	on := `"{\"state\":\"on\"}"`
 	refused := `"{\"state\":\"refused\"}"`
+	off := `"{\"state\":\"off\"}"`
+	unknown := `"{\"state\":\"unknown\"}"`
 
 	cases := []struct {
 		name   string
 		events []string
-		want   bool
+		want   any // nil: key absent
 	}{
 		{"on", []string{disp("b", true), sink("b", 1100, on)}, true},
-		{"on then refused", []string{disp("b", true), sink("b", 1100, on), sink("b", 1200, refused)}, false},
-		{"no sink", []string{disp("b", true)}, false},
-		{"sink without dispatch flag", []string{disp("b", false), sink("b", 1100, on)}, false},
-		{"plain", []string{disp("b", false)}, false},
-		{"junk array", []string{disp("b", true), sink("b", 1100, `"[1]"`)}, false},
-		{"junk number", []string{disp("b", true), sink("b", 1100, `"5"`)}, false},
-		{"junk text", []string{disp("b", true), sink("b", 1100, `"not json"`)}, false},
+		{"on then refused", []string{disp("b", true), sink("b", 1100, on), sink("b", 1200, refused)}, nil},
+		{"refused", []string{disp("b", true), sink("b", 1100, refused)}, nil},
+		{"off", []string{disp("b", true), sink("b", 1100, off)}, nil},
+		{"unknown", []string{disp("b", true), sink("b", 1100, unknown)}, "unknown"},
+		{"refused then unknown", []string{disp("b", true), sink("b", 1100, refused), sink("b", 1200, unknown)}, "unknown"},
+		{"no sink", []string{disp("b", true)}, "unknown"},
+		{"sink without dispatch flag", []string{disp("b", false), sink("b", 1100, on)}, nil},
+		{"plain", []string{disp("b", false)}, nil},
+		{"junk array", []string{disp("b", true), sink("b", 1100, `"[1]"`)}, "unknown"},
+		{"junk number", []string{disp("b", true), sink("b", 1100, `"5"`)}, "unknown"},
+		{"junk text", []string{disp("b", true), sink("b", 1100, `"not json"`)}, "unknown"},
 	}
 	vars := map[string]any{"repo": "acme/widgets", "costmap": map[string]any{}}
 	for _, tc := range cases {
@@ -205,8 +211,8 @@ func TestRecordsCodeMode(t *testing.T) {
 			}
 			rec := list[0].(map[string]any)
 			v, has := rec["code_mode"]
-			if has != tc.want || (has && v != true) {
-				t.Fatalf("code_mode = %v (present %v), want present %v", v, has, tc.want)
+			if has != (tc.want != nil) || (has && v != tc.want) {
+				t.Fatalf("code_mode = %v (present %v), want %v", v, has, tc.want)
 			}
 		})
 	}

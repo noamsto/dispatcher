@@ -130,8 +130,14 @@
           reverted: null,
           swept_at: (now*1000|floor)
         }
-        # Key absent unless true, so every stored run is not re-appended once
-        # through merge.jq's equality.
-        + (if ($d.code_mode == true) and ((($cm | objects | .state) // null) == "on")
-           then {code_mode: true} else {} end)
+        # Key absent for ordinary runs, so every stored run is not re-appended
+        # once through merge.jq's equality. Only an explicit refused/off state
+        # means the run used ordinary tools; a missing or unreadable outcome
+        # is "unknown", which no rating arm may count.
+        + (if $d.code_mode != true then {}
+           else ((($cm | objects | .state) // null) as $s
+                 | if $s == "on" then {code_mode: true}
+                   elif ($s == "refused" or $s == "off") then {}
+                   else {code_mode: "unknown"} end)
+           end)
   ]

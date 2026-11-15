@@ -241,9 +241,11 @@ func decodeGroups(t *testing.T, out string) []map[string]any {
 
 func TestReportSplitsCodeModeRunsIntoTheirOwnGroup(t *testing.T) {
 	cm := strings.Replace(mergedRow("acme/widgets", "e2", "claude", "opus", "standard", "medium"), "{", `{"code_mode":true,`, 1)
+	unk := strings.Replace(mergedRow("acme/widgets", "e3", "claude", "opus", "standard", "medium"), "{", `{"code_mode":"unknown",`, 1)
 	got := reportOut(t, storeOf(
 		mergedRow("acme/widgets", "e1", "claude", "opus", "standard", "medium"),
 		cm,
+		unk,
 	), Request{})
 	var rows []string
 	for _, l := range strings.Split(got, "\n") {
@@ -251,7 +253,7 @@ func TestReportSplitsCodeModeRunsIntoTheirOwnGroup(t *testing.T) {
 			rows = append(rows, l)
 		}
 	}
-	if len(rows) != 2 || strings.Contains(rows[0], "+cm") || !strings.Contains(rows[1], "opus+cm") {
-		t.Errorf("want an ordinary group then an opus+cm group, got %q in:\n%s", rows, got)
+	if len(rows) != 3 || strings.Contains(rows[0], "+cm") || !strings.Contains(rows[1], "opus+cm ") || !strings.Contains(rows[2], "opus+cm?") {
+		t.Errorf("want an ordinary group, an opus+cm group, then an opus+cm? group, got %q in:\n%s", rows, got)
 	}
 }

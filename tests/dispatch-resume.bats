@@ -3822,6 +3822,7 @@ _cm_wait_post() {
   line="$(grep -F 'codex ' <(launch_log) | head -1)"
   [[ "$line" != *CLAUDE_CODE_EXPERIMENTAL_CODE_MODE* ]]
   run ! grep -q '^code_mode:' "$WT/WORKER_TASK.md"
+  _cm_wait_post
   grep -qF 'code-mode:c1 {"state":"off","why":"resumed on codex"}' "$STUB_LOG"
   run ! grep -q 'capture-pane' "$STUB_LOG"
 }
@@ -3851,4 +3852,35 @@ _cm_wait_post() {
   grep -qx 'code_mode: true' "$WT/WORKER_TASK.md"
   _cm_wait_post
   sleep 1
+}
+
+@test "code-mode: a truncated bus line does not drop a recorded Code Mode" {
+  setup_worker_wt
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  _cm_config
+  _cm_dispatch_row true
+  printf '{"ts": 2, "kind": "sta' >>"$TEST_REPO/.git/crew/events.jsonl"
+  printf '\n' >>"$TEST_REPO/.git/crew/events.jsonl"
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 0 ]
+  line="$(grep -F 'claude --continue' <(launch_log))"
+  [[ "$line" == *CLAUDE_CODE_EXPERIMENTAL_CODE_MODE* ]]
+  grep -qx 'code_mode: true' "$WT/WORKER_TASK.md"
+  _cm_wait_post
+  sleep 1
+}
+
+@test "code-mode: dropping the header line leaves a column-0 code_mode line in the task body" {
+  setup_worker_wt 'code_mode: true'
+  printf 'code_mode: true\n' >>"$WT/WORKER_TASK.md"
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  _cm_config
+  _cm_dispatch_row false
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 0 ]
+  [ "$(grep -c '^code_mode: true$' "$WT/WORKER_TASK.md")" -eq 1 ]
+  [ "$(sed -n '/^$/q;/^code_mode:/p' "$WT/WORKER_TASK.md")" = "" ]
+  tail -n 1 "$WT/WORKER_TASK.md" | grep -qx 'code_mode: true'
 }
