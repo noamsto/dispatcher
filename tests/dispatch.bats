@@ -4641,6 +4641,13 @@ _pinned_store_bin() {
   [[ "$launch" == *'--effort medium'* ]]
 }
 
+@test "claude subagent effort helper maps every session rung" {
+  source "$BATS_TEST_DIRNAME/../adapters/core/launcher-common.sh"
+  for pair in max:high xhigh:high high:medium medium:low low:low; do
+    [ "$(claude_subagent_effort_env "${pair%%:*}")" = "CLAUDE_CODE_SUBAGENT_EFFORT=${pair##*:} " ]
+  done
+}
+
 @test "claude xhigh lead caps the subagent effort at high" {
   stub_launch_bins
   DISPATCH_PROFILE=work run run_dispatch deep opus --agent claude --effort xhigh --crew-id c1 42 "title"
