@@ -21,7 +21,7 @@ Fast deterministic gate green → before `/deslop` + push, get an independent re
   Roster severities: CRITICAL/HIGH/MEDIUM (shared tail); CRITICAL counts as HIGH for review_high.
 - Dispatch the review as a single parallel batch (one message, concurrent subagents). Roles are identical on every engine; the engine sets only spawn mechanism and rung:
 <!-- only:claude -->
-  - claude: Agent tool, one subagent per matched entry, resolved brief as prompt. Native agent preferred, only for a harness identity (entry `name` when `source` is `harness`, or `override.of` when set) matched by name or that harness entry's `aliases:`, spawned with the resolved brief; a new repo entry always runs as a general subagent. Rung: `model: opus` (Agent override) on every batch subagent, whatever the lead model; effort as-is.
+  - claude: Agent tool, one subagent per matched entry, resolved brief as prompt. Native agent preferred, only for a harness identity (entry `name` when `source` is `harness`, or `override.of` when set) matched by name or that harness entry's `aliases:`, spawned with the resolved brief; a new repo entry always runs as a general subagent. Rung: `model: opus` (Agent override) on every batch subagent, whatever the lead model, and `effort: <session effort>` (the task doc's `effort:`) so the lowered `CLAUDE_CODE_SUBAGENT_EFFORT` default doesn't apply.
 <!-- /only -->
 <!-- only:codex -->
   - codex: native subagent (`agents.enabled`, cap 3), the matched entry's resolved brief in its prompt. The review batch spawns at every session effort; rule 1's `ultra` clause covers execute subagents only. Rung: the tier's execute rung (deep → terra, standard → luna); effort as `dispatch` pinned (no per-spawn override).

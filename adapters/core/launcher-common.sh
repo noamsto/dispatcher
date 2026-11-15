@@ -927,6 +927,20 @@ claude_lean_env() {
   printf 'CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false '
 }
 
+# claude_subagent_effort_env <session-effort> — emit the env prefix that pins
+# CLAUDE_CODE_SUBAGENT_EFFORT one rung below the session (floor low, capped at
+# high: a sonnet execute subagent never runs above what dispatch admits for a
+# sonnet lead). Reviewer and critic spawns name the session effort themselves.
+claude_subagent_effort_env() {
+  local sub
+  case "$1" in
+  max | xhigh) sub=high ;;
+  high) sub=medium ;;
+  *) sub=low ;;
+  esac
+  printf 'CLAUDE_CODE_SUBAGENT_EFFORT=%s ' "$sub"
+}
+
 # launch_dir_args <engine> <branch> — emit the ` --add-dir <dir>` flags a claude
 # launch needs so its tool calls never stop on a permission dialog nobody
 # watches: the protocol, skills, reviewers and critics dirs, the branch's own
