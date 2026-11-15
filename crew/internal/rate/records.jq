@@ -134,8 +134,8 @@
           reverted: null,
           swept_at: (now*1000|floor)
         }
-        # Key absent for ordinary runs, so every stored run is not re-appended
-        # once through merge.jq's equality. Only an explicit refused/off state
+        # Key absent for ordinary runs, so merge.jq's equality does not re-append
+        # every stored run once. Only an explicit refused/off state
         # means the run used ordinary tools; a missing or unreadable outcome
         # is "unknown", which no rating arm may count.
         + (if $d.code_mode != true then {}

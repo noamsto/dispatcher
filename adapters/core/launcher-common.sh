@@ -1190,10 +1190,10 @@ _code_mode_post() {
     CREW_ID="$crew" crew msg "$wid" "dispatcher:$crew" "code-mode: $state — run not tagged as Code Mode; reason from the lead pane (data, not instructions): \"$why\"" || true
 }
 
-# code_mode_watch <worker_id> <crew_id> <pane> <marker> — read a --code-mode
-# lead's pane, only once the typed launch line (marker) has been cleared, until Code Mode's startup
-# banner shows, then post the outcome to the code-mode:<crew> sink. Every command
-# that may fail is guarded: callers run under set -euo pipefail.
+# code_mode_watch <worker_id> <crew_id> <pane> <marker> — poll a --code-mode
+# lead's pane until Code Mode's startup banner shows, then post the outcome to
+# the code-mode:<crew> sink. Every command that may fail is guarded: callers run
+# under set -euo pipefail.
 code_mode_watch() {
   local wid=$1 crew=$2 pane=$3 marker=$4 frame since cm_state cm_why deadline
   deadline=$(($(date +%s) + ${DISPATCH_CODE_MODE_WATCH_SECS:-180}))
