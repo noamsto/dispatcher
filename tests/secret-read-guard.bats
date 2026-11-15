@@ -2416,6 +2416,53 @@ assert_allow_within_each_awk() {
   deny_both $'export PATH=/tmp; eval \'cat\' \'<<\\EOF\n`env`\nEOF\''
 }
 
+@test "secret-read-guard: #1567 allows a quoted text-sink heredoc followed by a trailing plain export" {
+  # A trailing plain export runs after every heredoc sink in the text, so it
+  # cannot change what they resolve to.
+  local h=$'cat > /tmp/x <<\'EOF\'\nthe server (export `A`). end\nEOF\n'
+  allow_both "$h"'cd /a; export X=1'
+  allow_both "$h"'cd /a; export X=1 Y=2'
+  allow_both "$h"'cd /a; export PATH=/x'
+  # bash's export checks the operand is a legal identifier before any
+  # expansion or assignment, so a quoted subscript name runs nothing.
+  allow_both "$h"$'export X\'[Y]=1\''
+}
+
+@test "secret-read-guard: #1567 still denies dumps and non-trailing lookup changes around a quoted heredoc" {
+  local h=$'cat > /tmp/x <<\'EOF\'\nthe server (export `A`). end\nEOF\n'
+  # Dumps on the command itself.
+  deny_both "$h"'export'
+  deny_both "$h"'export -p'
+  deny_both "$h"'export >/tmp/y'
+  deny_both "$h"'echo $(export)'
+  deny_both "$h"'echo `export`'
+  # Accepted over-deny: an all-quoted operand blanks to a bare `export`.
+  deny_both "$h"$'export \'a[Y]=1\''
+  # Heredocs fed to a shell.
+  deny_both $'bash <<EOF\nexport\nEOF\nexport X=1'
+  deny_both $'sh -s <<EOF\nexport\nEOF\nexport X=1'
+  deny_both $'cat <<\'EOF\' | bash\nexport\nEOF\nexport X=1'
+  # A lookup change before a sink, or a trailing export followed by a stage.
+  deny_both $'export X=1; cat > /tmp/x <<\'EOF\'\n(export `A`)\nEOF\n'
+  deny_both "$h"'export X=1; ls'
+  deny_both "$h"'export X=1; git commit -F /tmp/x'
+  deny_both "$h"'export X=`bash /tmp/x`'
+  deny_both "$h"'export X=$(bash /tmp/x)'
+  deny_both "$h"'source /tmp/x'
+  deny_both "$h"'export -n X'
+  deny_both "$h"'declare -x X=1'
+  deny_both "$h"'cd /a; X=1'
+  # Expansions that can run code without a `(`.
+  deny_both "$h"$'Y=\'$(bash /tmp/x)\'; export X=${Y@P}'
+  deny_both "$h"$'Y=\'$(bash /tmp/x)\'; X=${Y@P}'
+  deny_both "$h"'export X=${Y@P}'
+  deny_both "$h"'export X="${Y@P}"'
+  deny_both "$h"$'Y=\'b[$(bash /tmp/x)]\'; export X=${a[Y]}'
+  deny_both "$h"'export X=${!Y}'
+  deny_both "$h"'export X=$[Y]'
+  deny_both "$h"$'Y=\'b[$(bash /tmp/x)]\'; export \'a[Y]=1\''
+}
+
 @test "secret-read-guard: rule 2 — denies a dumper after a separator inside an inline comment (accepted over-deny)" {
   deny_cmd 'ls # then; env'
 }
