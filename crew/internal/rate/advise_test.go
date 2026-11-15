@@ -501,3 +501,18 @@ func TestAdviseLocalLaneIdIsNotCalledUnselectable(t *testing.T) {
 		}
 	}
 }
+
+func TestAdviseIgnoresCodeModeRows(t *testing.T) {
+	req := Request{Advise: true, Args: []string{"claude", "standard"}}
+	want, _, _ := runAdvise(t, adviseFixture(), req)
+	withCM := adviseFixture()
+	extra := strings.Replace(advRow("acme/widgets", "cm-1", "opus", 5), "{", `{"code_mode":true,`, 1)
+	*withCM += extra + "\n"
+	got, errb, code := runAdvise(t, withCM, req)
+	if code != 0 || errb != "" {
+		t.Fatalf("exit %d, stderr %q", code, errb)
+	}
+	if got != want {
+		t.Errorf("a code_mode row changed the advice:\n%s\nwant\n%s", got, want)
+	}
+}

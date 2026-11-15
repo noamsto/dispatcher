@@ -1097,3 +1097,15 @@ _child_on_chain() {
   done
   return 1
 }
+
+# code_mode_optin_refusal — print the refusal for a --code-mode launch when the
+# owner has not accepted Code Mode's one-time opt-in dialogs, nothing otherwise.
+# Only the owner can accept them (a worker parked on the dialog would wedge), so
+# this reads the owner's .claude.json and never writes it.
+code_mode_optin_refusal() {
+  local f="${CLAUDE_CONFIG_DIR:-$HOME}/.claude.json"
+  if jq -e '.codeModeCaveatsAcceptedV1 == true and .codeModeAutoModeCaveatAcceptedV1 == true' "$f" >/dev/null 2>&1; then
+    return 0
+  fi
+  printf 'dispatch: --code-mode needs Code Mode'\''s one-time opt-in, which only the owner can accept: run CLAUDE_CODE_EXPERIMENTAL_CODE_MODE=1 CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=0 claude in a terminal and choose "Yes, turn on Code Mode" (dispatch never writes %s)\n' "$f"
+}

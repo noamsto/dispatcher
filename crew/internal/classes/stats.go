@@ -24,6 +24,10 @@ func Rated(row map[string]any) bool {
 	if row["task_kind"] == "review" {
 		return false
 	}
+	// Trial runs are not class evidence.
+	if row["code_mode"] == true {
+		return false
+	}
 	if row["owns_pr"] == true {
 		state, _ := row["pr_state"].(string)
 		return state == "MERGED" || state == "CLOSED"

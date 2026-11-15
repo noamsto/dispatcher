@@ -170,6 +170,12 @@ func rows() []row {
 	add("prompt: codex hook review", "codex", "prompt", hookReview, "", "1")
 	add("prompt: pi uses the claude shape", "pi", "prompt", trust, "", "1")
 
+	optin := "  ❯ No, start without it\n    Yes, turn on Code Mode\n\n  Tell us how it goes with /feedback\n\n  Enter to confirm · Esc to start without it"
+	add("prompt: Code Mode opt-in dialog", claude, "prompt", optin, "", "1")
+	add("prompt: Code Mode opt-in footer without the Yes option", claude, "prompt", "  ❯ No, start without it\n  Enter to confirm · Esc to start without it", "", "0")
+	add("prompt: Code Mode opt-in footer not last", claude, "prompt", optin+"\n"+modeRow, "", "0")
+	add("prompt: Code Mode opt-in is claude only", "pi", "prompt", optin, "", "0")
+
 	add("permission: claude dialog", claude, "permission_prompt", permAsk, "", "1")
 	add("permission: other engines never match", "pi", "permission_prompt", permAsk, "", "0")
 	add("permission: footer scrolled up", claude, "permission_prompt", permAsk+"\n"+modeRow, "", "0")

@@ -237,6 +237,16 @@ func TestD1Prompt(t *testing.T) {
 			frame: static(fixture(t, "permission_bash.txt")),
 			want:  map[int64][]string{15: {"blocked|" + topPermission}},
 		}},
+		{"countdown block-wording dialog", fdScript{
+			end:   60,
+			frame: static(fixture(t, "permission_countdown_block.txt")),
+			want:  map[int64][]string{15: {"blocked|" + guardPermission}},
+		}},
+		{"Code Mode opt-in dialog", fdScript{
+			end:   60,
+			frame: static(fixture(t, "codemode_optin.txt")),
+			want:  map[int64][]string{15: {promptDetail}},
+		}},
 		// A real, answerable prompt with the quota phrase painted further up the
 		// same screen stays a prompt: the worker can still answer it.
 		{"the quota phrase far up-screen is prompt:, not quota:", fdScript{
@@ -906,6 +916,10 @@ func TestPermissionDetail(t *testing.T) {
 			"prompt: permission — Bash command: ls -la — pane %1"},
 		{"countdown text in prose above a live dialog is not a dialog", sep + " prose line\n" + countdown + "\n" + sep + topHead + rule254c + "\n printf hi\n" + rule254c + "\n", "%1",
 			"prompt: permission — Bash command: printf hi — pane %1"},
+		{"a block-wording countdown parses like the deny one", sep + " Bash command\n" + rule254c + "\n rm -f x\n" + rule254c + "\n⚠ Claude Code will automatically block this request in 1:30, to avoid holding up an unattended session\n", "%1",
+			"prompt: permission — Bash command: rm -f x — pane %1"},
+		{"a block-wording countdown in words parses", sep + " Bash command\n" + rule254c + "\n rm -f x\n" + rule254c + "\n⚠ Claude Code will automatically block this request in about 2 minutes, to avoid holding up an unattended session\n", "%1",
+			"prompt: permission — Bash command: rm -f x — pane %1"},
 		{"a countdown with a wide-glyph gap still parses", sep + " Bash command\n" + rule254c + "\n rm -f x\n" + rule254c + "\n⚠  Claude Code will automatically deny this request in 0:05\n", "%1",
 			"prompt: permission — Bash command: rm -f x — pane %1"},
 		{"a stale rule box does not overwrite an agent-header request with a Tip title", hdr + "ls\n Write x\n Tip: y\n" + rule254c + "\n", "%1",
@@ -966,6 +980,7 @@ func TestPermissionDetailFixtures(t *testing.T) {
 		"permission_bash.txt":                  topPermission,
 		"permission_bash_guard.txt":            guardPermission,
 		"permission_bash_guard.color.txt":      guardPermission,
+		"permission_countdown_block.txt":       guardPermission,
 		"permission_subagent.txt":              subagentPermission,
 	}
 	for name, prefix := range cases {

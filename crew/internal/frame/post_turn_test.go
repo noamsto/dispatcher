@@ -111,6 +111,7 @@ func TestPaneIdleClearHintNoDone(t *testing.T) {
 		{"background shell, skipBg false", join(filler, []string{hint, rule, "❯ ", rule, "  1 shell · ← for agents"}), false, false},
 		{"esc to interrupt", join(filler, []string{hint, rule, "❯ ", rule, "  esc to interrupt"}), true, false},
 		{"permission dialog", join(filler, []string{hint}, strings.Split(read("permission_bash.txt"), "\n")), true, false},
+		{"Code Mode opt-in dialog", join(filler, []string{hint}, strings.Split(read("codemode_optin.txt"), "\n")), true, false},
 	}
 	var todos []string
 	for i := 1; i <= 9; i++ {

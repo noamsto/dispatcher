@@ -215,6 +215,37 @@ claude_toolsent.10.0k.txt	quota_cursor_limit	0
 claude_toolsent.10.0k.txt	quota_prompt	0
 claude_toolsent.10.0k.txt	quota_session_limit	0
 claude_toolsent.10.0k.txt	subrow	0
+codemode_optin.txt	bg_wait	0
+codemode_optin.txt	box_any.out	
+codemode_optin.txt	box_any.rc	1
+codemode_optin.txt	box_claude.out	
+codemode_optin.txt	box_claude.rc	1
+codemode_optin.txt	claude_idle_box.own0.color	0
+codemode_optin.txt	claude_idle_box.own0.plain	0
+codemode_optin.txt	claude_idle_box.own1.color	0
+codemode_optin.txt	claude_idle_box.own1.plain	0
+codemode_optin.txt	codex_hook_review	0
+codemode_optin.txt	idle_reason.skip0.color	rc=1 reason=prompt on screen
+codemode_optin.txt	idle_reason.skip0.plain	rc=1 reason=prompt on screen
+codemode_optin.txt	idle_reason.skip1.color	rc=1 reason=prompt on screen
+codemode_optin.txt	idle_reason.skip1.plain	rc=1 reason=prompt on screen
+codemode_optin.txt	meter	
+codemode_optin.txt	permission_prompt@claude	0
+codemode_optin.txt	permission_prompt@codex	0
+codemode_optin.txt	permission_prompt@cursor	0
+codemode_optin.txt	permission_prompt@pi	0
+codemode_optin.txt	pi_idle_box	0
+codemode_optin.txt	pi_live_turn	0
+codemode_optin.txt	pi_working_label	0
+codemode_optin.txt	pi_working_row	0
+codemode_optin.txt	prompt@claude	1
+codemode_optin.txt	prompt@codex	0
+codemode_optin.txt	prompt@cursor	0
+codemode_optin.txt	prompt@pi	0
+codemode_optin.txt	quota_cursor_limit	0
+codemode_optin.txt	quota_prompt	0
+codemode_optin.txt	quota_session_limit	0
+codemode_optin.txt	subrow	0
 codex_hooks_review.txt	bg_wait	0
 codex_hooks_review.txt	box_any.out	
 codex_hooks_review.txt	box_any.rc	1
@@ -1517,6 +1548,37 @@ permission_bash_guard.txt	quota_cursor_limit	0
 permission_bash_guard.txt	quota_prompt	0
 permission_bash_guard.txt	quota_session_limit	0
 permission_bash_guard.txt	subrow	0
+permission_countdown_block.txt	bg_wait	0
+permission_countdown_block.txt	box_any.out	
+permission_countdown_block.txt	box_any.rc	1
+permission_countdown_block.txt	box_claude.out	
+permission_countdown_block.txt	box_claude.rc	1
+permission_countdown_block.txt	claude_idle_box.own0.color	0
+permission_countdown_block.txt	claude_idle_box.own0.plain	0
+permission_countdown_block.txt	claude_idle_box.own1.color	0
+permission_countdown_block.txt	claude_idle_box.own1.plain	0
+permission_countdown_block.txt	codex_hook_review	0
+permission_countdown_block.txt	idle_reason.skip0.color	rc=1 reason=prompt on screen
+permission_countdown_block.txt	idle_reason.skip0.plain	rc=1 reason=prompt on screen
+permission_countdown_block.txt	idle_reason.skip1.color	rc=1 reason=prompt on screen
+permission_countdown_block.txt	idle_reason.skip1.plain	rc=1 reason=prompt on screen
+permission_countdown_block.txt	meter	
+permission_countdown_block.txt	permission_prompt@claude	1
+permission_countdown_block.txt	permission_prompt@codex	0
+permission_countdown_block.txt	permission_prompt@cursor	0
+permission_countdown_block.txt	permission_prompt@pi	0
+permission_countdown_block.txt	pi_idle_box	0
+permission_countdown_block.txt	pi_live_turn	0
+permission_countdown_block.txt	pi_working_label	0
+permission_countdown_block.txt	pi_working_row	0
+permission_countdown_block.txt	prompt@claude	0
+permission_countdown_block.txt	prompt@codex	0
+permission_countdown_block.txt	prompt@cursor	0
+permission_countdown_block.txt	prompt@pi	0
+permission_countdown_block.txt	quota_cursor_limit	0
+permission_countdown_block.txt	quota_prompt	0
+permission_countdown_block.txt	quota_session_limit	0
+permission_countdown_block.txt	subrow	0
 permission_sanitize.txt	bg_wait	0
 permission_sanitize.txt	box_any.out	
 permission_sanitize.txt	box_any.rc	1
@@ -2574,6 +2636,10 @@ row:pi working row: no leading space	pi_working_row	1
 row:pi working row: non-braille symbol	pi_working_row	0
 row:prompt: codex defers to the hook-review shape	prompt	0
 row:prompt: codex hook review	prompt	1
+row:prompt: Code Mode opt-in dialog	prompt	1
+row:prompt: Code Mode opt-in footer not last	prompt	0
+row:prompt: Code Mode opt-in footer without the Yes option	prompt	0
+row:prompt: Code Mode opt-in is claude only	prompt	0
 row:prompt: confirm footer last	prompt	1
 row:prompt: footer not last	prompt	0
 row:prompt: option 6 lines above the footer	prompt	1

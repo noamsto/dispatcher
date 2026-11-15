@@ -64,6 +64,11 @@
       | ($ev | map(select(.kind=="msg" and ((.to // "") | startswith("metrics:"))))
              | sort_by(.ts) | (.[-1] // null)
              | if . == null then null else (.body | try fromjson catch null) end) as $m
+      # The latest code-mode sink body decides: a later refusal clears an earlier
+      # "on". Junk bodies parse to non-objects and read as not-on.
+      | ($ev | map(select(.kind=="msg" and ((.to // "") | startswith("code-mode:"))))
+             | sort_by(.ts) | (.[-1] // null)
+             | if . == null then null else (.body | try fromjson catch null) end) as $cm
       | {
           run_id: ($repo + ":" + $b + ":" + ($t0|tostring)),
           repo: $repo, branch: $b,
@@ -124,4 +129,9 @@
           unresolved_notes: null,
           reverted: null,
           swept_at: (now*1000|floor)
-} ]
+        }
+        # Key absent unless true, so every stored run is not re-appended once
+        # through merge.jq's equality.
+        + (if ($d.code_mode == true) and ((($cm | objects | .state) // null) == "on")
+           then {code_mode: true} else {} end)
+  ]

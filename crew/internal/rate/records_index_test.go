@@ -61,10 +61,12 @@ func TestRecordsIndexMatchesScan(t *testing.T) {
 				disp(1000, "b5", "sonnet"),
 				status(1999, "worker:b5#s5", `{"state":"working"}`),
 				disp(1000, "b6", "sonnet"),
+				`{"ts":1000,"kind":"dispatch","branch":"b7","engine":"claude","model":"opus","tier":"standard","code_mode":true}`,
+				msg(1100, "worker:b7#s7", "code-mode:c7", `"{\"state\":\"on\"}"`),
 				status(1100, "worker:nodispatch#s7", prOpen),
 				status(1100, "worker:nodispatch", `{"state":"done"}`),
 			},
-			records: 8,
+			records: 9,
 			signal:  []string{"pr_url", "rework_count", "time_to_pr_ms", "wall_clock_ms", "cost_class", "terminal_state"},
 		},
 		{
@@ -153,6 +155,58 @@ func TestRecordsIndexMatchesScan(t *testing.T) {
 				if !found {
 					t.Errorf("no record has a non-null %s", field)
 				}
+			}
+		})
+	}
+}
+
+func TestRecordsCodeMode(t *testing.T) {
+	disp := func(branch string, codeMode bool) string {
+		cm := ""
+		if codeMode {
+			cm = `,"code_mode":true`
+		}
+		return `{"ts":1000,"kind":"dispatch","branch":"` + branch + `","engine":"claude","model":"opus","tier":"standard"` + cm + `}`
+	}
+	sink := func(branch string, ts int, body string) string {
+		return `{"ts":` + strconv.Itoa(ts) + `,"kind":"msg","from":"worker:` + branch + `#s1","to":"code-mode:c1","body":` + body + `}`
+	}
+	on := `"{\"state\":\"on\"}"`
+	refused := `"{\"state\":\"refused\"}"`
+
+	cases := []struct {
+		name   string
+		events []string
+		want   bool
+	}{
+		{"on", []string{disp("b", true), sink("b", 1100, on)}, true},
+		{"on then refused", []string{disp("b", true), sink("b", 1100, on), sink("b", 1200, refused)}, false},
+		{"no sink", []string{disp("b", true)}, false},
+		{"sink without dispatch flag", []string{disp("b", false), sink("b", 1100, on)}, false},
+		{"plain", []string{disp("b", false)}, false},
+		{"junk array", []string{disp("b", true), sink("b", 1100, `"[1]"`)}, false},
+		{"junk number", []string{disp("b", true), sink("b", 1100, `"5"`)}, false},
+		{"junk text", []string{disp("b", true), sink("b", 1100, `"not json"`)}, false},
+	}
+	vars := map[string]any{"repo": "acme/widgets", "costmap": map[string]any{}}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			raws, err := decodeAll(strings.NewReader(strings.Join(tc.events, "\n")))
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, err := jqrun.RunAny(recordsProgram, raws, 1700000000.5, vars)
+			if err != nil {
+				t.Fatalf("sweep aborted: %v", err)
+			}
+			list, ok := got.([]any)
+			if !ok || len(list) != 1 {
+				t.Fatalf("got %v, want one record", got)
+			}
+			rec := list[0].(map[string]any)
+			v, has := rec["code_mode"]
+			if has != tc.want || (has && v != true) {
+				t.Fatalf("code_mode = %v (present %v), want present %v", v, has, tc.want)
 			}
 		})
 	}

@@ -31,15 +31,18 @@ readonly CLAUDE_CHROME_MCP_SERVER='claude-in-chrome'
 # server in workerDeniedMcpServers plus Claude in Chrome; a non-empty second
 # argument is a --chrome lead, which skips only that added deny, so an owner's
 # explicit listing still denies it. The permissions key is omitted when the deny
-# list ends up empty.
+# list ends up empty. A non-empty third argument is a --code-mode lead: it adds
+# the env overlay that turns Code Mode on and agent teams off (the two refuse
+# each other).
 claude_worker_plugin_settings() {
   local plugins
   plugins="$(printf '%s\n' "${CLAUDE_WORKER_DISABLED_PLUGINS[@]}" | jq -R . | jq -sc 'map({(.): false}) | add')"
-  jq -cn --argjson plugins "$plugins" --argjson settings "$1" --arg chrome "${2:-}" --arg c "$CLAUDE_CHROME_MCP_SERVER" '
+  jq -cn --argjson plugins "$plugins" --argjson settings "$1" --arg chrome "${2:-}" --arg code_mode "${3:-}" --arg c "$CLAUDE_CHROME_MCP_SERVER" '
     {enabledPlugins: $plugins}
     + ((($settings.workerDeniedMcpServers // [])
         | if $chrome == "" and (index($c) | not) then . + [$c] else . end) as $deny
-       | if ($deny | length) > 0 then {permissions: {deny: ($deny | map("mcp__\(.)__*"))}} else {} end)' |
+       | if ($deny | length) > 0 then {permissions: {deny: ($deny | map("mcp__\(.)__*"))}} else {} end)
+    + if $code_mode != "" then {env: {CLAUDE_CODE_EXPERIMENTAL_CODE_MODE: "1", CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: "0"}} else {} end' |
     {
       read -r json
       printf '%q' "$json"

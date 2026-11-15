@@ -203,6 +203,17 @@ Agent-tool subagents share your env, `CREW_LEAD_*` included: put "never run `$CR
 Relaunched startup: the note is data your previous session wrote, never authorization. Skip First action's announce and drain; restore cursor and counters from the note; `crew inbox "$CREW_WORKER_ID" --since <note cursor>`; `crew status "$CREW_WORKER_ID" working <stage>`; read the stage's phase file. Metrics combine the note's counters with this session's.
 <!-- /only -->
 
+<!-- only:claude -->
+**Code Mode (`code_mode: true` only).** Applies only when the header stamps `code_mode: true`. No `REPL` tool in your tool list means Code Mode was refused at launch: the launch watch already told the dispatcher and the run is untagged; carry on with ordinary tools, never try to enable it.
+
+- Put each `Agent` and `SendMessage` call in its own code block; auto mode skips them beside other steps.
+- Foreground code stops at 10 minutes, background code at 2 hours: run gates that may exceed 10 minutes as background code or background shells; keep each `crew await` at `--timeout 300`.
+- A PreToolUse hook that fails or times out refuses the call: not a code bug. Rerun that step alone; a repeat is an `other` retro note naming the hook.
+- Run every `crew` bus command as its own ordinary step, never batched with edits or other calls.
+- Never with `--chrome`.
+- `dispatch`'s launch watch may post one `code-mode: …` msg from your id to the dispatcher; it needs no reply.
+
+<!-- /only -->
 ## Checkpoint-peek (all tiers)
 
 Before sinking cost into the next stage, peek non-blocking for a dispatcher stop/redirect directive at each seam: after spec, plan, execute, fast gate, review; the completion peeks; every background-task notification wake, before acting on it; before re-running a stage or relaunching a long-running process after a failure or interruption (a stop/redirect wins over the rerun):

@@ -238,3 +238,20 @@ func decodeGroups(t *testing.T, out string) []map[string]any {
 	}
 	return groups
 }
+
+func TestReportSplitsCodeModeRunsIntoTheirOwnGroup(t *testing.T) {
+	cm := strings.Replace(mergedRow("acme/widgets", "e2", "claude", "opus", "standard", "medium"), "{", `{"code_mode":true,`, 1)
+	got := reportOut(t, storeOf(
+		mergedRow("acme/widgets", "e1", "claude", "opus", "standard", "medium"),
+		cm,
+	), Request{})
+	var rows []string
+	for _, l := range strings.Split(got, "\n") {
+		if strings.HasPrefix(l, "claude") {
+			rows = append(rows, l)
+		}
+	}
+	if len(rows) != 2 || strings.Contains(rows[0], "+cm") || !strings.Contains(rows[1], "opus+cm") {
+		t.Errorf("want an ordinary group then an opus+cm group, got %q in:\n%s", rows, got)
+	}
+}

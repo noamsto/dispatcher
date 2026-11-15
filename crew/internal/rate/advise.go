@@ -72,6 +72,9 @@ func advise(req Request, cwd string, stdout, stderr io.Writer, o Options) int {
 		if !ok || t0 < float64(since.UnixMilli()) || field(row, "engine") != engine || field(row, "tier") != tier {
 			continue
 		}
+		if field(row, "code_mode") == true {
+			continue
+		}
 		pooled = append(pooled, row)
 		if field(row, "repo") == repo {
 			scoped = append(scoped, row)

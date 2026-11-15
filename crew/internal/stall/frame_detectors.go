@@ -76,7 +76,7 @@ var (
 	// rules. The title is read only on a frame that carries such a rule, and
 	// only when its next non-blank line is the hint.
 	rePermTip       = regexp.MustCompile(`^[` + space + `]*Tip:`)
-	rePermCountdown = regexp.MustCompile(`^[` + space + `]*⚠[` + space + `]+Claude Code will automatically deny this request in `)
+	rePermCountdown = regexp.MustCompile(`^[` + space + `]*⚠[` + space + `]+Claude Code will automatically (?:deny|block) this request in `)
 	rePermSeparator = regexp.MustCompile(`^[` + space + `]*\x{2500}{4,}[` + space + `]*$`)
 	rePermRule      = regexp.MustCompile(`^[` + space + `]*\x{254C}{4,}[` + space + `]*$`)
 	reLeadSpace     = regexp.MustCompile(`^[` + space + `]+`)

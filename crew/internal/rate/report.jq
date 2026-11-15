@@ -110,13 +110,15 @@
 
       def stats:
         $recs
-        | group_by([.engine, .model, .tier])
+        | group_by([.engine, .model, .tier, (.code_mode == true)])
         | map(
             . as $g
             | ($g | nrows) as $n
             | ($n | length) as $ncount
             | {
-                engine: $g[0].engine, model: $g[0].model, tier: $g[0].tier,
+                engine: $g[0].engine,
+                model: (if $g[0].code_mode == true then $g[0].model + "+cm" else $g[0].model end),
+                tier: $g[0].tier,
                 n: agg($ncount; $ncount; $ncount),
                 inc: ($g | map(select(.outcome == "incomplete")) | length),
                 run: ($g | map(select(.outcome == "running")) | length),

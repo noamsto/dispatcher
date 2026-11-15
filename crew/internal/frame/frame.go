@@ -146,6 +146,10 @@ func IsPrompt(engine, text string) bool {
 		return false
 	}
 	last := t[len(t)-1]
+	// The Code Mode first-use opt-in has unnumbered options, so reOption misses it.
+	if engine == "claude" && strings.Contains(last, "Esc to start without it") && anyContains(t[:len(t)-1], "Yes, turn on Code Mode") {
+		return true
+	}
 	if !strings.Contains(last, "Enter to select") && !strings.Contains(last, "Enter to confirm") {
 		return false
 	}

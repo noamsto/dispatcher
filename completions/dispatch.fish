@@ -36,6 +36,7 @@ complete -c dispatch -n 'not __fish_seen_subcommand_from resume' -l plan -r -f -
 complete -c dispatch -n 'not __fish_seen_subcommand_from resume' -l agent -r -f -a '(__dispatch_engines)' -d 'Engine for the lead'
 complete -c dispatch -n 'not __fish_seen_subcommand_from resume' -l mcp -r -f -d 'MCP for the lead'
 complete -c dispatch -n 'not __fish_seen_subcommand_from resume' -l chrome -d 'Claude in Chrome for the claude lead'
+complete -c dispatch -n 'not __fish_seen_subcommand_from resume' -l code-mode -d 'Claude Code Mode for the claude lead (trial)'
 complete -c dispatch -n 'not __fish_seen_subcommand_from resume' -l grid -d 'Role grid derived from the tier'
 complete -c dispatch -n 'not __fish_seen_subcommand_from resume' -l no-grid -d 'No role grid'
 complete -c dispatch -n 'not __fish_seen_subcommand_from resume' -l roles -r -f -d 'Grid roles, name[=agent:model[@effort]]'
