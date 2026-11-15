@@ -17289,3 +17289,22 @@ assert_no_code_mode_scaffold() {
   [ "$(launch_log | grep -c 'claude --name ')" -ge 2 ]
   [ "$(launch_log | grep -c CLAUDE_CODE_EXPERIMENTAL_CODE_MODE)" -eq 1 ]
 }
+
+@test "code-mode: --code-mode spawns the launch watch on the lead pane, and a plain dispatch does not" {
+  stub_launch_bins
+  code_mode_config
+  export DISPATCH_CODE_MODE_WATCH_SECS=1
+  run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 42 "plain"
+  [ "$status" -eq 0 ]
+  sleep 1
+  run ! grep -q 'capture-pane' "$STUB_LOG"
+  run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 --code-mode 43 "cm"
+  [ "$status" -eq 0 ]
+  for _ in $(seq 50); do
+    grep -q 'capture-pane .*-t %1' "$STUB_LOG" && break
+    sleep 0.1
+  done
+  grep -q 'capture-pane .*-t %1' "$STUB_LOG"
+  # let the 1s watch finish so no process outlives the test
+  sleep 3
+}

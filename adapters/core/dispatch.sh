@@ -5394,6 +5394,7 @@ fi
 stall_flags=()
 [ -n "$ignore_budget" ] && stall_flags+=(--no-budget)
 (CREW_ID="$crew_id" nohup crew stall-watch "$worker_id" --pane "$pane" --engine "$agent" "${stall_flags[@]}" >/dev/null 2>&1 &)
+[ -z "$code_mode" ] || spawn_code_mode_watch "$worker_id" "$crew_id" "$pane"
 # A human dispatching from an exited worker's pane (its env carries CREW_ID)
 # must not retarget the renderer there while the crew's dispatcher is live;
 # only the registered dispatcher's pane may move it.

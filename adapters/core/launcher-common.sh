@@ -1109,3 +1109,83 @@ code_mode_optin_refusal() {
   fi
   printf 'dispatch: --code-mode needs Code Mode'\''s one-time opt-in, which only the owner can accept: run CLAUDE_CODE_EXPERIMENTAL_CODE_MODE=1 CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=0 claude in a terminal and choose "Yes, turn on Code Mode" (dispatch never writes %s)\n' "$f"
 }
+
+# _code_mode_classify <frame> — set cm_state and cm_why from the EARLIEST line of
+# the lead's scrollback that reports Code Mode's startup outcome, so worker
+# output quoting a banner later cannot override the real one. Fails when no
+# line does yet.
+_code_mode_classify() {
+  local line why
+  local unavail="Code Mode (experimental) isn't available: "
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+    *"$unavail"*)
+      why="${line#*"$unavail"}"
+      cm_state=refused cm_why="${why%%. Starting with the ordinary tools*}"
+      return 0
+      ;;
+    *"Code Mode (experimental) is off for this session, as you chose."*)
+      cm_state=refused cm_why="declined at the opt-in dialog"
+      return 0
+      ;;
+    *"Yes, turn on Code Mode"*)
+      cm_state=refused cm_why="parked on the first-use opt-in dialog"
+      return 0
+      ;;
+    *"Code Mode (experimental) is on · this session can be resumed only with Code Mode on"*)
+      cm_state=on cm_why=""
+      return 0
+      ;;
+    esac
+  done <<<"$1"
+  return 1
+}
+
+# _code_mode_post <worker_id> <crew_id> <state> <why> — the sink row, plus a
+# dispatcher-visible line for any state but `on`. A failed post never ends the
+# watch under an inherited set -e.
+_code_mode_post() {
+  local wid=$1 crew=$2 state=$3 why=$4 body
+  if [ "$state" = on ]; then
+    body="$(jq -nc '{state:"on"}')" || return 0
+  else
+    body="$(jq -nc --arg s "$state" --arg w "$why" '{state:$s,why:$w}')" || return 0
+  fi
+  CREW_ID="$crew" crew msg "$wid" "code-mode:$crew" "$body" || true
+  [ "$state" = on ] ||
+    CREW_ID="$crew" crew msg "$wid" "dispatcher:$crew" "code-mode: $state — $why (run not tagged as Code Mode)" || true
+}
+
+# code_mode_watch <worker_id> <crew_id> <pane> — read a --code-mode lead's pane
+# until Code Mode's startup banner shows, then post the outcome to the
+# code-mode:<crew> sink. Every command that may fail is guarded: callers run
+# under set -euo pipefail.
+code_mode_watch() {
+  local wid=$1 crew=$2 pane=$3 frame cm_state cm_why deadline
+  deadline=$(($(date +%s) + ${DISPATCH_CODE_MODE_WATCH_SECS:-180}))
+  while :; do
+    if ! frame="$(tmux capture-pane -p -J -S - -t "$pane" 2>/dev/null)"; then
+      _code_mode_post "$wid" "$crew" unknown "lead pane gone before Code Mode reported"
+      return 0
+    fi
+    if _code_mode_classify "$frame"; then
+      _code_mode_post "$wid" "$crew" "$cm_state" "$cm_why"
+      return 0
+    fi
+    if [ "$(date +%s)" -ge "$deadline" ]; then
+      _code_mode_post "$wid" "$crew" unknown "no Code Mode banner within ${DISPATCH_CODE_MODE_WATCH_SECS:-180}s"
+      return 0
+    fi
+    sleep 2
+  done
+}
+
+# spawn_code_mode_watch <worker_id> <crew_id> <pane> — run the watch orphaned,
+# so it outlives dispatch and is not tied to a stamped pane the dispatch may be
+# running in.
+spawn_code_mode_watch() {
+  (
+    trap '' HUP
+    code_mode_watch "$@" </dev/null >/dev/null 2>&1 &
+  )
+}
