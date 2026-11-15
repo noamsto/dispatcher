@@ -69,7 +69,7 @@
              | sort_by(.ts) | (.[-1] // null)
              | if . == null then null else (.body | try fromjson catch null) end) as $m
       # The latest code-mode sink body decides: a later refusal clears an earlier
-      # "on". Junk bodies parse to non-objects and read as not-on.
+      # "on". A junk body has no readable state and folds to "unknown".
       | ($ev | map(select(.kind=="msg" and ((.to // "") | startswith("code-mode:"))))
              | sort_by(.ts) | (.[-1] // null)
              | if . == null then null else (.body | try fromjson catch null) end) as $cm

@@ -180,12 +180,12 @@ const subagentPermission = "prompt: permission — Bash command: bats --filter g
 // topPermission is permission_bash.txt's relay row.
 const topPermission = "prompt: permission — Bash command: printf hi > ./out.txt — pane %1"
 
-// guardPermission is permission_bash_guard.txt's relay row: the guard and
-// countdown lines are not the request.
 // codeModePermission is codemode_perm_prompt.txt's relay row: Code Mode's
 // inner-tool dialog has a `Run shell command` row where the others have the Tip.
 const codeModePermission = "prompt: permission — Bash command: echo cmp-ask-probe hello — pane %1"
 
+// guardPermission is permission_bash_guard.txt's relay row: the guard and
+// countdown lines are not the request.
 const guardPermission = "prompt: permission — Bash command: rm -f \"$S\"/*.log — pane %1"
 
 func wd(detail string) string { return fmt.Sprintf(wdBlock, detail) }

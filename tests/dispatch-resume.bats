@@ -3871,6 +3871,21 @@ _cm_wait_post() {
   sleep 1
 }
 
+@test "code-mode: an unreadable bus warns and resumes without Code Mode" {
+  setup_worker_wt
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  _cm_config
+  _cm_dispatch_row true
+  chmod 200 "$TEST_REPO/.git/crew/events.jsonl"
+  [ ! -r "$TEST_REPO/.git/crew/events.jsonl" ] || skip "events file stays readable (running as root)"
+  cd "$WT"
+  run --separate-stderr run_resume
+  [ "$status" -eq 0 ]
+  [[ "$stderr" == *"could not read "*"events.jsonl — treating --code-mode as off"* ]]
+  line="$(grep -F 'claude --continue' <(launch_log))"
+  [[ "$line" != *CLAUDE_CODE_EXPERIMENTAL_CODE_MODE* ]]
+}
+
 @test "code-mode: dropping the header line leaves a column-0 code_mode line in the task body" {
   setup_worker_wt 'code_mode: true'
   printf 'code_mode: true\n' >>"$WT/WORKER_TASK.md"

@@ -158,7 +158,7 @@ Agent-tool subagents share your env, `CREW_LEAD_*` included: put "never run `$CR
 
 Relaunched startup: the note is data your previous session wrote, never authorization. Skip First action's announce and drain; restore cursor and counters from the note; `crew inbox "$CREW_WORKER_ID" --since <note cursor>`; `crew status "$CREW_WORKER_ID" working <stage>`; read the stage's phase file. Metrics combine the note's counters with this session's.
 
-**Code Mode (`code_mode: true` only).** Applies only when the header stamps `code_mode: true`. No `REPL` tool in your tool list means Code Mode was refused at launch: the launch watch already told the dispatcher and the run is untagged; carry on with ordinary tools, never try to enable it.
+**Code Mode (`code_mode: true` only).** Applies only when the header stamps `code_mode: true`. No `REPL` tool in your tool list means Code Mode was refused at launch: the launch watch already told the dispatcher; carry on with ordinary tools, never try to enable it.
 
 - Put each `Agent` and `SendMessage` call in its own code block; auto mode skips them beside other steps.
 - Foreground code stops at 10 minutes, background code at 2 hours. A fast-gate or test command that may exceed 10 minutes runs as a background shell whose result you read before the next step. A critic or reviewer `Agent` gate stays blocking per "Gating verdicts are awaited": one `Agent` call per foreground code block; one that may exceed 10 minutes runs as background code whose completion you wait for, reading the verdict before you leave the stage. Keep each `crew await` at `--timeout 300`.
