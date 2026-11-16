@@ -66,9 +66,9 @@ func TestTabSwitchingByTab(t *testing.T) {
 	if m.active != boardTab {
 		t.Fatalf("after shift+tab: active = %d, want %d", m.active, boardTab)
 	}
-	// wraps around
+	// wraps around; Fleet and Overview own tab, so ] wraps
 	m.active = fleetTab
-	nm, _ = m.Update(keyType(tea.KeyTab))
+	nm, _ = m.Update(keyRune(']'))
 	m = nm.(Model)
 	if m.active != overviewTab {
 		t.Fatalf("tab wrap: active = %d, want %d", m.active, overviewTab)

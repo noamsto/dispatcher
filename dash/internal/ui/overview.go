@@ -58,11 +58,18 @@ type overviewView struct {
 	st    overviewState
 	pills pillMode
 
+	actionPrompt
+	size *ovSize
+}
+
+// actionPrompt is the action dispatch with its reply, confirm and filter
+// prompts, shared by the Overview and the Fleet tab: one mode owns the
+// keyboard, and every argv runs in its action's directory.
+type actionPrompt struct {
 	acts  actionDeps
 	mode  ovMode
 	input textinput.Model
 	pend  ovPending
-	size  *ovSize
 }
 
 func newOverviewView(in vm.Inputs, now func() time.Time) overviewView {
@@ -113,18 +120,31 @@ func (v overviewView) View(w, h int) string {
 	return v.overlay(strings.Split(base, "\n"), w, h)
 }
 
-func (v overviewView) Keys() []key.Binding {
-	switch v.mode {
+// promptKeys is the help bar while a prompt is open, else nil.
+func (p actionPrompt) promptKeys() []key.Binding {
+	switch p.mode {
 	case ovReply, ovFilter:
 		return []key.Binding{
-			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", map[ovMode]string{ovReply: "send", ovFilter: "keep"}[v.mode])),
-			key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", map[ovMode]string{ovReply: "cancel", ovFilter: "clear"}[v.mode])),
+			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", map[ovMode]string{ovReply: "send", ovFilter: "keep"}[p.mode])),
+			key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", map[ovMode]string{ovReply: "cancel", ovFilter: "clear"}[p.mode])),
 		}
 	case ovConfirm:
 		return []key.Binding{
 			key.NewBinding(key.WithKeys("y"), key.WithHelp("y", "confirm")),
 			key.NewBinding(key.WithKeys("n", "esc"), key.WithHelp("n/esc", "cancel")),
 		}
+	}
+	return nil
+}
+
+// prompting is true while a reply, confirm or filter prompt owns the keys.
+func (p actionPrompt) prompting() bool {
+	return p.mode == ovReply || p.mode == ovConfirm || p.mode == ovFilter
+}
+
+func (v overviewView) Keys() []key.Binding {
+	if ks := v.promptKeys(); ks != nil {
+		return ks
 	}
 	return []key.Binding{
 		key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "focus")),
@@ -137,9 +157,7 @@ func (v overviewView) Keys() []key.Binding {
 
 func (overviewView) Selection() data.Selection { return nil }
 
-func (v overviewView) Capturing() bool {
-	return v.mode == ovReply || v.mode == ovConfirm || v.mode == ovFilter
-}
+func (v overviewView) Capturing() bool { return v.prompting() }
 
 // ownsKey keeps the global switching, refresh and help keys for the Overview's
 // own use.
@@ -216,7 +234,7 @@ func (v *overviewView) setWorker(i int) {
 func (v *overviewView) handleKey(msg tea.KeyMsg) tea.Cmd {
 	switch v.mode {
 	case ovFilter:
-		return v.filterKey(msg)
+		return v.filterKey(msg, &v.st.filter)
 	case ovReply:
 		return v.replyKey(msg)
 	case ovConfirm:
@@ -247,9 +265,7 @@ func (v *overviewView) handleKey(msg tea.KeyMsg) tea.Cmd {
 	case "esc":
 		v.st.filter = ""
 	case "/":
-		v.mode = ovFilter
-		v.input = newOvInput("/", v.st.filter)
-		return textinput.Blink
+		return v.openFilter(v.st.filter)
 	case "?":
 		v.mode = ovHelp
 	case "p", "n", "r", "m":
@@ -333,19 +349,27 @@ func (v *overviewView) enterKey() tea.Cmd {
 	return nil
 }
 
-func (v *overviewView) filterKey(msg tea.KeyMsg) tea.Cmd {
+// openFilter starts the filter prompt on the current filter text.
+func (p *actionPrompt) openFilter(filter string) tea.Cmd {
+	p.mode = ovFilter
+	p.input = newOvInput("/", filter)
+	return textinput.Blink
+}
+
+// filterKey edits *filter live: enter keeps it, esc clears it.
+func (p *actionPrompt) filterKey(msg tea.KeyMsg, filter *string) tea.Cmd {
 	switch msg.String() {
 	case "enter":
-		v.mode = ovNormal
+		p.mode = ovNormal
 		return nil
 	case "esc", "ctrl+c":
-		v.mode = ovNormal
-		v.st.filter = ""
+		p.mode = ovNormal
+		*filter = ""
 		return nil
 	}
 	var cmd tea.Cmd
-	v.input, cmd = v.input.Update(msg)
-	v.st.filter = v.input.Value()
+	p.input, cmd = p.input.Update(msg)
+	*filter = p.input.Value()
 	return cmd
 }
 
@@ -400,12 +424,12 @@ func (v *overviewView) actOnSelected(k string) tea.Cmd {
 	return v.dispatch(w.Actions[i], workerTarget(w))
 }
 
-func (v *overviewView) dispatch(a vm.Action, t ovTarget) tea.Cmd {
+func (p *actionPrompt) dispatch(a vm.Action, t ovTarget) tea.Cmd {
 	switch a.Key {
 	case "p":
 		var then func(string) ([]string, error)
 		act := actPeek
-		if t.origin == vm.OriginLocal && v.acts.inTmux {
+		if t.origin == vm.OriginLocal && p.acts.inTmux {
 			act = actJump
 			then = func(out string) ([]string, error) {
 				pane, err := parseJumpPane(out)
@@ -415,60 +439,67 @@ func (v *overviewView) dispatch(a vm.Action, t ovTarget) tea.Cmd {
 				return switchArgv(pane), nil
 			}
 		}
-		return runActionCmd(v.acts.ctx, v.acts.runner, act, deref(a.Dir), a.Argv, then)
+		return runActionCmd(p.acts.ctx, p.acts.runner, act, deref(a.Dir), a.Argv, then)
 	case "n":
-		v.openConfirm(a, t, "nudge "+cleanText(t.name)+"? y/N")
+		p.openConfirm(a, t, "nudge "+cleanText(t.name)+"? y/N")
 	case "m":
 		if a.PR == nil {
 			return statusCmd("merge: no PR", true)
 		}
-		v.openConfirm(a, t, "merge PR #"+strconv.Itoa(*a.PR)+" ("+cleanText(t.branch)+")? y/N")
+		p.openConfirm(a, t, "merge PR #"+strconv.Itoa(*a.PR)+" ("+cleanText(t.branch)+")? y/N")
 	case "r":
-		v.mode, v.pend = ovReply, ovPending{act: a, target: t}
-		v.input = newOvInput("", "")
+		p.mode, p.pend = ovReply, ovPending{act: a, target: t}
+		p.input = newOvInput("", "")
 		return textinput.Blink
 	}
 	return nil
 }
 
-func (v *overviewView) openConfirm(a vm.Action, t ovTarget, prompt string) {
-	v.mode, v.pend = ovConfirm, ovPending{act: a, target: t, prompt: prompt}
+func (p *actionPrompt) openConfirm(a vm.Action, t ovTarget, prompt string) {
+	p.mode, p.pend = ovConfirm, ovPending{act: a, target: t, prompt: prompt}
 }
 
-func (v *overviewView) confirmKey(msg tea.KeyMsg) tea.Cmd {
-	v.mode = ovNormal
-	verb := v.pend.act.Verb
+func (p *actionPrompt) confirmKey(msg tea.KeyMsg) tea.Cmd {
+	p.mode = ovNormal
+	verb := p.pend.act.Verb
 	if msg.String() != "y" {
 		return statusCmd(verb+": cancelled", false)
 	}
 	act := actNudge
-	if v.pend.act.Key == "m" {
+	switch {
+	case p.pend.act.Key == "m":
 		act = actMerge
+	case verb == "relaunch":
+		// dispatcher --relaunch opens the crew's new window in $TMUX.
+		if !p.acts.inTmux {
+			return statusCmd("relaunch needs tmux", true)
+		}
+		act = actRelaunch
 	}
-	return runActionCmd(v.acts.ctx, v.acts.runner, act, deref(v.pend.act.Dir), v.pend.act.Argv, nil)
+	return runActionCmd(p.acts.ctx, p.acts.runner, act, deref(p.pend.act.Dir), p.pend.act.Argv, nil)
 }
 
-func (v *overviewView) replyKey(msg tea.KeyMsg) tea.Cmd {
+func (p *actionPrompt) replyKey(msg tea.KeyMsg) tea.Cmd {
 	switch msg.String() {
 	case "esc", "ctrl+c":
-		v.mode = ovNormal
+		p.mode = ovNormal
 		return nil
 	case "enter":
-		text := strings.TrimSpace(v.input.Value())
+		text := strings.TrimSpace(p.input.Value())
 		if text == "" {
 			return statusCmd("reply: text required", true)
 		}
-		v.mode = ovNormal
-		argv := slices.Clone(v.pend.act.Argv)
+		p.mode = ovNormal
+		argv := slices.Clone(p.pend.act.Argv)
 		for i, a := range argv {
 			if a == "<text>" {
 				argv[i] = text
 			}
 		}
-		return runActionCmd(v.acts.ctx, v.acts.runner, actReply, deref(v.pend.act.Dir), argv, nil)
+		return runActionCmd(p.acts.ctx, p.acts.runner, actReply, deref(p.pend.act.Dir), argv, nil)
 	}
 	var cmd tea.Cmd
-	v.input, cmd = v.input.Update(msg)
+	p.input, cmd = p.input.Update(msg)
 	return cmd
 }
 

@@ -74,6 +74,7 @@ type fleetSel struct{ crew, hold, host, cursor int }
 
 type fleetRects struct {
 	w, h      int
+	errLine   bool // the last row is the source-errors line
 	allClear  bool
 	stripRows int
 	stripOff  int
@@ -262,6 +263,10 @@ func splitHeights(total int, want []int) []int {
 func fleetLayout(w, h int, fv vm.FleetView, st fleetState) fleetRects {
 	ix := newFleetIndex(fv, st.filter)
 	r := fleetRects{w: w, h: h}
+	if len(fv.Errors) > 0 && h >= 2 {
+		r.errLine = true
+		h--
+	}
 	n := len(fv.Attention)
 	y := 0
 	if n == 0 {
@@ -417,13 +422,21 @@ func renderFleet(w, h int, fv vm.FleetView, st fleetState, mode pillMode) string
 			}
 		}
 	}
-	for len(lines) < h {
+	bodyH := h
+	if r.errLine {
+		bodyH--
+	}
+	for len(lines) < bodyH {
 		lines = append(lines, "")
+	}
+	lines = lines[:bodyH]
+	if r.errLine {
+		lines = append(lines, fg(colDim).Render(fmt.Sprintf(" ! %d source errors: %s", len(fv.Errors), fv.Errors[0])))
 	}
 	for i := range lines {
 		lines[i] = truncateLine(lines[i], w)
 	}
-	return strings.Join(lines[:h], "\n")
+	return strings.Join(lines, "\n")
 }
 
 // fleetRow renders one placed entry of any Fleet panel.

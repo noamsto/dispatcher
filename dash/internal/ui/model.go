@@ -14,6 +14,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/noamsto/dispatcher/dash/internal/buswatch"
 	"github.com/noamsto/dispatcher/dash/internal/data"
 	vm "github.com/noamsto/dispatcher/dash/internal/view"
 )
@@ -107,6 +108,21 @@ const fleetTickEvery = 10 * time.Second
 // quick switch away and back cannot leave two tick chains running.
 type fleetTickMsg struct{ gen int }
 
+// fleetChangedMsg is a fleet watcher event: a relay cursor, peer file or bus
+// of a known repo changed.
+type fleetChangedMsg struct{}
+
+// waitForFleetChange blocks on the fleet watcher like waitForBusChange; a
+// closed channel ends the loop with no message.
+func waitForFleetChange(w buswatch.Watcher) tea.Cmd {
+	return func() tea.Msg {
+		if _, ok := <-w.Events(); !ok {
+			return nil
+		}
+		return fleetChangedMsg{}
+	}
+}
+
 // Model is the root Bubble Tea model.
 type Model struct {
 	now     func() time.Time
@@ -121,6 +137,7 @@ type Model struct {
 	fleetIn      vm.FleetInputs
 	fleetStarted bool // the Fleet tab has been activated, so its source is live
 	fleetGen     int
+	fleetWatch   buswatch.Watcher // owned and closed by Run
 
 	width, height int
 	ready         bool
@@ -154,9 +171,10 @@ func NewModel(deps Deps, now func() time.Time, live liveDeps) Model {
 			Now:    deps.Now,
 			Roster: data.RosterSection{Crews: []data.RosterCrew{}},
 		},
-		crew: deps.Crew,
-		keys: DefaultKeyMap(),
-		help: help.New(),
+		crew:       deps.Crew,
+		fleetWatch: live.fleetWatcher,
+		keys:       DefaultKeyMap(),
+		help:       help.New(),
 	}
 	// Init (a value receiver) fires every loader, so mark them in flight
 	// here: a request before their results land must set again, not start a
@@ -170,6 +188,8 @@ func NewModel(deps Deps, now func() time.Time, live liveDeps) Model {
 	lv.acts = acts
 	ov := newOverviewView(msg.in, now)
 	ov.acts = acts
+	fl := newFleetView(msg, now)
+	fl.acts = acts
 	m.views = [numTabs]view{
 		overviewTab: ov,
 		liveTab:     lv,
@@ -181,7 +201,7 @@ func NewModel(deps Deps, now func() time.Time, live liveDeps) Model {
 			getenv: os.Getenv, exec: tea.ExecProcess,
 		}),
 		mapTab:   newMapView(msg.mapv, deps.Map, acts),
-		fleetTab: newFleetView(msg),
+		fleetTab: fl,
 	}
 	return m
 }
@@ -266,6 +286,9 @@ func (m Model) Init() tea.Cmd {
 	}
 	if lv, ok := m.views[liveTab].(liveView); ok {
 		cmds = append(cmds, lv.Init())
+	}
+	if m.fleetWatch != nil {
+		cmds = append(cmds, waitForFleetChange(m.fleetWatch))
 	}
 	cmds = append(cmds, tea.EnableMouseCellMotion)
 	return tea.Batch(cmds...)
@@ -390,6 +413,13 @@ func (m Model) update(msg tea.Msg) (Model, tea.Cmd) {
 			return m, nil
 		}
 		return m, tea.Batch(m.request(srcFleet), m.fleetTick())
+
+	case fleetChangedMsg:
+		wait := waitForFleetChange(m.fleetWatch)
+		if m.active != fleetTab || !m.fleetStarted {
+			return m, wait
+		}
+		return m, tea.Batch(m.request(srcFleet), wait)
 
 	case actionMsg:
 		m.status, m.statusErr, m.statusAt = msg.text, msg.err, m.now()

@@ -11,7 +11,7 @@ import (
 func fleetFixtureView(fv vm.FleetView) fleetView {
 	var loaded [numSources]bool
 	loaded[srcFleet] = true
-	return newFleetView(snapshotMsg{fleet: fv, loaded: loaded})
+	return newFleetView(snapshotMsg{fleet: fv, loaded: loaded}, fleetNow)
 }
 
 func TestFleetGolden(t *testing.T) {

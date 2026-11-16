@@ -94,14 +94,15 @@ func run() int {
 				},
 				Fleet: func(ctx context.Context) view.FleetInputs { return fleet.collect(ctx, time.Now().Unix()) },
 			},
-			Runner:         runner,
-			Crew:           cfg.Crew,
-			InTmux:         os.Getenv("TMUX") != "",
-			EventsPath:     eventsPath,
-			EventsPathErr:  eventsErr,
-			Now:            cfg.Now,
-			Map:            mapDeps,
-			DispatchConfig: cfg.DispatchConfigBin,
+			Runner:          runner,
+			Crew:            cfg.Crew,
+			InTmux:          os.Getenv("TMUX") != "",
+			EventsPath:      eventsPath,
+			EventsPathErr:   eventsErr,
+			Now:             cfg.Now,
+			Map:             mapDeps,
+			DispatchConfig:  cfg.DispatchConfigBin,
+			FleetWatchPaths: func() []string { return watchPaths(fleet.knownCommons()) },
 		}
 		if err := ui.Run(deps); err != nil {
 			fmt.Fprintln(os.Stderr, "crew dash: "+err.Error())
