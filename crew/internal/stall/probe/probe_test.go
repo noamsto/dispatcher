@@ -148,21 +148,58 @@ func TestPaneCmd(t *testing.T) {
 			t.Errorf("PaneCmd = %q, want claude (output survives a nonzero rc)", got)
 		}
 	})
-	list := "list-panes -a -F #{pane_id}\t#{pane_current_command}"
+	list := "list-panes -a -F #{pane_id}\t#{pane_current_command}\t#{pane_pid}"
 	for _, c := range []struct {
 		name string
 		tm   *tmuxtest.Fake
 		want string
 	}{
-		{"default picks the pane's row", &tmuxtest.Fake{Out: map[string]string{list: "%1\tfish\n%7\tclaude\n%70\tnvim"}}, "claude"},
-		{"default without the pane is empty", &tmuxtest.Fake{Out: map[string]string{list: "%1\tfish"}}, ""},
-		{"default on failure is empty", &tmuxtest.Fake{Func: func([]string) (string, error) { return "%7\tclaude", tmuxtest.ErrNoServer }}, ""},
+		{"default picks the pane's row", &tmuxtest.Fake{Out: map[string]string{list: "%1\tfish\t10\n%7\tclaude\t20\n%70\tnvim\t30"}}, "claude"},
+		{"default without the pane is empty", &tmuxtest.Fake{Out: map[string]string{list: "%1\tfish\t10"}}, ""},
+		{"default on failure is empty", &tmuxtest.Fake{Func: func([]string) (string, error) { return "%7\tclaude\t20", tmuxtest.ErrNoServer }}, ""},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			if got := (Probes{Env: envOf(nil, nil), Tmux: c.tm}).PaneCmd(context.Background()); got != c.want {
 				t.Errorf("PaneCmd = %q, want %q", got, c.want)
 			}
 		})
+	}
+}
+
+func TestPaneCmdEffective(t *testing.T) {
+	list := "list-panes -a -F #{pane_id}\t#{pane_current_command}\t#{pane_pid}"
+	never := func(context.Context) string { t.Error("Procs read"); return "" }
+	table := func(s string) func(context.Context) string { return func(context.Context) string { return s } }
+	for _, c := range []struct {
+		name  string
+		row   string
+		procs func(context.Context) string
+		want  string
+	}{
+		{"engine grandchild of a shell", "%7\tfish\t100", table("100 1 fish\n200 100 bash\n300 200 .claude-wrapped"), ".claude-wrapped"},
+		{"darwin path with a space", "%7\tzsh\t100", table("100 1 /bin/zsh\n200 100 /Applications/My Tools/claude"), "claude"},
+		{"only non-engine children", "%7\tfish\t100", table("100 1 fish\n200 100 sleep\n201 100 git"), "fish"},
+		{"engine elsewhere in the table", "%7\tfish\t100", table("100 1 fish\n500 1 claude"), "fish"},
+		{"already an engine", "%7\tclaude\t100", never, "claude"},
+		{"unparsable pane_pid", "%7\tfish\tx", never, "fish"},
+		{"pane_pid 1", "%7\tfish\t1", never, "fish"},
+		{"nil Procs", "%7\tfish\t100", nil, "fish"},
+		{"pid cycle", "%7\tfish\t100", table("100 200 fish\n200 100 bash"), "fish"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			tm := &tmuxtest.Fake{Out: map[string]string{list: c.row}}
+			p := Probes{Env: envOf(nil, nil), Tmux: tm, Procs: c.procs}
+			if got := p.PaneCmd(context.Background()); got != c.want {
+				t.Errorf("PaneCmd = %q, want %q", got, c.want)
+			}
+		})
+	}
+}
+
+func TestProcsSeam(t *testing.T) {
+	p := Default(envOf(map[string]string{"CREW_STALL_PS_CMD": `printf '1 0 init\n\n'`}, nil))
+	if got := p.Procs(context.Background()); got != "1 0 init" {
+		t.Errorf("Procs = %q", got)
 	}
 }
 

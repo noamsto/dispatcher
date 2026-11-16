@@ -18,13 +18,17 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
 	"time"
 
+	"github.com/noamsto/dispatcher/crew/internal/proc"
+	"github.com/noamsto/dispatcher/crew/internal/roster"
 	"github.com/noamsto/dispatcher/crew/internal/tmux"
 )
 
@@ -39,6 +43,7 @@ type Probes struct {
 	Tmux          tmux.Client
 	Load          func(ctx context.Context) string // "<load1> <nproc>"
 	Top           func(ctx context.Context) string
+	Procs         func(ctx context.Context) string // process table, one `pid ppid comm` per line
 	RefreshBudget func(ctx context.Context)
 	Sh            func(ctx context.Context, op string, args ...string) (out string, rc int)
 	BusRows       func(path string, sinceMS int64, maxLines int) ([]any, bool) // log tail, oldest first; ok=false if not a regular file
@@ -185,6 +190,17 @@ func Default(e Env) Probes {
 			}
 			return strings.TrimRight(strings.Join(lines, "\n"), "\n")
 		},
+		Procs: func(ctx context.Context) string {
+			if c := e.Getenv("CREW_STALL_PS_CMD"); c != "" {
+				text, _ := runSeam(ctx, c)
+				return text
+			}
+			out, rc := run(ctx, nil, "ps", "-A", "-o", "pid=,ppid=,comm=")
+			if rc != 0 {
+				return ""
+			}
+			return out
+		},
 		RefreshBudget: func(ctx context.Context) {
 			if c := e.Getenv("CREW_BUDGET_REFRESH_CMD"); c != "" {
 				runSeam(ctx, c)
@@ -245,16 +261,80 @@ func (p Probes) SampleColored(ctx context.Context) string {
 	return text
 }
 
+// PaneCmd is the pane's effective command. tmux-remux restores a pane as
+// `<shell> -c <cmd>`; a non-interactive shell has no job control, so the engine
+// stays in the shell's process group and #{pane_current_command} names the
+// shell. For a shell pane the engine is looked up among its descendants.
 func (p Probes) PaneCmd(ctx context.Context) string {
 	if c := p.Getenv("CREW_STALL_PROC_CMD"); c != "" {
 		text, _ := runSeam(ctx, c)
 		return text
 	}
-	rows := tmux.Output(ctx, p.Tmux, "list-panes", "-a", "-F", "#{pane_id}\t#{pane_current_command}")
+	rows := tmux.Output(ctx, p.Tmux, "list-panes", "-a", "-F", "#{pane_id}\t#{pane_current_command}\t#{pane_pid}")
 	for row := range strings.SplitSeq(rows, "\n") {
-		if id, cmd, _ := strings.Cut(row, "\t"); id == p.Pane {
+		id, rest, _ := strings.Cut(row, "\t")
+		if id != p.Pane {
+			continue
+		}
+		cmd, pidText, _ := strings.Cut(rest, "\t")
+		pid, err := strconv.Atoi(pidText)
+		if !proc.IsShell(cmd) || err != nil || pid <= 1 || p.Procs == nil {
 			return cmd
 		}
+		if engine := engineBelow(p.Procs(ctx), pid); engine != "" {
+			return engine
+		}
+		return cmd
+	}
+	return ""
+}
+
+const (
+	maxVisited = 4096
+	maxDepth   = 32
+)
+
+// engineBelow is the basename of the first engine among root's descendants in
+// a `pid ppid comm` table, breadth first. comm is the rest of the line: darwin
+// prints full paths, which may contain spaces.
+func engineBelow(table string, root int) string {
+	type proc struct {
+		pid  int
+		comm string
+	}
+	kids := map[int][]proc{}
+	for line := range strings.SplitSeq(table, "\n") {
+		pidText, rest, _ := strings.Cut(strings.TrimSpace(line), " ")
+		ppidText, comm, _ := strings.Cut(strings.TrimSpace(rest), " ")
+		pid, err1 := strconv.Atoi(pidText)
+		ppid, err2 := strconv.Atoi(ppidText)
+		if err1 != nil || err2 != nil {
+			continue
+		}
+		kids[ppid] = append(kids[ppid], proc{pid, strings.TrimSpace(comm)})
+	}
+	seen := map[int]bool{root: true}
+	level := []int{root}
+	for range maxDepth {
+		var next []int
+		for _, parent := range level {
+			for _, k := range kids[parent] {
+				if seen[k.pid] {
+					continue
+				}
+				if name := path.Base(k.comm); k.comm != "" && roster.IsEngineCmd(name) {
+					return name
+				}
+				if seen[k.pid] = true; len(seen) >= maxVisited {
+					return ""
+				}
+				next = append(next, k.pid)
+			}
+		}
+		if len(next) == 0 {
+			break
+		}
+		level = next
 	}
 	return ""
 }
