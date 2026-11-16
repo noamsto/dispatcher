@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"os"
 	"os/exec"
@@ -9,6 +10,9 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/noamsto/dispatcher/dash/internal/data"
+	"github.com/noamsto/dispatcher/dash/internal/view"
 )
 
 // TestMain re-executes the test binary as crew-dash itself, so the CLI tests
@@ -306,6 +310,8 @@ func TestParseArgs(t *testing.T) {
 		{args: []string{"--json", "--view", "overview"}, want: opts{mode: "json", view: "overview"}},
 		{args: []string{"--view", "roster", "--json"}, want: opts{mode: "json", view: "roster"}},
 		{args: []string{"--json", "--view", "overview", "--watch"}, want: opts{mode: "json", view: "overview", watch: true}},
+		{args: []string{"--json", "--view", "fleet"}, want: opts{mode: "json", view: "fleet"}},
+		{args: []string{"--json", "--view", "fleet", "--watch"}, want: opts{mode: "json", view: "fleet", watch: true}},
 		{args: []string{"--view", "overview"}, wantErr: "--view needs --json"},
 		{args: []string{"--json", "--watch"}, wantErr: "--watch needs --view"},
 		{args: []string{"--json", "--view", "nope"}, wantErr: "overview, roster, budget, runs, settings, map, fleet"},
@@ -399,5 +405,80 @@ func TestJSONViewBusErrorListedNotFatal(t *testing.T) {
 	}
 	if len(v.Errors) != 1 || !strings.HasPrefix(v.Errors[0], "bus: ") {
 		t.Errorf("errors = %q, want one bus error for the missing events.jsonl", v.Errors)
+	}
+}
+
+func TestWatchPaths(t *testing.T) {
+	if got := watchPaths(nil); len(got) != 0 {
+		t.Errorf("watchPaths(nil) = %v, want none", got)
+	}
+	got := watchPaths([]string{"/r/a/.git", "/r/b/.git"})
+	want := []string{
+		"/r/a/.git/crew/events.jsonl",
+		"/r/a/.git/crew/crews/*/relay/*.cursor",
+		"/r/a/.git/crew/peers/*.link",
+		"/r/a/.git/crew/peers/*.roster",
+		"/r/b/.git/crew/events.jsonl",
+		"/r/b/.git/crew/crews/*/relay/*.cursor",
+		"/r/b/.git/crew/peers/*.link",
+		"/r/b/.git/crew/peers/*.roster",
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("watchPaths = %v, want %v", got, want)
+	}
+}
+
+func TestUsageListsFleetView(t *testing.T) {
+	if !strings.Contains(usage(), "fleet") {
+		t.Errorf("usage lacks fleet: %q", usage())
+	}
+}
+
+func TestFleetCollector(t *testing.T) {
+	read := func(name string) []byte {
+		b, err := os.ReadFile(testdata + name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return b
+	}
+	r := &data.FakeRunner{Responses: map[string]data.FakeResponse{
+		"dispatch-config --show-origin":  {Stdout: read("settings_show_origin.json")},
+		"dispatch-config --layers":       {Stdout: read("settings_layers.json")},
+		"refresh-budget --report --json": {Stdout: read("budget_report.json")},
+		"crew fleet status --json":       {Stdout: read("fleet_status.json")},
+		"crew fleet queue --json":        {Stdout: read("fleet_queue.json")},
+	}}
+	cfg := data.Config{Crew: []string{"crew"}, DispatchConfigBin: "dispatch-config", RefreshBudget: "refresh-budget", Now: 1794800010}
+	fc := newFleetCollector(r, cfg)
+
+	in := fc.collect(context.Background(), 1794800010)
+	v := view.BuildFleet(in)
+	if v.Summary.Crews == 0 {
+		t.Fatalf("no crews: %+v", v.Summary)
+	}
+	active := view.ActiveCommons(in.Fleet)
+	scanned := map[string]bool{}
+	for c := range in.Digests {
+		scanned[c] = true
+	}
+	for c := range in.DigestErrs {
+		scanned[c] = true
+	}
+	if len(scanned) != len(active) {
+		t.Errorf("scanned %v, want exactly the active commons %v", scanned, active)
+	}
+	for _, c := range active {
+		if !scanned[c] {
+			t.Errorf("active common %s not scanned", c)
+		}
+	}
+	if known := fc.knownCommons(); len(known) < len(active) {
+		t.Errorf("knownCommons = %v, want every repo common (at least %v)", known, active)
+	}
+	for _, c := range r.CallsSnapshot() {
+		if c.Name == "crew" && len(c.Args) > 0 && c.Args[0] == "crews" {
+			t.Errorf("fleet collect ran the roster loop: %v", c)
+		}
 	}
 }

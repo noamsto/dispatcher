@@ -257,6 +257,27 @@ func fleetCrews(f FleetInputs) ([]fleetCrew, int) {
 	return crews, dropped
 }
 
+// ActiveCommons lists the local repo commons holding a crew BuildFleet will
+// not hide for lack of work: a live dispatcher or an unfinished worker.
+// Collectors scan only these buses.
+func ActiveCommons(sec data.FleetSection) []string {
+	crews, _ := fleetCrews(FleetInputs{Fleet: sec})
+	var commons []string
+	for _, c := range crews {
+		if c.origin != OriginLocal || slices.Contains(commons, c.repo.Common) {
+			continue
+		}
+		active := c.live()
+		for _, w := range c.local.Workers {
+			active = active || !isTerminal(WorkerRowOf(nil, c.crew, w).State)
+		}
+		if active {
+			commons = append(commons, c.repo.Common)
+		}
+	}
+	return commons
+}
+
 func (c fleetCrew) live() bool {
 	return c.origin == OriginLocal && c.home.Dispatcher.State == "live"
 }
