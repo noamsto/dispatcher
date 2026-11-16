@@ -551,8 +551,8 @@ func TestRootKeysOnOverview(t *testing.T) {
 		t.Errorf("] on Overview -> tab %d, want Live", m.active)
 	}
 	m, _ = press(base, keyRune('['))
-	if m.active != mapTab {
-		t.Errorf("[ on Overview -> tab %d, want Map", m.active)
+	if m.active != fleetTab {
+		t.Errorf("[ on Overview -> tab %d, want Fleet", m.active)
 	}
 
 	_, cmd := press(base, keyRune('R'))
@@ -562,8 +562,8 @@ func TestRootKeysOnOverview(t *testing.T) {
 			seen[sm.src] = true
 		}
 	}
-	if len(seen) != int(numSources) {
-		t.Errorf("R requested %d sources, want %d", len(seen), numSources)
+	if len(seen) != int(numSources)-1 { // fleet only once its tab opened
+		t.Errorf("R requested %d sources, want %d", len(seen), numSources-1)
 	}
 
 	live := base
@@ -661,10 +661,10 @@ func TestOverviewFooterDropsOwnedDigits(t *testing.T) {
 		m.active = tab
 		return stripped(m.renderFooter())
 	}
-	if f := footer(overviewTab); strings.Contains(f, "1-7") {
+	if f := footer(overviewTab); strings.Contains(f, "1-8") {
 		t.Errorf("Overview footer advertises view digits: %q", f)
 	}
-	if f := footer(liveTab); !strings.Contains(f, "1-7 views") {
+	if f := footer(liveTab); !strings.Contains(f, "1-8 views") {
 		t.Errorf("Live footer lacks view digits: %q", f)
 	}
 }

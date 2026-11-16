@@ -80,6 +80,7 @@ func run() int {
 		scanner := data.NewBusScanner(eventsPath)
 		mapDeps, closeMap := resolveMap(runner)
 		defer closeMap()
+		fleet := newFleetCollector(runner, cfg)
 		deps := ui.Deps{
 			Ctx: ctx,
 			Load: ui.Loaders{
@@ -91,6 +92,7 @@ func run() int {
 				Bus: func(context.Context) data.BusDigest {
 					return busDigest(scanner, eventsErr, time.Now().UnixMilli())
 				},
+				Fleet: func(ctx context.Context) view.FleetInputs { return fleet.collect(ctx, time.Now().Unix()) },
 			},
 			Runner:         runner,
 			Crew:           cfg.Crew,

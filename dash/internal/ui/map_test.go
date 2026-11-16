@@ -762,7 +762,7 @@ func TestMapRenderErrorShowsMessage(t *testing.T) {
 				t.Fatalf("an image was stored for a failed render")
 			}
 			m = r.press(m, keyType(tea.KeyTab))
-			if m.active != 0 {
+			if m.active != fleetTab {
 				t.Fatalf("tab did not switch views from the failed map: active %d", m.active)
 			}
 		})
@@ -802,7 +802,7 @@ func TestMapFallbackWhenNotCapable(t *testing.T) {
 		t.Fatalf("the fallback advertises map keys")
 	}
 	m = r.press(m, keyType(tea.KeyTab))
-	if m.active != overviewTab {
+	if m.active != fleetTab {
 		t.Fatalf("tab did not switch views: active %d", m.active)
 	}
 	m = r.press(m, keyRune('['))
@@ -981,8 +981,8 @@ func TestMapTabKeyMovesSelectionWhenOwnedElseSwitchesViews(t *testing.T) {
 	loading := r.model(100, 30)
 	nm, _ := loading.Update(keyRune('7'))
 	nm, _ = nm.Update(keyType(tea.KeyTab))
-	if nm.(Model).active != 0 {
-		t.Fatalf("tab while rendering: active %d, want a switch to view 0", nm.(Model).active)
+	if nm.(Model).active != fleetTab {
+		t.Fatalf("tab while rendering: active %d, want a switch to the next view", nm.(Model).active)
 	}
 }
 

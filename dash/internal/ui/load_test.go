@@ -121,16 +121,16 @@ func TestAllLoadersStartConcurrently(t *testing.T) {
 
 	seen := map[source]bool{}
 	timeout := time.After(time.Second)
-	for len(seen) < int(numSources) {
+	for len(seen) < int(numSources)-1 { // the fleet source waits for its tab
 		select {
 		case s := <-started:
 			seen[s] = true
 		case <-timeout:
-			t.Fatalf("only %d of %d loaders started before any was released: %v", len(seen), numSources, seen)
+			t.Fatalf("only %d of %d loaders started before any was released: %v", len(seen), numSources-1, seen)
 		}
 	}
 	close(release)
-	for range numSources {
+	for range numSources - 1 {
 		select {
 		case <-results:
 		case <-time.After(time.Second):
@@ -156,8 +156,8 @@ func TestRequestWhileInFlightSetsAgain(t *testing.T) {
 	nm, first := m.Update(keyRune('r'))
 	m = nm.(Model)
 	msgs := flattenCmd(first)
-	if len(msgs) != int(numSources) {
-		t.Fatalf("r started %d loads, want %d", len(msgs), numSources)
+	if len(msgs) != int(numSources)-1 { // fleet is requested only once its tab opened
+		t.Fatalf("r started %d loads, want %d", len(msgs), numSources-1)
 	}
 	nm, second := m.Update(keyRune('r'))
 	m = nm.(Model)

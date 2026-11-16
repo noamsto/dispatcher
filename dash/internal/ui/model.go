@@ -46,7 +46,7 @@ type tabHooks interface {
 	leave() (view, tea.Cmd)
 }
 
-var tabTitles = []string{"Overview", "Live", "Board", "Budget", "Runs", "Settings", "Map"}
+var tabTitles = []string{"Overview", "Live", "Board", "Budget", "Runs", "Settings", "Map", "Fleet"}
 
 // Tab indexes into Model.views and tabTitles.
 const (
@@ -57,6 +57,7 @@ const (
 	runsTab
 	settingsTab
 	mapTab
+	fleetTab
 	numTabs
 )
 
@@ -72,6 +73,9 @@ type snapshotMsg struct {
 	runs     vm.RunsView
 	settings vm.SettingsView
 	mapv     vm.MapView
+
+	fleet   vm.FleetView
+	fleetIn vm.FleetInputs // what fleet was built from, for drill-down
 }
 
 func newSnapshotMsg(in vm.Inputs, loaded [numSources]bool) snapshotMsg {
@@ -96,6 +100,13 @@ type clearStatusMsg struct{ at time.Time }
 
 const statusTTL = 10 * time.Second
 
+// fleetTickEvery is the Fleet tab's refresh cadence while it is active.
+const fleetTickEvery = 10 * time.Second
+
+// fleetTickMsg refreshes the fleet source; gen ties it to one activation so a
+// quick switch away and back cannot leave two tick chains running.
+type fleetTickMsg struct{ gen int }
+
 // Model is the root Bubble Tea model.
 type Model struct {
 	now     func() time.Time
@@ -106,6 +117,10 @@ type Model struct {
 	digest data.BusDigest
 	crew   []string
 	load   [numSources]loadState
+
+	fleetIn      vm.FleetInputs
+	fleetStarted bool // the Fleet tab has been activated, so its source is live
+	fleetGen     int
 
 	width, height int
 	ready         bool
@@ -147,9 +162,9 @@ func NewModel(deps Deps, now func() time.Time, live liveDeps) Model {
 	// here: a request before their results land must set again, not start a
 	// duplicate subprocess.
 	for i := range m.load {
-		m.load[i].inFlight = true
+		m.load[i].inFlight = source(i) != srcFleet
 	}
-	msg := newSnapshotMsg(m.viewInputs(), m.loaded())
+	msg := m.snapshotMsg()
 	lv := newLiveView(msg.roster, msg.budget, live, now)
 	acts := actionDeps{ctx: ctx, runner: deps.Runner, crew: deps.Crew, inTmux: deps.InTmux}
 	lv.acts = acts
@@ -165,9 +180,25 @@ func NewModel(deps Deps, now func() time.Time, live liveDeps) Model {
 			ctx: ctx, runner: deps.Runner, bin: deps.DispatchConfig,
 			getenv: os.Getenv, exec: tea.ExecProcess,
 		}),
-		mapTab: newMapView(msg.mapv, deps.Map, acts),
+		mapTab:   newMapView(msg.mapv, deps.Map, acts),
+		fleetTab: newFleetView(msg),
 	}
 	return m
+}
+
+// snapshotMsg builds every view model from the current sources. The fleet
+// view is built only once its source has landed.
+func (m Model) snapshotMsg() snapshotMsg {
+	msg := newSnapshotMsg(m.viewInputs(), m.loaded())
+	if !m.load[srcFleet].loaded {
+		return msg
+	}
+	in := m.fleetIn
+	in.Snap.Budget, in.Snap.Settings = m.snap.Budget, m.snap.Settings
+	in.NowMS = m.now().UnixMilli()
+	msg.fleetIn = in
+	msg.fleet = vm.BuildFleet(in)
+	return msg
 }
 
 func (m Model) viewInputs() vm.Inputs {
@@ -207,9 +238,14 @@ func (m *Model) request(s source) tea.Cmd {
 	return m.loaders.cmd(m.ctx, s)
 }
 
+// requestAll refreshes every source; the fleet source only once the Fleet tab
+// has been opened.
 func (m *Model) requestAll() tea.Cmd {
 	cmds := make([]tea.Cmd, 0, numSources)
 	for s := source(0); s < numSources; s++ {
+		if s == srcFleet && !m.fleetStarted {
+			continue
+		}
 		cmds = append(cmds, m.request(s))
 	}
 	return tea.Batch(cmds...)
@@ -223,6 +259,9 @@ func (m *Model) requestAll() tea.Cmd {
 func (m Model) Init() tea.Cmd {
 	cmds := make([]tea.Cmd, 0, numSources+1)
 	for s := source(0); s < numSources; s++ {
+		if s == srcFleet {
+			continue
+		}
 		cmds = append(cmds, m.loaders.cmd(m.ctx, s))
 	}
 	if lv, ok := m.views[liveTab].(liveView); ok {
@@ -283,6 +322,7 @@ func (m *Model) switchTab(i int) tea.Cmd {
 	first := m.handoffSelection()
 	m.active = i
 	sync := m.syncMapBox()
+	fleetCmd := m.enterFleet()
 	if h, ok := m.views[i].(tabHooks); ok {
 		var nv view
 		nv, enterCmd = h.enter(first)
@@ -290,7 +330,27 @@ func (m *Model) switchTab(i int) tea.Cmd {
 	}
 	// Map and Overview both toggle mouse reporting: the leave must land
 	// before the enter, which a plain Batch does not guarantee.
-	return tea.Sequence(leaveCmd, tea.Batch(sync, enterCmd))
+	return tea.Sequence(leaveCmd, tea.Batch(sync, enterCmd, fleetCmd))
+}
+
+// enterFleet starts the Fleet source on first activation and a fresh tick
+// chain on every one.
+func (m *Model) enterFleet() tea.Cmd {
+	if m.active != fleetTab {
+		return nil
+	}
+	var load tea.Cmd
+	if !m.fleetStarted {
+		m.fleetStarted = true
+		load = m.request(srcFleet)
+	}
+	m.fleetGen++
+	return tea.Batch(load, m.fleetTick())
+}
+
+func (m Model) fleetTick() tea.Cmd {
+	gen := m.fleetGen
+	return tea.Tick(fleetTickEvery, func(time.Time) tea.Msg { return fleetTickMsg{gen: gen} })
 }
 
 func (m Model) update(msg tea.Msg) (Model, tea.Cmd) {
@@ -313,6 +373,9 @@ func (m Model) update(msg tea.Msg) (Model, tea.Cmd) {
 		if msg.bus != nil {
 			m.digest = *msg.bus
 		}
+		if msg.fleet != nil {
+			m.fleetIn = *msg.fleet
+		}
 		st := &m.load[msg.src]
 		st.inFlight, st.loaded, st.at = false, true, m.now()
 		cmds := m.broadcast()
@@ -321,6 +384,12 @@ func (m Model) update(msg tea.Msg) (Model, tea.Cmd) {
 			cmds = append(cmds, m.request(msg.src))
 		}
 		return m, tea.Batch(cmds...)
+
+	case fleetTickMsg:
+		if m.active != fleetTab || msg.gen != m.fleetGen {
+			return m, nil
+		}
+		return m, tea.Batch(m.request(srcFleet), m.fleetTick())
 
 	case actionMsg:
 		m.status, m.statusErr, m.statusAt = msg.text, msg.err, m.now()
@@ -382,7 +451,7 @@ func (m Model) update(msg tea.Msg) (Model, tea.Cmd) {
 
 // broadcast forwards the current Snapshot to every view.
 func (m *Model) broadcast() []tea.Cmd {
-	msg := newSnapshotMsg(m.viewInputs(), m.loaded())
+	msg := m.snapshotMsg()
 	var cmds []tea.Cmd
 	for i, v := range m.views {
 		nv, cmd := v.Update(msg)

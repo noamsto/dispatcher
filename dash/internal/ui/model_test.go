@@ -39,7 +39,7 @@ func TestViewEmptyBeforeWindowSize(t *testing.T) {
 
 func TestTabSwitchingByDigits(t *testing.T) {
 	m := sized(newTestModel(t), 80, 24)
-	for want, digit := range []rune{'1', '2', '3', '4', '5', '6', '7'} {
+	for want, digit := range []rune{'1', '2', '3', '4', '5', '6', '7', '8'} {
 		m.active = liveTab // the Overview owns digits, so every press starts from Live
 		nm, _ := m.Update(keyRune(digit))
 		m = nm.(Model)
@@ -67,7 +67,7 @@ func TestTabSwitchingByTab(t *testing.T) {
 		t.Fatalf("after shift+tab: active = %d, want %d", m.active, boardTab)
 	}
 	// wraps around
-	m.active = mapTab
+	m.active = fleetTab
 	nm, _ = m.Update(keyType(tea.KeyTab))
 	m = nm.(Model)
 	if m.active != overviewTab {
