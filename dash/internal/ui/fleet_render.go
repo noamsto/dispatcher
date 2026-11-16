@@ -1,0 +1,791 @@
+package ui
+
+import (
+	"fmt"
+	"slices"
+	"strings"
+
+	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
+
+	"github.com/noamsto/dispatcher/dash/internal/data"
+	vm "github.com/noamsto/dispatcher/dash/internal/view"
+)
+
+// fleetPanel names the Fleet tab's focusable panels in tab order.
+type fleetPanel int
+
+const (
+	fpAttention fleetPanel = iota
+	fpCrews
+	fpCapacity
+	fpHolds
+	fpHosts
+	numFleetPanels
+)
+
+// fleetPanelMinH is a frame plus one row: a right-column panel below it is
+// not drawn.
+const (
+	fleetPanelMinH = 3
+	fleetCrewsPct  = 60
+)
+
+// Fleet entry kinds continue the Overview's, so place and placed serve both.
+const (
+	eCrew entryKind = eEvent + 1 + iota
+	eSection
+	eCapWeight
+	eCapLoad
+	eCapModel
+	eCapBudget
+	eHold
+	eHost
+	eSuggested
+)
+
+// fleetSections are the eSection titles, by entry idx.
+var fleetSections = [...]string{"PEERS", "BUDGET", "suggested (not admitted)"}
+
+const (
+	secPeers = iota
+	secBudget
+	secSuggested
+)
+
+// fleetState is what the operator asked for; resolveFleet turns it into what
+// is drawn and acted on. Rows are keyed by crew key, hold ID and host name,
+// so a selection survives refreshes and the filter.
+type fleetState struct {
+	focus    fleetPanel
+	cursor   string // the strip cursor's attention item ID
+	cursorAt int    // the cursor's index when set: tie-break and fallback
+	stripOff int
+	crew     string // CrewRow.Key of the chosen crew
+	hold     string
+	host     string
+	capOff   int // Capacity has no selectable rows, so it scrolls
+	filter   string
+}
+
+// fleetSel is the resolved selection: indexes into the FleetView's Crews,
+// Holds, Hosts and Attention, or -1 for none.
+type fleetSel struct{ crew, hold, host, cursor int }
+
+type fleetRects struct {
+	w, h      int
+	allClear  bool
+	stripRows int
+	stripOff  int
+	sel       fleetSel
+	panels    [numFleetPanels]panelLayout
+}
+
+// fleetIndex resolves crew keys and the filter once per frame.
+type fleetIndex struct {
+	byKey map[string]int
+	vis   []bool
+}
+
+func newFleetIndex(fv vm.FleetView, filter string) fleetIndex {
+	needle := strings.ToLower(filter)
+	ix := fleetIndex{byKey: make(map[string]int, len(fv.Crews)), vis: make([]bool, len(fv.Crews))}
+	for i, c := range fv.Crews {
+		ix.byKey[c.Key] = i
+		hay := strings.ToLower(strOf(c.Repo) + " " + c.Crew + " " + c.Host)
+		ix.vis[i] = needle == "" || strings.Contains(hay, needle)
+	}
+	return ix
+}
+
+// crew is the visible crew row with this key, or -1.
+func (ix fleetIndex) crew(key string) int {
+	if i, ok := ix.byKey[key]; ok && ix.vis[i] {
+		return i
+	}
+	return -1
+}
+
+func (ix fleetIndex) visible() []int {
+	var out []int
+	for i, v := range ix.vis {
+		if v {
+			out = append(out, i)
+		}
+	}
+	return out
+}
+
+// effectiveFleetFocus is the panel holding focus as drawn: the strip hands it
+// to the crews while it has no items.
+func effectiveFleetFocus(fv vm.FleetView, f fleetPanel) fleetPanel {
+	if f == fpAttention && len(fv.Attention) == 0 {
+		return fpCrews
+	}
+	return f
+}
+
+// fleetShown is the body panels drawn at width w: all four when wide, else
+// only the focused one (the crews while the strip has focus).
+func fleetShown(w int, focus fleetPanel) []fleetPanel {
+	switch {
+	case w >= wideWidth:
+		return []fleetPanel{fpCrews, fpCapacity, fpHolds, fpHosts}
+	case focus == fpAttention:
+		return []fleetPanel{fpCrews}
+	}
+	return []fleetPanel{focus}
+}
+
+// resolveFleet is the one answer to what is selected. With the strip focused
+// the crew is the cursor item's crew, or none; otherwise the chosen crew if
+// it passes the filter, else the first visible one when the crews are shown.
+// Holds and hosts fall back to their first row the same way.
+func resolveFleet(fv vm.FleetView, st fleetState, shown []fleetPanel) fleetSel {
+	ix := newFleetIndex(fv, st.filter)
+	sel := fleetSel{crew: -1, hold: -1, host: -1, cursor: attnCursor(fv.Attention, st.cursor, st.cursorAt)}
+	focus := effectiveFleetFocus(fv, st.focus)
+	if focus == fpAttention {
+		sel.crew = ix.crew(strOf(fv.Attention[sel.cursor].CrewKey))
+	} else {
+		sel.crew = ix.crew(st.crew)
+		if vis := ix.visible(); sel.crew < 0 && len(vis) > 0 && slices.Contains(shown, fpCrews) {
+			sel.crew = vis[0]
+		}
+	}
+	sel.hold = slices.IndexFunc(fv.Holds, func(h vm.FleetHoldRow) bool { return h.ID == st.hold })
+	if sel.hold < 0 && len(fv.Holds) > 0 && slices.Contains(shown, fpHolds) {
+		sel.hold = 0
+	}
+	sel.host = slices.IndexFunc(fv.Hosts, func(h vm.FleetHostRow) bool { return h.Name == st.host })
+	if sel.host < 0 && len(fv.Hosts) > 0 && slices.Contains(shown, fpHosts) {
+		sel.host = 0
+	}
+	return sel
+}
+
+// crewEntries is one row per visible crew, a PEERS subheading before the
+// first peer row. An entry's worker is its crew index, what place keeps in
+// view.
+func crewEntries(fv vm.FleetView, ix fleetIndex) []entry {
+	var es []entry
+	peers := false
+	for _, i := range ix.visible() {
+		if fv.Crews[i].Origin == vm.OriginPeer && !peers {
+			peers = true
+			es = append(es, entry{kind: eSection, idx: secPeers, worker: -1, lines: 1})
+		}
+		es = append(es, entry{kind: eCrew, idx: i, worker: i, lines: 1})
+	}
+	return es
+}
+
+func capacityEntries(fv vm.FleetView) []entry {
+	es := []entry{
+		{kind: eCapWeight, worker: -1, lines: 1},
+		{kind: eCapLoad, worker: -1, lines: 1},
+	}
+	for i := range fv.Capacity.LocalModels {
+		es = append(es, entry{kind: eCapModel, idx: i, worker: -1, lines: 1})
+	}
+	if len(fv.Capacity.Budgets) > 0 {
+		es = append(es, entry{kind: eSection, idx: secBudget, worker: -1, lines: 1})
+		for i := range fv.Capacity.Budgets {
+			es = append(es, entry{kind: eCapBudget, idx: i, worker: -1, lines: 1})
+		}
+	}
+	return es
+}
+
+func holdEntries(fv vm.FleetView) []entry {
+	es := make([]entry, len(fv.Holds))
+	for i := range fv.Holds {
+		es[i] = entry{kind: eHold, idx: i, worker: i, lines: 1}
+	}
+	return es
+}
+
+func hostEntries(fv vm.FleetView) []entry {
+	es := make([]entry, 0, len(fv.Hosts)+len(fv.SuggestedHosts)+1)
+	for i := range fv.Hosts {
+		es = append(es, entry{kind: eHost, idx: i, worker: i, lines: 1})
+	}
+	if len(fv.SuggestedHosts) > 0 {
+		es = append(es, entry{kind: eSection, idx: secSuggested, worker: -1, lines: 1})
+		for i := range fv.SuggestedHosts {
+			es = append(es, entry{kind: eSuggested, idx: i, worker: -1, lines: 1})
+		}
+	}
+	return es
+}
+
+func fleetEntries(p fleetPanel, fv vm.FleetView, ix fleetIndex) []entry {
+	switch p {
+	case fpCrews:
+		return crewEntries(fv, ix)
+	case fpCapacity:
+		return capacityEntries(fv)
+	case fpHolds:
+		return holdEntries(fv)
+	}
+	return hostEntries(fv)
+}
+
+// splitHeights shares total rows among panels: each gets fleetPanelMinH in
+// order while rows last, then one row at a time up to its wanted height, and
+// the last takes what is left.
+func splitHeights(total int, want []int) []int {
+	hs := make([]int, len(want))
+	left := total
+	for i := range hs {
+		hs[i] = min(fleetPanelMinH, left)
+		left -= hs[i]
+	}
+	for grew := true; grew && left > 0; {
+		grew = false
+		for i := range hs {
+			if left > 0 && hs[i] < want[i] {
+				hs[i]++
+				left--
+				grew = true
+			}
+		}
+	}
+	if len(hs) > 0 {
+		hs[len(hs)-1] += left
+	}
+	return hs
+}
+
+// fleetLayout is the one geometry the renderer and mouse hit-testing share,
+// and the only place the selection is resolved and the strip window computed.
+func fleetLayout(w, h int, fv vm.FleetView, st fleetState) fleetRects {
+	ix := newFleetIndex(fv, st.filter)
+	r := fleetRects{w: w, h: h}
+	n := len(fv.Attention)
+	y := 0
+	if n == 0 {
+		r.allClear = true
+		y = min(1, h)
+	} else {
+		var stripH int
+		stripH, r.stripRows, r.stripOff = stripWindow(n, h, st.stripOff, attnCursor(fv.Attention, st.cursor, st.cursorAt))
+		outer, inner := panelRect(rect{0, 0, w, stripH})
+		pl := panelLayout{shown: true, rect: outer, inner: inner}
+		for i := range r.stripRows {
+			idx := r.stripOff + i
+			pl.items = append(pl.items, placed{
+				entry: entry{kind: eAttn, idx: idx, worker: ix.crew(strOf(fv.Attention[idx].CrewKey)), lines: 1},
+				rect:  rect{inner.x, inner.y + i, inner.w, 1},
+			})
+		}
+		r.panels[fpAttention] = pl
+		y = stripH
+	}
+	bodyH := max0(h - y)
+	var shown []fleetPanel
+	if bodyH >= fleetPanelMinH {
+		shown = fleetShown(w, effectiveFleetFocus(fv, st.focus))
+	}
+	r.sel = resolveFleet(fv, st, shown)
+	if len(shown) == 0 {
+		return r
+	}
+
+	rects := map[fleetPanel]rect{}
+	if w >= wideWidth {
+		crewsW := w * fleetCrewsPct / 100
+		rects[fpCrews] = rect{0, y, crewsW, bodyH}
+		right := []fleetPanel{fpCapacity, fpHolds, fpHosts}
+		want := make([]int, len(right))
+		for i, p := range right {
+			want[i] = max(1, totalLines(fleetEntries(p, fv, ix))) + 2
+		}
+		py := y
+		for i, ph := range splitHeights(bodyH, want) {
+			if ph >= fleetPanelMinH {
+				rects[right[i]] = rect{crewsW, py, w - crewsW, ph}
+			}
+			py += ph
+		}
+	} else {
+		rects[shown[0]] = rect{0, y, w, bodyH}
+	}
+
+	for p, pr := range rects {
+		outer, inner := panelRect(pr)
+		es := fleetEntries(p, fv, ix)
+		selIdx := -1
+		switch p {
+		case fpCrews:
+			selIdx = r.sel.crew
+		case fpHolds:
+			selIdx = r.sel.hold
+		case fpHosts:
+			selIdx = r.sel.host
+		case fpCapacity:
+			es = es[clamp(st.capOff, 0, max0(len(es)-inner.h)):]
+		}
+		r.panels[p] = panelLayout{shown: true, rect: outer, inner: inner, items: place(es, inner, selIdx)}
+	}
+	return r
+}
+
+// fleetCols are the Crews panel's column widths, sized to every visible row
+// so scrolling never shifts them.
+type fleetCols struct{ label, lane, counts int }
+
+func crewCols(fv vm.FleetView, ix fleetIndex, iw int) fleetCols {
+	var c fleetCols
+	for _, i := range ix.visible() {
+		row := fv.Crews[i]
+		c.label = max(c.label, ansi.StringWidth(crewLabel(row)))
+		c.lane = max(c.lane, ansi.StringWidth(crewLane(row)))
+		c.counts = max(c.counts, ansi.StringWidth(workerCounts(row.Workers.ByState)))
+	}
+	c.label = min(c.label, max(8, iw/3))
+	return c
+}
+
+func renderFleet(w, h int, fv vm.FleetView, st fleetState, mode pillMode) string {
+	if w <= 0 || h <= 0 {
+		return ""
+	}
+	r := fleetLayout(w, h, fv, st)
+	focus := effectiveFleetFocus(fv, st.focus)
+	ix := newFleetIndex(fv, st.filter)
+	lines := make([]string, 0, h)
+	if r.allClear {
+		lines = append(lines, truncateLine(" "+fg(colGreen).Render("✓ all clear"), w))
+	}
+
+	crewsCount := fmt.Sprintf("%d crews · %d workers", fv.Summary.Crews, fv.Summary.Workers)
+	if st.filter != "" {
+		crewsCount = fmt.Sprintf("%d of %d crews", len(ix.visible()), len(fv.Crews))
+	}
+	capCount := ""
+	if fv.Capacity.Free != nil {
+		capCount = fmt.Sprintf("%d free", *fv.Capacity.Free)
+	}
+	specs := [numFleetPanels]panelSpec{
+		fpAttention: {title: "ATTENTION", count: fmt.Sprintf("%d need action", len(fv.Attention)), color: colAmber},
+		fpCrews:     {title: "CREWS", count: crewsCount, color: colTeal},
+		fpCapacity:  {title: "CAPACITY", count: capCount, color: colPurple},
+		fpHolds:     {title: "HOLDS", count: fmt.Sprintf("%d holds", len(fv.Holds)), color: colBlue},
+		fpHosts:     {title: "HOSTS", count: fmt.Sprintf("%d unhealthy of %d", fv.Summary.HostsUnhealthy, fv.Summary.Hosts), color: colGreen},
+	}
+	fr := fleetRow{fv: fv, r: r, focus: focus}
+	if pl := r.panels[fpCrews]; pl.shown {
+		fr.cols = crewCols(fv, ix, pl.inner.w)
+	}
+	body := func(p fleetPanel) []string {
+		pl := r.panels[p]
+		sp := specs[p]
+		sp.focused = focus == p
+		var content []string
+		for _, it := range pl.items {
+			content = append(content, fr.line(it, pl.inner.w))
+		}
+		if len(pl.items) == 0 && p != fpAttention {
+			content = append(content, newSpans(pl.inner.w, nil).add(" none", fg(colDim)).String())
+		}
+		return renderPanel(pl.rect.w, pl.rect.h, sp, mode, content)
+	}
+
+	if r.panels[fpAttention].shown {
+		lines = append(lines, body(fpAttention)...)
+	}
+	if left := r.panels[fpCrews]; left.shown && left.rect.w < w {
+		var right []string
+		for _, p := range []fleetPanel{fpCapacity, fpHolds, fpHosts} {
+			if r.panels[p].shown {
+				right = append(right, body(p)...)
+			}
+		}
+		blank := strings.Repeat(" ", w-left.rect.w)
+		for i, l := range body(fpCrews) {
+			rl := blank
+			if i < len(right) {
+				rl = right[i]
+			}
+			lines = append(lines, l+rl)
+		}
+	} else {
+		for _, p := range []fleetPanel{fpCrews, fpCapacity, fpHolds, fpHosts} {
+			if r.panels[p].shown {
+				lines = append(lines, body(p)...)
+			}
+		}
+	}
+	for len(lines) < h {
+		lines = append(lines, "")
+	}
+	for i := range lines {
+		lines[i] = truncateLine(lines[i], w)
+	}
+	return strings.Join(lines[:h], "\n")
+}
+
+// fleetRow renders one placed entry of any Fleet panel.
+type fleetRow struct {
+	fv    vm.FleetView
+	r     fleetRects
+	focus fleetPanel
+	cols  fleetCols
+}
+
+// selected: the strip highlights its cursor while focused, else the chosen
+// crew's items; the crew row always shows the chosen crew; holds and hosts
+// highlight only in their focused panel.
+func (fr fleetRow) selected(it placed) bool {
+	sel := fr.r.sel
+	switch it.kind {
+	case eAttn:
+		if fr.focus == fpAttention {
+			return it.idx == sel.cursor
+		}
+		return it.worker >= 0 && it.worker == sel.crew
+	case eCrew:
+		return it.worker == sel.crew
+	case eHold:
+		return fr.focus == fpHolds && it.worker == sel.hold
+	case eHost:
+		return fr.focus == fpHosts && it.worker == sel.host
+	}
+	return false
+}
+
+func (fr fleetRow) line(it placed, iw int) string {
+	if it.kind == eSection {
+		return sectionLine(fleetSections[it.idx], iw)
+	}
+	var bg lipgloss.TerminalColor = lipgloss.NoColor{}
+	sel := fr.selected(it)
+	if sel {
+		bg = colSelBg
+	}
+	s := newSpans(iw, bg)
+	if sel {
+		s.add("▌", fg(colTeal))
+	} else {
+		s.add(" ", lipgloss.NewStyle())
+	}
+	fv := fr.fv
+	switch it.kind {
+	case eAttn:
+		return attnStripLine(fv.Attention[fr.r.stripOff:fr.r.stripOff+fr.r.stripRows], it.idx-fr.r.stripOff, fleetAttnLabel, s)
+	case eCrew:
+		return fr.crewLine(fv.Crews[it.idx], s)
+	case eCapWeight:
+		return weightLine(fv.Capacity, s, iw)
+	case eCapLoad:
+		return loadLine(fv.Capacity, s)
+	case eCapModel:
+		m := fv.Capacity.LocalModels[it.idx]
+		c := colText
+		if m.InUse >= m.MaxConcurrent {
+			c = colAmber
+		}
+		return s.col(m.ID, capLabelW, fg(colText), false).add(" ", lipgloss.NewStyle()).
+			add(fmt.Sprintf("%d/%d", m.InUse, m.MaxConcurrent), fg(c)).String()
+	case eCapBudget:
+		return budgetBar(fv.Capacity.Budgets[it.idx], s, iw)
+	case eHold:
+		return fleetHoldLine(fv.Holds[it.idx], s, iw)
+	case eHost:
+		return fleetHostLine(fv.Hosts, it.idx, s)
+	}
+	sh := fv.SuggestedHosts[it.idx]
+	return s.col(sh.Name, suggestedNameW(fv.SuggestedHosts), fg(colDim), false).add(" ", lipgloss.NewStyle()).
+		add(onlineWord(sh.Online), fg(onlineColor(sh.Online))).String()
+}
+
+// fleetAttnLabel names who an attention item is about: the worker, else the
+// crew, else the host it concerns.
+func fleetAttnLabel(a vm.AttentionItem) string {
+	switch {
+	case a.Worker != "":
+		return a.Worker
+	case a.Crew != "":
+		return a.Crew
+	case a.Host != "":
+		return "@" + a.Host
+	}
+	return ""
+}
+
+func crewLabel(c vm.FleetCrewRow) string {
+	if c.Origin == vm.OriginPeer {
+		return "@" + c.Host + " " + c.Crew
+	}
+	return strOf(c.Repo) + " " + c.Crew
+}
+
+func crewLane(c vm.FleetCrewRow) string {
+	if c.Dispatcher == nil {
+		return ""
+	}
+	return ovStr(c.Dispatcher.Lane, "—")
+}
+
+// dispatcherGlyphState maps a dispatcher state onto the worker state whose
+// glyph and colour read the same: live runs, dead failed, closed idle.
+func dispatcherGlyphState(c vm.FleetCrewRow) string {
+	if c.Dispatcher == nil {
+		return ""
+	}
+	switch c.Dispatcher.State {
+	case "live":
+		return "working"
+	case "dead":
+		return "failed"
+	}
+	return ""
+}
+
+var countAbbrevs = []struct{ state, abbr string }{
+	{"working", "w"}, {"blocked", "b"}, {"pr_open", "pr"}, {"done", "d"},
+	{"failed", "f"}, {"exited", "x"}, {"unknown", "?"},
+}
+
+// workerCounts is by_state as "3w 1b 1pr": known states abbreviated in a
+// fixed order, any other state after them by name.
+func workerCounts(by map[string]int) string {
+	var parts []string
+	seen := map[string]bool{}
+	for _, a := range countAbbrevs {
+		seen[a.state] = true
+		if n := by[a.state]; n > 0 {
+			parts = append(parts, fmt.Sprintf("%d%s", n, a.abbr))
+		}
+	}
+	var rest []string
+	for st, n := range by {
+		if !seen[st] && n > 0 {
+			rest = append(rest, st)
+		}
+	}
+	slices.Sort(rest)
+	for _, st := range rest {
+		parts = append(parts, fmt.Sprintf("%d %s", by[st], st))
+	}
+	if len(parts) == 0 {
+		return "—"
+	}
+	return strings.Join(parts, " ")
+}
+
+func laneColor(lane string) lipgloss.Color {
+	switch lane {
+	case "alive":
+		return colGreen
+	case "stale":
+		return colAmber
+	}
+	return colDim
+}
+
+func (fr fleetRow) crewLine(c vm.FleetCrewRow, s *spans) string {
+	gs := dispatcherGlyphState(c)
+	text, counts := fg(colText).Bold(true), fg(colText)
+	if c.Origin == vm.OriginPeer {
+		text, counts = fg(colDim), fg(colDim)
+	}
+	lane := crewLane(c)
+	s.add(stateGlyph(gs), fg(glyphColor(gs))).
+		add(" ", lipgloss.NewStyle()).
+		col(crewLabel(c), fr.cols.label, text, false).
+		add(" ", lipgloss.NewStyle()).
+		col(lane, fr.cols.lane, fg(laneColor(lane)), false).
+		add(" ", lipgloss.NewStyle()).
+		col(workerCounts(c.Workers.ByState), fr.cols.counts, counts, false)
+	if c.Attention > 0 {
+		s.add(fmt.Sprintf(" %d!", c.Attention), fg(colAmber).Bold(true))
+	}
+	if c.Orphaned {
+		s.add(" orphaned", fg(colRed).Bold(true))
+	}
+	return s.String()
+}
+
+const capLabelW = 11
+
+func weightLine(c vm.FleetCapacity, s *spans, iw int) string {
+	s.col("weight", capLabelW, fg(colText), false).add(" ", lipgloss.NewStyle())
+	if c.Budget == nil || c.Weight == nil {
+		return s.add("?", fg(colDim)).String()
+	}
+	text := fmt.Sprintf(" %d/%d", *c.Weight, *c.Budget)
+	if c.Pending != nil && *c.Pending > 0 {
+		text += fmt.Sprintf(" (+%d)", *c.Pending)
+	}
+	barW := clamp(iw-1-capLabelW-1-ansi.StringWidth(text), 4, 20)
+	used, pct := 0.0, 0.0
+	if *c.Budget > 0 {
+		used = float64(*c.Weight) / float64(*c.Budget)
+		pct = float64(*c.Weight+derefInt(c.Pending)) / float64(*c.Budget) * 100
+	}
+	filled := clamp(int(used*float64(barW)+0.5), 0, barW)
+	col := lipgloss.Color(gaugeColor(pct))
+	return s.add(strings.Repeat("█", filled), fg(col)).
+		add(strings.Repeat("░", barW-filled), fg(colBorderOff)).
+		add(text, fg(col)).String()
+}
+
+func derefInt(p *int) int {
+	if p == nil {
+		return 0
+	}
+	return *p
+}
+
+func loadLine(c vm.FleetCapacity, s *spans) string {
+	s.col("load", capLabelW, fg(colText), false).add(" ", lipgloss.NewStyle())
+	if c.Load1 == nil || c.Cores == nil {
+		return s.add("?", fg(colDim)).String()
+	}
+	over := c.LoadOver != nil && *c.LoadOver
+	col := colText
+	if over {
+		col = colRed
+	}
+	s.add(fmt.Sprintf("%s/%d", optFmt1(c.Load1), *c.Cores), fg(col))
+	if over {
+		s.add(" load over", fg(colRed).Bold(true))
+	}
+	return s.String()
+}
+
+func prioColor(p string) lipgloss.Color {
+	switch p {
+	case "high":
+		return colRed
+	case "low", "quota":
+		return colDim
+	}
+	return colText
+}
+
+func fleetHoldLine(hd vm.FleetHoldRow, s *spans, iw int) string {
+	const prioW, stateW, ageW = 6, 15, 4
+	prio := ovStr(hd.Prio, hd.Kind)
+	where := hd.Repo + " " + hd.Crew
+	if hd.Branch != nil {
+		where = hd.Repo + "/" + *hd.Branch
+	}
+	state := hd.State
+	if hd.Reason != nil {
+		state += ":" + *hd.Reason
+	}
+	sc := colText
+	switch {
+	case hd.Matured:
+		sc = colAmber
+	case hd.State == "parked":
+		sc = colDim
+	}
+	whereW := max(4, iw-1-prioW-1-1-stateW-1-ageW)
+	return s.col(prio, prioW, fg(prioColor(prio)), false).
+		add(" ", lipgloss.NewStyle()).
+		col(where, whereW, fg(colText), false).
+		add(" ", lipgloss.NewStyle()).
+		col(state, stateW, fg(sc), false).
+		add(" ", lipgloss.NewStyle()).
+		col(ovAge(hd.WaitedS), ageW, fg(colDim), true).String()
+}
+
+// hostNameW is the admitted hosts' name column. Suggested hosts sit under
+// their own subheading and size theirs apart, so a long tailnet name never
+// pushes the admitted rows' sync column out of a narrow panel.
+func hostNameW(hosts []vm.FleetHostRow) int {
+	w := 4
+	for _, h := range hosts {
+		w = max(w, ansi.StringWidth(h.Name))
+	}
+	return min(w, 12)
+}
+
+func suggestedNameW(hosts []data.SuggestedHost) int {
+	w := 4
+	for _, h := range hosts {
+		w = max(w, ansi.StringWidth(h.Name))
+	}
+	return min(w, 16)
+}
+
+func onlineWord(on bool) string {
+	if on {
+		return "online"
+	}
+	return "offline"
+}
+
+func onlineColor(on bool) lipgloss.Color {
+	if on {
+		return colGreen
+	}
+	return colDim
+}
+
+func relayColor(state string) lipgloss.Color {
+	switch state {
+	case "up":
+		return colGreen
+	case "down":
+		return colRed
+	}
+	return colDim
+}
+
+func syncText(sy vm.FleetHostSync) (string, lipgloss.Color) {
+	lag := ""
+	if sy.LagSec != nil {
+		lag = " " + ovAge(*sy.LagSec)
+	}
+	switch sy.State {
+	case "n/a":
+		return "—", colDim
+	case "ok":
+		return "ok" + lag, colGreen
+	case "failed":
+		return "failed" + lag, colRed
+	}
+	return sy.State + lag, colAmber
+}
+
+// reachMark is the reach probe as a glyph (online, offline, unreachable or
+// unprobed) and the tag of the source that answered.
+func reachMark(re vm.FleetHostReach) (string, string, lipgloss.Color) {
+	tag := ""
+	switch strOf(re.Source) {
+	case "tailscale":
+		tag = "ts"
+	case "ssh":
+		tag = "ssh"
+	}
+	switch {
+	case re.Error != nil:
+		return "✗", tag, colRed
+	case re.Online == nil:
+		return "?", tag, colDim
+	case *re.Online:
+		return "●", tag, colGreen
+	}
+	return "○", tag, colDim
+}
+
+func fleetHostLine(hosts []vm.FleetHostRow, i int, s *spans) string {
+	const tagW, relayW = 3, 4
+	h := hosts[i]
+	sync, sc := syncText(h.Sync)
+	glyph, tag, rc := reachMark(h.Reach)
+	return s.col(h.Name, hostNameW(hosts), fg(colText).Bold(true), false).
+		add(" ", lipgloss.NewStyle()).
+		add(glyph, fg(rc)).
+		add(" ", lipgloss.NewStyle()).
+		col(tag, tagW, fg(colDim), false).
+		add(" relay ", fg(colDim)).
+		col(h.Relay.State, relayW, fg(relayColor(h.Relay.State)), false).
+		add(" sync ", fg(colDim)).
+		add(sync, fg(sc)).String()
+}

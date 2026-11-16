@@ -134,16 +134,39 @@ func (ix ovIndex) pick(crew, branch string) int {
 // cursorIndex is the strip cursor's item: the item with the cursor's ID
 // nearest its last index, else that index clamped, or -1 with no items.
 func cursorIndex(ov vm.OverviewView, st overviewState) int {
+	return attnCursor(ov.Attention, st.cursor, st.cursorAt)
+}
+
+func attnCursor(items []vm.AttentionItem, id string, at int) int {
 	best := -1
-	for i, a := range ov.Attention {
-		if a.ID == st.cursor && (best < 0 || absInt(i-st.cursorAt) < absInt(best-st.cursorAt)) {
+	for i, a := range items {
+		if a.ID == id && (best < 0 || absInt(i-at) < absInt(best-at)) {
 			best = i
 		}
 	}
-	if best < 0 && len(ov.Attention) > 0 {
-		best = clamp(st.cursorAt, 0, len(ov.Attention)-1)
+	if best < 0 && len(items) > 0 {
+		best = clamp(at, 0, len(items)-1)
 	}
 	return best
+}
+
+// stripWindow sizes the attention strip of n > 0 items in a frame h rows
+// high: its height with the frame, the rows shown and the first shown item.
+// The window always holds the cursor, whatever offset was stored before a
+// resize or a snapshot moved it.
+func stripWindow(n, h, off, cursor int) (stripH, rows, start int) {
+	want := min(n, 4)
+	if h >= 40 {
+		want = min(n, 9)
+	}
+	want = clamp(want, 1, (h-4)/2)
+	stripH = min(want+2, h)
+	rows = min(want, max0(stripH-2))
+	start = clamp(off, 0, n-rows)
+	if rows > 0 {
+		start = clamp(start, cursor-rows+1, cursor)
+	}
+	return stripH, rows, start
 }
 
 func absInt(n int) int { return max(n, -n) }
@@ -369,20 +392,8 @@ func overviewLayout(w, h int, ov vm.OverviewView, st overviewState) overviewRect
 		r.allClear = true
 		y = min(1, h)
 	} else {
-		rows := min(n, 4)
-		if h >= 40 {
-			rows = min(n, 9)
-		}
-		rows = clamp(rows, 1, (h-4)/2)
-		stripH := min(rows+2, h)
-		r.stripRows = min(rows, max0(stripH-2))
-		r.stripOff = clamp(st.stripOff, 0, n-r.stripRows)
-		if r.stripRows > 0 {
-			// The window always holds the cursor, whatever offset was stored
-			// before a resize or a snapshot moved it.
-			c := cursorIndex(ov, st)
-			r.stripOff = clamp(r.stripOff, c-r.stripRows+1, c)
-		}
+		var stripH int
+		stripH, r.stripRows, r.stripOff = stripWindow(n, h, st.stripOff, cursorIndex(ov, st))
 		outer, inner := panelRect(rect{0, 0, w, stripH})
 		pl := panelLayout{shown: true, rect: outer, inner: inner}
 		for i := range r.stripRows {
@@ -587,11 +598,16 @@ func rowLines(ov vm.OverviewView, r overviewRects, st overviewState, it placed, 
 }
 
 func attnLine(ov vm.OverviewView, r overviewRects, it placed, s *spans) string {
-	a := ov.Attention[it.idx]
-	visible := ov.Attention[r.stripOff : r.stripOff+r.stripRows]
+	return attnStripLine(ov.Attention[r.stripOff:r.stripOff+r.stripRows], it.idx-r.stripOff, attnWorker, s)
+}
+
+// attnStripLine draws row i of an attention strip window: its digit, glyph,
+// who (from label), message, age and action, columns sized to the window.
+func attnStripLine(visible []vm.AttentionItem, i int, label func(vm.AttentionItem) string, s *spans) string {
+	a := visible[i]
 	workerW, actionW := 0, 0
 	for _, v := range visible {
-		workerW = max(workerW, ansi.StringWidth(attnWorker(v)))
+		workerW = max(workerW, ansi.StringWidth(label(v)))
 		if v.Action != nil {
 			actionW = max(actionW, ansi.StringWidth(v.Action.Label))
 		}
@@ -606,11 +622,11 @@ func attnLine(ov vm.OverviewView, r overviewRects, it placed, s *spans) string {
 	msgW := iw - 5 - workerW - 1 - 1 - ageW - actionPart - 1
 	glyph, gc := severityGlyph(a.Severity)
 
-	s.add(fmt.Sprint(it.idx-r.stripOff+1), fg(colDim).Bold(true)).
+	s.add(fmt.Sprint(i+1), fg(colDim).Bold(true)).
 		add(" ", lipgloss.NewStyle()).
 		add(glyph, fg(gc)).
 		add(" ", lipgloss.NewStyle()).
-		col(attnWorker(a), workerW, fg(colText).Bold(true), false).
+		col(label(a), workerW, fg(colText).Bold(true), false).
 		add(" ", lipgloss.NewStyle()).
 		col(a.Message, msgW, fg(colText), false).
 		add(" ", lipgloss.NewStyle()).
@@ -702,7 +718,11 @@ func agentLines(ov vm.OverviewView, it placed, line func() *spans) []string {
 }
 
 func headerLine(section, iw int) string {
-	title := [...]string{"WATCHDOG", "PR CHECKS", "BUDGET"}[section]
+	return sectionLine([...]string{"WATCHDOG", "PR CHECKS", "BUDGET"}[section], iw)
+}
+
+// sectionLine is a dim subheading ruled to the inner width.
+func sectionLine(title string, iw int) string {
 	s := newSpans(iw, nil).add(" "+title+" ", fg(colDim))
 	return s.add(strings.Repeat("─", max0(iw-s.w)), fg(colBorderOff)).String()
 }
@@ -741,7 +761,11 @@ func prLine(ov vm.OverviewView, it placed, s *spans) string {
 }
 
 func budgetLine(ov vm.OverviewView, it placed, s *spans, iw int) string {
-	b := ov.Monitors.Budgets[it.idx]
+	return budgetBar(ov.Monitors.Budgets[it.idx], s, iw)
+}
+
+// budgetBar is one budget window: label, usage gauge, percent and pace arrow.
+func budgetBar(b vm.BudgetRow, s *spans, iw int) string {
 	const labelW, pctW = 11, 5
 	barW := clamp(iw-1-labelW-1-pctW-2, 4, 20)
 	filled := clamp(int(b.UsedPct/100*float64(barW)+0.5), 0, barW)
