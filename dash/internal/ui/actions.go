@@ -125,12 +125,12 @@ func statusCmd(text string, isErr bool) tea.Cmd {
 // runActionCmd runs argv through r, then, when then is set, the argv it
 // derives from the first step's stdout. The whole sequence runs inside the
 // returned Cmd, never in Update.
-func runActionCmd(ctx context.Context, r data.Runner, a action, argv []string, then func(stdout string) ([]string, error)) tea.Cmd {
+func runActionCmd(ctx context.Context, r data.Runner, a action, dir string, argv []string, then func(stdout string) ([]string, error)) tea.Cmd {
 	return func() tea.Msg {
 		fail := func(reason string) tea.Msg {
 			return actionMsg{text: cleanText(a.String() + " failed: " + reason), err: true}
 		}
-		out, err := runArgv(ctx, r, argv)
+		out, err := runArgv(ctx, r, dir, argv)
 		if err != nil {
 			return fail(err.Error())
 		}
@@ -139,7 +139,7 @@ func runActionCmd(ctx context.Context, r data.Runner, a action, argv []string, t
 			if err != nil {
 				return fail(err.Error())
 			}
-			if out, err = runArgv(ctx, r, next); err != nil {
+			if out, err = runArgv(ctx, r, dir, next); err != nil {
 				return fail(err.Error())
 			}
 		}
@@ -151,8 +151,8 @@ func runActionCmd(ctx context.Context, r data.Runner, a action, argv []string, t
 	}
 }
 
-func runArgv(ctx context.Context, r data.Runner, argv []string) (string, error) {
-	stdout, stderr, err := r.Run(ctx, argv[0], argv[1:]...)
+func runArgv(ctx context.Context, r data.Runner, dir string, argv []string) (string, error) {
+	stdout, stderr, err := r.RunIn(ctx, dir, argv[0], argv[1:]...)
 	if err != nil {
 		return "", errors.New(data.FailureLine(stderr, err))
 	}
@@ -186,9 +186,9 @@ func (u *actionUI) start(a action, sel data.Worker, have bool) tea.Cmd {
 			}
 			return switchArgv(pane), nil
 		}
-		return runActionCmd(u.acts.ctx, u.acts.runner, a, vm.PeekArgv(u.acts.crew, sel.Crew, sel.Branch), then)
+		return runActionCmd(u.acts.ctx, u.acts.runner, a, "", vm.PeekArgv(u.acts.crew, sel.Crew, sel.Branch), then)
 	case actOpenPR:
-		return runActionCmd(u.acts.ctx, u.acts.runner, a, ghArgv(sel.PRURL), nil)
+		return runActionCmd(u.acts.ctx, u.acts.runner, a, "", ghArgv(sel.PRURL), nil)
 	case actReply:
 		u.mode, u.target = modeReply, sel
 		u.input = textinput.New()
@@ -236,7 +236,7 @@ func (u *actionUI) handleReplyKey(msg tea.KeyMsg) tea.Cmd {
 			return statusCmd("reply: text required", true)
 		}
 		u.mode = modeNormal
-		return runActionCmd(u.acts.ctx, u.acts.runner, actReply, vm.ReplyArgv(u.acts.crew, u.target.Crew, u.target.Branch, text), nil)
+		return runActionCmd(u.acts.ctx, u.acts.runner, actReply, "", vm.ReplyArgv(u.acts.crew, u.target.Crew, u.target.Branch, text), nil)
 	}
 	var cmd tea.Cmd
 	u.input, cmd = u.input.Update(msg)
@@ -248,7 +248,7 @@ func (u *actionUI) handleConfirmKey(msg tea.KeyMsg) tea.Cmd {
 	if msg.String() != "y" {
 		return statusCmd("nudge: cancelled", false)
 	}
-	return runActionCmd(u.acts.ctx, u.acts.runner, actNudge, vm.NudgeArgv(u.acts.crew, u.target.Crew, u.target.Name, u.target.Branch), nil)
+	return runActionCmd(u.acts.ctx, u.acts.runner, actNudge, "", vm.NudgeArgv(u.acts.crew, u.target.Crew, u.target.Name, u.target.Branch), nil)
 }
 
 // prompt is the open reply prompt or nudge confirm, else fallback.
@@ -302,4 +302,12 @@ func workerByBranch(rows []vm.WorkerRow, crewID, branch string) (data.Worker, bo
 		}
 	}
 	return data.Worker{}, false
+}
+
+// deref is the action's working directory; "" runs in dash's own.
+func deref(dir *string) string {
+	if dir == nil {
+		return ""
+	}
+	return *dir
 }

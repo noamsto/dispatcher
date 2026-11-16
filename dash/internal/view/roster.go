@@ -146,8 +146,9 @@ func WorkerRowOf(crew []string, crewID string, w map[string]any) WorkerRow {
 	return row
 }
 
-// HoldRowOf types one hold. Matured follows crew's own rule: not a fleet wait
-// and past its reset.
+// HoldRowOf types one hold from either shape: a roster hold (nested wait),
+// where matured follows crew's own rule (not a fleet wait and past its reset),
+// or a `crew fleet status` hold ({id, kind, waited_s, due}).
 func HoldRowOf(h map[string]any, nowSec int64) HoldRow {
 	wait, _ := h["wait"].(map[string]any)
 	task, _ := h["task"].(map[string]any)
@@ -159,7 +160,13 @@ func HoldRowOf(h map[string]any, nowSec int64) HoldRow {
 		ResetAt: optInt(wait, "resets_at"),
 		Title:   optStr(task, "title"),
 	}
-	row.Matured = row.Kind != nil && *row.Kind != "fleet" && row.ResetAt != nil && *row.ResetAt <= nowSec
+	if wait == nil {
+		row.Kind = optStr(h, "kind")
+		due, _ := h["due"].(bool)
+		row.Matured = row.Kind != nil && *row.Kind == "quota" && due
+		return row
+	}
+	row.Matured = (row.Kind == nil || *row.Kind != "fleet") && row.ResetAt != nil && *row.ResetAt <= nowSec
 	return row
 }
 

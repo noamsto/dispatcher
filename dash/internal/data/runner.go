@@ -15,13 +15,20 @@ import (
 // are passed straight to the named program.
 type Runner interface {
 	Run(ctx context.Context, name string, args ...string) (stdout, stderr []byte, err error)
+	// RunIn is Run with dir as the working directory; "" means the caller's.
+	RunIn(ctx context.Context, dir, name string, args ...string) (stdout, stderr []byte, err error)
 }
 
 // ExecRunner runs a real subprocess.
 type ExecRunner struct{}
 
-func (ExecRunner) Run(ctx context.Context, name string, args ...string) ([]byte, []byte, error) {
+func (e ExecRunner) Run(ctx context.Context, name string, args ...string) ([]byte, []byte, error) {
+	return e.RunIn(ctx, "", name, args...)
+}
+
+func (ExecRunner) RunIn(ctx context.Context, dir, name string, args ...string) ([]byte, []byte, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Dir = dir
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -70,6 +77,7 @@ type FakeRunner struct {
 }
 
 type FakeCall struct {
+	Dir  string
 	Name string
 	Args []string
 }
@@ -84,9 +92,13 @@ type FakeResponse struct {
 }
 
 func (f *FakeRunner) Run(ctx context.Context, name string, args ...string) ([]byte, []byte, error) {
+	return f.RunIn(ctx, "", name, args...)
+}
+
+func (f *FakeRunner) RunIn(ctx context.Context, dir, name string, args ...string) ([]byte, []byte, error) {
 	key := fakeKey(name, args)
 	f.mu.Lock()
-	f.Calls = append(f.Calls, FakeCall{Name: name, Args: append([]string{}, args...)})
+	f.Calls = append(f.Calls, FakeCall{Dir: dir, Name: name, Args: append([]string{}, args...)})
 	resp, ok := f.Responses[key]
 	f.mu.Unlock()
 	if !ok {

@@ -415,7 +415,7 @@ func (v *overviewView) dispatch(a vm.Action, t ovTarget) tea.Cmd {
 				return switchArgv(pane), nil
 			}
 		}
-		return runActionCmd(v.acts.ctx, v.acts.runner, act, a.Argv, then)
+		return runActionCmd(v.acts.ctx, v.acts.runner, act, deref(a.Dir), a.Argv, then)
 	case "n":
 		v.openConfirm(a, t, "nudge "+cleanText(t.name)+"? y/N")
 	case "m":
@@ -445,7 +445,7 @@ func (v *overviewView) confirmKey(msg tea.KeyMsg) tea.Cmd {
 	if v.pend.act.Key == "m" {
 		act = actMerge
 	}
-	return runActionCmd(v.acts.ctx, v.acts.runner, act, v.pend.act.Argv, nil)
+	return runActionCmd(v.acts.ctx, v.acts.runner, act, deref(v.pend.act.Dir), v.pend.act.Argv, nil)
 }
 
 func (v *overviewView) replyKey(msg tea.KeyMsg) tea.Cmd {
@@ -465,7 +465,7 @@ func (v *overviewView) replyKey(msg tea.KeyMsg) tea.Cmd {
 				argv[i] = text
 			}
 		}
-		return runActionCmd(v.acts.ctx, v.acts.runner, actReply, argv, nil)
+		return runActionCmd(v.acts.ctx, v.acts.runner, actReply, deref(v.pend.act.Dir), argv, nil)
 	}
 	var cmd tea.Cmd
 	v.input, cmd = v.input.Update(msg)

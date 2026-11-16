@@ -393,7 +393,7 @@ func (v mapView) renderCmd(gen int, crewID string, sel mapgeom.PlanetKey, p mapg
 	ctx, runner := v.acts.ctx, v.acts.runner
 	return func() tea.Msg {
 		msg := mapRenderedMsg{gen: gen, crewID: crewID, place: p}
-		out, err := runArgv(ctx, runner, argv)
+		out, err := runArgv(ctx, runner, "", argv)
 		if err != nil {
 			msg.err = err
 			return msg

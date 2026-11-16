@@ -129,8 +129,12 @@ func message(w WorkerRow, fallback string) string {
 }
 
 func attentionOf(w WorkerRow, kind Kind, sev Severity, key, msg string) AttentionItem {
+	id := fmt.Sprintf("%s:%s:%s", kind, w.Crew, w.Branch)
+	if w.Host != "" {
+		id = fmt.Sprintf("%s:%s/%s:%s", kind, w.Host, w.Crew, w.Branch)
+	}
 	return AttentionItem{
-		ID:       fmt.Sprintf("%s:%s:%s", kind, w.Crew, w.Branch),
+		ID:       id,
 		Crew:     w.Crew,
 		Branch:   w.Branch,
 		Worker:   w.display(),
@@ -224,7 +228,7 @@ func buildAttention(in Inputs, rows []WorkerRow) []AttentionItem {
 			if c.Lane.State == "stale" {
 				kind, sev = KindLaneStale, SeverityWarning
 			}
-			act := newAction("", "inspect", "inspect", false, InspectLaneArgv(in.Crew, c.ID))
+			act := withDir(newAction("", "inspect", "inspect", false, InspectLaneArgv(in.Crew, c.ID)), in.Dir)
 			items = append(items, AttentionItem{
 				ID: fmt.Sprintf("%s:%s:", kind, c.ID), Crew: c.ID, Origin: OriginLocal,
 				Severity: sev, Kind: kind, Message: "crew stream lane is " + c.Lane.State, Action: &act,
@@ -235,7 +239,7 @@ func buildAttention(in Inputs, rows []WorkerRow) []AttentionItem {
 			if !hr.Matured {
 				continue
 			}
-			act := newAction("", "inspect", "inspect", false, InspectHoldArgv(in.Crew, c.ID))
+			act := withDir(newAction("", "inspect", "inspect", false, InspectHoldArgv(in.Crew, c.ID)), in.Dir)
 			msg := "hold " + hr.ID + " matured"
 			if t := deref(hr.Title); t != "" {
 				msg += ": " + t

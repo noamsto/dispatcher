@@ -29,6 +29,8 @@ type Inputs struct {
 	Loaded Loaded
 	NowMS  int64
 	Crew   []string
+	// Dir is the directory every action runs in; nil means dash's cwd.
+	Dir *string
 }
 
 func (in Inputs) nowSec() int64 {
@@ -87,6 +89,7 @@ type Action struct {
 	Label      string   `json:"label"`
 	Command    string   `json:"command" dash:"raw"`
 	Argv       []string `json:"argv" dash:"raw"`
+	Dir        *string  `json:"dir" dash:"raw"`
 	NeedsInput bool     `json:"needs_input"`
 	PR         *int     `json:"pr"`
 }
@@ -147,6 +150,21 @@ func shellJoin(argv []string) string {
 
 func newAction(key, verb, label string, needsInput bool, argv []string) Action {
 	return Action{Key: key, Verb: verb, Label: label, Command: shellJoin(argv), Argv: argv, NeedsInput: needsInput}
+}
+
+// withDir returns a with its argv bound to dir; a nil dir leaves it as built.
+func withDir(a Action, dir *string) Action {
+	if dir == nil {
+		return a
+	}
+	a.Dir = dir
+	a.Command = "cd " + shellQuote(*dir) + " && " + shellJoin(a.Argv)
+	return a
+}
+
+// RelaunchArgv restarts a dead crew's dispatcher from its launch record.
+func RelaunchArgv(crewID, repoRoot string) []string {
+	return []string{"dispatcher", "--relaunch", crewID, "--repo", repoRoot}
 }
 
 // WorkerActions is the operator's menu for one worker. Peer workers belong to
