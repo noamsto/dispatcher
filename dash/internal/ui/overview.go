@@ -34,7 +34,6 @@ type ovTarget struct {
 	host   string
 	branch string
 	name   string // what the operator calls it: name, else branch
-	pr     *int
 }
 
 // ovPending is the reply or confirm that is open: the exact argv to run and
@@ -68,7 +67,7 @@ type overviewView struct {
 
 func newOverviewView(in vm.Inputs, now func() time.Time) overviewView {
 	v := overviewView{now: now, in: in, pills: pillModeOf(os.Getenv, lipgloss.ColorProfile()), size: &ovSize{}}
-	v.model = vm.BuildOverview(v.in)
+	v.rebuild()
 	return v
 }
 
@@ -99,9 +98,15 @@ func (v overviewView) Update(msg tea.Msg) (view, tea.Cmd) {
 	return v, nil
 }
 
+// rebuild refreshes the view model and keeps one effective focus. While the
+// strip has focus the selection follows its cursor, whose item may have moved.
 func (v *overviewView) rebuild() {
 	v.model = vm.BuildOverview(v.in)
 	v.st.attn = clamp(v.st.attn, 0, len(v.model.Attention)-1)
+	v.st.focus = effectiveFocus(v.model, v.st.focus)
+	if v.mode == ovNormal && v.st.focus == panelAttention {
+		v.selectAttention(v.st.attn)
+	}
 }
 
 func (v overviewView) View(w, h int) string {
@@ -188,18 +193,34 @@ func (v overviewView) selectedWorker() (vm.OverviewWorker, bool) {
 func (v *overviewView) selectWorker(i int) {
 	if i >= 0 {
 		w := v.model.Workers[i]
-		v.st.selected = workerKey{w.Crew, w.Branch}
+		v.st.selected, v.st.noSel = workerKey{w.Crew, w.Branch}, false
 	}
 }
 
-// selectAttention moves the strip cursor to item c and selects its worker.
+// selectAttention moves the strip cursor to item c and selects its worker, or
+// clears the selection when the item names none (a lane or a hold), so worker
+// actions never fall through to a worker selected earlier.
 func (v *overviewView) selectAttention(c int) {
 	v.st.attn = c
 	if c < 0 || c >= len(v.model.Attention) {
 		return
 	}
 	a := v.model.Attention[c]
-	v.selectWorker(newOvIndex(v.model, v.st).worker(a.Crew, a.Branch))
+	i := newOvIndex(v.model, v.st).worker(a.Crew, a.Branch)
+	if i < 0 {
+		v.st.selected, v.st.noSel = workerKey{}, true
+		return
+	}
+	v.selectWorker(i)
+}
+
+// cursorItem is the attention item under the strip cursor while the strip has
+// focus.
+func (v overviewView) cursorItem() (vm.AttentionItem, bool) {
+	if v.st.focus != panelAttention || v.st.attn < 0 || v.st.attn >= len(v.model.Attention) {
+		return vm.AttentionItem{}, false
+	}
+	return v.model.Attention[v.st.attn], true
 }
 
 func (v *overviewView) handleKey(msg tea.KeyMsg) tea.Cmd {
@@ -233,6 +254,8 @@ func (v *overviewView) handleKey(msg tea.KeyMsg) tea.Cmd {
 	case "enter":
 		if _, ok := v.selectedWorker(); ok {
 			v.mode = ovDetail
+		} else if a, ok := v.cursorItem(); ok && a.Action != nil {
+			return statusCmd("run: "+a.Action.Command, false)
 		}
 	case "esc":
 		v.st.filter = ""
@@ -268,13 +291,7 @@ func (v *overviewView) cycle(d int) {
 	if len(v.model.Attention) > 0 {
 		order = append([]ovPanel{panelAttention}, order...)
 	}
-	i := slices.Index(order, v.st.focus)
-	if i < 0 {
-		i = 0
-		if d < 0 {
-			i = 1
-		}
-	}
+	i := slices.Index(order, effectiveFocus(v.model, v.st.focus))
 	v.st.focus = order[(i+d+len(order))%len(order)]
 	if v.st.focus == panelAttention {
 		v.selectAttention(v.st.attn)
@@ -284,8 +301,9 @@ func (v *overviewView) cycle(d int) {
 // move steps the selection within the focused panel, or between workers while
 // the detail overlay is open.
 func (v *overviewView) move(d int) {
+	v.st.focus = effectiveFocus(v.model, v.st.focus)
 	ix := newOvIndex(v.model, v.st)
-	if v.mode == ovNormal && v.st.focus == panelAttention && len(v.model.Attention) > 0 {
+	if v.mode == ovNormal && v.st.focus == panelAttention {
 		r := v.layout()
 		n := len(v.model.Attention)
 		c := clamp(v.st.attn+d, 0, n-1)
@@ -320,7 +338,9 @@ func (v *overviewView) move(d int) {
 func checklistWorkers(ov vm.OverviewView, ix ovIndex) []int {
 	var ws []int
 	for _, e := range checklistEntries(ov, ix, 1) {
-		ws = append(ws, e.worker)
+		if e.worker >= 0 {
+			ws = append(ws, e.worker)
+		}
 	}
 	return ws
 }
@@ -390,7 +410,7 @@ func (v *overviewView) digit(n int) tea.Cmd {
 }
 
 func workerTarget(w vm.OverviewWorker) ovTarget {
-	return ovTarget{origin: w.Origin, host: w.Host, branch: w.Branch, name: vm.NudgeTarget(strOf(w.Name), w.Branch), pr: w.PR}
+	return ovTarget{origin: w.Origin, host: w.Host, branch: w.Branch, name: vm.NudgeTarget(strOf(w.Name), w.Branch)}
 }
 
 var actionVerbs = map[string]string{"p": "peek", "n": "nudge", "r": "reply", "m": "merge"}
@@ -435,10 +455,10 @@ func (v *overviewView) dispatch(a vm.Action, t ovTarget) tea.Cmd {
 	case "n":
 		v.openConfirm(a, t, "nudge "+cleanText(t.name)+"? y/N")
 	case "m":
-		if t.pr == nil {
+		if a.PR == nil {
 			return statusCmd("merge: no PR", true)
 		}
-		v.openConfirm(a, t, "merge PR #"+strconv.Itoa(*t.pr)+" ("+cleanText(t.branch)+")? y/N")
+		v.openConfirm(a, t, "merge PR #"+strconv.Itoa(*a.PR)+" ("+cleanText(t.branch)+")? y/N")
 	case "r":
 		v.mode, v.pend = ovReply, ovPending{act: a, target: t}
 		v.input = newOvInput("", "")

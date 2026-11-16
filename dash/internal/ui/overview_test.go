@@ -65,9 +65,9 @@ func status(t *testing.T, cmd tea.Cmd) string {
 
 func selectBranch(t *testing.T, v *overviewView, branch string) {
 	t.Helper()
-	for _, w := range v.model.Workers {
+	for i, w := range v.model.Workers {
 		if w.Branch == branch {
-			v.st.selected = workerKey{w.Crew, w.Branch}
+			v.selectWorker(i)
 			return
 		}
 	}
@@ -617,5 +617,147 @@ func TestOverviewRoleFailureGlyph(t *testing.T) {
 	}
 	if got := stateGlyph(roleState(vm.AgentNode{State: "blocked"})); got != "●" {
 		t.Errorf("plain blocked role glyph %s", got)
+	}
+}
+
+func TestOverviewAllClearFocus(t *testing.T) {
+	asciiProfile(t)
+	v := newOverviewView(allClearInputs(), overviewNow)
+	v.View(150, 40)
+	if back, _ := ovKeys(v, "shift+tab"); back.st.focus != panelMonitors {
+		t.Errorf("shift+tab from the drawn CHECKLISTS focus: focus = %v, want monitors", back.st.focus)
+	}
+	before := selBranch(v)
+	v, _ = ovKeys(v, "j")
+	if selBranch(v) == before {
+		t.Errorf("j with no strip did not move the selection off %s", before)
+	}
+	want := []ovPanel{panelAgents, panelMonitors, panelChecklists, panelAgents}
+	for i, p := range want {
+		v, _ = ovKeys(v, "tab")
+		if v.st.focus != p {
+			t.Fatalf("tab %d: focus = %v, want %v", i+1, v.st.focus, p)
+		}
+	}
+	v, _ = ovKeys(v, "shift+tab", "shift+tab")
+	if v.st.focus != panelMonitors {
+		t.Errorf("shift+tab twice from agents: focus = %v, want monitors", v.st.focus)
+	}
+}
+
+func TestOverviewFooterDropsOwnedDigits(t *testing.T) {
+	asciiProfile(t)
+	base := sized(testModel(loadSnapshot(t)), 200, 40)
+	footer := func(tab int) string {
+		m := base
+		m.active = tab
+		return stripped(m.renderFooter())
+	}
+	if f := footer(overviewTab); strings.Contains(f, "1-7") {
+		t.Errorf("Overview footer advertises view digits: %q", f)
+	}
+	if f := footer(liveTab); !strings.Contains(f, "1-7 views") {
+		t.Errorf("Live footer lacks view digits: %q", f)
+	}
+}
+
+// stripMarks is the attention items whose strip rows carry the selection bar.
+func stripMarks(v overviewView, w, h int) []int {
+	r := overviewLayout(w, h, v.model, v.st)
+	lines := strings.Split(stripped(v.View(w, h)), "\n")
+	var marked []int
+	for _, it := range r.panels[panelAttention].items {
+		if l := lines[it.rect.y]; strings.Contains(l, "▌") {
+			marked = append(marked, it.idx)
+		}
+	}
+	return marked
+}
+
+func TestStripCursorDrawn(t *testing.T) {
+	v, fr := ovFixture(t, 150, 40, false, nil)
+	if got := stripMarks(v, 150, 40); !slices.Equal(got, []int{0}) {
+		t.Errorf("initial strip marks = %v, want item 0", got)
+	}
+	v, _ = ovKeys(v, "j", "j", "j") // item 4: lane_dead on c2, no worker
+	if a := v.model.Attention[v.st.attn]; a.Kind != vm.KindLaneDead {
+		t.Fatalf("item 4 is %s, want lane_dead", a.Kind)
+	}
+	if got := stripMarks(v, 150, 40); !slices.Equal(got, []int{3}) {
+		t.Errorf("strip marks = %v, want the cursor's item 3", got)
+	}
+	for _, k := range []string{"p", "n", "r", "m"} {
+		nv, cmd := ovKeys(v, k)
+		if got := status(t, cmd); got != actionVerbs[k]+": no worker selected" {
+			t.Errorf("%s on a lane item: status = %q", k, got)
+		}
+		if nv.mode != ovNormal {
+			t.Errorf("%s opened mode %v", k, nv.mode)
+		}
+	}
+	_, cmd := ovKeys(v, "enter")
+	if got := status(t, cmd); got != "run: crew stream --crew c2 --status" {
+		t.Errorf("enter on a lane item: status = %q", got)
+	}
+	noCalls(t, fr)
+
+	// Away from the strip, its rows follow the selected worker again.
+	v, _ = ovKeys(v, "tab")
+	selectBranch(t, &v, "feat/a")
+	v.st.stripOff = 0
+	if got := stripMarks(v, 150, 40); !slices.Equal(got, []int{2}) {
+		t.Errorf("unfocused strip marks = %v, want feat/a's item 2", got)
+	}
+}
+
+func TestMergePromptUsesActionPR(t *testing.T) {
+	v, fr := ovFixture(t, 150, 40, false, nil)
+	i := slices.IndexFunc(v.model.Attention, func(a vm.AttentionItem) bool { return a.Kind == vm.KindMergeReady })
+	if i < 0 {
+		t.Fatalf("fixture has no merge_ready item")
+	}
+	act := v.model.Attention[i].Action
+	if act == nil || act.PR == nil {
+		t.Fatalf("merge_ready action carries no PR: %+v", act)
+	}
+	// The worker row's PR is not what the action merges.
+	for k, w := range v.model.Workers {
+		if w.Branch == v.model.Attention[i].Branch {
+			stale := 99
+			v.model.Workers[k].PR = &stale
+		}
+	}
+	v.st.stripOff = max(0, i-2)
+	r := overviewLayout(150, 40, v.model, v.st)
+	v, _ = ovKeys(v, string(rune('1'+i-r.stripOff)))
+	if v.mode != ovConfirm {
+		t.Fatalf("merge digit did not open the confirm (mode %v)", v.mode)
+	}
+	want := "merge PR #" + act.Argv[slices.Index(act.Argv, "merge")+1] + " (feat/b)? y/N"
+	if v.pend.prompt != want || *act.PR != 12 {
+		t.Errorf("prompt = %q, want %q", v.pend.prompt, want)
+	}
+	noCalls(t, fr)
+}
+
+func TestEventSenderNames(t *testing.T) {
+	v, _ := ovFixture(t, 200, 60, false, nil)
+	for from, want := range map[string]string{
+		"worker:feat/a#s1":     "otter",
+		"worker:feat/c":        "feat/c",
+		"role:feat/a:reviewer": "otter:reviewer",
+		"worker:feat/zz#s9":    "feat/zz",
+		"pr-watch:12":          "pr-watch:12",
+	} {
+		if got := eventFrom(v.model, from); got != want {
+			t.Errorf("eventFrom(%q) = %q, want %q", from, got, want)
+		}
+	}
+	r := overviewLayout(200, 60, v.model, v.st)
+	ev := r.panels[panelEvents]
+	lines := strings.Split(stripped(v.View(200, 60)), "\n")[ev.inner.y : ev.inner.y+ev.inner.h]
+	text := strings.Join(lines, "\n")
+	if strings.Contains(text, "worker:") || !strings.Contains(text, "otter:reviewer") {
+		t.Errorf("events panel names senders by raw id:\n%s", text)
 	}
 }

@@ -159,8 +159,11 @@ func newSpans(limit int, bg lipgloss.TerminalColor) *spans {
 	return &spans{limit: max0(limit), bg: bg}
 }
 
-// add appends text, truncated to the cells left before the limit.
+// add appends text, truncated to the cells left before the limit. Every
+// Overview row is built here, so this is where worker-controlled text loses
+// its control characters and escape sequences.
 func (s *spans) add(text string, st lipgloss.Style) *spans {
+	text = cleanText(text)
 	room := s.limit - s.w
 	if room <= 0 || text == "" {
 		return s
@@ -175,7 +178,7 @@ func (s *spans) add(text string, st lipgloss.Style) *spans {
 
 // col appends text in a fixed-width column, truncated and padded inside one span.
 func (s *spans) col(text string, width int, st lipgloss.Style, right bool) *spans {
-	t := ansi.Truncate(text, max0(width), "…")
+	t := ansi.Truncate(cleanText(text), max0(width), "…")
 	pad := strings.Repeat(" ", max0(width-ansi.StringWidth(t)))
 	if right {
 		t = pad + t

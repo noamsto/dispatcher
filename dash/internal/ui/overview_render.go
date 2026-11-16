@@ -35,7 +35,8 @@ type overviewState struct {
 	focus    ovPanel
 	selected workerKey
 	stripOff int
-	attn     int // strip cursor, an index into ov.Attention
+	attn     int  // strip cursor, an index into ov.Attention
+	noSel    bool // the strip cursor is on an item that names no worker
 	filter   string
 }
 
@@ -89,20 +90,23 @@ type overviewRects struct {
 // ovIndex resolves worker lookups, the filter and the selected worker once per
 // frame.
 type ovIndex struct {
-	byKey map[workerKey]int
-	vis   []bool
-	sel   int
+	byKey  map[workerKey]int
+	vis    []bool
+	sel    int
+	needle string
 }
 
 func newOvIndex(ov vm.OverviewView, st overviewState) ovIndex {
-	ix := ovIndex{byKey: make(map[workerKey]int, len(ov.Workers)), vis: make([]bool, len(ov.Workers)), sel: -1}
-	needle := strings.ToLower(st.filter)
+	ix := ovIndex{byKey: make(map[workerKey]int, len(ov.Workers)), vis: make([]bool, len(ov.Workers)), sel: -1,
+		needle: strings.ToLower(st.filter)}
 	for i, w := range ov.Workers {
 		ix.byKey[workerKey{w.Crew, w.Branch}] = i
-		hay := strings.ToLower(workerLabel(w) + " " + w.Branch + " " + ovStr(w.Title, ""))
-		ix.vis[i] = needle == "" || strings.Contains(hay, needle)
+		ix.vis[i] = ix.matches(workerLabel(w) + " " + w.Branch + " " + ovStr(w.Title, ""))
 	}
-	if i, ok := ix.byKey[st.selected]; ok {
+	if st.noSel {
+		return ix
+	}
+	if i := ix.worker(st.selected.crew, st.selected.branch); i >= 0 {
 		ix.sel = i
 		return ix
 	}
@@ -123,6 +127,21 @@ func (ix ovIndex) worker(crew, branch string) int {
 		return i
 	}
 	return -1
+}
+
+// matches reports whether hay passes the filter.
+func (ix ovIndex) matches(hay string) bool {
+	return ix.needle == "" || strings.Contains(strings.ToLower(hay), ix.needle)
+}
+
+// effectiveFocus is the panel that holds focus as drawn: the strip hands it to
+// the checklists while it has no items. The narrow layout always draws the
+// focused agents or monitors panel, so the strip is the only one that hides.
+func effectiveFocus(ov vm.OverviewView, f ovPanel) ovPanel {
+	if f == panelAttention && len(ov.Attention) == 0 {
+		return panelChecklists
+	}
+	return f
 }
 
 func ovStr(p *string, fallback string) string {
@@ -152,12 +171,19 @@ func ovAge(sec int64) string {
 	return fmt.Sprintf("%dh", sec/3600)
 }
 
+// checklistEntries is one card per visible worker. A peer placeholder with no
+// branch gets worker -1: nothing can select or act on it.
 func checklistEntries(ov vm.OverviewView, ix ovIndex, lines int) []entry {
 	var es []entry
-	for i := range ov.Workers {
-		if ix.vis[i] {
-			es = append(es, entry{kind: eCard, idx: i, worker: i, lines: lines})
+	for i, w := range ov.Workers {
+		if !ix.vis[i] {
+			continue
 		}
+		wk := i
+		if w.Branch == "" {
+			wk = -1
+		}
+		es = append(es, entry{kind: eCard, idx: i, worker: wk, lines: lines})
 	}
 	return es
 }
@@ -165,8 +191,10 @@ func checklistEntries(ov vm.OverviewView, ix ovIndex, lines int) []entry {
 func agentEntries(ov vm.OverviewView, ix ovIndex) []entry {
 	var es []entry
 	for i, a := range ov.Agents {
+		// A lead with no worker row (a peer placeholder without a branch) is
+		// matched on its own branch and host.
 		wi := ix.worker(a.Crew, a.Branch)
-		if wi >= 0 && !ix.vis[wi] {
+		if wi >= 0 && !ix.vis[wi] || wi < 0 && !ix.matches(a.Branch+" "+a.Host) {
 			continue
 		}
 		es = append(es, entry{kind: eAgent, idx: i, worker: wi, lines: 2})
@@ -369,10 +397,10 @@ func renderOverview(w, h int, ov vm.OverviewView, st overviewState, mode pillMod
 	body := func(p ovPanel) []string {
 		pl := r.panels[p]
 		sp := specs[p]
-		sp.focused = st.focus == p || (p == panelChecklists && !r.panels[st.focus].shown)
+		sp.focused = effectiveFocus(ov, st.focus) == p
 		var content []string
 		for _, it := range pl.items {
-			content = append(content, rowLines(ov, ix, r, it, pl.inner.w)...)
+			content = append(content, rowLines(ov, ix, r, st, it, pl.inner.w)...)
 		}
 		return renderPanel(pl.rect.w, pl.rect.h, sp, mode, content)
 	}
@@ -438,9 +466,13 @@ func severityGlyph(s vm.Severity) (string, lipgloss.Color) {
 }
 
 // rowLines renders one placed entry as len == entry.lines lines of width iw.
-func rowLines(ov vm.OverviewView, ix ovIndex, r overviewRects, it placed, iw int) []string {
+func rowLines(ov vm.OverviewView, ix ovIndex, r overviewRects, st overviewState, it placed, iw int) []string {
 	var bg lipgloss.TerminalColor = lipgloss.NoColor{}
 	selected := it.worker >= 0 && it.worker == ix.sel && it.kind != eHeader
+	if it.kind == eAttn && st.focus == panelAttention {
+		// The focused strip highlights its own cursor, which may name no worker.
+		selected = it.idx == st.attn
+	}
 	if selected {
 		bg = colSelBg
 	}
@@ -647,12 +679,38 @@ func budgetLine(ov vm.OverviewView, it placed, s *spans, iw int) string {
 
 func ovEventLine(ov vm.OverviewView, it placed, s *spans, iw int) string {
 	e := ov.Events[it.idx]
-	const workerW = 14
+	fromW := clamp(iw/4, 12, 24)
 	return s.col(ovAge(ov.GeneratedAt-e.TS), 4, fg(colDim), true).
 		add(" ", lipgloss.NewStyle()).
-		col(e.Worker, workerW, fg(colText).Bold(true), false).
+		col(eventFrom(ov, e.Worker), fromW, fg(colText).Bold(true), false).
 		add(" ", lipgloss.NewStyle()).
-		col(e.Text, iw-1-4-1-workerW-1, fg(colText), false).String()
+		col(e.Text, iw-1-4-1-fromW-1, fg(colText), false).String()
+}
+
+// eventFrom names a bus sender as the panels do: worker:<branch>[#session] is
+// the worker's codename (else its branch) and role:<branch>:<role> is that
+// name with the role after a colon. Other senders show as sent.
+func eventFrom(ov vm.OverviewView, from string) string {
+	if rest, ok := strings.CutPrefix(from, "worker:"); ok {
+		branch, _, _ := strings.Cut(rest, "#")
+		return branchName(ov, branch)
+	}
+	if rest, ok := strings.CutPrefix(from, "role:"); ok {
+		if branch, role, ok := strings.Cut(rest, ":"); ok {
+			return branchName(ov, branch) + ":" + role
+		}
+	}
+	return from
+}
+
+// branchName is the codename of the worker on branch, else the branch.
+func branchName(ov vm.OverviewView, branch string) string {
+	for _, w := range ov.Workers {
+		if w.Branch == branch {
+			return ovStr(w.Name, branch)
+		}
+	}
+	return branch
 }
 
 // roleState is a role pane's state for display: a failed role, or one blocked

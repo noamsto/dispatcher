@@ -25,8 +25,14 @@ func composite(base, box []string, x, y, w int) []string {
 		}
 		b = ansi.Truncate(b, w-x, "")
 		bw := ansi.StringWidth(b)
+		// A wide character straddling either box edge is dropped and its
+		// visible half replaced by a space, so the row keeps exactly w cells.
 		left := padRight(ansi.Truncate(out[row], x, ""), x)
-		out[row] = left + reset + b + reset + ansi.Cut(out[row], x+bw, w)
+		right := ansi.Cut(out[row], x+bw, w)
+		if ansi.StringWidth(right) > w-x-bw {
+			right = " " + ansi.Cut(out[row], x+bw+1, w)
+		}
+		out[row] = left + reset + b + reset + right
 	}
 	return out
 }
@@ -47,7 +53,7 @@ func (v overviewView) overlay(base []string, w, h int) string {
 		ix := newOvIndex(v.model, v.st)
 		if ix.sel >= 0 {
 			content = detailLines(v.model, ix.sel, iw)
-			spec.count = workerLabel(v.model.Workers[ix.sel])
+			spec.count = cleanText(workerLabel(v.model.Workers[ix.sel]))
 		}
 	case ovHelp:
 		spec.title = "HELP"
@@ -108,9 +114,9 @@ func detailLines(ov vm.OverviewView, wi, iw int) []string {
 	plain := lipgloss.NewStyle()
 	var out []string
 	out = append(out,
-		" "+fg(glyphColor(w.State)).Render(stateGlyph(w.State))+" "+fg(colText).Bold(true).Render(workerLabel(w))+
-			fg(colDim).Render("  "+w.Branch+"  "+ovStr(w.Tier, "?")+"  "+ovStr(w.Engine, "?")+"/"+ovStr(w.Model, "?")+"  ")+
-			fg(glyphColor(w.State)).Render(w.State))
+		" "+fg(glyphColor(w.State)).Render(stateGlyph(w.State))+" "+fg(colText).Bold(true).Render(cleanText(workerLabel(w)))+
+			fg(colDim).Render(cleanText("  "+w.Branch+"  "+ovStr(w.Tier, "?")+"  "+ovStr(w.Engine, "?")+"/"+ovStr(w.Model, "?")+"  "))+
+			fg(glyphColor(w.State)).Render(cleanText(w.State)))
 	if d := ovStr(w.Detail, ""); d != "" {
 		out = append(out, "   "+fg(colDim).Render(cleanText(d)))
 	}
@@ -126,7 +132,7 @@ func detailLines(ov vm.OverviewView, wi, iw int) []string {
 			if s.SinceSec != nil {
 				since = " " + ovAge(*s.SinceSec)
 			}
-			b.WriteString(" " + trackStyle(s.Status).Render(phaseGlyph(s.Status)+" "+s.Name) + fg(colDim).Render(since))
+			b.WriteString(" " + trackStyle(s.Status).Render(phaseGlyph(s.Status)+" "+cleanText(s.Name)) + fg(colDim).Render(since))
 		}
 		out = append(out, b.String())
 	}
@@ -142,13 +148,13 @@ func detailLines(ov vm.OverviewView, wi, iw int) []string {
 		if a.Crew != w.Crew || a.Branch != w.Branch {
 			continue
 		}
-		out = append(out, "   lead "+ovStr(a.Lead.Model, ovStr(a.Lead.Engine, "?"))+" "+ovStr(a.Lead.Tier, "?")+" "+a.Lead.State)
+		out = append(out, "   lead "+cleanText(ovStr(a.Lead.Model, ovStr(a.Lead.Engine, "?"))+" "+ovStr(a.Lead.Tier, "?")+" "+a.Lead.State))
 		if a.Roles == nil {
 			out = append(out, "   roles ?")
 		}
 		for _, r := range a.Roles {
 			st := roleState(r)
-			out = append(out, "   "+fg(glyphColor(st)).Render(stateGlyph(st))+" "+ovStr(r.Role, "?")+" "+r.State+
+			out = append(out, "   "+fg(glyphColor(st)).Render(stateGlyph(st))+" "+cleanText(ovStr(r.Role, "?")+" "+r.State)+
 				fg(colDim).Render(" "+cleanText(ovStr(r.Detail, ""))))
 		}
 		out = append(out, "   "+fg(colDim).Render("execute subagents: not reported"))
@@ -166,7 +172,7 @@ func detailLines(ov vm.OverviewView, wi, iw int) []string {
 			cmd = a.Action.Command
 		}
 		glyph, gc := severityGlyph(a.Severity)
-		out = append(out, "   "+fg(gc).Render(glyph)+plain.Render(" "+a.Message+" ")+fg(colDim).Render("→ "+cmd))
+		out = append(out, "   "+fg(gc).Render(glyph)+plain.Render(" "+cleanText(a.Message)+" ")+fg(colDim).Render("→ "+cleanText(cmd)))
 	}
 	if n == 0 {
 		out = append(out, "   "+fg(colDim).Render("none"))

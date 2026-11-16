@@ -42,25 +42,30 @@ func DefaultKeyMap() KeyMap {
 }
 
 // ShortHelp is the global row shown collapsed.
-func (k KeyMap) ShortHelp() []key.Binding { return k.shortHelp(false) }
+func (k KeyMap) ShortHelp() []key.Binding { return k.shortHelp(false, false) }
 
 // FullHelp is the global row shown expanded (`?`).
-func (k KeyMap) FullHelp() [][]key.Binding { return k.fullHelp(false) }
+func (k KeyMap) FullHelp() [][]key.Binding { return k.fullHelp(false, false) }
 
-// shortHelp and fullHelp drop the view-switching tab keys while the active view
-// owns them, since they move its selection instead.
-func (k KeyMap) shortHelp(ownsTab bool) []key.Binding {
-	if ownsTab {
-		return []key.Binding{k.Tab1, k.NextView, k.Refresh, k.Help, k.Quit}
-	}
-	return []key.Binding{k.Tab1, k.Next, k.NextView, k.Refresh, k.Help, k.Quit}
+// shortHelp and fullHelp drop the view-switching tab and digit keys while the
+// active view owns them, since they act on its selection instead.
+func (k KeyMap) shortHelp(ownsTab, ownsDigits bool) []key.Binding {
+	return k.switching(ownsTab, ownsDigits, k.Next)
 }
 
-func (k KeyMap) fullHelp(ownsTab bool) [][]key.Binding {
-	if ownsTab {
-		return [][]key.Binding{{k.Tab1, k.NextView, k.Refresh, k.Help, k.Quit}}
+func (k KeyMap) fullHelp(ownsTab, ownsDigits bool) [][]key.Binding {
+	return [][]key.Binding{k.switching(ownsTab, ownsDigits, k.Next, k.Prev)}
+}
+
+func (k KeyMap) switching(ownsTab, ownsDigits bool, tabKeys ...key.Binding) []key.Binding {
+	var out []key.Binding
+	if !ownsDigits {
+		out = append(out, k.Tab1)
 	}
-	return [][]key.Binding{{k.Tab1, k.Next, k.Prev, k.NextView, k.Refresh, k.Help, k.Quit}}
+	if !ownsTab {
+		out = append(out, tabKeys...)
+	}
+	return append(out, k.NextView, k.Refresh, k.Help, k.Quit)
 }
 
 // tabIndex maps a KeyMsg's string to a 0-based view index, or -1.

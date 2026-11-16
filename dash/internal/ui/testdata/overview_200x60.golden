@@ -1,5 +1,5 @@
 ╭ ▸ ATTENTION ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── 12 need action ─╮
-│ 1 ✗ feat/h exit 1 after test failure                                                                                                                                                   20m → peek    │
+│▌1 ✗ feat/h exit 1 after test failure                                                                                                                                                   20m → peek    │
 │ 2 ✗ feat/g dead: quiet: no output 20m                                                                                                                                                  15m → peek    │
 │ 3 ✗ otter  reviewer: role reviewer engine exited (pane %9)                                                                                                                              6m → peek    │
 │ 4 ✗ c2     crew stream lane is dead                                                                                                                                                    now → inspect │
@@ -24,16 +24,16 @@
 │   Task feat/d                                                                ││   roles —                                                ││            ······························ ?              │
 │ ● feat/e standard                                                        AC —││ ✗ feat/g sonnet standard                                 ││ PR CHECKS ───────────────────────────────────────────────│
 │   ○─○─○─○─○─○ blocked                                                        ││   roles —                                                ││ #12 ● checks ● merge 10m                                 │
-│   Task feat/e                                                                ││ ✗ feat/h sonnet standard                                 ││ BUDGET ──────────────────────────────────────────────────│
-│ ● feat/f standard                                                        AC —││   roles —                                                ││ claude 5h   ██░░░░░░░░░░░░░░░░░░  10%                    │
+│   Task feat/e                                                                ││▌✗ feat/h sonnet standard                                 ││ BUDGET ──────────────────────────────────────────────────│
+│ ● feat/f standard                                                        AC —││▌  roles —                                                ││ claude 5h   ██░░░░░░░░░░░░░░░░░░  10%                    │
 │   ○─○─○─○─○─○ blocked                                                        ││ ● feat/r@halo gpt-5 deep                                 ││ claude 7d   ████████████░░░░░░░░  62% ↑                  │
 │   Task feat/f                                                                ││   roles ?                                                ││                                                          │
 │ ✗ feat/g standard                                                        AC —││ ● feat/j sonnet standard                                 ││                                                          │
 │   ○─○─○─○─○─○ failed                                                         ││   roles —                                                ││                                                          │
 │   Task feat/g                                                                ││ ● feat/p@mbp ? ?                                         ││                                                          │
-│ ✗ feat/h standard                                                        AC —││   roles ?                                                ││                                                          │
-│   ○─○─○─○─○─○ failed                                                         ││ ○ feat/q@nuc ? ?                                         ││                                                          │
-│   Task feat/h                                                                ││   roles ?                                                ││                                                          │
+│▌✗ feat/h standard                                                        AC —││   roles ?                                                ││                                                          │
+│▌  ○─○─○─○─○─○ failed                                                         ││ ○ feat/q@nuc ? ?                                         ││                                                          │
+│▌  Task feat/h                                                                ││   roles ?                                                ││                                                          │
 │ ● feat/r@halo deep                                                       AC —││ ○  ? ?                                                   ││                                                          │
 │   ?                                                                          ││   roles ?                                                ││                                                          │
 │   Task feat/r                                                                ││                                                          ││                                                          │
@@ -46,15 +46,15 @@
 │ ○ feat/q@nuc ?                                                           AC —││                                                          ││                                                          │
 │   ?                                                                          ││                                                          ││                                                          │
 │   —                                                                          ││                                                          ││                                                          │
-│▌○ @halo ?                                                                AC —││                                                          ││                                                          │
-│▌  ?                                                                          ││                                                          ││                                                          │
-│▌  —                                                                          ││                                                          ││                                                          │
+│ ○ @halo ?                                                                AC —││                                                          ││                                                          │
+│   ?                                                                          ││                                                          ││                                                          │
+│   —                                                                          ││                                                          ││                                                          │
 ╰──────────────────────────────────────────────────────────────────────────────╯╰──────────────────────────────────────────────────────────╯╰──────────────────────────────────────────────────────────╯
 ╭ RECENT EVENTS ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── 19 events ─╮
-│   1m worker:feat/a… working execute                                                                                                                                                                  │
-│   4m worker:feat/j… working execute                                                                                                                                                                  │
-│   5m worker:feat/d… blocked prompt: permission dialog                                                                                                                                                │
-│   6m role:feat/a:r… blocked role reviewer engine exited (pane %9)                                                                                                                                    │
-│   8m worker:feat/a… progress note                                                                                                                                                                    │
-│  10m pr-watch:12    {"ts": 1, "repo": "o/r", "pr": 12, "url": "https://github.com/o/r/pull/12", "changed": ["checks"], "state": {"state": "OPEN", "checks": "SUCCESS", "mergeable": "MERGEABLE"}, "w…│
+│   1m otter                    working execute                                                                                                                                                        │
+│   4m feat/j                   working execute                                                                                                                                                        │
+│   5m feat/d                   blocked prompt: permission dialog                                                                                                                                      │
+│   6m otter:reviewer           blocked role reviewer engine exited (pane %9)                                                                                                                          │
+│   8m otter                    progress note                                                                                                                                                          │
+│  10m pr-watch:12              {"ts": 1, "repo": "o/r", "pr": 12, "url": "https://github.com/o/r/pull/12", "changed": ["checks"], "state": {"state": "OPEN", "checks": "SUCCESS", "mergeable": "MERGE…│
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯

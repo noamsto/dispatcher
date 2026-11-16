@@ -61,3 +61,15 @@ func TestOverlayCompositePadsShortBase(t *testing.T) {
 		t.Errorf("short base row = %q", got)
 	}
 }
+
+// A wide character cut by either box edge must not widen the row.
+func TestOverlayCompositeWideCharEdges(t *testing.T) {
+	const w = 30
+	base := []string{strings.Repeat("漢", w/2)}
+	for _, tc := range []struct{ x, bw int }{{4, 9}, {6, 9}, {5, 10}, {4, 10}} {
+		out := composite(base, []string{strings.Repeat("X", tc.bw)}, tc.x, 0, w)
+		if got := ansi.StringWidth(out[0]); got != w {
+			t.Errorf("x=%d bw=%d: row is %d cells, want %d: %q", tc.x, tc.bw, got, w, ansi.Strip(out[0]))
+		}
+	}
+}
