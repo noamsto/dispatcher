@@ -37,6 +37,10 @@ func (ExecRunner) RunIn(ctx context.Context, dir, name string, args ...string) (
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	err := cmd.Run()
+	// The program exited 0; only an orphaned grandchild held the pipes open.
+	if errors.Is(err, exec.ErrWaitDelay) {
+		err = nil
+	}
 	return stdout.Bytes(), stderr.Bytes(), err
 }
 
