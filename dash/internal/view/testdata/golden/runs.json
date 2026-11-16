@@ -2,6 +2,8 @@
   "schema_version": 1,
   "view": "runs",
   "loaded": true,
+  "retro_loaded": true,
+  "ratings_loaded": true,
   "retro": {
     "tags": [],
     "unknown": [],

@@ -618,7 +618,7 @@ func TestWorkerByBranch(t *testing.T) {
 	snap := data.Snapshot{Roster: data.RosterSection{Crews: []data.RosterCrew{
 		{ID: "c1", Workers: []map[string]any{row("feat/a", "working"), row("feat/gone", "reaped")}},
 		{ID: "c2", Workers: []map[string]any{row("feat/b", "idle")}},
-		{ID: "bad", Workers: []map[string]any{}, WorkersError: &msg},
+		{ID: "bad", Workers: []map[string]any{row("feat/x", "idle")}, WorkersError: &msg},
 	}}}
 	rows := snapMsg(snap, allLoaded).mapv.Workers
 

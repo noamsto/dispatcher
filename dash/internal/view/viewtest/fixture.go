@@ -44,7 +44,7 @@ func Inputs() view.Inputs {
 	return view.Inputs{
 		Snap:   snap,
 		Bus:    digest,
-		Loaded: view.Loaded{Settings: true, Budget: true, Runs: true, Roster: true, Bus: true},
+		Loaded: view.Loaded{Settings: true, Budget: true, Retro: true, Ratings: true, Roster: true, Bus: true},
 		NowMS:  NowMS,
 		Crew:   []string{"crew"},
 	}

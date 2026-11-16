@@ -166,7 +166,7 @@ func testBudgetView(snap data.Snapshot, loaded [numSources]bool) budgetView {
 
 func testRunsView(snap data.Snapshot, loaded [numSources]bool) runsView {
 	msg := snapMsg(snap, loaded)
-	return newRunsView(msg.runs, msg.loaded)
+	return newRunsView(msg.runs)
 }
 
 func testSettingsView(snap data.Snapshot, loaded [numSources]bool, deps settingsDeps) settingsView {

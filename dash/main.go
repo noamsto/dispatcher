@@ -167,7 +167,7 @@ func runView(ctx context.Context, cfg data.Config, o opts) int {
 		return view.Build(o.view, view.Inputs{
 			Snap:   data.Collect(ctx, runner, cfg),
 			Bus:    busDigest(scanner, eventsErr, nowMS),
-			Loaded: view.Loaded{Settings: true, Budget: true, Runs: true, Roster: true, Bus: true},
+			Loaded: view.Loaded{Settings: true, Budget: true, Retro: true, Ratings: true, Roster: true, Bus: true},
 			NowMS:  nowMS,
 			Crew:   cfg.Crew,
 		})

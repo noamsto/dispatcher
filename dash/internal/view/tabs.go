@@ -16,6 +16,8 @@ type RunsView struct {
 	SchemaVersion int                `json:"schema_version"`
 	View          string             `json:"view"`
 	Loaded        bool               `json:"loaded"`
+	RetroLoaded   bool               `json:"retro_loaded"`
+	RatingsLoaded bool               `json:"ratings_loaded"`
 	Retro         *data.RetroReport  `json:"retro"`
 	RetroError    *string            `json:"retro_error"`
 	RatingsGroups []data.RatingGroup `json:"ratings"`
@@ -66,7 +68,9 @@ func BuildRuns(in Inputs) RunsView {
 	return RunsView{
 		SchemaVersion: SchemaVersion,
 		View:          "runs",
-		Loaded:        in.Loaded.Runs,
+		Loaded:        in.Loaded.Retro && in.Loaded.Ratings,
+		RetroLoaded:   in.Loaded.Retro,
+		RatingsLoaded: in.Loaded.Ratings,
 		Retro:         r.Retro,
 		RetroError:    r.RetroError,
 		RatingsGroups: nonNil(r.RatingsGroups),
@@ -90,6 +94,9 @@ func BuildSettings(in Inputs) SettingsView {
 func BuildMap(in Inputs) MapView {
 	v := MapView{SchemaVersion: SchemaVersion, View: "map", Loaded: in.Loaded.Roster, Workers: []WorkerRow{}}
 	for _, c := range in.Snap.Roster.Crews {
+		if c.WorkersError != nil {
+			continue
+		}
 		v.Workers = append(v.Workers, workerRows(in.Crew, c.ID, c.Workers)...)
 	}
 	return v

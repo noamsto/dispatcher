@@ -90,16 +90,14 @@ type runsView struct {
 	ratingsLoaded, retroLoaded bool
 }
 
-// newRunsView takes the per-source loaded flags beside the view: RunsView's
-// Loaded needs both sources, but each section shows its own loading line.
-func newRunsView(rv vm.RunsView, loaded [numSources]bool) runsView {
+func newRunsView(rv vm.RunsView) runsView {
 	var v runsView
-	v.load(rv, loaded)
+	v.load(rv)
 	return v
 }
 
-func (v *runsView) load(rv vm.RunsView, loaded [numSources]bool) {
-	v.ratingsLoaded, v.retroLoaded = loaded[srcRatings], loaded[srcRetro]
+func (v *runsView) load(rv vm.RunsView) {
+	v.ratingsLoaded, v.retroLoaded = rv.RatingsLoaded, rv.RetroLoaded
 	v.ratingsErr = rv.RatingsError
 	if v.ratingsErr == nil {
 		v.ratingsNatural = sortRatingsNatural(rv.RatingsGroups)
@@ -136,7 +134,7 @@ func (v *runsView) applySort() {
 func (v runsView) Update(msg tea.Msg) (view, tea.Cmd) {
 	switch msg := msg.(type) {
 	case snapshotMsg:
-		v.load(msg.runs, msg.loaded)
+		v.load(msg.runs)
 		return v, nil
 
 	case tea.KeyMsg:

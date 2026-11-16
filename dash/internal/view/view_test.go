@@ -98,7 +98,7 @@ func fullInputs(t *testing.T) Inputs {
 	if err := json.Unmarshal(b, &snap); err != nil {
 		t.Fatal(err)
 	}
-	return Inputs{Snap: snap, NowMS: snap.Now * 1000, Crew: []string{"crew"}, Loaded: Loaded{true, true, true, true, true}}
+	return Inputs{Snap: snap, NowMS: snap.Now * 1000, Crew: []string{"crew"}, Loaded: Loaded{true, true, true, true, true, true}}
 }
 
 func TestBuildRoster(t *testing.T) {
@@ -150,6 +150,30 @@ func TestBuildTabs(t *testing.T) {
 	m := BuildMap(in)
 	if m.View != "map" || len(m.Workers) != 2 || m.Workers[0].Crew != "c1" {
 		t.Errorf("map = %+v", m)
+	}
+}
+
+func TestBuildMapSkipsCrewsWithWorkersError(t *testing.T) {
+	msg := "boom"
+	w := []map[string]any{{"branch": "feat/x", "name": "x", "state": "idle"}}
+	var in Inputs
+	in.Snap.Roster.Crews = []data.RosterCrew{
+		{ID: "ok", Workers: w},
+		{ID: "bad", Workers: w, WorkersError: &msg},
+	}
+	m := BuildMap(in)
+	if len(m.Workers) != 1 || m.Workers[0].Crew != "ok" {
+		t.Errorf("workers = %+v, want only crew ok", m.Workers)
+	}
+}
+
+func TestBuildRunsLoadedPerSource(t *testing.T) {
+	v := BuildRuns(Inputs{Loaded: Loaded{Retro: true}})
+	if v.Loaded || !v.RetroLoaded || v.RatingsLoaded {
+		t.Errorf("runs loaded = %v/%v/%v", v.Loaded, v.RetroLoaded, v.RatingsLoaded)
+	}
+	if v := BuildRuns(Inputs{Loaded: Loaded{Retro: true, Ratings: true}}); !v.Loaded {
+		t.Errorf("Loaded = false with both sources loaded")
 	}
 }
 

@@ -20,7 +20,7 @@ var Names = []string{"overview", "roster", "budget", "runs", "settings", "map"}
 
 // Loaded says which sources have delivered at least once.
 type Loaded struct {
-	Settings, Budget, Runs, Roster, Bus bool
+	Settings, Budget, Retro, Ratings, Roster, Bus bool
 }
 
 // Inputs is everything a builder reads.

@@ -158,7 +158,7 @@ func NewModel(deps Deps, now func() time.Time, live liveDeps) Model {
 		liveTab:     lv,
 		boardTab:    newBoardView(msg.roster, now, acts),
 		budgetTab:   newBudgetView(msg.budget),
-		runsTab:     newRunsView(msg.runs, msg.loaded),
+		runsTab:     newRunsView(msg.runs),
 		settingsTab: newSettingsView(msg.settings, settingsDeps{
 			ctx: ctx, runner: deps.Runner, bin: deps.DispatchConfig,
 			getenv: os.Getenv, exec: tea.ExecProcess,
@@ -180,7 +180,7 @@ func inputsOf(snap data.Snapshot, digest data.BusDigest, l [numSources]bool, now
 		Bus:  digest,
 		Loaded: vm.Loaded{
 			Settings: l[srcSettings], Budget: l[srcBudget],
-			Runs: l[srcRetro] && l[srcRatings], Roster: l[srcRoster], Bus: l[srcBus],
+			Retro: l[srcRetro], Ratings: l[srcRatings], Roster: l[srcRoster], Bus: l[srcBus],
 		},
 		NowMS: nowMS,
 		Crew:  crew,
