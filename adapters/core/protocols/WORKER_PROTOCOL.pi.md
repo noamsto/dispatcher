@@ -118,6 +118,7 @@ Behavioral bug, shared contract change or PR-feedback fix → read `EVIDENCE_REV
 - trivial: implement directly → gate (`WORKER_EXECUTE`) → `/deslop` → PR (`WORKER_SHIP`); no spec, plan, critics or review. Still run the completion, wake and rerun peeks (Checkpoint-peek): the only points a dispatcher redirect reaches you.
 - standard: Plan of record first (`WORKER_PLAN`); no existing plan → `spec-plan-critic` `{ tier: 'standard', ... }` (plan + plan-critic only); execute via subagents. Code-review gate: one batch + targeted re-review if required.
 - deep: Resuming a killed run first; else (`WORKER_PLAN`) `spec-plan-critic` `{ tier: 'deep', ... }` (spec + spec-critic → optional consultant decomposition (Orchestration consult) → plan + plan-critic). Code-review gate: one parallel batch, reconciled once, conditional second re-review.
+- standard/deep draw issue and plan diagrams at the spec/plan seams (`WORKER_PLAN`, Diagrams); trivial none.
 - standard/deep then: execute → fast deterministic gate (`WORKER_EXECUTE`) → code-review gate (`WORKER_REVIEW`) → `/deslop` + push + PR (`WORKER_SHIP`).
 
 ## Gating verdicts are awaited (all engines)

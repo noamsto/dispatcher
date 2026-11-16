@@ -24,6 +24,7 @@ Every visible line must help a human reviewer decide something; agent-facing sta
 - `## Testing` (replaces Evidence/Test-plan): one line per command + result; raw output only for evidence CI cannot reproduce, trimmed to decisive lines.
 - `## Review notes`: one disposition line (e.g. `deferred (reported)`, `dropped (below bar)`, `refuted`) per open, deferred or refuted item; no fixed rows, SHAs, round counts.
 - `## Escalated`, `## Assumptions`, `## Follow-ups (untracked)` (worker-written, "Deferred findings"), in that order.
+- Diagrams (`WORKER_PLAN`, Diagrams): one collapsed `<details><summary>Diagrams</summary>` block holding `issue.d2` and `plan.d2`, each in a fenced `d2` block, with a blank line after `</summary>` and around each fence; a skipped diagram gets a one-line note instead. Omit the block on trivial, or when both were skipped as docs/config-only. Place it before the Agent ledger.
 
 Always last: one collapsed `<details><summary>Agent ledger</summary>…</details>` block with full recurrence ledger (all `EVIDENCE_REVIEW.md` ledger-table fields) and acceptance ledger (all `## Acceptance` items with evidence). Add it at PR create if ledger data exists, else with the first `gh pr edit` carrying some; update via `gh pr edit`. New visible sections (e.g. Follow-ups) go before it.
 
