@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/noamsto/dispatcher/dash/internal/data"
@@ -205,26 +206,55 @@ func TestShellQuote(t *testing.T) {
 	}
 }
 
-func TestShellQuoteRoundTripsThroughShells(t *testing.T) {
-	hostile := []string{
+// roundTripTokens is every printable ASCII character alone, after "a", and
+// before each suffix that completes a shell special (%self, ~x, $1, ~~), plus
+// the hostile strings earlier quoting bugs let through.
+func roundTripTokens() []string {
+	toks := []string{
 		`x\'; echo INJECTED; #`, `a\\b`, `\`, `it's`, `$HOME $(id) ` + "`id`", `a;b&&c|d`, "a b  c", "line1\nline2", `"dq"`, `\n`, `trailing\`,
 	}
-	shells := []struct{ name, flag string }{{"sh", "-c"}, {"fish", "-c"}}
-	for _, sh := range shells {
-		path, err := exec.LookPath(sh.name)
-		if err != nil {
-			t.Run(sh.name, func(t *testing.T) { t.Skip(sh.name + " not installed") })
-			continue
+	for c := byte(' '); c <= '~'; c++ {
+		for _, pre := range []string{"", "a"} {
+			for _, suf := range []string{"", "self", "x", "1", "~"} {
+				toks = append(toks, pre+string(c)+suf)
+			}
 		}
+	}
+	return toks
+}
+
+func TestShellQuoteRoundTripsThroughShells(t *testing.T) {
+	toks := roundTripTokens()
+	quoted := make([]string, len(toks))
+	var want strings.Builder
+	for i, s := range toks {
+		quoted[i] = shellQuote(s)
+		want.WriteString("[" + s + "]\n")
+	}
+	shells := []struct{ name, flags string }{{"sh", "-c"}, {"fish", "--no-config -c"}}
+	for _, sh := range shells {
 		t.Run(sh.name, func(t *testing.T) {
-			for _, s := range hostile {
-				out, err := exec.Command(path, sh.flag, `printf '%s\n' `+shellQuote(s)).Output()
-				if err != nil {
-					t.Errorf("%q: %v", s, err)
-					continue
+			path, err := exec.LookPath(sh.name)
+			if err != nil {
+				if testing.Short() {
+					t.Skip(sh.name + " not installed")
 				}
-				if got := string(out); got != s+"\n" {
-					t.Errorf("%s read %q back as %q", sh.name, s, got)
+				t.Fatalf("%s not installed; the round trip needs it (go test -short skips)", sh.name)
+			}
+			run := func(args ...string) string {
+				argv := append(strings.Fields(sh.flags), `printf '[%s]\n' `+strings.Join(args, " "))
+				out, err := exec.Command(path, argv...).Output()
+				if err != nil {
+					t.Fatalf("%s: %v", sh.name, err)
+				}
+				return string(out)
+			}
+			if run(quoted...) == want.String() {
+				return
+			}
+			for i, s := range toks {
+				if got := run(quoted[i]); got != "["+s+"]\n" {
+					t.Errorf("%s read %q (quoted %s) back as %q", sh.name, s, quoted[i], got)
 				}
 			}
 		})

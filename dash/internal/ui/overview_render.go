@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
@@ -30,15 +31,21 @@ const (
 
 type workerKey struct{ crew, branch string }
 
-// overviewState is the UI state the renderer reads besides the view model.
+// overviewState is what the operator asked for, never a derived selection:
+// resolve turns it into what is drawn and acted on, so nothing has to keep the
+// two in step.
 type overviewState struct {
 	focus    ovPanel
-	selected workerKey
+	cursor   string    // the strip cursor's attention item ID
+	cursorAt int       // the cursor's index when set: the tie-break, and the fallback once its item leaves
+	worker   workerKey // the worker chosen outside the strip
 	stripOff int
-	attn     int  // strip cursor, an index into ov.Attention
-	noSel    bool // the strip cursor is on an item that names no worker
 	filter   string
 }
+
+// ovSel is the resolved selection: the worker every panel highlights and
+// actions act on, and the strip cursor. Either is -1 for none.
+type ovSel struct{ worker, cursor int }
 
 type rect struct{ x, y, w, h int }
 
@@ -84,49 +91,117 @@ type overviewRects struct {
 	stripRows int
 	stripOff  int
 	cardLines int
+	sel       ovSel
 	panels    [numOvPanels]panelLayout
 }
 
-// ovIndex resolves worker lookups, the filter and the selected worker once per
-// frame.
+// ovIndex resolves worker lookups and the filter once per frame.
 type ovIndex struct {
 	byKey  map[workerKey]int
 	vis    []bool
-	sel    int
 	needle string
 }
 
 func newOvIndex(ov vm.OverviewView, st overviewState) ovIndex {
-	ix := ovIndex{byKey: make(map[workerKey]int, len(ov.Workers)), vis: make([]bool, len(ov.Workers)), sel: -1,
+	ix := ovIndex{byKey: make(map[workerKey]int, len(ov.Workers)), vis: make([]bool, len(ov.Workers)),
 		needle: strings.ToLower(st.filter)}
 	for i, w := range ov.Workers {
 		ix.byKey[workerKey{w.Crew, w.Branch}] = i
 		ix.vis[i] = ix.matches(workerLabel(w) + " " + w.Branch + " " + ovStr(w.Title, ""))
 	}
-	if st.noSel {
-		return ix
-	}
-	if i := ix.worker(st.selected.crew, st.selected.branch); i >= 0 {
-		ix.sel = i
-		return ix
-	}
-	for _, a := range ov.Attention {
-		if i := ix.worker(a.Crew, a.Branch); i >= 0 {
-			ix.sel = i
-			return ix
-		}
-	}
-	if len(ov.Workers) > 0 {
-		ix.sel = 0
-	}
 	return ix
 }
 
+// worker is the index of the worker row with this key, or -1. A row without a
+// branch (a peer placeholder) is never found.
 func (ix ovIndex) worker(crew, branch string) int {
 	if i, ok := ix.byKey[workerKey{crew, branch}]; ok && branch != "" {
 		return i
 	}
 	return -1
+}
+
+// pick is worker narrowed to a selectable one: it also passes the filter.
+// Every row's worker comes from here, so a row can only highlight, or select
+// on a click, a worker that resolve accepts.
+func (ix ovIndex) pick(crew, branch string) int {
+	if i := ix.worker(crew, branch); i >= 0 && ix.vis[i] {
+		return i
+	}
+	return -1
+}
+
+// cursorIndex is the strip cursor's item: the item with the cursor's ID
+// nearest its last index, else that index clamped, or -1 with no items.
+func cursorIndex(ov vm.OverviewView, st overviewState) int {
+	best := -1
+	for i, a := range ov.Attention {
+		if a.ID == st.cursor && (best < 0 || absInt(i-st.cursorAt) < absInt(best-st.cursorAt)) {
+			best = i
+		}
+	}
+	if best < 0 && len(ov.Attention) > 0 {
+		best = clamp(st.cursorAt, 0, len(ov.Attention)-1)
+	}
+	return best
+}
+
+func absInt(n int) int { return max(n, -n) }
+
+// resolve is the one answer to what is selected. With the strip focused it is
+// the cursor and its item's worker, or no worker; otherwise the chosen worker,
+// else the first the shown panels list. Only a worker that a shown panel draws
+// on a row of its own can be selected, so the highlight and the target agree.
+func resolve(ov vm.OverviewView, st overviewState, ix ovIndex, shown []ovPanel) ovSel {
+	sel := ovSel{worker: -1, cursor: cursorIndex(ov, st)}
+	var cands []int
+	for _, p := range shown {
+		cands = append(cands, panelWorkers(p, ov, ix)...)
+	}
+	want := ix.worker(st.worker.crew, st.worker.branch)
+	if effectiveFocus(ov, st.focus) == panelAttention {
+		a := ov.Attention[sel.cursor]
+		want = ix.worker(a.Crew, a.Branch)
+	}
+	switch {
+	case slices.Contains(cands, want):
+		sel.worker = want
+	case effectiveFocus(ov, st.focus) != panelAttention && len(cands) > 0:
+		sel.worker = cands[0]
+	}
+	return sel
+}
+
+// shownPanels is the body panels drawn at width w: all three when wide, else
+// the focused agents or monitors panel, else the checklists.
+func shownPanels(w int, focus ovPanel) []ovPanel {
+	switch {
+	case w >= wideWidth:
+		return []ovPanel{panelChecklists, panelAgents, panelMonitors}
+	case focus == panelAgents || focus == panelMonitors:
+		return []ovPanel{focus}
+	}
+	return []ovPanel{panelChecklists}
+}
+
+// panelWorkers is the distinct workers of panel p's rows, top to bottom.
+func panelWorkers(p ovPanel, ov vm.OverviewView, ix ovIndex) []int {
+	var es []entry
+	switch p {
+	case panelChecklists:
+		es = checklistEntries(ov, ix, 1)
+	case panelAgents:
+		es = agentEntries(ov, ix)
+	case panelMonitors:
+		es = monitorEntries(ov, ix)
+	}
+	var ws []int
+	for _, e := range es {
+		if e.worker >= 0 && !slices.Contains(ws, e.worker) {
+			ws = append(ws, e.worker)
+		}
+	}
+	return ws
 }
 
 // matches reports whether hay passes the filter.
@@ -208,13 +283,13 @@ func monitorEntries(ov vm.OverviewView, ix ovIndex) []entry {
 	if len(m.Watchdogs) > 0 {
 		es = append(es, entry{kind: eHeader, idx: 0, worker: -1, lines: 1})
 		for i, w := range m.Watchdogs {
-			es = append(es, entry{kind: eWatch, idx: i, worker: ix.worker(w.Crew, w.Branch), lines: 1})
+			es = append(es, entry{kind: eWatch, idx: i, worker: ix.pick(w.Crew, w.Branch), lines: 1})
 		}
 	}
 	if len(m.PRChecks) > 0 {
 		es = append(es, entry{kind: eHeader, idx: 1, worker: -1, lines: 1})
 		for i, p := range m.PRChecks {
-			es = append(es, entry{kind: ePR, idx: i, worker: ix.worker(p.Crew, p.Branch), lines: 1})
+			es = append(es, entry{kind: ePR, idx: i, worker: ix.pick(p.Crew, p.Branch), lines: 1})
 		}
 	}
 	if len(m.Budgets) > 0 {
@@ -275,7 +350,9 @@ func panelRect(r rect) (outer, inner rect) {
 	return r, rect{r.x + left, r.y + top, max0(r.w - fw), max0(r.h - fh)}
 }
 
-// overviewLayout is the one geometry the renderer and mouse hit-testing share.
+// overviewLayout is the one geometry the renderer, mouse hit-testing and every
+// action share, and the only place the selection is resolved and the strip
+// window computed.
 func overviewLayout(w, h int, ov vm.OverviewView, st overviewState) overviewRects {
 	ix := newOvIndex(ov, st)
 	r := overviewRects{w: w, h: h}
@@ -293,33 +370,36 @@ func overviewLayout(w, h int, ov vm.OverviewView, st overviewState) overviewRect
 		stripH := min(rows+2, h)
 		r.stripRows = min(rows, max0(stripH-2))
 		r.stripOff = clamp(st.stripOff, 0, n-r.stripRows)
+		if r.stripRows > 0 {
+			// The window always holds the cursor, whatever offset was stored
+			// before a resize or a snapshot moved it.
+			c := cursorIndex(ov, st)
+			r.stripOff = clamp(r.stripOff, c-r.stripRows+1, c)
+		}
 		outer, inner := panelRect(rect{0, 0, w, stripH})
 		pl := panelLayout{shown: true, rect: outer, inner: inner}
 		for i := range r.stripRows {
 			idx := r.stripOff + i
 			a := ov.Attention[idx]
 			pl.items = append(pl.items, placed{
-				entry: entry{kind: eAttn, idx: idx, worker: ix.worker(a.Crew, a.Branch), lines: 1},
+				entry: entry{kind: eAttn, idx: idx, worker: ix.pick(a.Crew, a.Branch), lines: 1},
 				rect:  rect{inner.x, inner.y + i, inner.w, 1},
 			})
 		}
 		r.panels[panelAttention] = pl
 		y = stripH
 	}
+	var shown []ovPanel
 	bodyH := max0(h - y)
-	if bodyH < 3 {
+	if bodyH >= 3 {
+		shown = shownPanels(w, st.focus)
+	}
+	r.sel = resolve(ov, st, ix, shown)
+	if len(shown) == 0 {
 		return r
 	}
 
 	wide := w >= wideWidth
-	var shown []ovPanel
-	if wide {
-		shown = []ovPanel{panelChecklists, panelAgents, panelMonitors}
-	} else if st.focus == panelAgents || st.focus == panelMonitors {
-		shown = []ovPanel{st.focus}
-	} else {
-		shown = []ovPanel{panelChecklists}
-	}
 	widths := map[ovPanel]int{}
 	if wide {
 		widths[panelChecklists] = w * 40 / 100
@@ -365,7 +445,7 @@ func overviewLayout(w, h int, ov vm.OverviewView, st overviewState) overviewRect
 		case panelMonitors:
 			es = monitorEntries(ov, ix)
 		}
-		r.panels[p] = panelLayout{shown: true, rect: outer, inner: inner, items: place(es, inner, ix.sel)}
+		r.panels[p] = panelLayout{shown: true, rect: outer, inner: inner, items: place(es, inner, r.sel.worker)}
 		x += widths[p]
 	}
 	if eventsH > 0 {
@@ -381,7 +461,6 @@ func renderOverview(w, h int, ov vm.OverviewView, st overviewState, mode pillMod
 		return ""
 	}
 	r := overviewLayout(w, h, ov, st)
-	ix := newOvIndex(ov, st)
 	lines := make([]string, 0, h)
 	if r.allClear {
 		lines = append(lines, truncateLine(" "+fg(colGreen).Render("✓ all clear"), w))
@@ -400,7 +479,7 @@ func renderOverview(w, h int, ov vm.OverviewView, st overviewState, mode pillMod
 		sp.focused = effectiveFocus(ov, st.focus) == p
 		var content []string
 		for _, it := range pl.items {
-			content = append(content, rowLines(ov, ix, r, st, it, pl.inner.w)...)
+			content = append(content, rowLines(ov, r, st, it, pl.inner.w)...)
 		}
 		return renderPanel(pl.rect.w, pl.rect.h, sp, mode, content)
 	}
@@ -466,12 +545,12 @@ func severityGlyph(s vm.Severity) (string, lipgloss.Color) {
 }
 
 // rowLines renders one placed entry as len == entry.lines lines of width iw.
-func rowLines(ov vm.OverviewView, ix ovIndex, r overviewRects, st overviewState, it placed, iw int) []string {
+func rowLines(ov vm.OverviewView, r overviewRects, st overviewState, it placed, iw int) []string {
 	var bg lipgloss.TerminalColor = lipgloss.NoColor{}
-	selected := it.worker >= 0 && it.worker == ix.sel && it.kind != eHeader
-	if it.kind == eAttn && st.focus == panelAttention {
+	selected := it.worker >= 0 && it.worker == r.sel.worker && it.kind != eHeader
+	if it.kind == eAttn && effectiveFocus(ov, st.focus) == panelAttention {
 		// The focused strip highlights its own cursor, which may name no worker.
-		selected = it.idx == st.attn
+		selected = it.idx == r.sel.cursor
 	}
 	if selected {
 		bg = colSelBg

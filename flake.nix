@@ -220,6 +220,9 @@
             vendorHash = "sha256-0HYob9awE9cJYU/7J6WF7o6D6i4gmPMN0kyFuCpgpFA=";
             ldflags = ["-s" "-w" "-X main.dispatchConfigBin=${dispatchConfig}/bin/dispatch-config"];
             nativeBuildInputs = [pkgs.makeWrapper];
+            # The copy-paste quoting test round-trips through fish and fails
+            # without it.
+            nativeCheckInputs = [pkgs.fish];
             postInstall = ''
               mv $out/bin/dash $out/bin/crew-dash
               wrapProgram $out/bin/crew-dash --prefix PATH : ${pkgs.lib.makeBinPath [refresh-budget pkgs.git]}

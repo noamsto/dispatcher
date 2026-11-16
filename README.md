@@ -905,7 +905,8 @@ same struct the TUI renders.
 
 Overview keys: `tab`/`shift-tab` move focus, `j`/`k` select, `1`–`9` act on
 the attention rows shown, `p` peeks, `n` nudges, `r` replies, `m` merges
-(always confirms), `enter` opens details and `esc` closes them, `/` filters,
+(always confirms), `enter` on an attention row selects its worker in the
+checklists, elsewhere it opens details and `esc` closes them, `/` filters,
 `?` shows every binding. Other tabs: `1`–`7` or `tab` switch views; on Live,
 Board and Map `m` is reply and `t` jumps. `[`/`]` switch to the previous or
 next view and `R` refreshes everywhere; `q` quits. A mouse click selects or

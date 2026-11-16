@@ -3,9 +3,12 @@ package ui
 import (
 	"fmt"
 	"math"
+	"reflect"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/noamsto/dispatcher/dash/internal/invisible"
 )
@@ -145,4 +148,60 @@ func cleanText(s string) string {
 		}
 	}
 	return invisible.Drop(b.String())
+}
+
+// cleanView returns a deep copy of v with every string, string pointer and
+// string map key or value passed through cleanText(ansi.Strip(s)), so text is
+// clean before anything measures or truncates it. Fields tagged dash:"raw"
+// keep their bytes. Pointers, slices and maps are copied, never written
+// through, since the view model shares them with its inputs.
+func cleanView[T any](v T) T {
+	cleanValue(reflect.ValueOf(&v).Elem())
+	return v
+}
+
+func cleanValue(v reflect.Value) {
+	switch v.Kind() {
+	case reflect.String:
+		v.SetString(cleanText(ansi.Strip(v.String())))
+	case reflect.Pointer:
+		if v.IsNil() {
+			return
+		}
+		c := reflect.New(v.Type().Elem())
+		c.Elem().Set(v.Elem())
+		cleanValue(c.Elem())
+		v.Set(c)
+	case reflect.Struct:
+		t := v.Type()
+		for i := range t.NumField() {
+			if f := t.Field(i); f.IsExported() && f.Tag.Get("dash") != "raw" {
+				cleanValue(v.Field(i))
+			}
+		}
+	case reflect.Slice:
+		if v.IsNil() {
+			return
+		}
+		c := reflect.MakeSlice(v.Type(), v.Len(), v.Len())
+		reflect.Copy(c, v)
+		for i := range c.Len() {
+			cleanValue(c.Index(i))
+		}
+		v.Set(c)
+	case reflect.Map:
+		if v.IsNil() {
+			return
+		}
+		c := reflect.MakeMapWithSize(v.Type(), v.Len())
+		for it := v.MapRange(); it.Next(); {
+			k, e := reflect.New(v.Type().Key()).Elem(), reflect.New(v.Type().Elem()).Elem()
+			k.Set(it.Key())
+			e.Set(it.Value())
+			cleanValue(k)
+			cleanValue(e)
+			c.SetMapIndex(k, e)
+		}
+		v.Set(c)
+	}
 }

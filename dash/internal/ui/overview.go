@@ -98,15 +98,10 @@ func (v overviewView) Update(msg tea.Msg) (view, tea.Cmd) {
 	return v, nil
 }
 
-// rebuild refreshes the view model and keeps one effective focus. While the
-// strip has focus the selection follows its cursor, whose item may have moved.
+// rebuild refreshes the view model, cleaned once for the terminal. It writes
+// no selection: the state holds intent, which the layout resolves per frame.
 func (v *overviewView) rebuild() {
-	v.model = vm.BuildOverview(v.in)
-	v.st.attn = clamp(v.st.attn, 0, len(v.model.Attention)-1)
-	v.st.focus = effectiveFocus(v.model, v.st.focus)
-	if v.mode == ovNormal && v.st.focus == panelAttention {
-		v.selectAttention(v.st.attn)
-	}
+	v.model = cleanView(vm.BuildOverview(v.in))
 }
 
 func (v overviewView) View(w, h int) string {
@@ -182,45 +177,43 @@ func (v overviewView) layout() overviewRects {
 	return overviewLayout(w, h, v.model, v.st)
 }
 
-func (v overviewView) selectedWorker() (vm.OverviewWorker, bool) {
-	ix := newOvIndex(v.model, v.st)
-	if ix.sel < 0 {
+// sel is the selection as drawn at the last frame's size.
+func (v overviewView) sel() ovSel { return v.layout().sel }
+
+// target is the worker actions act on: the highlighted one.
+func (v overviewView) target() (vm.OverviewWorker, bool) {
+	s := v.sel()
+	if s.worker < 0 {
 		return vm.OverviewWorker{}, false
 	}
-	return v.model.Workers[ix.sel], true
+	return v.model.Workers[s.worker], true
 }
 
-func (v *overviewView) selectWorker(i int) {
-	if i >= 0 {
-		w := v.model.Workers[i]
-		v.st.selected, v.st.noSel = workerKey{w.Crew, w.Branch}, false
+// setFocus moves focus to p and pins the highlighted worker as the chosen one,
+// so changing panels (leaving the strip above all) keeps what was drawn.
+func (v *overviewView) setFocus(p ovPanel) {
+	if s := v.sel(); s.worker >= 0 {
+		v.setWorker(s.worker)
+	}
+	v.st.focus = p
+}
+
+// settleFocus makes the drawn focus the stored one before the operator acts: a
+// strip that emptied has handed focus to the checklists, and it stays there
+// when items come back.
+func (v *overviewView) settleFocus() {
+	if f := effectiveFocus(v.model, v.st.focus); f != v.st.focus {
+		v.setFocus(f)
 	}
 }
 
-// selectAttention moves the strip cursor to item c and selects its worker, or
-// clears the selection when the item names none (a lane or a hold), so worker
-// actions never fall through to a worker selected earlier.
-func (v *overviewView) selectAttention(c int) {
-	v.st.attn = c
-	if c < 0 || c >= len(v.model.Attention) {
-		return
-	}
-	a := v.model.Attention[c]
-	i := newOvIndex(v.model, v.st).worker(a.Crew, a.Branch)
-	if i < 0 {
-		v.st.selected, v.st.noSel = workerKey{}, true
-		return
-	}
-	v.selectWorker(i)
+func (v *overviewView) setCursor(i int) {
+	v.st.cursor, v.st.cursorAt = v.model.Attention[i].ID, i
 }
 
-// cursorItem is the attention item under the strip cursor while the strip has
-// focus.
-func (v overviewView) cursorItem() (vm.AttentionItem, bool) {
-	if v.st.focus != panelAttention || v.st.attn < 0 || v.st.attn >= len(v.model.Attention) {
-		return vm.AttentionItem{}, false
-	}
-	return v.model.Attention[v.st.attn], true
+func (v *overviewView) setWorker(i int) {
+	w := v.model.Workers[i]
+	v.st.worker = workerKey{w.Crew, w.Branch}
 }
 
 func (v *overviewView) handleKey(msg tea.KeyMsg) tea.Cmd {
@@ -242,6 +235,7 @@ func (v *overviewView) handleKey(msg tea.KeyMsg) tea.Cmd {
 		v.mode = ovNormal
 		return nil
 	}
+	v.settleFocus()
 	switch s {
 	case "tab":
 		v.cycle(1)
@@ -252,11 +246,7 @@ func (v *overviewView) handleKey(msg tea.KeyMsg) tea.Cmd {
 	case "k", "up":
 		v.move(-1)
 	case "enter":
-		if _, ok := v.selectedWorker(); ok {
-			v.mode = ovDetail
-		} else if a, ok := v.cursorItem(); ok && a.Action != nil {
-			return statusCmd("run: "+a.Action.Command, false)
-		}
+		return v.enterKey()
 	case "esc":
 		v.st.filter = ""
 	case "/":
@@ -291,39 +281,32 @@ func (v *overviewView) cycle(d int) {
 	if len(v.model.Attention) > 0 {
 		order = append([]ovPanel{panelAttention}, order...)
 	}
-	i := slices.Index(order, effectiveFocus(v.model, v.st.focus))
-	v.st.focus = order[(i+d+len(order))%len(order)]
-	if v.st.focus == panelAttention {
-		v.selectAttention(v.st.attn)
-	}
+	i := slices.Index(order, v.st.focus)
+	v.setFocus(order[(i+d+len(order))%len(order)])
 }
 
-// move steps the selection within the focused panel, or between workers while
-// the detail overlay is open.
+// move steps the strip cursor, or the selected worker over the focused panel's
+// rows, from what is drawn.
 func (v *overviewView) move(d int) {
-	v.st.focus = effectiveFocus(v.model, v.st.focus)
-	ix := newOvIndex(v.model, v.st)
-	if v.mode == ovNormal && v.st.focus == panelAttention {
-		r := v.layout()
-		n := len(v.model.Attention)
-		c := clamp(v.st.attn+d, 0, n-1)
-		if c != v.st.attn {
-			// The window scrolls one row with the cursor until it reaches an end.
-			v.st.stripOff = clamp(r.stripOff+d, 0, n-r.stripRows)
+	r := v.layout()
+	if v.st.focus == panelAttention {
+		c := clamp(r.sel.cursor+d, 0, len(v.model.Attention)-1)
+		if c == r.sel.cursor {
+			return
 		}
-		v.selectAttention(c)
+		// The window scrolls one row with the cursor until it reaches an end;
+		// the layout clamps it and keeps the cursor inside, and that window is
+		// the one kept.
+		v.st.stripOff = r.stripOff + d
+		v.setCursor(c)
+		v.st.stripOff = v.layout().stripOff
 		return
 	}
-	var ws []int
-	if v.mode == ovDetail {
-		ws = checklistWorkers(v.model, ix)
-	} else {
-		ws = panelWorkers(v.st.focus, v.model, ix)
-	}
+	ws := panelWorkers(v.st.focus, v.model, newOvIndex(v.model, v.st))
 	if len(ws) == 0 {
 		return
 	}
-	pos := slices.Index(ws, ix.sel)
+	pos := slices.Index(ws, r.sel.worker)
 	switch {
 	case pos < 0 && d < 0:
 		pos = len(ws) - 1
@@ -332,37 +315,25 @@ func (v *overviewView) move(d int) {
 	default:
 		pos = clamp(pos+d, 0, len(ws)-1)
 	}
-	v.selectWorker(ws[pos])
+	v.setWorker(ws[pos])
 }
 
-func checklistWorkers(ov vm.OverviewView, ix ovIndex) []int {
-	var ws []int
-	for _, e := range checklistEntries(ov, ix, 1) {
-		if e.worker >= 0 {
-			ws = append(ws, e.worker)
+// enterKey on the strip hands focus to the checklists with the cursor's worker
+// selected, or shows the command of an item that names no worker. Elsewhere it
+// opens the detail overlay on the checklists, where j and k then move.
+func (v *overviewView) enterKey() tea.Cmd {
+	s := v.sel()
+	strip := v.st.focus == panelAttention
+	switch {
+	case s.worker >= 0:
+		v.setFocus(panelChecklists)
+		if !strip {
+			v.mode = ovDetail
 		}
+	case strip && v.model.Attention[s.cursor].Action != nil:
+		return statusCmd("run: "+v.model.Attention[s.cursor].Action.Command, false)
 	}
-	return ws
-}
-
-// panelWorkers is the distinct workers of panel p's rows, top to bottom.
-func panelWorkers(p ovPanel, ov vm.OverviewView, ix ovIndex) []int {
-	var es []entry
-	switch p {
-	case panelChecklists:
-		return checklistWorkers(ov, ix)
-	case panelAgents:
-		es = agentEntries(ov, ix)
-	case panelMonitors:
-		es = monitorEntries(ov, ix)
-	}
-	var ws []int
-	for _, e := range es {
-		if e.worker >= 0 && !slices.Contains(ws, e.worker) {
-			ws = append(ws, e.worker)
-		}
-	}
-	return ws
+	return nil
 }
 
 func (v *overviewView) filterKey(msg tea.KeyMsg) tea.Cmd {
@@ -378,24 +349,22 @@ func (v *overviewView) filterKey(msg tea.KeyMsg) tea.Cmd {
 	var cmd tea.Cmd
 	v.input, cmd = v.input.Update(msg)
 	v.st.filter = v.input.Value()
-	ix := newOvIndex(v.model, v.st)
-	if ix.sel >= 0 && !ix.vis[ix.sel] {
-		if ws := checklistWorkers(v.model, ix); len(ws) > 0 {
-			v.selectWorker(ws[0])
-		}
-	}
 	return cmd
 }
 
-// digit acts on the attention row labelled n in the strip as drawn.
+// digit acts on the attention row labelled n in the strip as drawn, moving the
+// cursor, and the selection when the item names a worker, onto it.
 func (v *overviewView) digit(n int) tea.Cmd {
 	r := v.layout()
 	if n > r.stripRows {
 		return statusCmd("no attention item "+strconv.Itoa(n), true)
 	}
-	idx := r.stripOff + n - 1
-	v.selectAttention(idx)
-	a := v.model.Attention[idx]
+	it := r.panels[panelAttention].items[n-1]
+	v.setCursor(it.idx)
+	if it.worker >= 0 {
+		v.setWorker(it.worker)
+	}
+	a := v.model.Attention[it.idx]
 	if a.Action == nil {
 		return statusCmd("peer worker: read-only", true)
 	}
@@ -417,7 +386,7 @@ var actionVerbs = map[string]string{"p": "peek", "n": "nudge", "r": "reply", "m"
 
 // actOnSelected runs the p, n, r or m action on the selected worker.
 func (v *overviewView) actOnSelected(k string) tea.Cmd {
-	w, ok := v.selectedWorker()
+	w, ok := v.target()
 	if !ok {
 		return statusCmd(actionVerbs[k]+": no worker selected", true)
 	}
@@ -517,15 +486,15 @@ func (v *overviewView) click(x, y int) {
 		if !pl.shown || !in(pl.rect) {
 			continue
 		}
-		v.st.focus = p
+		v.setFocus(p)
 		for _, it := range pl.items {
 			if !in(it.rect) {
 				continue
 			}
 			if p == panelAttention {
-				v.selectAttention(it.idx)
-			} else {
-				v.selectWorker(it.worker)
+				v.setCursor(it.idx)
+			} else if it.worker >= 0 {
+				v.setWorker(it.worker)
 			}
 			return
 		}

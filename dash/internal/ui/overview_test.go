@@ -63,11 +63,17 @@ func status(t *testing.T, cmd tea.Cmd) string {
 	return am.text
 }
 
+// selectBranch selects the worker on branch from the checklists, moving focus
+// there first when the strip has it, since the strip selects its cursor's
+// worker.
 func selectBranch(t *testing.T, v *overviewView, branch string) {
 	t.Helper()
 	for i, w := range v.model.Workers {
 		if w.Branch == branch {
-			v.selectWorker(i)
+			if v.st.focus == panelAttention {
+				v.setFocus(panelChecklists)
+			}
+			v.setWorker(i)
 			return
 		}
 	}
@@ -75,7 +81,7 @@ func selectBranch(t *testing.T, v *overviewView, branch string) {
 }
 
 func selBranch(v overviewView) string {
-	w, _ := v.selectedWorker()
+	w, _ := v.target()
 	return w.Branch
 }
 
@@ -123,8 +129,8 @@ func TestOverviewMovePerPanel(t *testing.T) {
 	v, _ := ovFixture(t, 150, 40, false, nil)
 	// Attention: j moves the cursor and selects that item's worker.
 	v, _ = ovKeys(v, "j")
-	if v.st.attn != 1 || selBranch(v) != "feat/g" {
-		t.Errorf("attention j: attn=%d sel=%s", v.st.attn, selBranch(v))
+	if v.sel().cursor != 1 || selBranch(v) != "feat/g" {
+		t.Errorf("attention j: cursor=%d sel=%s", v.sel().cursor, selBranch(v))
 	}
 	// Checklists: j walks the worker order.
 	v, _ = ovKeys(v, "tab")
@@ -379,7 +385,7 @@ func TestPeerRefused(t *testing.T) {
 func TestPeerAttentionDigitRefused(t *testing.T) {
 	v, fr := ovFixture(t, 150, 40, true, nil)
 	i := slices.IndexFunc(v.model.Attention, func(a vm.AttentionItem) bool { return a.Origin == vm.OriginPeer })
-	v.st.stripOff = max(0, i-2)
+	v.setCursor(i)
 	r := overviewLayout(150, 40, v.model, v.st)
 	_, cmd := ovKeys(v, string(rune('1'+i-r.stripOff)))
 	if got := status(t, cmd); got != "peer worker: read-only" {
@@ -390,7 +396,8 @@ func TestPeerAttentionDigitRefused(t *testing.T) {
 
 func TestFilter(t *testing.T) {
 	v, _ := ovFixture(t, 150, 40, false, nil)
-	v, _ = ovKeys(v, "/")
+	// From the checklists: the focused strip selects only its cursor's worker.
+	v, _ = ovKeys(v, "tab", "/")
 	if v.mode != ovFilter || !v.Capturing() {
 		t.Fatalf("/ did not open the filter")
 	}
@@ -472,15 +479,15 @@ func TestMouse(t *testing.T) {
 
 	row := r.panels[panelAttention].items[2]
 	cv := ovClick(v, row.rect.x+3, row.rect.y)
-	if cv.st.attn != row.idx || cv.st.focus != panelAttention || selBranch(cv) != "feat/a" {
-		t.Errorf("attention click: attn %d focus %v sel %s", cv.st.attn, cv.st.focus, selBranch(cv))
+	if cv.sel().cursor != row.idx || cv.st.focus != panelAttention || selBranch(cv) != "feat/a" {
+		t.Errorf("attention click: cursor %d focus %v sel %s", cv.sel().cursor, cv.st.focus, selBranch(cv))
 	}
 
 	card := r.panels[panelChecklists].items[3]
 	cw := v.model.Workers[card.worker]
 	cv = ovClick(v, card.rect.x+2, card.rect.y+1) // the card's second line
-	if cv.st.focus != panelChecklists || cv.st.selected != (workerKey{cw.Crew, cw.Branch}) {
-		t.Errorf("card click: focus %v sel %v", cv.st.focus, cv.st.selected)
+	if cv.st.focus != panelChecklists || cv.st.worker != (workerKey{cw.Crew, cw.Branch}) {
+		t.Errorf("card click: focus %v sel %v", cv.st.focus, cv.st.worker)
 	}
 
 	ag := r.panels[panelAgents]
@@ -490,8 +497,8 @@ func TestMouse(t *testing.T) {
 	}
 	agRow := ag.items[1]
 	cv = ovClick(v, agRow.rect.x, agRow.rect.y)
-	if cv.st.focus != panelAgents || cv.st.selected.branch != v.model.Agents[agRow.idx].Branch {
-		t.Errorf("agent row click: focus %v sel %v", cv.st.focus, cv.st.selected)
+	if cv.st.focus != panelAgents || cv.st.worker.branch != v.model.Agents[agRow.idx].Branch {
+		t.Errorf("agent row click: focus %v sel %v", cv.st.focus, cv.st.worker)
 	}
 
 	// A click outside every panel, a right click and a click under an overlay change nothing.
@@ -524,8 +531,8 @@ func TestMouseThroughRoot(t *testing.T) {
 	nm, _ := m.Update(tea.MouseMsg{X: card.rect.x + 2, Y: y, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
 	got := nm.(Model).views[overviewTab].(overviewView)
 	w := ov.model.Workers[card.worker]
-	if got.st.focus != panelChecklists || got.st.selected != (workerKey{w.Crew, w.Branch}) {
-		t.Errorf("root click: focus %v sel %v, want %s", got.st.focus, got.st.selected, w.Branch)
+	if got.st.focus != panelChecklists || got.st.worker != (workerKey{w.Crew, w.Branch}) {
+		t.Errorf("root click: focus %v sel %v, want %s", got.st.focus, got.st.worker, w.Branch)
 	}
 }
 
@@ -680,7 +687,7 @@ func TestStripCursorDrawn(t *testing.T) {
 		t.Errorf("initial strip marks = %v, want item 0", got)
 	}
 	v, _ = ovKeys(v, "j", "j", "j") // item 4: lane_dead on c2, no worker
-	if a := v.model.Attention[v.st.attn]; a.Kind != vm.KindLaneDead {
+	if a := v.model.Attention[v.sel().cursor]; a.Kind != vm.KindLaneDead {
 		t.Fatalf("item 4 is %s, want lane_dead", a.Kind)
 	}
 	if got := stripMarks(v, 150, 40); !slices.Equal(got, []int{3}) {
@@ -727,7 +734,7 @@ func TestMergePromptUsesActionPR(t *testing.T) {
 			v.model.Workers[k].PR = &stale
 		}
 	}
-	v.st.stripOff = max(0, i-2)
+	v.setCursor(i)
 	r := overviewLayout(150, 40, v.model, v.st)
 	v, _ = ovKeys(v, string(rune('1'+i-r.stripOff)))
 	if v.mode != ovConfirm {

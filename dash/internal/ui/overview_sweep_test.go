@@ -7,6 +7,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/noamsto/dispatcher/dash/internal/data"
 	vm "github.com/noamsto/dispatcher/dash/internal/view"
@@ -15,7 +16,9 @@ import (
 
 // sweepModel is a root Model on the Overview over the shared fixture plus 12
 // blocked workers, so the strip always has more items than it can show.
-func sweepModel() Model {
+func sweepModel() Model { return overviewModel(sweepInputs()) }
+
+func sweepInputs() vm.Inputs {
 	in := viewtest.Inputs()
 	crew := &in.Snap.Roster.Crews[0]
 	for i := range 12 {
@@ -29,7 +32,7 @@ func sweepModel() Model {
 			"title": fmt.Sprintf("Task feat/x%02d with a deliberately long title that has to be cut", i),
 		})
 	}
-	return overviewModel(in)
+	return in
 }
 
 // overviewModel is a loaded root Model on the Overview over in.
@@ -46,9 +49,10 @@ func overviewModel(in vm.Inputs) Model {
 
 func sweepSelect(m Model, branch string) Model {
 	ov := m.views[overviewTab].(overviewView)
-	for _, w := range ov.model.Workers {
+	for i, w := range ov.model.Workers {
 		if w.Branch == branch {
-			ov.st.selected = workerKey{w.Crew, w.Branch}
+			ov.st.focus = panelChecklists
+			ov.setWorker(i)
 		}
 	}
 	m.views[overviewTab] = ov
@@ -167,6 +171,60 @@ func TestOverviewSanitizesWorkerText(t *testing.T) {
 		frame := sweepKeys(sized(m, 150, 40), k).View()
 		if strings.Contains(frame, "\x1b]") || strings.Contains(frame, "\x1b[2J") {
 			t.Errorf("root frame after %s carries an escape sequence", k)
+		}
+	}
+}
+
+// TestOverviewPoisonedViewRendersClean renders a view model whose every string
+// carries escapes, a C1 and a bidi control, cleaned the way rebuild cleans it,
+// in each mode at each size: the frame keeps its geometry, carries no control,
+// and matches the frame of the unpoisoned fixture.
+func TestOverviewPoisonedViewRendersClean(t *testing.T) {
+	asciiProfile(t)
+	modes := []struct {
+		name   string
+		mode   ovMode
+		branch string
+		keys   []string
+	}{
+		{"normal", ovNormal, "", nil},
+		{"detail", ovDetail, "feat/a", []string{"enter"}},
+		{"help", ovHelp, "", []string{"?"}},
+		{"confirm", ovConfirm, "feat/b", []string{"m"}},
+		{"reply", ovReply, "feat/c", []string{"r", "hi"}},
+	}
+	poisoned := cleanView(poisonedOverview())
+	for _, sz := range [][2]int{{80, 24}, {100, 30}, {150, 40}, {200, 60}} {
+		w, h := sz[0], sz[1]
+		for _, md := range modes {
+			name := fmt.Sprintf("%dx%d %s", w, h, md.name)
+			render := func(model vm.OverviewView) string {
+				v := newOverviewView(viewtest.Inputs(), overviewNow)
+				v.model = model
+				v.View(w, h)
+				if md.branch != "" {
+					selectBranch(t, &v, md.branch)
+				}
+				v, _ = ovKeys(v, md.keys...)
+				if v.mode != md.mode {
+					t.Fatalf("%s: mode %v, want %v", name, v.mode, md.mode)
+				}
+				return v.View(w, h)
+			}
+			frame := render(poisoned)
+			lines := strings.Split(frame, "\n")
+			if len(lines) != h {
+				t.Errorf("%s: %d lines, want %d", name, len(lines), h)
+			}
+			assertWidth(t, frame, w, h)
+			for i, l := range lines {
+				if j := strings.IndexFunc(ansi.Strip(l), controlRune); j >= 0 {
+					t.Errorf("%s: line %d carries control %U: %q", name, i, []rune(ansi.Strip(l)[j:])[0], l)
+				}
+			}
+			if want := render(cleanView(vm.BuildOverview(viewtest.Inputs()))); frame != want {
+				t.Errorf("%s: the poisoned frame differs from the fixture's:\n%s\n--- want ---\n%s", name, stripped(frame), stripped(want))
+			}
 		}
 	}
 }

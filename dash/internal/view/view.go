@@ -80,13 +80,14 @@ func OriginOf(row map[string]any) Origin {
 }
 
 // Action is one operator command: Command is the shell rendering of Argv, and
-// the TUI executes Argv, so the two cannot drift.
+// the TUI executes Argv, so the two cannot drift. Argv is tagged raw: the TUI
+// cleans every other string for display but must execute these bytes as built.
 type Action struct {
 	Key        string   `json:"key"`
 	Verb       string   `json:"verb"`
 	Label      string   `json:"label"`
 	Command    string   `json:"command"`
-	Argv       []string `json:"argv"`
+	Argv       []string `json:"argv" dash:"raw"`
 	NeedsInput bool     `json:"needs_input"`
 	PR         *int     `json:"pr"`
 }
@@ -120,7 +121,11 @@ func MergeArgv(crew []string, crewID string, pr int) []string {
 	return append(slices.Clone(crew), "merge", strconv.Itoa(pr), "--crew", crewID)
 }
 
-var shellSafe = regexp.MustCompile(`^[A-Za-z0-9_@%+=:,./-]+$`)
+// shellSafe is a token sh and fish both read literally. % is never bare (fish
+// expands the whole token %self to its PID), and = @ : , + only follow a safe
+// first character, since a word's first character is where shells give
+// punctuation meaning (zsh's =cmd); quoting those costs nothing.
+var shellSafe = regexp.MustCompile(`^[A-Za-z0-9_./-][A-Za-z0-9_./:@,+=-]*$`)
 
 // shellEscaper closes the quote around each ' and \: fish treats \' and \\ as
 // escapes inside single quotes, POSIX sh does not, and this form reads the
