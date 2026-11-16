@@ -22,7 +22,6 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/clock"
 	"github.com/noamsto/dispatcher/crew/internal/git"
 	"github.com/noamsto/dispatcher/crew/internal/jsonval"
-	"github.com/noamsto/dispatcher/crew/internal/peer"
 	"github.com/noamsto/dispatcher/crew/internal/remote"
 	"github.com/noamsto/dispatcher/crew/internal/repos"
 	"github.com/noamsto/dispatcher/crew/internal/roster"
@@ -121,15 +120,14 @@ func Run(ctx context.Context, req Request, stdout, stderr io.Writer, o Options) 
 		}
 		origin, _ := git.Origin(ctx, o.Git, r.Common)
 		name := repos.Label(r.Common, origin)
-		peerRows, err := peer.RosterRows(peer.StoreFor(bus.Paths{Common: r.Common, Dir: r.Common + "/crew"}), peerHosts, now)
+		found, dropped, err := peerRows(r.Common, peerHosts, events, now)
 		if err != nil {
 			say(stderr, "crew: fleet: %s: peer rows skipped (%s)\n", r.Common, oneLine(err))
 		}
-		peerRows, dropped := peer.DropLocal(peerRows, events)
 		if dropped > 0 {
 			say(stderr, "crew: fleet: %s: %d peer rows dropped (a local crew id or branch)\n", r.Common, dropped)
 		}
-		for _, p := range peerRows {
+		for _, p := range found {
 			id, _ := p["crew_id"].(string)
 			if onlyCrew != "" && id != onlyCrew {
 				continue
