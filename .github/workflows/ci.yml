@@ -11,7 +11,7 @@ jobs:
       - uses: actions/checkout@v5
       - uses: DeterminateSystems/nix-installer-action@main
       # Read-only: no authToken, so this job only substitutes from the cache
-      # (only flake-check and build-darwin push). continue-on-error keeps a
+      # (only flake-check and build-darwin push, from main). continue-on-error keeps a
       # cachix install or configure failure from failing the job; the job then
       # builds from source.
       - uses: cachix/cachix-action@v17
@@ -190,20 +190,44 @@ jobs:
         continue-on-error: true
         with:
           name: dispatcher
-      - name: flake check
-        run: nix flake check
-      - name: build packages for the cache
-        run: nix build .#default --no-link
-      # Only the installable packages (.#default bundles every binary the
-      # Home Manager module installs) go to the cache, and only from main.
-      # The token reaches this step alone, never the read-only cachix setup.
-      - name: push packages to the cache
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      # Eval only: the build step below builds every check, so its outputs
+      # exist for the cache push even when one check fails.
+      - name: flake check (eval)
+        run: nix flake check --no-build
+      # The installable list goes to a file, `.#default` first, before any
+      # other eval, so the push step has it even if enumeration fails.
+      - name: build packages and checks
+        id: build
+        shell: bash
+        run: |
+          list="$RUNNER_TEMP/cache-installables"
+          echo '.#default' >"$list"
+          echo '.#devShells.x86_64-linux.default' >>"$list"
+          nix eval --json .#checks.x86_64-linux --apply builtins.attrNames |
+            jq -r '.[] | ".#checks.x86_64-linux." + .' >>"$list"
+          mapfile -t installables <"$list"
+          nix build --keep-going --no-link "${installables[@]}"
+      # Pushes everything built here (checks, devshell, .#default closure), only
+      # from main, even after a failed build so passing checks still cache. A
+      # failed `nix path-info .#default` after a failed build fails this
+      # tolerated step. The token reaches this step alone, never the read-only
+      # cachix setup.
+      - name: push built derivations to the cache
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && !cancelled() && (steps.build.outcome == 'success' || steps.build.outcome == 'failure')
         continue-on-error: true
         shell: bash
         env:
           CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
-        run: nix build .#default --no-link --print-out-paths | cachix push dispatcher
+        run: |
+          mapfile -t installables <"$RUNNER_TEMP/cache-installables"
+          { ./scripts/cache-built-paths.sh "${installables[@]}"; nix path-info .#default; } | cachix push dispatcher
+      # Token-free, so PR CI exercises the enumeration the main push relies on.
+      - name: dry-run cache path enumeration
+        if: github.event_name == 'pull_request' && !cancelled() && (steps.build.outcome == 'success' || steps.build.outcome == 'failure')
+        shell: bash
+        run: |
+          mapfile -t installables <"$RUNNER_TEMP/cache-installables"
+          ./scripts/cache-built-paths.sh "${installables[@]}" | wc -l
 
   # Darwin consumers otherwise compile crew-go (and run its suite) themselves,
   # and macOS-only test failures surface first in their rebuilds.
@@ -218,14 +242,16 @@ jobs:
         with:
           name: dispatcher
       - name: build packages for the cache
+        id: build
         run: nix build .#default --no-link
-      - name: push packages to the cache
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      - name: push built derivations to the cache
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && !cancelled() && (steps.build.outcome == 'success' || steps.build.outcome == 'failure')
         continue-on-error: true
         shell: bash
         env:
           CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
-        run: nix build .#default --no-link --print-out-paths | cachix push dispatcher
+        run: |
+          { ./scripts/cache-built-paths.sh .#default; nix path-info .#default; } | cachix push dispatcher
 
   check:
     if: always()
