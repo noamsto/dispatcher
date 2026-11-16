@@ -8,17 +8,24 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
+	"os/signal"
+	"slices"
 	"strconv"
+	"strings"
+	"syscall"
 	"time"
 
 	"golang.org/x/term"
 
+	"github.com/noamsto/dispatcher/dash/internal/buswatch"
 	"github.com/noamsto/dispatcher/dash/internal/data"
 	"github.com/noamsto/dispatcher/dash/internal/kitty"
 	"github.com/noamsto/dispatcher/dash/internal/once"
 	"github.com/noamsto/dispatcher/dash/internal/ui"
+	"github.com/noamsto/dispatcher/dash/internal/view"
 )
 
 // dispatchConfigBin is baked at build time via -ldflags -X
@@ -30,11 +37,12 @@ func main() {
 }
 
 func run() int {
-	mode, ok := parseArgs(os.Args[1:])
-	if !ok {
-		fmt.Fprintln(os.Stderr, "usage: crew dash [--once | --json]")
+	o, err := parseArgs(os.Args[1:])
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "crew dash: %s\n%s", err, usage())
 		return 2
 	}
+	mode := o.mode
 	if mode == "" {
 		mode = "once"
 		if term.IsTerminal(int(os.Stdin.Fd())) && term.IsTerminal(int(os.Stdout.Fd())) {
@@ -51,6 +59,9 @@ func run() int {
 
 	switch mode {
 	case "json":
+		if o.view != "" {
+			return runView(ctx, cfg, o)
+		}
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
 		if err := enc.Encode(collect()); err != nil {
@@ -64,6 +75,7 @@ func run() int {
 	case "interactive":
 		eventsPath, eventsErr := data.EventsPath(ctx, data.ExecRunner{}, cfg.Git)
 		runner := data.ExecRunner{}
+		scanner := data.NewBusScanner(eventsPath)
 		mapDeps, closeMap := resolveMap(runner)
 		defer closeMap()
 		deps := ui.Deps{
@@ -74,6 +86,9 @@ func run() int {
 				Retro:    func(ctx context.Context) data.RunsSection { return data.CollectRetro(ctx, runner, cfg) },
 				Ratings:  func(ctx context.Context) data.RunsSection { return data.CollectRatings(ctx, runner, cfg) },
 				Roster:   func(ctx context.Context) data.RosterSection { return data.CollectRoster(ctx, runner, cfg) },
+				Bus: func(context.Context) data.BusDigest {
+					return busDigest(scanner, eventsErr, time.Now().UnixMilli())
+				},
 			},
 			Runner:         runner,
 			Crew:           cfg.Crew,
@@ -136,21 +151,133 @@ func resolveMap(runner data.Runner) (ui.MapDeps, func()) {
 		}
 }
 
-// parseArgs: no args leaves mode empty (decided by the caller from the
-// ttys), --once/--json pick a mode, anything else is a usage error.
-func parseArgs(args []string) (mode string, ok bool) {
-	switch len(args) {
-	case 0:
-		return "", true
-	case 1:
-		switch args[0] {
-		case "--once":
-			return "once", true
-		case "--json":
-			return "json", true
+// runView prints one view: indented once, or one compact line per bus change
+// with --watch. One BusScanner serves every collect so later scans only read
+// appended lines.
+func runView(ctx context.Context, cfg data.Config, o opts) int {
+	runner := data.ExecRunner{}
+	eventsPath, eventsErr := data.EventsPath(ctx, runner, cfg.Git)
+	scanner := data.NewBusScanner(eventsPath)
+	collect := func(ctx context.Context) (any, error) {
+		cfg := cfg
+		if o.watch {
+			cfg.Now = resolveNow()
+		}
+		nowMS := cfg.Now * 1000
+		return view.Build(o.view, view.Inputs{
+			Snap:   data.Collect(ctx, runner, cfg),
+			Bus:    busDigest(scanner, eventsErr, nowMS),
+			Loaded: view.Loaded{Settings: true, Budget: true, Retro: true, Ratings: true, Roster: true, Bus: true},
+			NowMS:  nowMS,
+			Crew:   cfg.Crew,
+		})
+	}
+
+	if !o.watch {
+		v, err := collect(ctx)
+		if err == nil {
+			enc := json.NewEncoder(os.Stdout)
+			enc.SetEscapeHTML(false)
+			enc.SetIndent("", "  ")
+			err = enc.Encode(v)
+		}
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "crew dash: "+err.Error())
+			return 1
+		}
+		return 0
+	}
+
+	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	// Without a bus path nothing can change: a nil channel never fires.
+	var changes <-chan struct{}
+	if eventsErr == nil {
+		w := buswatch.New(eventsPath)
+		defer func() { _ = w.Close() }()
+		changes = w.Events()
+	}
+	if err := runWatch(ctx, os.Stdout, changes, collect, 200*time.Millisecond); err != nil {
+		fmt.Fprintln(os.Stderr, "crew dash: "+err.Error())
+		return 1
+	}
+	return 0
+}
+
+// busDigest scans the bus, or returns an empty digest carrying the error so
+// the view lists it instead of aborting.
+func busDigest(s *data.BusScanner, pathErr error, nowMS int64) data.BusDigest {
+	err := pathErr
+	if err == nil {
+		var d data.BusDigest
+		if d, err = s.Scan(nowMS); err == nil {
+			return d
 		}
 	}
-	return "", false
+	msg := err.Error()
+	return data.BusDigest{Err: &msg}
+}
+
+type opts struct {
+	mode, view string
+	watch      bool
+}
+
+func usage() string {
+	return "usage: crew dash [--once | --json [--view <name> [--watch]]]\n" +
+		"views: " + strings.Join(view.Names, ", ") + "\n"
+}
+
+// parseArgs: no args leaves mode empty (decided by the caller from the
+// ttys), --once/--json pick a mode, --view needs --json and --watch needs
+// --view.
+func parseArgs(args []string) (opts, error) {
+	var o opts
+	var onceFlag, jsonFlag bool
+	for i := 0; i < len(args); i++ {
+		var seen *bool
+		switch args[i] {
+		case "--once":
+			seen = &onceFlag
+		case "--json":
+			seen = &jsonFlag
+		case "--watch":
+			seen = &o.watch
+		case "--view":
+			if o.view != "" {
+				return opts{}, errors.New("--view given twice")
+			}
+			if i+1 == len(args) {
+				return opts{}, errors.New("--view needs a name")
+			}
+			i++
+			o.view = args[i]
+			if !slices.Contains(view.Names, o.view) {
+				return opts{}, fmt.Errorf("unknown view %q (valid: %s)", o.view, strings.Join(view.Names, ", "))
+			}
+			continue
+		default:
+			return opts{}, fmt.Errorf("unknown argument %q", args[i])
+		}
+		if *seen {
+			return opts{}, fmt.Errorf("%s given twice", args[i])
+		}
+		*seen = true
+	}
+
+	switch {
+	case onceFlag && (jsonFlag || o.view != "" || o.watch):
+		return opts{}, errors.New("--once takes no other flags")
+	case o.view != "" && !jsonFlag:
+		return opts{}, errors.New("--view needs --json")
+	case o.watch && o.view == "":
+		return opts{}, errors.New("--watch needs --view")
+	case onceFlag:
+		o.mode = "once"
+	case jsonFlag:
+		o.mode = "json"
+	}
+	return o, nil
 }
 
 func colorEnabled() bool {

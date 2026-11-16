@@ -62,7 +62,7 @@ func TestBoardLinesFitWidth(t *testing.T) {
 	asciiProfile(t)
 	for _, w := range []int{60, 80, 120, 200} {
 		for _, h := range []int{12, 40} {
-			frame := boardModel(t, w, h).views[1].View(w, h)
+			frame := boardModel(t, w, h).views[boardTab].View(w, h)
 			for i, l := range strings.Split(frame, "\n") {
 				if got := lipgloss.Width(l); got > w {
 					t.Errorf("w=%d h=%d line %d is %d cells: %q", w, h, i, got, l)
@@ -77,7 +77,7 @@ func TestBoardCardsHaveFixedWidth(t *testing.T) {
 	asciiProfile(t)
 	for _, sel := range []bool{false, true} {
 		for _, row := range boardSnapshot().Roster.Crews[0].Workers {
-			for i, l := range renderCard(row, sel) {
+			for i, l := range renderCard(workerRow("alpha", row), sel) {
 				if got := lipgloss.Width(l); got != boardCardW {
 					t.Errorf("sel=%v %v line %d is %d cells, want %d: %q", sel, row["name"], i, got, boardCardW, l)
 				}
@@ -113,7 +113,7 @@ func TestBoardHidesEmptyColumns(t *testing.T) {
 func TestBoardSelectionAndActions(t *testing.T) {
 	m := boardModel(t, 200, 40)
 	sel := func(m Model) data.Worker {
-		w, _ := m.views[1].Selection().(data.Worker)
+		w, _ := m.views[boardTab].Selection().(data.Worker)
 		return w
 	}
 	first := sel(m)
@@ -139,7 +139,7 @@ func TestBoardSelectionAndActions(t *testing.T) {
 	}
 	nm, _ = m.Update(keyRune('m'))
 	m = nm.(Model)
-	if !m.views[1].Capturing() {
+	if !m.views[boardTab].Capturing() {
 		t.Fatalf("m on a blocked worker did not open the reply prompt")
 	}
 	nm, _ = m.Update(keyType(tea.KeyEsc))
@@ -154,17 +154,17 @@ func TestBoardSelectionAndActions(t *testing.T) {
 
 	// The same key on the same worker gives the same reason on Live.
 	live := sized(testModel(boardSnapshot()), 200, 40)
-	liveSel := func() data.Worker { w, _ := live.views[0].Selection().(data.Worker); return w }
+	liveSel := func() data.Worker { w, _ := live.views[liveTab].Selection().(data.Worker); return w }
 	for range 6 {
 		if liveSel().Name == "coral" {
 			break
 		}
-		live.views[0], _ = live.views[0].Update(keyRune('j'))
+		live.views[liveTab], _ = live.views[liveTab].Update(keyRune('j'))
 	}
 	if liveSel().Name != "coral" {
 		t.Fatalf("live never reached coral: %+v", liveSel())
 	}
-	_, lcmd := live.views[0].Update(keyRune('t'))
+	_, lcmd := live.views[liveTab].Update(keyRune('t'))
 	if lam, _ := lcmd().(actionMsg); lam != am {
 		t.Fatalf("live t = %+v, board t = %+v", lam, am)
 	}
@@ -172,7 +172,7 @@ func TestBoardSelectionAndActions(t *testing.T) {
 
 func TestBoardNavigation(t *testing.T) {
 	m := boardModel(t, 200, 40)
-	name := func() string { w, _ := m.views[1].Selection().(data.Worker); return w.Name }
+	name := func() string { w, _ := m.views[boardTab].Selection().(data.Worker); return w.Name }
 	press := func(r rune) {
 		nm, _ := m.Update(keyRune(r))
 		m = nm.(Model)
@@ -196,11 +196,11 @@ func TestBoardNavigation(t *testing.T) {
 	}
 	press('l')
 	press('h')
-	if w, _ := m.views[1].Selection().(data.Worker); w.State != "working" {
+	if w, _ := m.views[boardTab].Selection().(data.Worker); w.State != "working" {
 		t.Errorf("h from the blocked column = %+v", w)
 	}
 	nm, _ := m.Update(tea.KeyMsg{Type: tea.KeyRight})
-	if w, _ := nm.(Model).views[1].Selection().(data.Worker); w.State != "blocked" {
+	if w, _ := nm.(Model).views[boardTab].Selection().(data.Worker); w.State != "blocked" {
 		t.Errorf("right arrow = %+v", w)
 	}
 }
@@ -232,10 +232,10 @@ func TestBoardResizeKeepsSelection(t *testing.T) {
 // crew/internal/rosterrender/card_test.go asserts for the SVG card
 // (TestCardFieldsMatchDashBoard): keep the two in step.
 func TestBoardCardFieldsMatchSVGCard(t *testing.T) {
-	got := fieldsOf(map[string]any{
+	got := fieldsOf(workerRow("c", map[string]any{
 		"branch": "feat/12-x", "name": "lime", "state": "pr_open", "title": "fix the bug",
 		"tier": "deep", "engine": "claude", "model": "claude-opus-5-5", "detail": "running tests",
-	})
+	}))
 	want := cardFields{
 		head: "lime · #12", state: "pr open", title: "fix the bug",
 		tier: "deep", meta: "deep·claude·opus", detail: "running tests",
@@ -247,10 +247,10 @@ func TestBoardCardFieldsMatchSVGCard(t *testing.T) {
 
 func TestBoardRemoteHostShowsOnRow3(t *testing.T) {
 	asciiProfile(t)
-	rows := cardRows(fieldsOf(map[string]any{
+	rows := cardRows(fieldsOf(workerRow("c", map[string]any{
 		"branch": "feat/1-a", "name": "a", "state": "working", "tier": "standard",
 		"engine": "claude", "model": "claude-sonnet-5-5", "host": "mini-host",
-	}), lipgloss.NewStyle())
+	})), lipgloss.NewStyle())
 	if !strings.Contains(rows[3], "@mini-host") {
 		t.Errorf("row 3 = %q lacks the host", rows[3])
 	}
@@ -286,7 +286,7 @@ func TestBoardManyFailedCrewsKeepPrompt(t *testing.T) {
 	}
 	m := sized(testModel(snap), 120, 8)
 	m.active = goldenTabBoard
-	out := m.views[1].View(120, 6)
+	out := m.views[boardTab].View(120, 6)
 	lines := strings.Split(out, "\n")
 	if len(lines) > 6 || !strings.Contains(lines[len(lines)-1], "·") || !strings.Contains(out, "more crews") {
 		t.Errorf("info line or overflow note missing:\n%s", out)
@@ -304,11 +304,11 @@ func TestBoardMapOpensOnBoardSelection(t *testing.T) {
 
 func TestBoardCardCutsLongStateHostAndFirstWord(t *testing.T) {
 	asciiProfile(t)
-	card := renderCard(map[string]any{
+	card := renderCard(workerRow("c", map[string]any{
 		"branch": "feat/1-a", "name": "a", "state": "waiting_for_dispatcher_answer_now",
 		"title": strings.Repeat("x", 40) + " second words", "host": "strata.tail1234.ts.net",
 		"engine": "claude", "model": "opus", "tier": "deep",
-	}, false)
+	}), false)
 	for i, l := range card {
 		if got := lipgloss.Width(l); got != boardCardW {
 			t.Errorf("line %d is %d cells, want %d: %q", i, got, boardCardW, l)

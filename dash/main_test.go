@@ -263,16 +263,141 @@ func TestRetroReportWithoutRowsRendersNoNotesYet(t *testing.T) {
 	}
 }
 
+const usageText = "usage: crew dash [--once | --json [--view <name> [--watch]]]\n" +
+	"views: overview, roster, budget, runs, settings, map\n"
+
 func TestUnknownArgumentExits2WithUsage(t *testing.T) {
 	s := newSandbox(t)
 	out, stderr, code := s.run(nil, "--bogus")
 	if code != 2 {
 		t.Errorf("exit %d, want 2", code)
 	}
-	if want := "usage: crew dash [--once | --json]\n"; stderr != want {
+	if want := "crew dash: unknown argument \"--bogus\"\n" + usageText; stderr != want {
 		t.Errorf("stderr = %q, want %q", stderr, want)
 	}
 	if out != "" {
 		t.Errorf("stdout = %q, want empty", out)
+	}
+}
+
+func TestUnknownViewExits2NamingViews(t *testing.T) {
+	s := newSandbox(t)
+	out, stderr, code := s.run(nil, "--json", "--view", "nope")
+	if code != 2 {
+		t.Errorf("exit %d, want 2", code)
+	}
+	if !strings.HasSuffix(stderr, usageText) || !strings.Contains(stderr, `unknown view "nope"`) {
+		t.Errorf("stderr = %q, want the unknown view and the usage naming the views", stderr)
+	}
+	if out != "" {
+		t.Errorf("stdout = %q, want empty", out)
+	}
+}
+
+func TestParseArgs(t *testing.T) {
+	for _, tc := range []struct {
+		args    []string
+		want    opts
+		wantErr string
+	}{
+		{args: nil, want: opts{}},
+		{args: []string{"--once"}, want: opts{mode: "once"}},
+		{args: []string{"--json"}, want: opts{mode: "json"}},
+		{args: []string{"--json", "--view", "overview"}, want: opts{mode: "json", view: "overview"}},
+		{args: []string{"--view", "roster", "--json"}, want: opts{mode: "json", view: "roster"}},
+		{args: []string{"--json", "--view", "overview", "--watch"}, want: opts{mode: "json", view: "overview", watch: true}},
+		{args: []string{"--view", "overview"}, wantErr: "--view needs --json"},
+		{args: []string{"--json", "--watch"}, wantErr: "--watch needs --view"},
+		{args: []string{"--json", "--view", "nope"}, wantErr: "overview, roster, budget, runs, settings, map"},
+		{args: []string{"--json", "--view"}, wantErr: "--view needs a name"},
+		{args: []string{"--once", "--json"}, wantErr: "--once takes no other flags"},
+		{args: []string{"--once", "--watch"}, wantErr: "--once takes no other flags"},
+		{args: []string{"--json", "extra"}, wantErr: `unknown argument "extra"`},
+		{args: []string{"--json", "--json"}, wantErr: "--json given twice"},
+	} {
+		t.Run(strings.Join(tc.args, " "), func(t *testing.T) {
+			got, err := parseArgs(tc.args)
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("parseArgs(%q) err = %v, want one containing %q", tc.args, err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("parseArgs(%q): %v", tc.args, err)
+			}
+			if got != tc.want {
+				t.Errorf("parseArgs(%q) = %+v, want %+v", tc.args, got, tc.want)
+			}
+		})
+	}
+}
+
+// setGit installs a git stub whose rev-parse names gitDir as the common git
+// dir, so the bus log is gitDir/crew/events.jsonl.
+func (s *sandbox) setGit(gitDir string) {
+	s.t.Helper()
+	writeScript(s.t, filepath.Join(s.dir, "git"), "echo "+gitDir+"\n")
+}
+
+func TestJSONViewOverview(t *testing.T) {
+	s := newSandbox(t)
+	gitDir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(gitDir, "crew"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	bus, err := os.ReadFile("internal/view/testdata/events.jsonl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(gitDir, "crew", "events.jsonl"), bus, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s.setGit(gitDir)
+
+	out, stderr, code := s.run(nil, "--json", "--view", "overview")
+	if code != 0 {
+		t.Fatalf("exit %d, stderr %q", code, stderr)
+	}
+	var v struct {
+		SchemaVersion int               `json:"schema_version"`
+		View          string            `json:"view"`
+		GeneratedAt   int64             `json:"generated_at"`
+		Events        []json.RawMessage `json:"events"`
+		Errors        []string          `json:"errors"`
+	}
+	if err := json.Unmarshal([]byte(out), &v); err != nil {
+		t.Fatalf("--json --view overview is not JSON: %v\n%s", err, out)
+	}
+	if v.SchemaVersion != 1 || v.View != "overview" || v.GeneratedAt != 1790000000 {
+		t.Errorf("schema_version/view/generated_at = %d/%q/%d", v.SchemaVersion, v.View, v.GeneratedAt)
+	}
+	if want := bytes.Count(bus, []byte("\n")); len(v.Events) != want {
+		t.Errorf("events = %d, want %d (one per bus line)", len(v.Events), want)
+	}
+	if len(v.Errors) != 0 {
+		t.Errorf("errors = %q, want none", v.Errors)
+	}
+	if !strings.HasPrefix(out, "{\n  \"schema_version\": 1,\n") {
+		t.Errorf("output is not indented:\n%s", out)
+	}
+}
+
+func TestJSONViewBusErrorListedNotFatal(t *testing.T) {
+	s := newSandbox(t)
+	s.setGit(t.TempDir())
+
+	out, stderr, code := s.run(nil, "--json", "--view", "overview")
+	if code != 0 {
+		t.Fatalf("exit %d, stderr %q", code, stderr)
+	}
+	var v struct {
+		Errors []string `json:"errors"`
+	}
+	if err := json.Unmarshal([]byte(out), &v); err != nil {
+		t.Fatalf("not JSON: %v\n%s", err, out)
+	}
+	if len(v.Errors) != 1 || !strings.HasPrefix(v.Errors[0], "bus: ") {
+		t.Errorf("errors = %q, want one bus error for the missing events.jsonl", v.Errors)
 	}
 }

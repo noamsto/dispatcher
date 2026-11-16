@@ -1,4 +1,4 @@
-  Live │ ▸ Board │   Budget │   Runs │   Settings │   Map
+  Overview │   Live │ ▸ Board │   Budget │   Runs │   Settings │   Map
 working (2)                  blocked (1)                  pr_open (1)                  done/failed (2)             
 alpha                        alpha                        alpha                        beta                        
 ╔══════════════════════════╗ ╭──────────────────────────╮ ╭──────────────────────────╮ ╭──────────────────────────╮
@@ -37,4 +37,4 @@ alpha · feat/101-basil
 
 
 
-hjkl move • t jump • o open PR • m reply • n nudge • 1-6 views • tab next view • r refresh • ? help • q quit  refreshed 14:13:20
+hjkl move • t jump • o open PR • m reply • n nudge • 1-7 views • tab next view • [/] prev/next • R refresh • ? help • q quit  refreshed 14:13:20

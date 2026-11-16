@@ -11,6 +11,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/noamsto/dispatcher/dash/internal/data"
+	vm "github.com/noamsto/dispatcher/dash/internal/view"
 )
 
 // loadSnapshot reads the shared fixture (also used by internal/once's golden
@@ -92,24 +93,29 @@ var allLoaded = [numSources]bool{true, true, true, true, true}
 
 // loadingModel builds a root Model with no source applied.
 func loadingModel(deps Deps) Model {
-	return NewModel(deps, func() time.Time { return time.Unix(deps.Now, 0).UTC() }, liveDeps{})
+	m := NewModel(deps, func() time.Time { return time.Unix(deps.Now, 0).UTC() }, liveDeps{})
+	m.active = liveTab
+	return m
 }
 
 // loadedModel builds a root Model with every source of snap applied, with
 // no live roster refresh (no watcher) — the default for tests that don't
 // specifically exercise live-refresh wiring (see live_test.go for those).
 func loadedModel(snap data.Snapshot, deps Deps) Model {
-	var m tea.Model = NewModel(deps, fixedNow(snap), liveDeps{})
+	root := NewModel(deps, fixedNow(snap), liveDeps{})
+	root.active = liveTab
+	var m tea.Model = root
 	for _, msg := range []sourceMsg{
-		{srcSettings, func(s *data.Snapshot) { s.Settings = snap.Settings }},
-		{srcBudget, func(s *data.Snapshot) { s.Budget = snap.Budget }},
-		{srcRetro, func(s *data.Snapshot) {
+		{src: srcSettings, apply: func(s *data.Snapshot) { s.Settings = snap.Settings }},
+		{src: srcBudget, apply: func(s *data.Snapshot) { s.Budget = snap.Budget }},
+		{src: srcRetro, apply: func(s *data.Snapshot) {
 			s.Runs.Retro, s.Runs.RetroError = snap.Runs.Retro, snap.Runs.RetroError
 		}},
-		{srcRatings, func(s *data.Snapshot) {
+		{src: srcRatings, apply: func(s *data.Snapshot) {
 			s.Runs.Ratings, s.Runs.RatingsGroups, s.Runs.RatingsError = snap.Runs.Ratings, snap.Runs.RatingsGroups, snap.Runs.RatingsError
 		}},
-		{srcRoster, func(s *data.Snapshot) { s.Roster = snap.Roster }},
+		{src: srcRoster, apply: func(s *data.Snapshot) { s.Roster = snap.Roster }},
+		{src: srcBus, apply: func(*data.Snapshot) {}},
 	} {
 		m, _ = m.Update(msg)
 	}
@@ -141,4 +147,33 @@ func flattenCmd(cmd tea.Cmd) []tea.Msg {
 func sized(m Model, w, h int) Model {
 	nm, _ := m.Update(tea.WindowSizeMsg{Width: w, Height: h})
 	return nm.(Model)
+}
+
+// snapMsg is the snapshotMsg the root broadcasts once snap's sources landed
+// with these loaded flags.
+func snapMsg(snap data.Snapshot, loaded [numSources]bool) snapshotMsg {
+	return newSnapshotMsg(inputsOf(snap, data.BusDigest{}, loaded, snap.Now*1000, nil), loaded)
+}
+
+func testLiveView(snap data.Snapshot, loaded [numSources]bool, deps liveDeps, now func() time.Time) liveView {
+	msg := snapMsg(snap, loaded)
+	return newLiveView(msg.roster, msg.budget, deps, now)
+}
+
+func testBudgetView(snap data.Snapshot, loaded [numSources]bool) budgetView {
+	return newBudgetView(snapMsg(snap, loaded).budget)
+}
+
+func testRunsView(snap data.Snapshot, loaded [numSources]bool) runsView {
+	msg := snapMsg(snap, loaded)
+	return newRunsView(msg.runs)
+}
+
+func testSettingsView(snap data.Snapshot, loaded [numSources]bool, deps settingsDeps) settingsView {
+	return newSettingsView(snapMsg(snap, loaded).settings, deps)
+}
+
+// workerRow types one fixture roster row of crewID.
+func workerRow(crewID string, w map[string]any) vm.WorkerRow {
+	return vm.WorkerRowOf(nil, crewID, w)
 }

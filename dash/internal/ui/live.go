@@ -15,16 +15,18 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/noamsto/dispatcher/dash/internal/buswatch"
 	"github.com/noamsto/dispatcher/dash/internal/data"
+	vm "github.com/noamsto/dispatcher/dash/internal/view"
 )
 
 // liveDeps bundles the live view's live-refresh seams. eventsPath and
-// watcher are resolved/started once by ui.Run (not here — see watcher.go
+// watcher are resolved/started once by ui.Run (not here — see buswatch
 // and ui.go): eventsPath "" disables the enter-to-drill-in Cmd, watcher nil
 // disables the bus-change reload (liveOffNote explains why).
 type liveDeps struct {
 	eventsPath  string
-	watcher     busWatcher
+	watcher     buswatch.Watcher
 	liveOffNote string
 }
 
@@ -57,7 +59,7 @@ func tickCmd() tea.Cmd {
 // watcher's channel, re-arming happens by the caller issuing this Cmd again
 // in response to the busChangedMsg it produces. A closed channel (watcher
 // shutting down) ends the loop with no message, never a panic.
-func waitForBusChange(w busWatcher) tea.Cmd {
+func waitForBusChange(w buswatch.Watcher) tea.Cmd {
 	return func() tea.Msg {
 		if _, ok := <-w.Events(); !ok {
 			return nil
@@ -74,18 +76,9 @@ func requestRosterCmd() tea.Cmd {
 	return func() tea.Msg { return requestRosterMsg{} }
 }
 
-// liveRow pairs a worker map with its owning crew id for the flat,
-// cursor-navigable list (holds are informational only — not selectable).
-type liveRow struct {
-	crewID string
-	w      map[string]any
-}
-
 // rowKey identifies a worker across reloads and re-sorts.
-func rowKey(crewID string, w map[string]any) string {
-	branch, _ := strField(w, "branch")
-	session, _ := strField(w, "session")
-	return crewID + "\x00" + branch + "\x00" + session
+func rowKey(w vm.WorkerRow) string {
+	return w.Crew + "\x00" + w.Branch + "\x00" + strOf(w.Session)
 }
 
 // liveMode is what owns the keyboard: the table, the reply prompt or the
@@ -104,10 +97,10 @@ type liveView struct {
 	deps liveDeps
 	now  func() time.Time
 
-	snap   data.Snapshot
-	loaded [numSources]bool
+	roster vm.RosterView
+	budget vm.BudgetView
 
-	rows         []liveRow
+	rows         []vm.WorkerRow // the flat, cursor-navigable list; holds are informational only
 	showReaped   bool
 	hiddenReaped int
 	cursor       int
@@ -122,16 +115,16 @@ type liveView struct {
 	detailCursor  int // index into detailEvents — RecentEvents is oldest-first, so this starts at the last (newest) event
 }
 
-func newLiveView(snap data.Snapshot, loaded [numSources]bool, deps liveDeps, now func() time.Time) liveView {
+func newLiveView(roster vm.RosterView, budget vm.BudgetView, deps liveDeps, now func() time.Time) liveView {
 	v := liveView{deps: deps, now: now}
-	v.load(snap, loaded)
+	v.load(roster, budget)
 	return v
 }
 
-func (v *liveView) load(snap data.Snapshot, loaded [numSources]bool) {
-	v.snap = snap
-	v.loaded = loaded
-	v.setRoster(snap.Roster)
+func (v *liveView) load(roster vm.RosterView, budget vm.BudgetView) {
+	v.roster = roster
+	v.budget = budget
+	v.setRoster()
 }
 
 // stateRank orders worker states by how much they need an operator.
@@ -158,36 +151,34 @@ func stateRank(state string) int {
 // setRoster rebuilds the sorted worker list (state rank, then age
 // descending), leaving reaped workers out unless showReaped, and puts the cursor back on the worker it was on, falling back
 // to the same index, clamped, when that worker vanished.
-func (v *liveView) setRoster(r data.RosterSection) {
-	var rows []liveRow
+func (v *liveView) setRoster() {
+	var rows []vm.WorkerRow
 	hidden := 0
-	for _, c := range r.Crews {
+	for _, c := range v.roster.Crews {
 		if c.WorkersError != nil {
 			continue
 		}
 		for _, w := range c.Workers {
-			if state, _ := strField(w, "state"); state == "reaped" && !v.showReaped {
+			if w.State == "reaped" && !v.showReaped {
 				hidden++
 				continue
 			}
-			rows = append(rows, liveRow{crewID: c.ID, w: w})
+			rows = append(rows, w)
 		}
 	}
 	v.hiddenReaped = hidden
 	now := v.now()
 	sort.SliceStable(rows, func(i, j int) bool {
-		si, _ := strField(rows[i].w, "state")
-		sj, _ := strField(rows[j].w, "state")
-		if ri, rj := stateRank(si), stateRank(sj); ri != rj {
+		if ri, rj := stateRank(rows[i].State), stateRank(rows[j].State); ri != rj {
 			return ri < rj
 		}
-		return workerAge(rows[i].w, now) > workerAge(rows[j].w, now)
+		return workerAge(rows[i], now) > workerAge(rows[j], now)
 	})
 	v.rows = rows
 
 	cursor := clamp(v.cursor, 0, len(rows)-1)
 	for i, row := range rows {
-		if rowKey(row.crewID, row.w) == v.selKey {
+		if rowKey(row) == v.selKey {
 			cursor = i
 			break
 		}
@@ -200,8 +191,7 @@ func (v *liveView) moveTo(i int) {
 	v.cursor = clamp(i, 0, len(v.rows)-1)
 	v.selKey = ""
 	if v.cursor < len(v.rows) {
-		row := v.rows[v.cursor]
-		v.selKey = rowKey(row.crewID, row.w)
+		v.selKey = rowKey(v.rows[v.cursor])
 	}
 }
 
@@ -209,17 +199,13 @@ func (v *liveView) moveTo(i int) {
 // now — never read from a stale age_s snapshot field — so the 1s tick can
 // animate it without a collect. age_s is only the fallback for a worker
 // with no ts.
-func workerAge(w map[string]any, now time.Time) int64 {
+func workerAge(w vm.WorkerRow, now time.Time) int64 {
 	var tsMs float64
-	switch v := w["ts"].(type) {
-	case int64:
-		tsMs = float64(v)
-	case float64:
-		tsMs = v
-	default:
-		if s, ok := w["age_s"].(float64); ok {
-			return max(0, int64(s))
-		}
+	switch {
+	case w.TS != nil:
+		tsMs = float64(*w.TS)
+	case w.AgeS != nil:
+		return max(0, *w.AgeS)
 	}
 	return max(0, now.Unix()-int64(math.Floor(tsMs/1000)))
 }
@@ -243,7 +229,7 @@ func (v liveView) Update(msg tea.Msg) (view, tea.Cmd) {
 		return v, nil
 
 	case snapshotMsg:
-		v.load(msg.snap, msg.loaded)
+		v.load(msg.roster, msg.budget)
 		return v, nil
 
 	case tickMsg:
@@ -306,7 +292,7 @@ func (v liveView) handleKey(msg tea.KeyMsg) (view, tea.Cmd) {
 		return v.startAction(actNudge)
 	case "a":
 		v.showReaped = !v.showReaped
-		v.setRoster(v.snap.Roster)
+		v.setRoster()
 	case "enter":
 		if v.cursor >= len(v.rows) || v.deps.eventsPath == "" {
 			return v, nil
@@ -315,7 +301,7 @@ func (v liveView) handleKey(msg tea.KeyMsg) (view, tea.Cmd) {
 		v.detailLoading = true
 		v.detailEvents = nil
 		v.detailErr = ""
-		branch, _ := strField(v.rows[v.cursor].w, "branch")
+		branch := v.rows[v.cursor].Branch
 		path := v.deps.eventsPath
 		return v, func() tea.Msg {
 			events, err := data.RecentEvents(path, branch, 20)
@@ -375,8 +361,7 @@ func (v liveView) Selection() data.Selection {
 	if v.cursor >= len(v.rows) {
 		return nil
 	}
-	row := v.rows[v.cursor]
-	return workerFromRow(row.crewID, row.w)
+	return workerFromRow(v.rows[v.cursor])
 }
 
 // startAction runs the key's action on the selected worker.
@@ -416,9 +401,9 @@ func (v liveView) tableView(w, h int) string {
 	}
 	top = append(top, v.budgetLines(w)...)
 
-	roster := v.snap.Roster
+	roster := v.roster
 	switch {
-	case !v.loaded[srcRoster]:
+	case !roster.Loaded:
 		top = append(top, loadingLine(srcRoster, w))
 		return strings.Join(top, "\n")
 	case roster.Error != nil:
@@ -474,12 +459,12 @@ func (v liveView) tableView(w, h int) string {
 func (v liveView) attentionLines(w int) []string {
 	blocked := 0
 	for _, r := range v.rows {
-		if s, _ := strField(r.w, "state"); s == "blocked" {
+		if r.State == "blocked" {
 			blocked++
 		}
 	}
 	holds := 0
-	for _, c := range v.snap.Roster.Crews {
+	for _, c := range v.roster.Crews {
 		holds += len(c.Holds)
 	}
 	var parts []string
@@ -500,7 +485,7 @@ func (v liveView) attentionLines(w int) []string {
 	if len(parts) > 0 {
 		out = append(out, attentionStyle.Render(truncateLine(strings.Join(parts, " · "), w)))
 	}
-	for _, c := range v.snap.Roster.Crews {
+	for _, c := range v.roster.Crews {
 		id := cleanText(c.ID)
 		if c.WorkersError != nil {
 			out = append(out, truncateLine(warnStyle.Render("crew "+id+": workers unavailable: "+cleanText(*c.WorkersError)), w))
@@ -535,7 +520,7 @@ func (v liveView) selectedPane(w int) []string {
 	}
 	out = append(out, truncateLine(v.prompt(where), w), truncateLine("PR "+pr, w))
 
-	detail, _ := strField(row.w, "detail")
+	detail := strOf(row.Detail)
 	room := selectedPaneH - len(out)
 	var wrapped []string
 	if d := cleanText(detail); d != "" && w > 0 {
@@ -555,9 +540,9 @@ func (v liveView) selectedPane(w int) []string {
 // budgetLines is the strip of one segment per engine (its highest-used
 // window), at most two lines.
 func (v liveView) budgetLines(w int) []string {
-	b := v.snap.Budget
+	b := v.budget
 	switch {
-	case !v.loaded[srcBudget]:
+	case !b.Loaded:
 		return []string{loadingLine(srcBudget, w)}
 	case b.Error != nil:
 		return []string{truncateLine("budget unavailable: "+cleanText(*b.Error), w)}
@@ -770,26 +755,25 @@ func fitColumns(cols []col, rows [][numCols]string, w int) []int {
 }
 
 // liveCells are one worker's plain (cleaned, unstyled) cell texts by column.
-func liveCells(r liveRow, now time.Time) [numCols]string {
-	w := r.w
-	or := func(k string) string {
-		if s, ok := strField(w, k); ok && s != "" {
+func liveCells(w vm.WorkerRow, now time.Time) [numCols]string {
+	or := func(s string) string {
+		if s != "" {
 			return cleanText(s)
 		}
 		return "—"
 	}
-	name := or("name")
-	if _, ok := strField(w, "name"); !ok {
-		name = or("branch")
+	name := or(strOf(w.Name))
+	if w.Name == nil {
+		name = or(w.Branch)
 	}
 	var c [numCols]string
-	c[colCrew] = cleanText(r.crewID)
+	c[colCrew] = cleanText(w.Crew)
 	c[colName] = name
-	c[colState] = or("state")
+	c[colState] = or(w.State)
 	c[colAge] = reltime(workerAge(w, now))
-	c[colTier] = or("tier") + "/" + or("engine") + "/" + or("model")
-	c[colPR] = prCell(or("pr_url"))
-	c[colDetail] = or("detail")
+	c[colTier] = or(strOf(w.Tier)) + "/" + or(strOf(w.Engine)) + "/" + or(strOf(w.Model))
+	c[colPR] = prCell(or(strOf(w.PRURL)))
+	c[colDetail] = or(strOf(w.Detail))
 	return c
 }
 
@@ -812,7 +796,7 @@ func (v liveView) workerLines(w int) (header string, lines []string, cursorLine 
 	for i, r := range v.rows {
 		cells[i] = liveCells(r, now)
 	}
-	cols, widths := layoutColumns(liveColumns(w, len(v.snap.Roster.Crews) > 1), cells, w)
+	cols, widths := layoutColumns(liveColumns(w, len(v.roster.Crews) > 1), cells, w)
 
 	compose := func(prefix string, text func(c col) string) string {
 		var b strings.Builder
@@ -839,7 +823,7 @@ func (v liveView) workerLines(w int) (header string, lines []string, cursorLine 
 		lines = append(lines, compose(prefix, func(c col) string {
 			cell := truncateLine(cells[i][c.id], widthOf(cols, widths, c.id))
 			if c.id == colName {
-				return tmuxColorStyle(r.w).Render(cell)
+				return tmuxColorStyle(r).Render(cell)
 			}
 			return cell
 		}))
@@ -871,23 +855,14 @@ func padCell(s string, w int, left bool) string {
 	return pad + s
 }
 
-func strField(w map[string]any, key string) (string, bool) {
-	v, ok := w[key]
-	if !ok || v == nil {
-		return "", false
-	}
-	s, ok := v.(string)
-	return s, ok
-}
-
 // tmuxColorStyle renders a codename in its recorded tmux colour ("colour137"
 // -> lipgloss.Color("137")); a missing or malformed field is the default
 // style.
-func tmuxColorStyle(w map[string]any) lipgloss.Style {
-	s, ok := strField(w, "tmux")
-	if !ok {
+func tmuxColorStyle(w vm.WorkerRow) lipgloss.Style {
+	if w.Tmux == nil {
 		return lipgloss.NewStyle()
 	}
+	s := *w.Tmux
 	n := strings.TrimPrefix(s, "colour")
 	if n == s {
 		return lipgloss.NewStyle()
@@ -898,21 +873,13 @@ func tmuxColorStyle(w map[string]any) lipgloss.Style {
 	return lipgloss.NewStyle().Foreground(lipgloss.Color(n))
 }
 
-func holdLine(h map[string]any) string {
-	id := cleanText(fmt.Sprintf("%v", h["id"]))
-	wait, _ := h["wait"].(map[string]any)
-	task, _ := h["task"].(map[string]any)
-	engine, _ := wait["engine"].(string)
-	window, _ := wait["window"].(string)
-	engine, window = cleanText(engine), cleanText(window)
-	resetsAt, _ := wait["resets_at"].(float64)
-	title := ""
-	if task != nil {
-		if s, ok := task["title"].(string); ok {
-			title = s
-		}
+func holdLine(h vm.HoldRow) string {
+	var resetsAt int64
+	if h.ResetAt != nil {
+		resetsAt = *h.ResetAt
 	}
-	return "hold " + id + ": " + engine + " " + window + " until " + isoUTC(int64(resetsAt)) + " — " + cleanText(title)
+	return "hold " + cleanText(h.ID) + ": " + cleanText(strOf(h.Engine)) + " " + cleanText(strOf(h.Window)) +
+		" until " + isoUTC(resetsAt) + " — " + cleanText(strOf(h.Title))
 }
 
 // detailView windows the event list to h the same way tableView windows the

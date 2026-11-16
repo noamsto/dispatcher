@@ -15,11 +15,11 @@ var update = flag.Bool("update", false, "update golden files")
 
 // Tab indexes in the root model's view order.
 const (
-	goldenTabLive = iota
-	goldenTabBoard
-	goldenTabBudget
-	goldenTabRuns
-	goldenTabSettings
+	goldenTabLive     = liveTab
+	goldenTabBoard    = boardTab
+	goldenTabBudget   = budgetTab
+	goldenTabRuns     = runsTab
+	goldenTabSettings = settingsTab
 )
 
 func checkGolden(t *testing.T, name, got string, w, h int) {

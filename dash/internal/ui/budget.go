@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/noamsto/dispatcher/dash/internal/data"
+	vm "github.com/noamsto/dispatcher/dash/internal/view"
 )
 
 var budgetEngineOrder = []string{"claude", "codex", "cursor", "pi"}
@@ -21,7 +22,7 @@ type winRef struct {
 }
 
 type budgetView struct {
-	now      int64 // snap.Now — the budget pane's "fetched X ago" clock (once.go parity)
+	now      int64 // BudgetView.Now — the budget pane's "fetched X ago" clock (once.go parity)
 	report   *data.BudgetReport
 	warnings []string
 	err      *string
@@ -32,18 +33,18 @@ type budgetView struct {
 	loaded bool
 }
 
-func newBudgetView(snap data.Snapshot, loaded [numSources]bool) budgetView {
+func newBudgetView(bv vm.BudgetView) budgetView {
 	var v budgetView
-	v.load(snap, loaded)
+	v.load(bv)
 	return v
 }
 
-func (v *budgetView) load(snap data.Snapshot, loaded [numSources]bool) {
-	v.now = snap.Now
-	v.report = snap.Budget.Report
-	v.warnings = snap.Budget.Warnings
-	v.err = snap.Budget.Error
-	v.loaded = loaded[srcBudget]
+func (v *budgetView) load(bv vm.BudgetView) {
+	v.now = bv.Now
+	v.report = bv.Report
+	v.warnings = bv.Warnings
+	v.err = bv.Error
+	v.loaded = bv.Loaded
 	v.rebuildSel()
 }
 
@@ -76,7 +77,7 @@ func (v budgetView) curWindow() (data.Window, bool) {
 func (v budgetView) Update(msg tea.Msg) (view, tea.Cmd) {
 	switch msg := msg.(type) {
 	case snapshotMsg:
-		v.load(msg.snap, msg.loaded)
+		v.load(msg.budget)
 		return v, nil
 
 	case tea.KeyMsg:

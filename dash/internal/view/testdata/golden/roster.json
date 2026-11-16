@@ -1,0 +1,1027 @@
+{
+  "schema_version": 1,
+  "view": "roster",
+  "loaded": true,
+  "error": null,
+  "crews": [
+    {
+      "id": "c1",
+      "workers": [
+        {
+          "crew": "c1",
+          "branch": "feat/a",
+          "session": "s-a",
+          "name": "otter",
+          "state": "working",
+          "prev_state": null,
+          "detail": "execute",
+          "source": null,
+          "pr_url": null,
+          "pr": null,
+          "host": "",
+          "origin": "local",
+          "host_error": null,
+          "peer_error": null,
+          "title": "Task feat/a",
+          "repo": null,
+          "engine": "claude",
+          "model": "sonnet",
+          "tier": "standard",
+          "tmux": null,
+          "color": null,
+          "from": "worker:feat/a",
+          "ts": 1794800555000,
+          "age_s": 45,
+          "live": null,
+          "exit_suspect": null,
+          "actions": [
+            {
+              "key": "p",
+              "verb": "peek",
+              "label": "peek",
+              "command": "crew where --crew c1 -- feat/a",
+              "argv": [
+                "crew",
+                "where",
+                "--crew",
+                "c1",
+                "--",
+                "feat/a"
+              ],
+              "needs_input": false,
+              "pr": null
+            },
+            {
+              "key": "n",
+              "verb": "nudge",
+              "label": "nudge",
+              "command": "crew nudge --crew c1 -- otter",
+              "argv": [
+                "crew",
+                "nudge",
+                "--crew",
+                "c1",
+                "--",
+                "otter"
+              ],
+              "needs_input": false,
+              "pr": null
+            },
+            {
+              "key": "r",
+              "verb": "reply",
+              "label": "reply",
+              "command": "crew reply --crew c1 -- worker:feat/a '<text>'",
+              "argv": [
+                "crew",
+                "reply",
+                "--crew",
+                "c1",
+                "--",
+                "worker:feat/a",
+                "<text>"
+              ],
+              "needs_input": true,
+              "pr": null
+            }
+          ]
+        },
+        {
+          "crew": "c1",
+          "branch": "feat/b",
+          "session": "s-b",
+          "name": "heron",
+          "state": "pr_open",
+          "prev_state": null,
+          "detail": "AC1 pass(go test); AC2-4 pass(bats); AC5 waived(dispatcher: n/a)",
+          "source": null,
+          "pr_url": "https://github.com/o/r/pull/12",
+          "pr": 12,
+          "host": "",
+          "origin": "local",
+          "host_error": null,
+          "peer_error": null,
+          "title": "Task feat/b",
+          "repo": null,
+          "engine": "claude",
+          "model": "sonnet",
+          "tier": "standard",
+          "tmux": null,
+          "color": null,
+          "from": "worker:feat/b",
+          "ts": 1794800000000,
+          "age_s": 600,
+          "live": null,
+          "exit_suspect": null,
+          "actions": [
+            {
+              "key": "p",
+              "verb": "peek",
+              "label": "peek",
+              "command": "crew where --crew c1 -- feat/b",
+              "argv": [
+                "crew",
+                "where",
+                "--crew",
+                "c1",
+                "--",
+                "feat/b"
+              ],
+              "needs_input": false,
+              "pr": null
+            },
+            {
+              "key": "n",
+              "verb": "nudge",
+              "label": "nudge",
+              "command": "crew nudge --crew c1 -- heron",
+              "argv": [
+                "crew",
+                "nudge",
+                "--crew",
+                "c1",
+                "--",
+                "heron"
+              ],
+              "needs_input": false,
+              "pr": null
+            },
+            {
+              "key": "r",
+              "verb": "reply",
+              "label": "reply",
+              "command": "crew reply --crew c1 -- worker:feat/b '<text>'",
+              "argv": [
+                "crew",
+                "reply",
+                "--crew",
+                "c1",
+                "--",
+                "worker:feat/b",
+                "<text>"
+              ],
+              "needs_input": true,
+              "pr": null
+            },
+            {
+              "key": "m",
+              "verb": "merge",
+              "label": "squash-merge",
+              "command": "crew merge 12 --crew c1",
+              "argv": [
+                "crew",
+                "merge",
+                "12",
+                "--crew",
+                "c1"
+              ],
+              "needs_input": false,
+              "pr": 12
+            }
+          ]
+        },
+        {
+          "crew": "c1",
+          "branch": "feat/c",
+          "session": "s-c",
+          "name": null,
+          "state": "blocked",
+          "prev_state": null,
+          "detail": "which schema should the migration target?",
+          "source": null,
+          "pr_url": null,
+          "pr": null,
+          "host": "",
+          "origin": "local",
+          "host_error": null,
+          "peer_error": null,
+          "title": "Task feat/c",
+          "repo": null,
+          "engine": "claude",
+          "model": "sonnet",
+          "tier": "standard",
+          "tmux": null,
+          "color": null,
+          "from": "worker:feat/c",
+          "ts": 1794800300000,
+          "age_s": 300,
+          "live": null,
+          "exit_suspect": null,
+          "actions": [
+            {
+              "key": "p",
+              "verb": "peek",
+              "label": "peek",
+              "command": "crew where --crew c1 -- feat/c",
+              "argv": [
+                "crew",
+                "where",
+                "--crew",
+                "c1",
+                "--",
+                "feat/c"
+              ],
+              "needs_input": false,
+              "pr": null
+            },
+            {
+              "key": "n",
+              "verb": "nudge",
+              "label": "nudge",
+              "command": "crew nudge --crew c1 -- feat/c",
+              "argv": [
+                "crew",
+                "nudge",
+                "--crew",
+                "c1",
+                "--",
+                "feat/c"
+              ],
+              "needs_input": false,
+              "pr": null
+            },
+            {
+              "key": "r",
+              "verb": "reply",
+              "label": "reply",
+              "command": "crew reply --crew c1 -- worker:feat/c '<text>'",
+              "argv": [
+                "crew",
+                "reply",
+                "--crew",
+                "c1",
+                "--",
+                "worker:feat/c",
+                "<text>"
+              ],
+              "needs_input": true,
+              "pr": null
+            }
+          ]
+        },
+        {
+          "crew": "c1",
+          "branch": "feat/d",
+          "session": "s-d",
+          "name": null,
+          "state": "blocked",
+          "prev_state": null,
+          "detail": "prompt: permission dialog",
+          "source": "watchdog",
+          "pr_url": null,
+          "pr": null,
+          "host": "",
+          "origin": "local",
+          "host_error": null,
+          "peer_error": null,
+          "title": "Task feat/d",
+          "repo": null,
+          "engine": "claude",
+          "model": "sonnet",
+          "tier": "standard",
+          "tmux": null,
+          "color": null,
+          "from": "worker:feat/d",
+          "ts": 1794800400000,
+          "age_s": 200,
+          "live": null,
+          "exit_suspect": null,
+          "actions": [
+            {
+              "key": "p",
+              "verb": "peek",
+              "label": "peek",
+              "command": "crew where --crew c1 -- feat/d",
+              "argv": [
+                "crew",
+                "where",
+                "--crew",
+                "c1",
+                "--",
+                "feat/d"
+              ],
+              "needs_input": false,
+              "pr": null
+            },
+            {
+              "key": "n",
+              "verb": "nudge",
+              "label": "nudge",
+              "command": "crew nudge --crew c1 -- feat/d",
+              "argv": [
+                "crew",
+                "nudge",
+                "--crew",
+                "c1",
+                "--",
+                "feat/d"
+              ],
+              "needs_input": false,
+              "pr": null
+            },
+            {
+              "key": "r",
+              "verb": "reply",
+              "label": "reply",
+              "command": "crew reply --crew c1 -- worker:feat/d '<text>'",
+              "argv": [
+                "crew",
+                "reply",
+                "--crew",
+                "c1",
+                "--",
+                "worker:feat/d",
+                "<text>"
+              ],
+              "needs_input": true,
+              "pr": null
+            }
+          ]
+        },
+        {
+          "crew": "c1",
+          "branch": "feat/e",
+          "session": "s-e",
+          "name": null,
+          "state": "blocked",
+          "prev_state": null,
+          "detail": "quiet: no output 4m",
+          "source": "watchdog",
+          "pr_url": null,
+          "pr": null,
+          "host": "",
+          "origin": "local",
+          "host_error": null,
+          "peer_error": null,
+          "title": "Task feat/e",
+          "repo": null,
+          "engine": "claude",
+          "model": "sonnet",
+          "tier": "standard",
+          "tmux": null,
+          "color": null,
+          "from": "worker:feat/e",
+          "ts": 1794800360000,
+          "age_s": 240,
+          "live": null,
+          "exit_suspect": null,
+          "actions": [
+            {
+              "key": "p",
+              "verb": "peek",
+              "label": "peek",
+              "command": "crew where --crew c1 -- feat/e",
+              "argv": [
+                "crew",
+                "where",
+                "--crew",
+                "c1",
+                "--",
+                "feat/e"
+              ],
+              "needs_input": false,
+              "pr": null
+            },
+            {
+              "key": "n",
+              "verb": "nudge",
+              "label": "nudge",
+              "command": "crew nudge --crew c1 -- feat/e",
+              "argv": [
+                "crew",
+                "nudge",
+                "--crew",
+                "c1",
+                "--",
+                "feat/e"
+              ],
+              "needs_input": false,
+              "pr": null
+            },
+            {
+              "key": "r",
+              "verb": "reply",
+              "label": "reply",
+              "command": "crew reply --crew c1 -- worker:feat/e '<text>'",
+              "argv": [
+                "crew",
+                "reply",
+                "--crew",
+                "c1",
+                "--",
+                "worker:feat/e",
+                "<text>"
+              ],
+              "needs_input": true,
+              "pr": null
+            }
+          ]
+        },
+        {
+          "crew": "c1",
+          "branch": "feat/f",
+          "session": "s-f",
+          "name": null,
+          "state": "blocked",
+          "prev_state": null,
+          "detail": "runaway: 900 tool calls in 10m",
+          "source": "watchdog",
+          "pr_url": null,
+          "pr": null,
+          "host": "",
+          "origin": "local",
+          "host_error": null,
+          "peer_error": null,
+          "title": "Task feat/f",
+          "repo": null,
+          "engine": "claude",
+          "model": "sonnet",
+          "tier": "standard",
+          "tmux": null,
+          "color": null,
+          "from": "worker:feat/f",
+          "ts": 1794800450000,
+          "age_s": 150,
+          "live": null,
+          "exit_suspect": null,
+          "actions": [
+            {
+              "key": "p",
+              "verb": "peek",
+              "label": "peek",
+              "command": "crew where --crew c1 -- feat/f",
+              "argv": [
+                "crew",
+                "where",
+                "--crew",
+                "c1",
+                "--",
+                "feat/f"
+              ],
+              "needs_input": false,
+              "pr": null
+            },
+            {
+              "key": "n",
+              "verb": "nudge",
+              "label": "nudge",
+              "command": "crew nudge --crew c1 -- feat/f",
+              "argv": [
+                "crew",
+                "nudge",
+                "--crew",
+                "c1",
+                "--",
+                "feat/f"
+              ],
+              "needs_input": false,
+              "pr": null
+            },
+            {
+              "key": "r",
+              "verb": "reply",
+              "label": "reply",
+              "command": "crew reply --crew c1 -- worker:feat/f '<text>'",
+              "argv": [
+                "crew",
+                "reply",
+                "--crew",
+                "c1",
+                "--",
+                "worker:feat/f",
+                "<text>"
+              ],
+              "needs_input": true,
+              "pr": null
+            }
+          ]
+        },
+        {
+          "crew": "c1",
+          "branch": "feat/g",
+          "session": "s-g",
+          "name": null,
+          "state": "failed",
+          "prev_state": null,
+          "detail": "dead: quiet: no output 20m",
+          "source": "watchdog",
+          "pr_url": null,
+          "pr": null,
+          "host": "",
+          "origin": "local",
+          "host_error": null,
+          "peer_error": null,
+          "title": "Task feat/g",
+          "repo": null,
+          "engine": "claude",
+          "model": "sonnet",
+          "tier": "standard",
+          "tmux": null,
+          "color": null,
+          "from": "worker:feat/g",
+          "ts": 1794799700000,
+          "age_s": 900,
+          "live": null,
+          "exit_suspect": null,
+          "actions": [
+            {
+              "key": "p",
+              "verb": "peek",
+              "label": "peek",
+              "command": "crew where --crew c1 -- feat/g",
+              "argv": [
+                "crew",
+                "where",
+                "--crew",
+                "c1",
+                "--",
+                "feat/g"
+              ],
+              "needs_input": false,
+              "pr": null
+            },
+            {
+              "key": "n",
+              "verb": "nudge",
+              "label": "nudge",
+              "command": "crew nudge --crew c1 -- feat/g",
+              "argv": [
+                "crew",
+                "nudge",
+                "--crew",
+                "c1",
+                "--",
+                "feat/g"
+              ],
+              "needs_input": false,
+              "pr": null
+            },
+            {
+              "key": "r",
+              "verb": "reply",
+              "label": "reply",
+              "command": "crew reply --crew c1 -- worker:feat/g '<text>'",
+              "argv": [
+                "crew",
+                "reply",
+                "--crew",
+                "c1",
+                "--",
+                "worker:feat/g",
+                "<text>"
+              ],
+              "needs_input": true,
+              "pr": null
+            }
+          ]
+        },
+        {
+          "crew": "c1",
+          "branch": "feat/h",
+          "session": "s-h",
+          "name": null,
+          "state": "failed",
+          "prev_state": null,
+          "detail": "exit 1 after test failure",
+          "source": null,
+          "pr_url": null,
+          "pr": null,
+          "host": "",
+          "origin": "local",
+          "host_error": null,
+          "peer_error": null,
+          "title": "Task feat/h",
+          "repo": null,
+          "engine": "claude",
+          "model": "sonnet",
+          "tier": "standard",
+          "tmux": null,
+          "color": null,
+          "from": "worker:feat/h",
+          "ts": 1794799400000,
+          "age_s": 1200,
+          "live": null,
+          "exit_suspect": null,
+          "actions": [
+            {
+              "key": "p",
+              "verb": "peek",
+              "label": "peek",
+              "command": "crew where --crew c1 -- feat/h",
+              "argv": [
+                "crew",
+                "where",
+                "--crew",
+                "c1",
+                "--",
+                "feat/h"
+              ],
+              "needs_input": false,
+              "pr": null
+            },
+            {
+              "key": "n",
+              "verb": "nudge",
+              "label": "nudge",
+              "command": "crew nudge --crew c1 -- feat/h",
+              "argv": [
+                "crew",
+                "nudge",
+                "--crew",
+                "c1",
+                "--",
+                "feat/h"
+              ],
+              "needs_input": false,
+              "pr": null
+            },
+            {
+              "key": "r",
+              "verb": "reply",
+              "label": "reply",
+              "command": "crew reply --crew c1 -- worker:feat/h '<text>'",
+              "argv": [
+                "crew",
+                "reply",
+                "--crew",
+                "c1",
+                "--",
+                "worker:feat/h",
+                "<text>"
+              ],
+              "needs_input": true,
+              "pr": null
+            }
+          ]
+        },
+        {
+          "crew": "c1",
+          "branch": "feat/i",
+          "session": "s-i",
+          "name": null,
+          "state": "reaped",
+          "prev_state": null,
+          "detail": "merged",
+          "source": null,
+          "pr_url": null,
+          "pr": null,
+          "host": "",
+          "origin": "local",
+          "host_error": null,
+          "peer_error": null,
+          "title": "Task feat/i",
+          "repo": null,
+          "engine": "claude",
+          "model": "sonnet",
+          "tier": "standard",
+          "tmux": null,
+          "color": null,
+          "from": "worker:feat/i",
+          "ts": 1794797600000,
+          "age_s": 3000,
+          "live": null,
+          "exit_suspect": null,
+          "actions": [
+            {
+              "key": "p",
+              "verb": "peek",
+              "label": "peek",
+              "command": "crew where --crew c1 -- feat/i",
+              "argv": [
+                "crew",
+                "where",
+                "--crew",
+                "c1",
+                "--",
+                "feat/i"
+              ],
+              "needs_input": false,
+              "pr": null
+            },
+            {
+              "key": "n",
+              "verb": "nudge",
+              "label": "nudge",
+              "command": "crew nudge --crew c1 -- feat/i",
+              "argv": [
+                "crew",
+                "nudge",
+                "--crew",
+                "c1",
+                "--",
+                "feat/i"
+              ],
+              "needs_input": false,
+              "pr": null
+            },
+            {
+              "key": "r",
+              "verb": "reply",
+              "label": "reply",
+              "command": "crew reply --crew c1 -- worker:feat/i '<text>'",
+              "argv": [
+                "crew",
+                "reply",
+                "--crew",
+                "c1",
+                "--",
+                "worker:feat/i",
+                "<text>"
+              ],
+              "needs_input": true,
+              "pr": null
+            }
+          ]
+        },
+        {
+          "crew": "c1",
+          "branch": "feat/r",
+          "session": "s-r",
+          "name": null,
+          "state": "blocked",
+          "prev_state": null,
+          "detail": "need the staging db password",
+          "source": null,
+          "pr_url": null,
+          "pr": null,
+          "host": "halo",
+          "origin": "remote_worker",
+          "host_error": null,
+          "peer_error": null,
+          "title": "Task feat/r",
+          "repo": null,
+          "engine": "codex",
+          "model": "gpt-5",
+          "tier": "deep",
+          "tmux": null,
+          "color": null,
+          "from": "worker:feat/r",
+          "ts": 1794800180000,
+          "age_s": 420,
+          "live": null,
+          "exit_suspect": null,
+          "actions": [
+            {
+              "key": "p",
+              "verb": "peek",
+              "label": "peek",
+              "command": "crew where --crew c1 -- feat/r",
+              "argv": [
+                "crew",
+                "where",
+                "--crew",
+                "c1",
+                "--",
+                "feat/r"
+              ],
+              "needs_input": false,
+              "pr": null
+            },
+            {
+              "key": "n",
+              "verb": "nudge",
+              "label": "nudge",
+              "command": "crew nudge --crew c1 -- feat/r",
+              "argv": [
+                "crew",
+                "nudge",
+                "--crew",
+                "c1",
+                "--",
+                "feat/r"
+              ],
+              "needs_input": false,
+              "pr": null
+            },
+            {
+              "key": "r",
+              "verb": "reply",
+              "label": "reply",
+              "command": "crew reply --crew c1 -- worker:feat/r '<text>'",
+              "argv": [
+                "crew",
+                "reply",
+                "--crew",
+                "c1",
+                "--",
+                "worker:feat/r",
+                "<text>"
+              ],
+              "needs_input": true,
+              "pr": null
+            }
+          ]
+        }
+      ],
+      "holds": [
+        {
+          "id": "h-due",
+          "kind": "window",
+          "engine": "claude",
+          "window": "5h",
+          "resets_at": 1794800480,
+          "title": "matured task",
+          "matured": true
+        },
+        {
+          "id": "h-later",
+          "kind": "window",
+          "engine": "claude",
+          "window": "7d",
+          "resets_at": 1794805600,
+          "title": "later task",
+          "matured": false
+        },
+        {
+          "id": "h-fleet",
+          "kind": "fleet",
+          "engine": "claude",
+          "window": null,
+          "resets_at": 1794800100,
+          "title": "fleet task",
+          "matured": false
+        }
+      ],
+      "workers_error": null,
+      "holds_error": null,
+      "lane": "alive"
+    },
+    {
+      "id": "c2",
+      "workers": [
+        {
+          "crew": "c2",
+          "branch": "feat/j",
+          "session": "s-j",
+          "name": null,
+          "state": "working",
+          "prev_state": null,
+          "detail": "execute",
+          "source": null,
+          "pr_url": null,
+          "pr": null,
+          "host": "",
+          "origin": "local",
+          "host_error": null,
+          "peer_error": null,
+          "title": "Task feat/j",
+          "repo": null,
+          "engine": "claude",
+          "model": "sonnet",
+          "tier": "standard",
+          "tmux": null,
+          "color": null,
+          "from": "worker:feat/j",
+          "ts": 1794800570000,
+          "age_s": 30,
+          "live": null,
+          "exit_suspect": null,
+          "actions": [
+            {
+              "key": "p",
+              "verb": "peek",
+              "label": "peek",
+              "command": "crew where --crew c2 -- feat/j",
+              "argv": [
+                "crew",
+                "where",
+                "--crew",
+                "c2",
+                "--",
+                "feat/j"
+              ],
+              "needs_input": false,
+              "pr": null
+            },
+            {
+              "key": "n",
+              "verb": "nudge",
+              "label": "nudge",
+              "command": "crew nudge --crew c2 -- feat/j",
+              "argv": [
+                "crew",
+                "nudge",
+                "--crew",
+                "c2",
+                "--",
+                "feat/j"
+              ],
+              "needs_input": false,
+              "pr": null
+            },
+            {
+              "key": "r",
+              "verb": "reply",
+              "label": "reply",
+              "command": "crew reply --crew c2 -- worker:feat/j '<text>'",
+              "argv": [
+                "crew",
+                "reply",
+                "--crew",
+                "c2",
+                "--",
+                "worker:feat/j",
+                "<text>"
+              ],
+              "needs_input": true,
+              "pr": null
+            }
+          ]
+        }
+      ],
+      "holds": [],
+      "workers_error": null,
+      "holds_error": null,
+      "lane": "dead"
+    }
+  ],
+  "peers": [
+    {
+      "crew": "c1",
+      "branch": "feat/p",
+      "session": null,
+      "name": null,
+      "state": "blocked",
+      "prev_state": null,
+      "detail": null,
+      "source": null,
+      "pr_url": null,
+      "pr": null,
+      "host": "mbp",
+      "origin": "peer",
+      "host_error": null,
+      "peer_error": null,
+      "title": null,
+      "repo": null,
+      "engine": null,
+      "model": null,
+      "tier": null,
+      "tmux": null,
+      "color": null,
+      "from": null,
+      "ts": null,
+      "age_s": null,
+      "live": null,
+      "exit_suspect": null,
+      "actions": []
+    },
+    {
+      "crew": "c1",
+      "branch": "feat/q",
+      "session": null,
+      "name": null,
+      "state": "",
+      "prev_state": null,
+      "detail": null,
+      "source": null,
+      "pr_url": null,
+      "pr": null,
+      "host": "nuc",
+      "origin": "peer",
+      "host_error": null,
+      "peer_error": "sync stale: last ok 900s ago",
+      "title": null,
+      "repo": null,
+      "engine": null,
+      "model": null,
+      "tier": null,
+      "tmux": null,
+      "color": null,
+      "from": null,
+      "ts": null,
+      "age_s": null,
+      "live": null,
+      "exit_suspect": null,
+      "actions": []
+    },
+    {
+      "crew": "",
+      "branch": "",
+      "session": null,
+      "name": null,
+      "state": "",
+      "prev_state": null,
+      "detail": null,
+      "source": null,
+      "pr_url": null,
+      "pr": null,
+      "host": "halo",
+      "origin": "peer",
+      "host_error": null,
+      "peer_error": "no snapshot yet",
+      "title": null,
+      "repo": null,
+      "engine": null,
+      "model": null,
+      "tier": null,
+      "tmux": null,
+      "color": null,
+      "from": null,
+      "ts": null,
+      "age_s": null,
+      "live": null,
+      "exit_suspect": null,
+      "actions": []
+    }
+  ]
+}

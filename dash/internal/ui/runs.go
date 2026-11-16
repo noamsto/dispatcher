@@ -11,6 +11,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/noamsto/dispatcher/dash/internal/data"
+	vm "github.com/noamsto/dispatcher/dash/internal/view"
 )
 
 // sortColumns is the ratings table's sort-cycle order and display labels:
@@ -89,27 +90,27 @@ type runsView struct {
 	ratingsLoaded, retroLoaded bool
 }
 
-func newRunsView(snap data.Snapshot, loaded [numSources]bool) runsView {
+func newRunsView(rv vm.RunsView) runsView {
 	var v runsView
-	v.load(snap, loaded)
+	v.load(rv)
 	return v
 }
 
-func (v *runsView) load(snap data.Snapshot, loaded [numSources]bool) {
-	v.ratingsLoaded, v.retroLoaded = loaded[srcRatings], loaded[srcRetro]
-	v.ratingsErr = snap.Runs.RatingsError
+func (v *runsView) load(rv vm.RunsView) {
+	v.ratingsLoaded, v.retroLoaded = rv.RatingsLoaded, rv.RetroLoaded
+	v.ratingsErr = rv.RatingsError
 	if v.ratingsErr == nil {
-		v.ratingsNatural = sortRatingsNatural(snap.Runs.RatingsGroups)
+		v.ratingsNatural = sortRatingsNatural(rv.RatingsGroups)
 	} else {
 		v.ratingsNatural = nil
 	}
 	v.applySort()
 	v.ratingsCursor = clamp(v.ratingsCursor, 0, len(v.ratings)-1)
 
-	v.retroErr = snap.Runs.RetroError
+	v.retroErr = rv.RetroError
 	var rows []data.RetroRow
-	if v.retroErr == nil && snap.Runs.Retro != nil {
-		rows = append([]data.RetroRow{}, snap.Runs.Retro.Rows...)
+	if v.retroErr == nil && rv.Retro != nil {
+		rows = append([]data.RetroRow{}, rv.Retro.Rows...)
 	}
 	sort.SliceStable(rows, func(i, j int) bool { return rows[i].T0 > rows[j].T0 })
 	v.rows = rows
@@ -133,7 +134,7 @@ func (v *runsView) applySort() {
 func (v runsView) Update(msg tea.Msg) (view, tea.Cmd) {
 	switch msg := msg.(type) {
 	case snapshotMsg:
-		v.load(msg.snap, msg.loaded)
+		v.load(msg.runs)
 		return v, nil
 
 	case tea.KeyMsg:

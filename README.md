@@ -878,32 +878,42 @@ users get the same fan-out from the engine-neutral `dispatcher` launcher —
 ```bash
 crew dash          # interactive TUI (Bubble Tea); falls back to --once off a TTY
 crew dash --once   # plain text, for piping or tests
-crew dash --json   # the collected model, as JSON
+crew dash --json   # the collected model, as JSON (unchanged)
+crew dash --json --view <name>           # one view model as JSON
+crew dash --json --view <name> --watch   # one JSON line per bus change
 ```
 
-`crew dash` execs `crew-dash`, a Go binary under `dash/`. Four views, each
+`crew dash` execs `crew-dash`, a Go binary under `dash/`. Seven tabs, each
 read from an already-cached or already-run source, never probed live:
 
-- **Settings** — the resolved layer tree, collapsible, each leaf tagged with
-  its origin: `default`, `user`, `env` or `🔒 locked` (locked keys come from
-  the home-manager module). `/` filters by key path or value.
-- **Budget** — a gauge per engine window with used %, pace (points ahead of
-  the window's elapsed share), resets-in and the lever verdict, from the
-  cached `refresh-budget` data (run `refresh-budget` to update it).
-- **Runs** — ratings by tier/engine/model (n, pr%, success, median burn;
-  `s` cycles the sort column, `o` flips it) and the retro rows: session
-  summaries and each run's tagged notes. `f` moves focus, `enter` opens a
-  run's notes.
-- **Roster** — the live crew, refreshed as the crew bus log changes; `enter`
+- **Overview** (the default tab) — an attention strip, one row per item that
+  needs you with its suggested command: blocked or stalled workers, watchdog
+  details, failed workers and roles, merge-ready PRs, dead watch lanes and
+  matured holds; or a single `all clear` line. Below it, Checklists, Agents
+  and Monitors panels.
+- **Live** — the live crew, refreshed as the crew bus log changes; `enter`
   shows a worker's recent bus events.
+- **Board**, **Budget**, **Runs**, **Settings**, **Map** — the roster board;
+  a gauge per engine window (used %, pace, resets-in, lever verdict, from the
+  cached `refresh-budget` data); ratings and retro rows (`s` cycles the sort
+  column, `o` flips it); the resolved settings layer tree with each leaf's
+  origin (`default`, `user`, `env` or `🔒 locked`); and the crew map.
 
-Keys: `1`–`4` or `tab` switch views, `j`/`k`/`g`/`G` move, `enter`/`esc` open
-and close details, `r` re-collects, `?` shows every binding, `q` quits.
+`--json --view` takes `overview`, `roster`, `budget`, `runs`, `settings` or
+`map`. Each view carries `schema_version` and snake_case fields, and is the
+same struct the TUI renders.
+
+Overview keys: `tab`/`shift-tab` move focus, `j`/`k` select, `1`–`9` act on
+the attention rows shown, `p` peeks, `n` nudges, `r` replies, `m` merges
+(always confirms), `enter` on an attention row selects its worker in the
+checklists, elsewhere it opens details and `esc` closes them, `/` filters,
+`?` shows every binding. Other tabs: `1`–`7` or `tab` switch views; on Live,
+Board and Map `m` is reply and `t` jumps. `[`/`]` switch to the previous or
+next view and `R` refreshes everywhere; `q` quits. A mouse click selects or
+focuses. Peer rows are read-only.
 `NO_COLOR` or `CREW_DASH_COLOR=never` disables colour; `--once` also honours
-`CREW_DASH_COLOR=always`.
-
-It is read-only: no network or `gh` calls, and it writes nothing — edit
-`~/.config/dispatcher/settings.json` by hand for now.
+`CREW_DASH_COLOR=always`. Set `CREW_DASH_PILLS=square` for fonts without
+powerline glyphs; it is also automatic on `TERM=linux` or with no colour.
 
 ---
 

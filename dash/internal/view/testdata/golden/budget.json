@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "view": "budget",
+  "loaded": true,
+  "now": 1794800600,
+  "report": {
+    "fetched_epoch": 1794800570,
+    "engines": {
+      "claude": {
+        "source": "oauth_usage",
+        "plan_type": null,
+        "credits_cover": false,
+        "unlimited": false,
+        "spend_usd": null,
+        "target_usd": null,
+        "elapsed_pct": null,
+        "projected_month_end_usd": null,
+        "windows": [
+          {
+            "key": "5h",
+            "used_pct": 10,
+            "resets_at": 1794807800,
+            "resets_in_s": 7200,
+            "ahead_pts": null,
+            "verdict": null
+          },
+          {
+            "key": "7d",
+            "used_pct": 62,
+            "resets_at": 1795103000,
+            "resets_in_s": 302400,
+            "ahead_pts": 12,
+            "verdict": "ahead of pace: prefer a cheaper burn class"
+          }
+        ],
+        "limit_reached": null,
+        "projection": null
+      }
+    }
+  },
+  "warnings": [],
+  "error": null
+}

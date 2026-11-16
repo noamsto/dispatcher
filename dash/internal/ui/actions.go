@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"regexp"
-	"slices"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/key"
@@ -13,6 +12,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/noamsto/dispatcher/dash/internal/data"
+	vm "github.com/noamsto/dispatcher/dash/internal/view"
 )
 
 // action is one operator command on the selected worker.
@@ -23,9 +23,11 @@ const (
 	actOpenPR
 	actReply
 	actNudge
+	actPeek
+	actMerge
 )
 
-var actionNames = [...]string{"jump", "open PR", "reply", "nudge"}
+var actionNames = [...]string{"jump", "open PR", "reply", "nudge", "peek", "merge"}
 
 func (a action) String() string { return actionNames[a] }
 
@@ -50,6 +52,9 @@ func disabledReason(a action, w data.Worker, inTmux, have bool) string {
 	if !have {
 		return "no worker selected"
 	}
+	if w.Origin == string(vm.OriginPeer) {
+		return "peer worker: read-only"
+	}
 	switch a {
 	case actJump:
 		switch {
@@ -72,7 +77,7 @@ func disabledReason(a action, w data.Worker, inTmux, have bool) string {
 			return "not blocked"
 		}
 	case actNudge:
-		if nudgeTarget(w) == "" {
+		if vm.NudgeTarget(w.Name, w.Branch) == "" {
 			return "no name or branch"
 		}
 	}
@@ -83,33 +88,9 @@ func disabledReason(a action, w data.Worker, inTmux, have bool) string {
 // cannot read as a flag, resolve against the cwd repo, or name another host.
 var ghPRURLRe = regexp.MustCompile(`^https://github\.com/[^/]+/[^/]+/pull/[0-9]+$`)
 
-// nudgeTarget is the codename, else the branch.
-func nudgeTarget(w data.Worker) string {
-	if w.Name != "" {
-		return w.Name
-	}
-	return w.Branch
-}
-
-// crewArgv is `<crew…> <sub> --crew <crew id> -- <target…>`.
-func crewArgv(crew []string, sub string, w data.Worker, target ...string) []string {
-	argv := append(slices.Clone(crew), sub, "--crew", w.Crew, "--")
-	return append(argv, target...)
-}
-
-func whereArgv(crew []string, w data.Worker) []string { return crewArgv(crew, "where", w, w.Branch) }
-
 func switchArgv(pane string) []string { return []string{"tmux", "switch-client", "-t", pane} }
 
 func ghArgv(url string) []string { return []string{"gh", "pr", "view", "--web", url} }
-
-func replyArgv(crew []string, w data.Worker, text string) []string {
-	return crewArgv(crew, "reply", w, "worker:"+w.Branch, text)
-}
-
-func nudgeArgv(crew []string, w data.Worker) []string {
-	return crewArgv(crew, "nudge", w, nudgeTarget(w))
-}
 
 const jumpMarker = "jump: ! tmux switch-client -t "
 
@@ -205,7 +186,7 @@ func (u *actionUI) start(a action, sel data.Worker, have bool) tea.Cmd {
 			}
 			return switchArgv(pane), nil
 		}
-		return runActionCmd(u.acts.ctx, u.acts.runner, a, whereArgv(u.acts.crew, sel), then)
+		return runActionCmd(u.acts.ctx, u.acts.runner, a, vm.PeekArgv(u.acts.crew, sel.Crew, sel.Branch), then)
 	case actOpenPR:
 		return runActionCmd(u.acts.ctx, u.acts.runner, a, ghArgv(sel.PRURL), nil)
 	case actReply:
@@ -227,7 +208,7 @@ func (u *actionUI) start(a action, sel data.Worker, have bool) tea.Cmd {
 func (u *actionUI) fit() {
 	const lead, tail = "reply to ", ": "
 	room := max(u.width/2-ansi.StringWidth(lead)-ansi.StringWidth(tail), 1)
-	target := ansi.Truncate(cleanText(nudgeTarget(u.target)), room, "…")
+	target := ansi.Truncate(cleanText(vm.NudgeTarget(u.target.Name, u.target.Branch)), room, "…")
 	u.input.Prompt = lead + target + tail
 	u.input.Width = max(u.width-ansi.StringWidth(u.input.Prompt)-1, 1)
 }
@@ -255,7 +236,7 @@ func (u *actionUI) handleReplyKey(msg tea.KeyMsg) tea.Cmd {
 			return statusCmd("reply: text required", true)
 		}
 		u.mode = modeNormal
-		return runActionCmd(u.acts.ctx, u.acts.runner, actReply, replyArgv(u.acts.crew, u.target, text), nil)
+		return runActionCmd(u.acts.ctx, u.acts.runner, actReply, vm.ReplyArgv(u.acts.crew, u.target.Crew, u.target.Branch, text), nil)
 	}
 	var cmd tea.Cmd
 	u.input, cmd = u.input.Update(msg)
@@ -267,7 +248,7 @@ func (u *actionUI) handleConfirmKey(msg tea.KeyMsg) tea.Cmd {
 	if msg.String() != "y" {
 		return statusCmd("nudge: cancelled", false)
 	}
-	return runActionCmd(u.acts.ctx, u.acts.runner, actNudge, nudgeArgv(u.acts.crew, u.target), nil)
+	return runActionCmd(u.acts.ctx, u.acts.runner, actNudge, vm.NudgeArgv(u.acts.crew, u.target.Crew, u.target.Name, u.target.Branch), nil)
 }
 
 // prompt is the open reply prompt or nudge confirm, else fallback.
@@ -276,7 +257,7 @@ func (u *actionUI) prompt(fallback string) string {
 	case modeReply:
 		return u.input.View()
 	case modeConfirmNudge:
-		return "nudge " + cleanText(nudgeTarget(u.target)) + "? y/N"
+		return "nudge " + cleanText(vm.NudgeTarget(u.target.Name, u.target.Branch)) + "? y/N"
 	}
 	return fallback
 }
@@ -299,31 +280,25 @@ func (u *actionUI) promptKeys() []key.Binding {
 	return nil
 }
 
-// workerFromRow maps a roster worker map to the Worker the actions take.
-func workerFromRow(crewID string, w map[string]any) data.Worker {
-	f := func(k string) string { s, _ := strField(w, k); return s }
+func workerFromRow(w vm.WorkerRow) data.Worker {
 	return data.Worker{
-		Crew:    crewID,
-		Branch:  f("branch"),
-		Session: f("session"),
-		Name:    f("name"),
-		State:   f("state"),
-		PRURL:   f("pr_url"),
-		Host:    f("host"),
+		Crew:    w.Crew,
+		Branch:  w.Branch,
+		Session: strOf(w.Session),
+		Name:    strOf(w.Name),
+		State:   w.State,
+		PRURL:   strOf(w.PRURL),
+		Host:    w.Host,
+		Origin:  string(w.Origin),
 	}
 }
 
-// workerByBranch finds crewID's worker on branch over every worker in the
-// roster, reaped ones included. A crew whose workers failed to load has none.
-func workerByBranch(snap data.Snapshot, crewID, branch string) (data.Worker, bool) {
-	for _, c := range snap.Roster.Crews {
-		if c.ID != crewID || c.WorkersError != nil {
-			continue
-		}
-		for _, w := range c.Workers {
-			if b, _ := strField(w, "branch"); b == branch {
-				return workerFromRow(crewID, w), true
-			}
+// workerByBranch finds crewID's worker on branch over rows, reaped ones
+// included.
+func workerByBranch(rows []vm.WorkerRow, crewID, branch string) (data.Worker, bool) {
+	for _, w := range rows {
+		if w.Crew == crewID && w.Branch == branch {
+			return workerFromRow(w), true
 		}
 	}
 	return data.Worker{}, false

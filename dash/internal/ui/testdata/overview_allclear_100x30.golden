@@ -1,0 +1,30 @@
+ ✓ all clear
+╭ ▸ CHECKLISTS ───────── 0 of 11 done ─╮╭ AGENTS ──────── 11 agents ─╮╭ MONITORS ───── 11 watched ─╮
+│▌● otter standard                 AC —││▌● otter sonnet standard    ││ WATCHDOG ──────────────────│
+│▌  ●─●─◉─○─○─○ execute                ││▌  roles —                  ││▌otter      ▁▁▁█▁ ok 45s    │
+│ ● heron standard               AC 5/5││ ● heron sonnet standard    ││ heron      ▁▁▁▁▁ ok 10m    │
+│   ●─●─●─◉─○─○ gate                   ││   roles —                  ││ feat/c     ▁▁▁▁▁ ok 5m     │
+│ ● feat/c standard                AC —││ ● feat/c sonnet standard   ││ feat/d     ▁▁▁▁▁ prompt 3m │
+│   ○─○─○─○─○─○ working                ││   roles —                  ││ feat/e     ▁▁▁▁▁ stall 4m  │
+│ ● feat/d standard                AC —││ ● feat/d sonnet standard   ││ feat/f     ▁▁▁▁▁ runaway 2m│
+│   ○─○─○─○─○─○ working                ││   roles —                  ││ feat/g     ▁▁▁▁▁ dead 15m  │
+│ ● feat/e standard                AC —││ ● feat/e sonnet standard   ││ feat/h     ▁▁▁▁▁ ok 20m    │
+│   ○─○─○─○─○─○ working                ││   roles —                  ││ feat/i     ▁▁▁▁▁ ok 50m    │
+│ ● feat/f standard                AC —││ ● feat/f sonnet standard   ││ feat/r@ha… ····· ok 7m     │
+│   ○─○─○─○─○─○ working                ││   roles —                  ││ feat/j     █▁▁▁▁ ok 30s    │
+│ ● feat/g standard                AC —││ ● feat/g sonnet standard   ││ PR CHECKS ─────────────────│
+│   ○─○─○─○─○─○ working                ││   roles —                  ││ #12 ● checks ● merge 10m   │
+│ ● feat/h standard                AC —││ ● feat/h sonnet standard   ││ BUDGET ────────────────────│
+│   ○─○─○─○─○─○ working                ││   roles —                  ││ claude 5h   █░░░░░░░  10%  │
+│ ● feat/i standard                AC —││ ● feat/i sonnet standard   ││ claude 7d   █████░░░  62% ↑│
+│   ○─○─○─○─○─○ working                ││   roles —                  ││                            │
+│ ● feat/r@halo deep               AC —││ ● feat/r@halo gpt-5 deep   ││                            │
+│   ?                                  ││   roles ?                  ││                            │
+│ ● feat/j standard                AC —││ ● feat/j sonnet standard   ││                            │
+│   ●─-─◉─○─○─○ execute                ││   roles —                  ││                            │
+│                                      ││                            ││                            │
+│                                      ││                            ││                            │
+│                                      ││                            ││                            │
+│                                      ││                            ││                            │
+│                                      ││                            ││                            │
+╰──────────────────────────────────────╯╰────────────────────────────╯╰────────────────────────────╯

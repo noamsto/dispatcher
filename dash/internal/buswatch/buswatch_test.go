@@ -1,4 +1,4 @@
-package ui
+package buswatch
 
 import (
 	"errors"
@@ -20,7 +20,7 @@ func TestFsnotifyWatcherFiresOnWrite(t *testing.T) {
 	path := filepath.Join(dir, "events.jsonl")
 	writeFile(t, path, "{}\n")
 
-	w := newBusWatcher(path, nil)
+	w := newWatcher(path, nil)
 	defer func() { _ = w.Close() }()
 
 	go func() {
@@ -46,7 +46,7 @@ func TestFsnotifyWatcherIgnoresOtherFiles(t *testing.T) {
 	writeFile(t, path, "{}\n")
 	other := filepath.Join(dir, "unrelated.txt")
 
-	w := newBusWatcher(path, nil)
+	w := newWatcher(path, nil)
 	defer func() { _ = w.Close() }()
 
 	writeFile(t, other, "hi")
@@ -63,11 +63,11 @@ func TestPollWatcherFallbackOnFailingCtor(t *testing.T) {
 	path := filepath.Join(dir, "events.jsonl")
 	writeFile(t, path, "{}\n")
 
-	failing := func(string) (busWatcher, error) { return nil, errors.New("no fsnotify here") }
-	w := newBusWatcher(path, failing)
+	failing := func(string) (Watcher, error) { return nil, errors.New("no fsnotify here") }
+	w := newWatcher(path, failing)
 	defer func() { _ = w.Close() }()
 	if _, ok := w.(*pollWatcher); !ok {
-		t.Fatalf("newBusWatcher with a failing ctor = %T, want *pollWatcher", w)
+		t.Fatalf("newWatcher with a failing ctor = %T, want *pollWatcher", w)
 	}
 }
 
@@ -102,7 +102,7 @@ func TestWatcherCloseUnblocksReaderAndExits(t *testing.T) {
 	path := filepath.Join(dir, "events.jsonl")
 	writeFile(t, path, "{}\n")
 
-	w := newBusWatcher(path, nil)
+	w := newWatcher(path, nil)
 
 	readerDone := make(chan struct{})
 	go func() {

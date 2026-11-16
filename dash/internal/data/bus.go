@@ -2,6 +2,7 @@ package data
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -25,6 +26,20 @@ func EventsPath(ctx context.Context, r Runner, git string) (string, error) {
 	return dir + "/crew/events.jsonl", nil
 }
 
+// decodeLine parses one bus line. A blank or torn line (a hard-killed worker's
+// partial append) reports false so callers skip it without aborting the rest.
+func decodeLine(line []byte) (Event, bool) {
+	line = bytes.TrimSpace(line)
+	if len(line) == 0 {
+		return nil, false
+	}
+	var ev Event
+	if err := json.Unmarshal(line, &ev); err != nil {
+		return nil, false
+	}
+	return ev, true
+}
+
 // RecentEvents reads the last n bus events whose from is exactly
 // "worker:<branch>" or starts with "worker:<branch>#" (a worker's own
 // per-session suffix — "worker:feat/x-y#s1" does not match "worker:feat/x").
@@ -44,13 +59,9 @@ func RecentEvents(path, branch string, n int) ([]Event, error) {
 	scanner := bufio.NewScanner(f)
 	scanner.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
 	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" {
+		ev, ok := decodeLine(scanner.Bytes())
+		if !ok {
 			continue
-		}
-		var ev Event
-		if err := json.Unmarshal([]byte(line), &ev); err != nil {
-			continue // torn line — tolerate, do not abort the rest
 		}
 		from, _ := ev["from"].(string)
 		if from == exact || strings.HasPrefix(from, prefix) {

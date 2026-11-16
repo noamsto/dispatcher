@@ -57,7 +57,7 @@ func newKnobHarness(t *testing.T, content string, tweak func(*data.Snapshot)) *k
 		tweak(&snap)
 	}
 	env := map[string]string{}
-	h.v = newSettingsView(snap, allLoaded, settingsDeps{
+	h.v = testSettingsView(snap, allLoaded, settingsDeps{
 		ctx:    t.Context(),
 		runner: h.runner,
 		bin:    "dispatch-config",
@@ -730,7 +730,7 @@ func TestSettingsErrorInjectionIsCleaned(t *testing.T) {
 	snap := loadFullSnapshot(t)
 	msg := injectedErr
 	snap.Settings.Error = &msg
-	out := newSettingsView(snap, allLoaded, settingsDeps{}).View(120, 24)
+	out := testSettingsView(snap, allLoaded, settingsDeps{}).View(120, 24)
 	requireNoControl(t, out)
 	if !strings.Contains(out, "unavailable: boom") {
 		t.Errorf("missing unavailable: boom:\n%q", out)
@@ -752,7 +752,7 @@ func TestSettingsFieldsInjectionAreCleaned(t *testing.T) {
 		snap.Settings.Rows[i].Value = json.RawMessage("\"v\u202e\"")
 		snap.Settings.Rows[i].Origin = "o" + injectedErr
 	}
-	out := newSettingsView(snap, allLoaded, settingsDeps{}).View(120, 40)
+	out := testSettingsView(snap, allLoaded, settingsDeps{}).View(120, 40)
 	requireNoControl(t, out)
 	if !strings.Contains(out, "warning: boom") {
 		t.Errorf("missing warning: boom:\n%q", out)

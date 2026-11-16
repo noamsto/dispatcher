@@ -1,0 +1,19 @@
+{"ts":1794799200000,"crew_id":"c1","from":"worker:feat/a#s1","to":"dispatcher:c1","kind":"status","body":{"state":"working","detail":"spec"}}
+{"ts":1794799260000,"crew_id":"c1","from":"worker:feat/b#s1","to":"dispatcher:c1","kind":"status","body":{"state":"working","detail":"spec"}}
+{"ts":1794799320000,"crew_id":"c1","from":"worker:feat/a#s1","to":"dispatcher:c1","kind":"status","body":{"state":"working","detail":"plan"}}
+{"ts":1794799325000,"crew_id":"c1","from":"role:feat/a:plan-critic","to":"dispatcher:c1","kind":"status","body":{"state":"working","detail":"plan review"}}
+{"ts":1794799330000,"crew_id":"c1","from":"role:feat/a:plan-critic","to":"dispatcher:c1","kind":"msg","body":"{\"role\": \"plan-critic\", \"seam\": \"plan\", \"verdict\": \"accept\", \"findings\": []}"}
+{"ts":1794799380000,"crew_id":"c1","from":"worker:feat/b#s1","to":"dispatcher:c1","kind":"status","body":{"state":"working","detail":"plan"}}
+{"ts":1794799500000,"crew_id":"c1","from":"worker:feat/a#s1","to":"dispatcher:c1","kind":"status","body":{"state":"working","detail":"execute"}}
+{"ts":1794799560000,"crew_id":"c1","from":"worker:feat/b#s1","to":"dispatcher:c1","kind":"status","body":{"state":"working","detail":"execute"}}
+{"ts":1794799700000,"crew_id":"c2","from":"worker:feat/j#s1","to":"dispatcher:c2","kind":"status","body":{"state":"working","detail":"spec"}}
+{"ts":1794799800000,"crew_id":"c1","from":"worker:feat/b#s1","to":"dispatcher:c1","kind":"status","body":{"state":"working","detail":"gate"}}
+{"ts":1794799900000,"crew_id":"c1","from":"worker:feat/b#s1","to":"dispatcher:c1","kind":"status","body":{"state":"pr_open","detail":"AC1 pass(go test); AC2-4 pass(bats); AC5 waived(dispatcher: n/a)"}}
+{"ts":1794799910000,"crew_id":"c1","from":"pr-watch:12","to":"dispatcher:c1","kind":"msg","body":"{\"ts\": 1, \"repo\": \"o/r\", \"pr\": 12, \"url\": \"https://github.com/o/r/pull/12\", \"changed\": [\"checks\"], \"state\": {\"state\": \"OPEN\", \"checks\": \"PENDING\", \"mergeable\": \"MERGEABLE\"}, \"was\": {}}"}
+{"ts":1794799920000,"crew_id":"c1","from":"role:feat/c:spec-critic","to":"dispatcher:c1","kind":"status","body":{"state":"failed","detail":"no assignment"}}
+{"ts":1794799990000,"crew_id":"c1","from":"pr-watch:12","to":"dispatcher:c1","kind":"msg","body":"{\"ts\": 1, \"repo\": \"o/r\", \"pr\": 12, \"url\": \"https://github.com/o/r/pull/12\", \"changed\": [\"checks\"], \"state\": {\"state\": \"OPEN\", \"checks\": \"SUCCESS\", \"mergeable\": \"MERGEABLE\"}, \"was\": {}}"}
+{"ts":1794800100000,"crew_id":"c1","from":"worker:feat/a#s1","to":"dispatcher:c1","kind":"msg","body":"progress note"}
+{"ts":1794800200000,"crew_id":"c1","from":"role:feat/a:reviewer","to":"dispatcher:c1","kind":"status","body":{"state":"blocked","detail":"role reviewer engine exited (pane %9)"}}
+{"ts":1794800300000,"crew_id":"c1","from":"worker:feat/d#s1","to":"dispatcher:c1","kind":"status","body":{"state":"blocked","detail":"prompt: permission dialog","source":"watchdog"}}
+{"ts":1794800350000,"crew_id":"c2","from":"worker:feat/j#s1","to":"dispatcher:c2","kind":"status","body":{"state":"working","detail":"execute"}}
+{"ts":1794800500000,"crew_id":"c1","from":"worker:feat/a#s1","to":"dispatcher:c1","kind":"status","body":{"state":"working","detail":"execute"}}

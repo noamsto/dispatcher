@@ -19,10 +19,11 @@ const (
 	srcRetro
 	srcRatings
 	srcRoster
+	srcBus
 	numSources
 )
 
-var sourceNames = [numSources]string{"settings", "budget", "retro", "ratings", "roster"}
+var sourceNames = [numSources]string{"settings", "budget", "retro", "ratings", "roster", "bus"}
 
 func (s source) String() string { return sourceNames[s] }
 
@@ -34,6 +35,7 @@ type Loaders struct {
 	Retro    func(context.Context) data.RunsSection
 	Ratings  func(context.Context) data.RunsSection
 	Roster   func(context.Context) data.RosterSection
+	Bus      func(context.Context) data.BusDigest
 }
 
 // loadState tracks one source. again records a request that arrived while a
@@ -49,11 +51,17 @@ type loadState struct {
 type sourceMsg struct {
 	src   source
 	apply func(*data.Snapshot)
+	bus   *data.BusDigest // set only by srcBus
 }
 
 func (l Loaders) cmd(ctx context.Context, s source) tea.Cmd {
 	return func() tea.Msg {
-		return sourceMsg{src: s, apply: l.collect(ctx, s)}
+		msg := sourceMsg{src: s, apply: l.collect(ctx, s)}
+		if s == srcBus && l.Bus != nil {
+			d := l.Bus(ctx)
+			msg.bus = &d
+		}
+		return msg
 	}
 }
 

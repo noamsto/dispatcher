@@ -26,7 +26,7 @@ func actionModel(t *testing.T, snap data.Snapshot, fake *data.FakeRunner, inTmux
 func selectName(t *testing.T, m Model, name string) Model {
 	t.Helper()
 	for range 20 {
-		if w, _ := m.views[0].Selection().(data.Worker); w.Name == name {
+		if w, _ := m.views[liveTab].Selection().(data.Worker); w.Name == name {
 			return m
 		}
 		m = send(m, keyRune('j'))
@@ -136,7 +136,7 @@ func TestJumpDisabledOnHostRow(t *testing.T) {
 	snap := loadCrewErrSnapshot(t)
 	m := actionModel(t, snap, fake, true)
 	for range 20 {
-		if w, _ := m.views[0].Selection().(data.Worker); w.Host != "" {
+		if w, _ := m.views[liveTab].Selection().(data.Worker); w.Host != "" {
 			break
 		}
 		m = send(m, keyRune('j'))
@@ -154,6 +154,18 @@ func TestActionsDisabledWithoutSelection(t *testing.T) {
 	m = send(m, keyRune('o'))
 	wantCalls(t, fake)
 	wantStatus(t, m, "open PR: no worker selected")
+}
+
+func TestPeerWorkerRefusesEveryAction(t *testing.T) {
+	w := data.Worker{
+		Crew: "c1", Branch: "feat/a", Name: "a", State: "blocked", Host: "h",
+		PRURL: "https://github.com/o/r/pull/1", Origin: "peer",
+	}
+	for a := actJump; a <= actNudge; a++ {
+		if got := disabledReason(a, w, true, true); got != "peer worker: read-only" {
+			t.Errorf("%s on a peer = %q, want peer worker: read-only", a, got)
+		}
+	}
 }
 
 func TestOpenPRRunsGhView(t *testing.T) {
@@ -186,7 +198,7 @@ func TestReplySendsText(t *testing.T) {
 	m = send(m, keyType(tea.KeyEnter))
 	wantCalls(t, fake, []string{"crew", "reply", "--crew", "c1", "--", "worker:fix/123-widget", "go ahead"})
 	wantStatus(t, m, "reply: sent")
-	if m.views[0].Capturing() {
+	if m.views[liveTab].Capturing() {
 		t.Fatalf("prompt should close after sending")
 	}
 }
@@ -200,7 +212,7 @@ func TestReplyEmptyTextRefused(t *testing.T) {
 		m = send(m, keyType(tea.KeyEnter))
 		wantCalls(t, fake)
 		wantStatus(t, m, "reply: text required")
-		if !m.views[0].Capturing() {
+		if !m.views[liveTab].Capturing() {
 			t.Fatalf("prompt must stay open after an empty reply (text %q)", text)
 		}
 	}
@@ -213,7 +225,7 @@ func TestReplyEscCancels(t *testing.T) {
 	m = typeText(m, "hello")
 	m = send(m, keyType(tea.KeyEsc))
 	wantCalls(t, fake)
-	if m.views[0].Capturing() {
+	if m.views[liveTab].Capturing() {
 		t.Fatalf("esc should close the prompt")
 	}
 }
@@ -224,7 +236,7 @@ func TestReplyDisabledWhenNotBlocked(t *testing.T) {
 	m = send(m, keyRune('m'))
 	wantCalls(t, fake)
 	wantStatus(t, m, "reply: not blocked")
-	if m.views[0].Capturing() {
+	if m.views[liveTab].Capturing() {
 		t.Fatalf("no prompt should open on a worker that is not blocked")
 	}
 }
@@ -249,7 +261,7 @@ func TestNudgeDeclined(t *testing.T) {
 	m = send(m, keyRune('n'))
 	wantCalls(t, fake)
 	wantStatus(t, m, "nudge: cancelled")
-	if m.views[0].Capturing() {
+	if m.views[liveTab].Capturing() {
 		t.Fatalf("declining should close the confirm")
 	}
 }
@@ -303,10 +315,10 @@ func TestGlobalKeysGoToPromptWhileCapturing(t *testing.T) {
 			}
 		}
 	}
-	if m.active != 0 {
+	if m.active != liveTab {
 		t.Fatalf("digit switched tab to %d while the prompt was open", m.active)
 	}
-	if got := m.views[0].(liveView).input.Value(); got != "q1r" {
+	if got := m.views[liveTab].(liveView).input.Value(); got != "q1r" {
 		t.Fatalf("prompt text = %q, want q1r", got)
 	}
 	wantCalls(t, fake)
@@ -347,7 +359,7 @@ func TestHelpBarKeysAreHandled(t *testing.T) {
 	snap := loadFullSnapshot(t)
 	fake := &data.FakeRunner{}
 	// coral sorts first, so j has somewhere to go.
-	v := newLiveView(snap, allLoaded, liveDeps{eventsPath: "testdata/events.jsonl"}, fixedNow(snap))
+	v := testLiveView(snap, allLoaded, liveDeps{eventsPath: "testdata/events.jsonl"}, fixedNow(snap))
 	v.acts = actionDeps{runner: fake, crew: []string{"crew"}, inTmux: true}
 	for _, b := range v.Keys() {
 		k := b.Keys()[0]
@@ -365,7 +377,7 @@ func TestHelpBarKeysAreHandled(t *testing.T) {
 
 func TestKeysPerMode(t *testing.T) {
 	snap := loadFullSnapshot(t)
-	v := newLiveView(snap, allLoaded, liveDeps{}, fixedNow(snap))
+	v := testLiveView(snap, allLoaded, liveDeps{}, fixedNow(snap))
 	v.acts = actionDeps{runner: &data.FakeRunner{}, crew: []string{"crew"}, inTmux: true}
 	helps := func(v liveView) string {
 		var parts []string
@@ -392,7 +404,7 @@ func TestSelectedPaneIsRulePlusFourLines(t *testing.T) {
 	snap := loadFullSnapshot(t)
 	long := strings.Repeat("alpha beta gamma ", 12)
 	snap.Roster.Crews[0].Workers[1]["detail"] = long
-	v := newLiveView(snap, allLoaded, liveDeps{}, fixedNow(snap))
+	v := testLiveView(snap, allLoaded, liveDeps{}, fixedNow(snap))
 	pane := v.selectedPane(40)
 	if len(pane) != 5 {
 		t.Fatalf("pane has %d lines, want 5", len(pane))
@@ -475,7 +487,7 @@ func TestReplyCtrlCCancels(t *testing.T) {
 		}
 	}
 	wantCalls(t, fake)
-	if m.views[0].Capturing() {
+	if m.views[liveTab].Capturing() {
 		t.Fatalf("ctrl+c should close the prompt")
 	}
 }
@@ -553,7 +565,7 @@ func TestReplyLongPromptKeepsTailVisibleOnNarrowWidth(t *testing.T) {
 	}
 	m := actionModel(t, snap, &data.FakeRunner{}, true)
 	for range 20 {
-		if w, _ := m.views[0].Selection().(data.Worker); w.Branch == branch {
+		if w, _ := m.views[liveTab].Selection().(data.Worker); w.Branch == branch {
 			break
 		}
 		m = send(m, keyRune('j'))
@@ -589,7 +601,7 @@ func TestFooterKeepsWholeLoadStatusWhenKeysOverflow(t *testing.T) {
 	snap := loadFullSnapshot(t)
 	m := sized(loadingModel(Deps{Now: snap.Now}), 160, 40)
 	foot := footerOf(m)
-	if want := "loading settings, budget, retro, ratings, roster…"; !strings.Contains(foot, want) {
+	if want := "loading settings, budget, retro, ratings, roster, bus…"; !strings.Contains(foot, want) {
 		t.Fatalf("footer cut the load status, want %q in %q", want, foot)
 	}
 	assertWidth(t, foot, 160, 1)
@@ -601,13 +613,14 @@ func TestWorkerByBranch(t *testing.T) {
 		return map[string]any{"branch": branch, "name": "n-" + branch, "state": state, "pr_url": "https://github.com/o/r/pull/1", "host": "h", "session": "s"}
 	}
 	want := func(crew, branch, state string) data.Worker {
-		return data.Worker{Crew: crew, Branch: branch, Session: "s", Name: "n-" + branch, State: state, PRURL: "https://github.com/o/r/pull/1", Host: "h"}
+		return data.Worker{Crew: crew, Branch: branch, Session: "s", Name: "n-" + branch, State: state, PRURL: "https://github.com/o/r/pull/1", Host: "h", Origin: "remote_worker"}
 	}
 	snap := data.Snapshot{Roster: data.RosterSection{Crews: []data.RosterCrew{
 		{ID: "c1", Workers: []map[string]any{row("feat/a", "working"), row("feat/gone", "reaped")}},
 		{ID: "c2", Workers: []map[string]any{row("feat/b", "idle")}},
 		{ID: "bad", Workers: []map[string]any{row("feat/x", "idle")}, WorkersError: &msg},
 	}}}
+	rows := snapMsg(snap, allLoaded).mapv.Workers
 
 	tests := []struct {
 		name, crew, branch string
@@ -622,7 +635,7 @@ func TestWorkerByBranch(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, ok := workerByBranch(snap, tt.crew, tt.branch)
+			got, ok := workerByBranch(rows, tt.crew, tt.branch)
 			if ok != tt.ok || got != tt.want {
 				t.Fatalf("workerByBranch(%q, %q) = %+v, %v; want %+v, %v", tt.crew, tt.branch, got, ok, tt.want, tt.ok)
 			}

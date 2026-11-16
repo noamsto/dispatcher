@@ -1,0 +1,288 @@
+package view
+
+import (
+	"cmp"
+	"fmt"
+	"regexp"
+	"slices"
+	"strings"
+
+	"github.com/noamsto/dispatcher/dash/internal/data"
+)
+
+type Severity string
+
+const (
+	SeverityCritical Severity = "critical"
+	SeverityWarning  Severity = "warning"
+	SeverityReady    Severity = "ready"
+)
+
+type Kind string
+
+const (
+	KindBlocked     Kind = "blocked"
+	KindPrompt      Kind = "prompt"
+	KindStall       Kind = "stall"
+	KindWatchdog    Kind = "watchdog"
+	KindDead        Kind = "dead"
+	KindFailed      Kind = "failed"
+	KindRoleFailed  Kind = "role_failed"
+	KindMergeReady  Kind = "merge_ready"
+	KindLaneDead    Kind = "lane_dead"
+	KindLaneStale   Kind = "lane_stale"
+	KindHoldMatured Kind = "hold_matured"
+)
+
+// AttentionItem is one thing that needs the operator. Action is nil for peer
+// workers, which belong to another host's dispatcher.
+type AttentionItem struct {
+	ID       string   `json:"id"`
+	Crew     string   `json:"crew"`
+	Branch   string   `json:"branch"`
+	Worker   string   `json:"worker"`
+	Host     string   `json:"host"`
+	Origin   Origin   `json:"origin"`
+	Severity Severity `json:"severity"`
+	Kind     Kind     `json:"kind"`
+	Message  string   `json:"message"`
+	AgeSec   int64    `json:"age_sec"`
+	Action   *Action  `json:"action"`
+}
+
+func InspectLaneArgv(crew []string, crewID string) []string {
+	return append(slices.Clone(crew), "stream", "--crew", crewID, "--status")
+}
+
+func InspectHoldArgv(crew []string, crewID string) []string {
+	return append(slices.Clone(crew), "hold", "due", "--crew", crewID)
+}
+
+func deref(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
+}
+
+func derefInt(n *int64) int64 {
+	if n == nil {
+		return 0
+	}
+	return *n
+}
+
+func (w WorkerRow) display() string {
+	return NudgeTarget(deref(w.Name), w.Branch)
+}
+
+func (w WorkerRow) action(key string) *Action {
+	for i := range w.Actions {
+		if w.Actions[i].Key == key {
+			return &w.Actions[i]
+		}
+	}
+	return nil
+}
+
+func watchdogKind(detail string) Kind {
+	switch {
+	case strings.HasPrefix(detail, "prompt:"):
+		return KindPrompt
+	case strings.HasPrefix(detail, "quiet:"), strings.HasPrefix(detail, "stalled:"), strings.HasPrefix(detail, "turn-stall:"):
+		return KindStall
+	}
+	return KindWatchdog
+}
+
+// stateItem classifies a worker from its roster row alone, so it works for
+// local, remote and peer rows. Peer rows lack source, so they fall back to the
+// plain blocked/failed kinds.
+func stateItem(w WorkerRow) (kind Kind, sev Severity, key string, ok bool) {
+	detail := deref(w.Detail)
+	watchdog := deref(w.Source) == "watchdog"
+	switch w.State {
+	case "blocked":
+		if !watchdog {
+			return KindBlocked, SeverityWarning, "r", true
+		}
+		kind = watchdogKind(detail)
+		key = "p"
+		if kind == KindStall {
+			key = "n"
+		}
+		return kind, SeverityWarning, key, true
+	case "failed":
+		if watchdog && strings.HasPrefix(detail, "dead:") {
+			return KindDead, SeverityCritical, "p", true
+		}
+		return KindFailed, SeverityCritical, "p", true
+	}
+	return "", "", "", false
+}
+
+func message(w WorkerRow, fallback string) string {
+	if d := deref(w.Detail); d != "" {
+		return d
+	}
+	return fallback
+}
+
+func attentionOf(w WorkerRow, kind Kind, sev Severity, key, msg string) AttentionItem {
+	return AttentionItem{
+		ID:       fmt.Sprintf("%s:%s:%s", kind, w.Crew, w.Branch),
+		Crew:     w.Crew,
+		Branch:   w.Branch,
+		Worker:   w.display(),
+		Host:     w.Host,
+		Origin:   w.Origin,
+		Severity: sev,
+		Kind:     kind,
+		Message:  msg,
+		AgeSec:   derefInt(w.AgeS),
+		Action:   w.action(key),
+	}
+}
+
+func roleFailed(role string, r *data.RoleDigest) bool {
+	switch r.State {
+	case "blocked":
+		return strings.Contains(r.Detail, "role "+role+" engine exited")
+	case "failed":
+		return r.Detail != "no assignment"
+	}
+	return false
+}
+
+// ledgerPresent reads the digest ledger; a remote worker has no local bus
+// events, so its (clipped) roster detail stands in.
+func ledgerPresent(w WorkerRow, d *data.WorkerDigest) bool {
+	if d != nil && d.Ledger != "" {
+		return true
+	}
+	if w.Origin == OriginRemote {
+		_, _, ok := ledgerCount(deref(w.Detail))
+		return ok
+	}
+	return false
+}
+
+func mergeReady(w WorkerRow, in Inputs) bool {
+	if w.State != "pr_open" || w.PR == nil || w.Origin == OriginPeer {
+		return false
+	}
+	pr := in.Bus.PRs[*w.PR]
+	if pr == nil || pr.Checks != "SUCCESS" || pr.Mergeable != "MERGEABLE" || pr.State != "OPEN" {
+		return false
+	}
+	return ledgerPresent(w, in.Bus.Workers[data.WorkerKey{Crew: w.Crew, Branch: w.Branch}])
+}
+
+var severityRank = map[Severity]int{SeverityCritical: 0, SeverityWarning: 1, SeverityReady: 2}
+
+func buildAttention(in Inputs, rows []WorkerRow) []AttentionItem {
+	now := in.nowSec()
+	items := []AttentionItem{}
+	byKey := map[data.WorkerKey]WorkerRow{}
+	for _, w := range rows {
+		if w.Origin == OriginLocal {
+			byKey[data.WorkerKey{Crew: w.Crew, Branch: w.Branch}] = w
+		}
+		if kind, sev, key, ok := stateItem(w); ok {
+			items = append(items, attentionOf(w, kind, sev, key, message(w, w.State)))
+		}
+		if mergeReady(w, in) {
+			items = append(items, attentionOf(w, KindMergeReady, SeverityReady, "m", fmt.Sprintf("PR #%d checks green, mergeable", *w.PR)))
+		}
+	}
+
+	failedRoles := map[data.WorkerKey][]string{}
+	for k, r := range in.Bus.Roles {
+		wk := data.WorkerKey{Crew: k.Crew, Branch: k.Branch}
+		if _, live := byKey[wk]; live && roleFailed(k.Role, r) {
+			failedRoles[wk] = append(failedRoles[wk], k.Role)
+		}
+	}
+	for wk, roles := range failedRoles {
+		slices.Sort(roles)
+		w := byKey[wk]
+		var parts []string
+		age := derefInt(w.AgeS)
+		for _, role := range roles {
+			r := in.Bus.Roles[data.RoleKey{Crew: wk.Crew, Branch: wk.Branch, Role: role}]
+			parts = append(parts, role+": "+r.Detail)
+			age = max(age, now-r.TS/1000)
+		}
+		it := attentionOf(w, KindRoleFailed, SeverityCritical, "p", strings.Join(parts, "; "))
+		it.AgeSec = age
+		items = append(items, it)
+	}
+
+	for _, c := range in.Snap.Roster.Crews {
+		if c.Lane != nil && (c.Lane.State == "dead" || c.Lane.State == "stale") {
+			kind, sev := KindLaneDead, SeverityCritical
+			if c.Lane.State == "stale" {
+				kind, sev = KindLaneStale, SeverityWarning
+			}
+			act := newAction("", "inspect", "inspect", false, InspectLaneArgv(in.Crew, c.ID))
+			items = append(items, AttentionItem{
+				ID: fmt.Sprintf("%s:%s:", kind, c.ID), Crew: c.ID, Origin: OriginLocal,
+				Severity: sev, Kind: kind, Message: "crew stream lane is " + c.Lane.State, Action: &act,
+			})
+		}
+		for _, h := range c.Holds {
+			hr := HoldRowOf(h, now)
+			if !hr.Matured {
+				continue
+			}
+			act := newAction("", "inspect", "inspect", false, InspectHoldArgv(in.Crew, c.ID))
+			msg := "hold " + hr.ID + " matured"
+			if t := deref(hr.Title); t != "" {
+				msg += ": " + t
+			}
+			items = append(items, AttentionItem{
+				ID: fmt.Sprintf("%s:%s:%s", KindHoldMatured, c.ID, hr.ID), Crew: c.ID, Origin: OriginLocal,
+				Severity: SeverityWarning, Kind: KindHoldMatured, Message: msg, AgeSec: now - derefInt(hr.ResetAt), Action: &act,
+			})
+		}
+	}
+
+	slices.SortFunc(items, func(a, b AttentionItem) int {
+		return cmp.Or(
+			cmp.Compare(severityRank[a.Severity], severityRank[b.Severity]),
+			cmp.Compare(b.AgeSec, a.AgeSec),
+			cmp.Compare(a.ID, b.ID),
+		)
+	})
+	return items
+}
+
+var (
+	ledgerItemRe = regexp.MustCompile(`^(\S+) (\w+)\(`)
+	ledgerIDRe   = regexp.MustCompile(`^[A-Za-z]+(\d+)-(\d+)$`)
+)
+
+// ledgerCount counts acceptance items in a pr_open detail; a run id such as
+// AC2-4 stands for 4-2+1 items, and pass and waived items are done.
+func ledgerCount(detail string) (done, total int, ok bool) {
+	for item := range strings.SplitSeq(detail, "; ") {
+		m := ledgerItemRe.FindStringSubmatch(strings.TrimSpace(item))
+		if m == nil {
+			continue
+		}
+		n := 1
+		if r := ledgerIDRe.FindStringSubmatch(m[1]); r != nil {
+			var lo, hi int
+			_, _ = fmt.Sscan(r[1], &lo)
+			_, _ = fmt.Sscan(r[2], &hi)
+			if hi >= lo {
+				n = hi - lo + 1
+			}
+		}
+		total += n
+		if m[2] == "pass" || m[2] == "waived" {
+			done += n
+		}
+	}
+	return done, total, total > 0
+}

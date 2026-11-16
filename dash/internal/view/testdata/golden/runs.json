@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "view": "runs",
+  "loaded": true,
+  "retro_loaded": true,
+  "ratings_loaded": true,
+  "retro": {
+    "tags": [],
+    "unknown": [],
+    "rows": []
+  },
+  "retro_error": null,
+  "ratings": [
+    {
+      "tier": "standard",
+      "engine": "claude",
+      "model": "sonnet",
+      "n": {
+        "value": 2,
+        "k": 2,
+        "n": 2
+      },
+      "pr_pct": {
+        "value": 100,
+        "k": 2,
+        "n": 2
+      },
+      "merge_pct": {
+        "value": 100,
+        "k": 2,
+        "n": 2
+      },
+      "burn_median": {
+        "value": null,
+        "k": 0,
+        "n": 2
+      }
+    }
+  ],
+  "ratings_error": null
+}

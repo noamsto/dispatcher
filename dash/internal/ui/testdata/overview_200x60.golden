@@ -1,0 +1,60 @@
+╭ ▸ ATTENTION ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── 12 need action ─╮
+│▌1 ✗ feat/h exit 1 after test failure                                                                                                                                                   20m → peek    │
+│ 2 ✗ feat/g dead: quiet: no output 20m                                                                                                                                                  15m → peek    │
+│ 3 ✗ otter  reviewer: role reviewer engine exited (pane %9)                                                                                                                              6m → peek    │
+│ 4 ✗ c2     crew stream lane is dead                                                                                                                                                    now → inspect │
+│ 5 ! feat/r need the staging db password                                                                                                                                                 7m → reply   │
+│ 6 ! feat/c which schema should the migration target?                                                                                                                                    5m → reply   │
+│ 7 ! feat/e quiet: no output 4m                                                                                                                                                          4m → nudge   │
+│ 8 ! feat/d prompt: permission dialog                                                                                                                                                    3m → peek    │
+│ 9 ! feat/f runaway: 900 tool calls in 10m                                                                                                                                               2m → peek    │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭ CHECKLISTS ─────────────────────────────────────────────────── 0 of 13 done ─╮╭ AGENTS ────────────────────────────────────── 16 agents ─╮╭ MONITORS ─────────────────────────────────── 11 watched ─╮
+│ ● otter standard                                                         AC —││ ● otter sonnet standard                                  ││ WATCHDOG ────────────────────────────────────────────────│
+│   ●─●─◉─○─○─○ execute                                                        ││   roles ● pla ✗ rev                                      ││ otter      ▁▁▁▁▁▁█▁█▁▁█▁▁▁▁▁▁▁▁▁█▁▁▁▁▁▁█▁ ok 45s         │
+│   Task feat/a                                                                ││ ● heron sonnet standard                                  ││ heron      ▁▁▁▁▁▁▁█▁█▁▁█▁▁▁█▁█▁▁▁▁▁▁▁▁▁▁▁ ok 10m         │
+│ ● heron standard                                                       AC 5/5││   roles —                                                ││ feat/c     ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁ ok 5m          │
+│   ●─●─●─●─●─● pr_open                                                        ││ ● feat/c sonnet standard                                 ││ feat/d     ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁ prompt 3m      │
+│   Task feat/b                                                                ││   roles ✗ spe                                            ││ feat/e     ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁ stall 4m       │
+│ ● feat/c standard                                                        AC —││ ● feat/d sonnet standard                                 ││ feat/f     ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁ runaway 2m     │
+│   ○─○─○─○─○─○ blocked                                                        ││   roles —                                                ││ feat/r@ha… ······························ ok 7m          │
+│   Task feat/c                                                                ││ ● feat/e sonnet standard                                 ││ feat/j     ▁▁▁▁▁▁▁▁▁▁▁▁▁▁█▁▁▁▁▁▁▁▁▁▁█▁▁▁▁ ok 30s         │
+│ ● feat/d standard                                                        AC —││   roles —                                                ││ feat/p@mbp ······························ ok             │
+│   ○─○─○─○─○─○ blocked                                                        ││ ● feat/f sonnet standard                                 ││ feat/q@nuc ······························ ?              │
+│   Task feat/d                                                                ││   roles —                                                ││ @halo      ······························ ?              │
+│ ● feat/e standard                                                        AC —││ ✗ feat/g sonnet standard                                 ││ PR CHECKS ───────────────────────────────────────────────│
+│   ○─○─○─○─○─○ blocked                                                        ││   roles —                                                ││ #12 ● checks ● merge 10m                                 │
+│   Task feat/e                                                                ││▌✗ feat/h sonnet standard                                 ││ BUDGET ──────────────────────────────────────────────────│
+│ ● feat/f standard                                                        AC —││▌  roles —                                                ││ claude 5h   ██░░░░░░░░░░░░░░░░░░  10%                    │
+│   ○─○─○─○─○─○ blocked                                                        ││ ● feat/r@halo gpt-5 deep                                 ││ claude 7d   ████████████░░░░░░░░  62% ↑                  │
+│   Task feat/f                                                                ││   roles ?                                                ││                                                          │
+│ ✗ feat/g standard                                                        AC —││ ● feat/j sonnet standard                                 ││                                                          │
+│   ○─○─○─○─○─○ failed                                                         ││   roles —                                                ││                                                          │
+│   Task feat/g                                                                ││ ● feat/p@mbp ? ?                                         ││                                                          │
+│▌✗ feat/h standard                                                        AC —││   roles ?                                                ││                                                          │
+│▌  ○─○─○─○─○─○ failed                                                         ││ ○ feat/q@nuc ? ?                                         ││                                                          │
+│▌  Task feat/h                                                                ││   roles ?                                                ││                                                          │
+│ ● feat/r@halo deep                                                       AC —││ ○ @halo ? ?                                              ││                                                          │
+│   ?                                                                          ││   roles ?                                                ││                                                          │
+│   Task feat/r                                                                ││                                                          ││                                                          │
+│ ● feat/j standard                                                        AC —││                                                          ││                                                          │
+│   ●─-─◉─○─○─○ execute                                                        ││                                                          ││                                                          │
+│   Task feat/j                                                                ││                                                          ││                                                          │
+│ ● feat/p@mbp ?                                                           AC —││                                                          ││                                                          │
+│   ?                                                                          ││                                                          ││                                                          │
+│   —                                                                          ││                                                          ││                                                          │
+│ ○ feat/q@nuc ?                                                           AC —││                                                          ││                                                          │
+│   ?                                                                          ││                                                          ││                                                          │
+│   —                                                                          ││                                                          ││                                                          │
+│ ○ @halo ?                                                                AC —││                                                          ││                                                          │
+│   ?                                                                          ││                                                          ││                                                          │
+│   —                                                                          ││                                                          ││                                                          │
+╰──────────────────────────────────────────────────────────────────────────────╯╰──────────────────────────────────────────────────────────╯╰──────────────────────────────────────────────────────────╯
+╭ RECENT EVENTS ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── 19 events ─╮
+│   1m otter                    working execute                                                                                                                                                        │
+│   4m feat/j                   working execute                                                                                                                                                        │
+│   5m feat/d                   blocked prompt: permission dialog                                                                                                                                      │
+│   6m otter:reviewer           blocked role reviewer engine exited (pane %9)                                                                                                                          │
+│   8m otter                    progress note                                                                                                                                                          │
+│  10m pr-watch:12              {"ts": 1, "repo": "o/r", "pr": 12, "url": "https://github.com/o/r/pull/12", "changed": ["checks"], "state": {"state": "OPEN", "checks": "SUCCESS", "mergeable": "MERGE…│
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
