@@ -30,6 +30,7 @@ const (
 	KindRoleFailed  Kind = "role_failed"
 	KindMergeReady  Kind = "merge_ready"
 	KindLaneDead    Kind = "lane_dead"
+	KindLaneStale   Kind = "lane_stale"
 	KindHoldMatured Kind = "hold_matured"
 )
 
@@ -218,11 +219,15 @@ func buildAttention(in Inputs, rows []WorkerRow) []AttentionItem {
 	}
 
 	for _, c := range in.Snap.Roster.Crews {
-		if c.Lane != nil && c.Lane.State == "dead" {
+		if c.Lane != nil && (c.Lane.State == "dead" || c.Lane.State == "stale") {
+			kind, sev := KindLaneDead, SeverityCritical
+			if c.Lane.State == "stale" {
+				kind, sev = KindLaneStale, SeverityWarning
+			}
 			act := newAction("", "inspect", "inspect", false, InspectLaneArgv(in.Crew, c.ID))
 			items = append(items, AttentionItem{
-				ID: fmt.Sprintf("%s:%s:", KindLaneDead, c.ID), Crew: c.ID, Origin: OriginLocal,
-				Severity: SeverityCritical, Kind: KindLaneDead, Message: "crew stream lane is dead", Action: &act,
+				ID: fmt.Sprintf("%s:%s:", kind, c.ID), Crew: c.ID, Origin: OriginLocal,
+				Severity: sev, Kind: kind, Message: "crew stream lane is " + c.Lane.State, Action: &act,
 			})
 		}
 		for _, h := range c.Holds {

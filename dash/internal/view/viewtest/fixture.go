@@ -32,6 +32,8 @@ func Inputs() view.Inputs {
 	}
 	snap.Roster.Peers = []map[string]any{
 		{"crew_id": "c1", "branch": "feat/p", "host": "mbp", "peer": true, "state": "blocked"},
+		{"crew_id": "c1", "branch": "feat/q", "host": "nuc", "peer": true, "state": nil, "peer_error": "sync stale: last ok 900s ago"},
+		{"branch": nil, "name": nil, "state": nil, "live": nil, "host": "halo", "peer": true, "peer_error": "no snapshot yet"},
 	}
 	lanes := map[string]string{"c1": "alive", "c2": "dead"}
 	for i := range snap.Roster.Crews {

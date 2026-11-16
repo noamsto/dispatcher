@@ -548,3 +548,21 @@ func TestSnapshotJSONOmitsPeersAndLane(t *testing.T) {
 		}
 	}
 }
+
+func TestCollectRosterLeavesAgeAbsentWithoutTS(t *testing.T) {
+	r := twoCrewRunner(t)
+	placeholder := `{"branch":null,"name":null,"state":null,"live":null,"host":"mbp","peer":true,"peer_error":"no snapshot"}`
+	r.Responses["crew roster c1 --peers"] = FakeResponse{Stdout: []byte(`[{"name":"w","branch":"feat/a","ts":1000},` + placeholder + `]`)}
+
+	sec := CollectRoster(context.Background(), r, baseConfig())
+
+	if _, ok := sec.Crews[0].Workers[0]["age_s"]; !ok {
+		t.Errorf("worker with ts lost age_s: %+v", sec.Crews[0].Workers[0])
+	}
+	if len(sec.Peers) != 1 {
+		t.Fatalf("Peers = %+v", sec.Peers)
+	}
+	if age, ok := sec.Peers[0]["age_s"]; ok {
+		t.Errorf("placeholder has age_s = %v, want absent", age)
+	}
+}

@@ -191,3 +191,23 @@ func TestScannerIncremental(t *testing.T) {
 		t.Errorf("after truncate: workers=%v recent=%d", d4.Workers, len(d4.Recent))
 	}
 }
+
+func TestNewRunClearsPriorRoles(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "events.jsonl")
+	lines := []string{
+		`{"ts":1794800000000,"crew_id":"c1","from":"worker:feat/x#s1","to":"dispatcher:c1","kind":"status","body":{"state":"working","detail":"spec"}}`,
+		`{"ts":1794800001000,"crew_id":"c1","from":"role:feat/x:reviewer","to":"dispatcher:c1","kind":"status","body":{"state":"failed","detail":"boom"}}`,
+		`{"ts":1794800002000,"crew_id":"c1","from":"worker:feat/x#s1","to":"dispatcher:c1","kind":"status","body":{"state":"failed","detail":"x"}}`,
+		`{"ts":1794800003000,"crew_id":"c1","from":"worker:feat/x#s2","to":"dispatcher:c1","kind":"status","body":{"state":"working","detail":"spec"}}`,
+	}
+	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	d, err := NewBusScanner(path).Scan(digestBase + 10000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r := d.Roles[RoleKey{"c1", "feat/x", "reviewer"}]; r != nil {
+		t.Errorf("old run's role survived a new run: %+v", r)
+	}
+}

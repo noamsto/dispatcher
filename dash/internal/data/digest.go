@@ -221,6 +221,11 @@ func (s *BusScanner) applyWorker(key WorkerKey, ts int64, kind, state, detail st
 	if state == "working" && slices.Contains(phaseNames, detail) {
 		if (detail == "spec" || detail == "plan") && slices.Contains(terminalState, s.lastState[key]) {
 			w.Stages, w.Ledger, w.LedgerTS = nil, "", 0
+			for k := range s.d.Roles {
+				if k.Crew == key.Crew && k.Branch == key.Branch {
+					delete(s.d.Roles, k)
+				}
+			}
 		}
 		if n := len(w.Stages); n == 0 || w.Stages[n-1].Name != detail {
 			w.Stages = append(w.Stages, StageMark{Name: detail, TS: ts})

@@ -299,8 +299,9 @@ func collectCrew(ctx context.Context, r Runner, cfg Config, id string) (RosterCr
 	workers := []map[string]any{}
 	var peers []map[string]any
 	for _, w := range rows {
-		ts, _ := w["ts"].(float64)
-		w["age_s"] = cfg.Now - int64(math.Floor(ts/1000))
+		if ts, ok := w["ts"].(float64); ok {
+			w["age_s"] = cfg.Now - int64(math.Floor(ts/1000))
+		}
 		if isPeer, _ := w["peer"].(bool); isPeer {
 			peers = append(peers, w)
 			continue

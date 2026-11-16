@@ -3,6 +3,7 @@ package view
 import (
 	"encoding/json"
 	"os"
+	"os/exec"
 	"slices"
 	"testing"
 
@@ -186,5 +187,58 @@ func TestBuildDispatch(t *testing.T) {
 	}
 	if _, err := Build("nope", in); err == nil {
 		t.Error("unknown view should error")
+	}
+}
+
+func TestShellQuote(t *testing.T) {
+	cases := map[string]string{
+		"plain/word-1":   "plain/word-1",
+		"it's":           `'it'\''s'`,
+		`a\b`:            `'a'\\'b'`,
+		`x\'; echo I; #`: `'x'\\''\''; echo I; #'`,
+		"a b":            "'a b'",
+	}
+	for in, want := range cases {
+		if got := shellQuote(in); got != want {
+			t.Errorf("shellQuote(%q) = %s, want %s", in, got, want)
+		}
+	}
+}
+
+func TestShellQuoteRoundTripsThroughShells(t *testing.T) {
+	hostile := []string{
+		`x\'; echo INJECTED; #`, `a\\b`, `\`, `it's`, `$HOME $(id) ` + "`id`", `a;b&&c|d`, "a b  c", "line1\nline2", `"dq"`, `\n`, `trailing\`,
+	}
+	shells := []struct{ name, flag string }{{"sh", "-c"}, {"fish", "-c"}}
+	for _, sh := range shells {
+		path, err := exec.LookPath(sh.name)
+		if err != nil {
+			t.Run(sh.name, func(t *testing.T) { t.Skip(sh.name + " not installed") })
+			continue
+		}
+		t.Run(sh.name, func(t *testing.T) {
+			for _, s := range hostile {
+				out, err := exec.Command(path, sh.flag, `printf '%s\n' `+shellQuote(s)).Output()
+				if err != nil {
+					t.Errorf("%q: %v", s, err)
+					continue
+				}
+				if got := string(out); got != s+"\n" {
+					t.Errorf("%s read %q back as %q", sh.name, s, got)
+				}
+			}
+		})
+	}
+}
+
+func TestMergeActionCarriesPR(t *testing.T) {
+	pr := 12
+	for _, a := range WorkerActions(OriginLocal, []string{"crew"}, "c1", "feat/a", "", &pr) {
+		if (a.Key == "m") != (a.PR != nil) {
+			t.Errorf("action %s: PR = %v", a.Key, a.PR)
+		}
+		if a.Key == "m" && *a.PR != 12 {
+			t.Errorf("merge PR = %d", *a.PR)
+		}
 	}
 }

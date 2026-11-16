@@ -88,6 +88,7 @@ type Action struct {
 	Command    string   `json:"command"`
 	Argv       []string `json:"argv"`
 	NeedsInput bool     `json:"needs_input"`
+	PR         *int     `json:"pr"`
 }
 
 func crewArgv(crew []string, sub, crewID string, target ...string) []string {
@@ -121,11 +122,16 @@ func MergeArgv(crew []string, crewID string, pr int) []string {
 
 var shellSafe = regexp.MustCompile(`^[A-Za-z0-9_@%+=:,./-]+$`)
 
+// shellEscaper closes the quote around each ' and \: fish treats \' and \\ as
+// escapes inside single quotes, POSIX sh does not, and this form reads the
+// same in both.
+var shellEscaper = strings.NewReplacer(`\`, `'\\'`, `'`, `'\''`)
+
 func shellQuote(s string) string {
 	if shellSafe.MatchString(s) {
 		return s
 	}
-	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+	return "'" + shellEscaper.Replace(s) + "'"
 }
 
 func shellJoin(argv []string) string {
@@ -152,7 +158,9 @@ func WorkerActions(origin Origin, crew []string, crewID, branch, name string, pr
 		newAction("r", "reply", "reply", true, ReplyArgv(crew, crewID, branch, "<text>")),
 	}
 	if pr != nil {
-		acts = append(acts, newAction("m", "merge", "squash-merge", false, MergeArgv(crew, crewID, *pr)))
+		merge := newAction("m", "merge", "squash-merge", false, MergeArgv(crew, crewID, *pr))
+		merge.PR = pr
+		acts = append(acts, merge)
 	}
 	return acts
 }

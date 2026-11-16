@@ -6,6 +6,7 @@ import (
 	"flag"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/noamsto/dispatcher/dash/internal/data"
@@ -216,5 +217,49 @@ func TestGoldenViews(t *testing.T) {
 				t.Errorf("%s differs from golden; run go test ./internal/view -update and review the diff", name)
 			}
 		})
+	}
+}
+
+func TestPeerErrorRowsAreUnknownAndListed(t *testing.T) {
+	v := view.BuildOverview(viewtest.Inputs())
+	labels := map[string]string{}
+	for _, w := range v.Monitors.Watchdogs {
+		if w.Origin == view.OriginPeer {
+			labels[w.Host+"/"+w.Branch] = w.Label
+		}
+	}
+	if labels["nuc/feat/q"] != "?" || labels["halo/"] != "?" {
+		t.Errorf("peer error labels = %v, want ?", labels)
+	}
+	for _, want := range []string{"peer nuc: sync stale: last ok 900s ago", "peer halo: no snapshot yet"} {
+		if !slices.Contains(v.Errors, want) {
+			t.Errorf("errors = %v, missing %q", v.Errors, want)
+		}
+	}
+}
+
+func TestPeerErrorsDedupe(t *testing.T) {
+	in := viewtest.Inputs()
+	in.Snap.Roster.Peers = append(in.Snap.Roster.Peers, in.Snap.Roster.Peers[1])
+	n := 0
+	for _, e := range view.BuildOverview(in).Errors {
+		if e == "peer nuc: sync stale: last ok 900s ago" {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Errorf("error listed %d times", n)
+	}
+}
+
+func TestPeerRowNeverShadowsLocalRow(t *testing.T) {
+	in := viewtest.Inputs()
+	in.Snap.Roster.Peers = []map[string]any{
+		{"crew_id": "c1", "branch": "feat/b", "host": "mbp", "peer": true, "state": "blocked"},
+	}
+	for _, w := range view.BuildOverview(in).Workers {
+		if w.Crew == "c1" && w.Branch == "feat/b" && w.Origin == view.OriginPeer {
+			t.Errorf("peer row shadows %+v", w)
+		}
 	}
 }

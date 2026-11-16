@@ -3,15 +3,16 @@
   "view": "overview",
   "generated_at": 1794800600,
   "summary": {
-    "workers": 11,
+    "workers": 13,
     "by_state": {
       "blocked": 6,
       "failed": 2,
       "pr_open": 1,
+      "unknown": 2,
       "working": 2
     },
     "attention": 12,
-    "agents": 14,
+    "agents": 16,
     "prs_watched": 1
   },
   "attention": [
@@ -39,7 +40,8 @@
           "--",
           "feat/h"
         ],
-        "needs_input": false
+        "needs_input": false,
+        "pr": null
       }
     },
     {
@@ -66,7 +68,8 @@
           "--",
           "feat/g"
         ],
-        "needs_input": false
+        "needs_input": false,
+        "pr": null
       }
     },
     {
@@ -93,7 +96,8 @@
           "--",
           "feat/a"
         ],
-        "needs_input": false
+        "needs_input": false,
+        "pr": null
       }
     },
     {
@@ -119,7 +123,8 @@
           "c2",
           "--status"
         ],
-        "needs_input": false
+        "needs_input": false,
+        "pr": null
       }
     },
     {
@@ -147,7 +152,8 @@
           "worker:feat/r",
           "<text>"
         ],
-        "needs_input": true
+        "needs_input": true,
+        "pr": null
       }
     },
     {
@@ -175,7 +181,8 @@
           "worker:feat/c",
           "<text>"
         ],
-        "needs_input": true
+        "needs_input": true,
+        "pr": null
       }
     },
     {
@@ -202,7 +209,8 @@
           "--",
           "feat/e"
         ],
-        "needs_input": false
+        "needs_input": false,
+        "pr": null
       }
     },
     {
@@ -229,7 +237,8 @@
           "--",
           "feat/d"
         ],
-        "needs_input": false
+        "needs_input": false,
+        "pr": null
       }
     },
     {
@@ -256,7 +265,8 @@
           "--",
           "feat/f"
         ],
-        "needs_input": false
+        "needs_input": false,
+        "pr": null
       }
     },
     {
@@ -282,7 +292,8 @@
           "--crew",
           "c1"
         ],
-        "needs_input": false
+        "needs_input": false,
+        "pr": null
       }
     },
     {
@@ -321,7 +332,8 @@
           "--crew",
           "c1"
         ],
-        "needs_input": false
+        "needs_input": false,
+        "pr": 12
       }
     }
   ],
@@ -391,7 +403,8 @@
             "--",
             "feat/a"
           ],
-          "needs_input": false
+          "needs_input": false,
+          "pr": null
         },
         {
           "key": "n",
@@ -406,7 +419,8 @@
             "--",
             "otter"
           ],
-          "needs_input": false
+          "needs_input": false,
+          "pr": null
         },
         {
           "key": "r",
@@ -422,7 +436,8 @@
             "worker:feat/a",
             "<text>"
           ],
-          "needs_input": true
+          "needs_input": true,
+          "pr": null
         }
       ]
     },
@@ -494,7 +509,8 @@
             "--",
             "feat/b"
           ],
-          "needs_input": false
+          "needs_input": false,
+          "pr": null
         },
         {
           "key": "n",
@@ -509,7 +525,8 @@
             "--",
             "heron"
           ],
-          "needs_input": false
+          "needs_input": false,
+          "pr": null
         },
         {
           "key": "r",
@@ -525,7 +542,8 @@
             "worker:feat/b",
             "<text>"
           ],
-          "needs_input": true
+          "needs_input": true,
+          "pr": null
         },
         {
           "key": "m",
@@ -539,7 +557,8 @@
             "--crew",
             "c1"
           ],
-          "needs_input": false
+          "needs_input": false,
+          "pr": 12
         }
       ]
     },
@@ -608,7 +627,8 @@
             "--",
             "feat/c"
           ],
-          "needs_input": false
+          "needs_input": false,
+          "pr": null
         },
         {
           "key": "n",
@@ -623,7 +643,8 @@
             "--",
             "feat/c"
           ],
-          "needs_input": false
+          "needs_input": false,
+          "pr": null
         },
         {
           "key": "r",
@@ -639,7 +660,8 @@
             "worker:feat/c",
             "<text>"
           ],
-          "needs_input": true
+          "needs_input": true,
+          "pr": null
         }
       ]
     },
@@ -708,7 +730,8 @@
             "--",
             "feat/d"
           ],
-          "needs_input": false
+          "needs_input": false,
+          "pr": null
         },
         {
           "key": "n",
@@ -723,7 +746,8 @@
             "--",
             "feat/d"
           ],
-          "needs_input": false
+          "needs_input": false,
+          "pr": null
         },
         {
           "key": "r",
@@ -739,7 +763,8 @@
             "worker:feat/d",
             "<text>"
           ],
-          "needs_input": true
+          "needs_input": true,
+          "pr": null
         }
       ]
     },
@@ -808,7 +833,8 @@
             "--",
             "feat/e"
           ],
-          "needs_input": false
+          "needs_input": false,
+          "pr": null
         },
         {
           "key": "n",
@@ -823,7 +849,8 @@
             "--",
             "feat/e"
           ],
-          "needs_input": false
+          "needs_input": false,
+          "pr": null
         },
         {
           "key": "r",
@@ -839,7 +866,8 @@
             "worker:feat/e",
             "<text>"
           ],
-          "needs_input": true
+          "needs_input": true,
+          "pr": null
         }
       ]
     },
@@ -908,7 +936,8 @@
             "--",
             "feat/f"
           ],
-          "needs_input": false
+          "needs_input": false,
+          "pr": null
         },
         {
           "key": "n",
@@ -923,7 +952,8 @@
             "--",
             "feat/f"
           ],
-          "needs_input": false
+          "needs_input": false,
+          "pr": null
         },
         {
           "key": "r",
@@ -939,7 +969,8 @@
             "worker:feat/f",
             "<text>"
           ],
-          "needs_input": true
+          "needs_input": true,
+          "pr": null
         }
       ]
     },
@@ -1008,7 +1039,8 @@
             "--",
             "feat/g"
           ],
-          "needs_input": false
+          "needs_input": false,
+          "pr": null
         },
         {
           "key": "n",
@@ -1023,7 +1055,8 @@
             "--",
             "feat/g"
           ],
-          "needs_input": false
+          "needs_input": false,
+          "pr": null
         },
         {
           "key": "r",
@@ -1039,7 +1072,8 @@
             "worker:feat/g",
             "<text>"
           ],
-          "needs_input": true
+          "needs_input": true,
+          "pr": null
         }
       ]
     },
@@ -1108,7 +1142,8 @@
             "--",
             "feat/h"
           ],
-          "needs_input": false
+          "needs_input": false,
+          "pr": null
         },
         {
           "key": "n",
@@ -1123,7 +1158,8 @@
             "--",
             "feat/h"
           ],
-          "needs_input": false
+          "needs_input": false,
+          "pr": null
         },
         {
           "key": "r",
@@ -1139,7 +1175,8 @@
             "worker:feat/h",
             "<text>"
           ],
-          "needs_input": true
+          "needs_input": true,
+          "pr": null
         }
       ]
     },
@@ -1174,7 +1211,8 @@
             "--",
             "feat/r"
           ],
-          "needs_input": false
+          "needs_input": false,
+          "pr": null
         },
         {
           "key": "n",
@@ -1189,7 +1227,8 @@
             "--",
             "feat/r"
           ],
-          "needs_input": false
+          "needs_input": false,
+          "pr": null
         },
         {
           "key": "r",
@@ -1205,7 +1244,8 @@
             "worker:feat/r",
             "<text>"
           ],
-          "needs_input": true
+          "needs_input": true,
+          "pr": null
         }
       ]
     },
@@ -1274,7 +1314,8 @@
             "--",
             "feat/j"
           ],
-          "needs_input": false
+          "needs_input": false,
+          "pr": null
         },
         {
           "key": "n",
@@ -1289,7 +1330,8 @@
             "--",
             "feat/j"
           ],
-          "needs_input": false
+          "needs_input": false,
+          "pr": null
         },
         {
           "key": "r",
@@ -1305,7 +1347,8 @@
             "worker:feat/j",
             "<text>"
           ],
-          "needs_input": true
+          "needs_input": true,
+          "pr": null
         }
       ]
     },
@@ -1316,6 +1359,44 @@
       "host": "mbp",
       "origin": "peer",
       "state": "blocked",
+      "detail": null,
+      "tier": null,
+      "engine": null,
+      "model": null,
+      "title": null,
+      "pr_url": null,
+      "pr": null,
+      "age_sec": null,
+      "phase": null,
+      "acceptance": null,
+      "actions": []
+    },
+    {
+      "crew": "c1",
+      "branch": "feat/q",
+      "name": null,
+      "host": "nuc",
+      "origin": "peer",
+      "state": "",
+      "detail": null,
+      "tier": null,
+      "engine": null,
+      "model": null,
+      "title": null,
+      "pr_url": null,
+      "pr": null,
+      "age_sec": null,
+      "phase": null,
+      "acceptance": null,
+      "actions": []
+    },
+    {
+      "crew": "",
+      "branch": "",
+      "name": null,
+      "host": "halo",
+      "origin": "peer",
+      "state": "",
       "detail": null,
       "tier": null,
       "engine": null,
@@ -1554,6 +1635,42 @@
         "model": null,
         "tier": null,
         "state": "blocked",
+        "detail": null,
+        "age_sec": null
+      },
+      "roles": null,
+      "execute": []
+    },
+    {
+      "crew": "c1",
+      "branch": "feat/q",
+      "host": "nuc",
+      "origin": "peer",
+      "lead": {
+        "kind": "lead",
+        "role": null,
+        "engine": null,
+        "model": null,
+        "tier": null,
+        "state": "",
+        "detail": null,
+        "age_sec": null
+      },
+      "roles": null,
+      "execute": []
+    },
+    {
+      "crew": "",
+      "branch": "",
+      "host": "halo",
+      "origin": "peer",
+      "lead": {
+        "kind": "lead",
+        "role": null,
+        "engine": null,
+        "model": null,
+        "tier": null,
+        "state": "",
         "detail": null,
         "age_sec": null
       },
@@ -1860,6 +1977,24 @@
         "state": "blocked",
         "label": "ok",
         "activity": null
+      },
+      {
+        "crew": "c1",
+        "branch": "feat/q",
+        "host": "nuc",
+        "origin": "peer",
+        "state": "",
+        "label": "?",
+        "activity": null
+      },
+      {
+        "crew": "",
+        "branch": "",
+        "host": "halo",
+        "origin": "peer",
+        "state": "",
+        "label": "?",
+        "activity": null
       }
     ],
     "pr_checks": [
@@ -1990,5 +2125,8 @@
       "text": "working spec"
     }
   ],
-  "errors": []
+  "errors": [
+    "peer nuc: sync stale: last ok 900s ago",
+    "peer halo: no snapshot yet"
+  ]
 }

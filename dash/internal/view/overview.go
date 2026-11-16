@@ -156,8 +156,16 @@ func overviewRows(in Inputs) []WorkerRow {
 			keep(WorkerRowOf(in.Crew, c.ID, w))
 		}
 	}
+	seen := map[data.WorkerKey]bool{}
+	for _, w := range rows {
+		seen[data.WorkerKey{Crew: w.Crew, Branch: w.Branch}] = true
+	}
 	for _, p := range in.Snap.Roster.Peers {
-		keep(WorkerRowOf(in.Crew, str(p, "crew_id"), p))
+		w := WorkerRowOf(in.Crew, str(p, "crew_id"), p)
+		if w.Branch != "" && seen[data.WorkerKey{Crew: w.Crew, Branch: w.Branch}] {
+			continue
+		}
+		keep(w)
 	}
 	return rows
 }
@@ -283,7 +291,10 @@ func fmtDur(sec int64) string {
 
 func watchdogLabel(w WorkerRow) string {
 	word := "ok"
-	if deref(w.Source) == "watchdog" {
+	switch {
+	case w.State == "" || w.PeerError != nil || w.HostError != nil:
+		word = "?"
+	case deref(w.Source) == "watchdog":
 		detail := deref(w.Detail)
 		word, _, _ = strings.Cut(detail, ":")
 		if watchdogKind(detail) == KindStall {
@@ -345,7 +356,7 @@ func eventRows(recent []data.RecentEvent) []EventRow {
 	return rows
 }
 
-func overviewErrors(in Inputs) []string {
+func overviewErrors(in Inputs, rows []WorkerRow) []string {
 	errs := []string{}
 	if e := in.Snap.Roster.Error; e != nil {
 		errs = append(errs, "roster: "+*e)
@@ -360,6 +371,18 @@ func overviewErrors(in Inputs) []string {
 		if c.Lane != nil && c.Lane.State == "unknown" {
 			errs = append(errs, fmt.Sprintf("crew %s: lane unknown: %s", c.ID, deref(c.Lane.Error)))
 		}
+	}
+	add := func(label, host string, why *string) {
+		if why == nil {
+			return
+		}
+		if msg := fmt.Sprintf("%s %s: %s", label, host, *why); !slices.Contains(errs, msg) {
+			errs = append(errs, msg)
+		}
+	}
+	for _, w := range rows {
+		add("peer", w.Host, w.PeerError)
+		add("host", w.Host, w.HostError)
 	}
 	if in.Bus.Err != nil {
 		errs = append(errs, "bus: "+*in.Bus.Err)
@@ -380,7 +403,7 @@ func BuildOverview(in Inputs) OverviewView {
 		Agents:        make([]AgentRow, 0, len(rows)),
 		Monitors:      Monitors{Watchdogs: []WatchdogRow{}, PRChecks: []PRCheckRow{}, Budgets: budgetRows(in.Snap.Budget.Report)},
 		Events:        eventRows(in.Bus.Recent),
-		Errors:        overviewErrors(in),
+		Errors:        overviewErrors(in, rows),
 	}
 	for _, w := range rows {
 		d := in.Bus.Workers[data.WorkerKey{Crew: w.Crew, Branch: w.Branch}]
@@ -393,7 +416,11 @@ func BuildOverview(in Inputs) OverviewView {
 		agent := agentRow(w, in, now)
 		v.Agents = append(v.Agents, agent)
 		v.Summary.Agents += 1 + len(agent.Roles)
-		v.Summary.ByState[w.State]++
+		if w.State == "" {
+			v.Summary.ByState["unknown"]++
+		} else {
+			v.Summary.ByState[w.State]++
+		}
 
 		if isTerminal(w.State) {
 			continue

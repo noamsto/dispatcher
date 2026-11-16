@@ -903,11 +903,12 @@ read from an already-cached or already-run source, never probed live:
 `map`. Each view carries `schema_version` and snake_case fields, and is the
 same struct the TUI renders.
 
-Keys: `tab`/`shift-tab` move focus, `[`/`]` switch to the previous or next
-view, `j`/`k` select, `enter` opens details and `esc` closes them, `1`–`9` act
-on the attention rows shown, `p` peeks, `n` nudges, `r` replies, `m` merges
-(always confirms; on Live and Map `m` stays reply), `/` filters, `R`
-refreshes, `?` shows every binding, `q` quits. A mouse click selects or
+Overview keys: `tab`/`shift-tab` move focus, `j`/`k` select, `1`–`9` act on
+the attention rows shown, `p` peeks, `n` nudges, `r` replies, `m` merges
+(always confirms), `enter` opens details and `esc` closes them, `/` filters,
+`?` shows every binding. Other tabs: `1`–`7` or `tab` switch views; on Live,
+Board and Map `m` is reply and `t` jumps. `[`/`]` switch to the previous or
+next view and `R` refreshes everywhere; `q` quits. A mouse click selects or
 focuses. Peer rows are read-only.
 `NO_COLOR` or `CREW_DASH_COLOR=never` disables colour; `--once` also honours
 `CREW_DASH_COLOR=always`. Set `CREW_DASH_PILLS=square` for fonts without

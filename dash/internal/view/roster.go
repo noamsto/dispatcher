@@ -40,6 +40,7 @@ type WorkerRow struct {
 	Host        string   `json:"host"`
 	Origin      Origin   `json:"origin"`
 	HostError   *string  `json:"host_error"`
+	PeerError   *string  `json:"peer_error"`
 	Title       *string  `json:"title"`
 	Repo        *string  `json:"repo"`
 	Engine      *string  `json:"engine"`
@@ -125,6 +126,7 @@ func WorkerRowOf(crew []string, crewID string, w map[string]any) WorkerRow {
 		Host:        str(w, "host"),
 		Origin:      origin,
 		HostError:   optStr(w, "host_error"),
+		PeerError:   optStr(w, "peer_error"),
 		Title:       optStr(w, "title"),
 		Repo:        optStr(w, "repo"),
 		Engine:      optStr(w, "engine"),

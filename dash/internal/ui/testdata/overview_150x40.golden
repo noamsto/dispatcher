@@ -1,5 +1,5 @@
 ╭ ▸ ATTENTION ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── 12 need action ─╮
-│▌1 ✗ feat/h exit 1 after test failure                                                                                                 20m → peek    │
+│ 1 ✗ feat/h exit 1 after test failure                                                                                                 20m → peek    │
 │ 2 ✗ feat/g dead: quiet: no output 20m                                                                                                15m → peek    │
 │ 3 ✗ otter  reviewer: role reviewer engine exited (pane %9)                                                                            6m → peek    │
 │ 4 ✗ c2     crew stream lane is dead                                                                                                  now → inspect │
@@ -9,7 +9,7 @@
 │ 8 ! feat/d prompt: permission dialog                                                                                                  3m → peek    │
 │ 9 ! feat/f runaway: 900 tool calls in 10m                                                                                             2m → peek    │
 ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
-╭ CHECKLISTS ─────────────────────────────── 0 of 11 done ─╮╭ AGENTS ─────────────────────── 14 agents ─╮╭ MONITORS ───────────────────── 9 watched ─╮
+╭ CHECKLISTS ─────────────────────────────── 0 of 13 done ─╮╭ AGENTS ─────────────────────── 16 agents ─╮╭ MONITORS ──────────────────── 11 watched ─╮
 │ ● otter standard                                     AC —││ ● otter sonnet standard                   ││ WATCHDOG ─────────────────────────────────│
 │   ●─●─◉─○─○─○ execute                                    ││   roles ● pla ✗ rev                       ││ otter      ▁█▁▁▁▁▁▁▁▁▁█▁▁▁▁▁▁█▁ ok 45s    │
 │ ● heron standard                                   AC 5/5││ ● heron sonnet standard                   ││ heron      ▁▁█▁▁▁█▁█▁▁▁▁▁▁▁▁▁▁▁ ok 10m    │
@@ -20,21 +20,21 @@
 │   ○─○─○─○─○─○ blocked                                    ││   roles —                                 ││ feat/r@ha… ···················· ok 7m     │
 │ ● feat/e standard                                    AC —││ ● feat/e sonnet standard                  ││ feat/j     ▁▁▁▁█▁▁▁▁▁▁▁▁▁▁█▁▁▁▁ ok 30s    │
 │   ○─○─○─○─○─○ blocked                                    ││   roles —                                 ││ feat/p@mbp ···················· ok        │
-│ ● feat/f standard                                    AC —││ ● feat/f sonnet standard                  ││ PR CHECKS ────────────────────────────────│
-│   ○─○─○─○─○─○ blocked                                    ││   roles —                                 ││ #12 ● checks ● merge 10m                  │
-│ ✗ feat/g standard                                    AC —││ ✗ feat/g sonnet standard                  ││ BUDGET ───────────────────────────────────│
+│ ● feat/f standard                                    AC —││ ● feat/f sonnet standard                  ││ feat/q@nuc ···················· ?         │
+│   ○─○─○─○─○─○ blocked                                    ││   roles —                                 ││            ···················· ?         │
+│ ✗ feat/g standard                                    AC —││ ✗ feat/g sonnet standard                  ││ PR CHECKS ────────────────────────────────│
+│   ○─○─○─○─○─○ failed                                     ││   roles —                                 ││ #12 ● checks ● merge 10m                  │
+│ ✗ feat/h standard                                    AC —││ ✗ feat/h sonnet standard                  ││ BUDGET ───────────────────────────────────│
 │   ○─○─○─○─○─○ failed                                     ││   roles —                                 ││ claude 5h   ██░░░░░░░░░░░░░░░░░░  10%     │
-│▌✗ feat/h standard                                    AC —││▌✗ feat/h sonnet standard                  ││ claude 7d   ████████████░░░░░░░░  62% ↑   │
-│▌  ○─○─○─○─○─○ failed                                     ││▌  roles —                                 ││                                           │
-│ ● feat/r@halo deep                                   AC —││ ● feat/r@halo gpt-5 deep                  ││                                           │
+│ ● feat/r@halo deep                                   AC —││ ● feat/r@halo gpt-5 deep                  ││ claude 7d   ████████████░░░░░░░░  62% ↑   │
 │   ?                                                      ││   roles ?                                 ││                                           │
 │ ● feat/j standard                                    AC —││ ● feat/j sonnet standard                  ││                                           │
 │   ●─-─◉─○─○─○ execute                                    ││   roles —                                 ││                                           │
 │ ● feat/p@mbp ?                                       AC —││ ● feat/p@mbp ? ?                          ││                                           │
 │   ?                                                      ││   roles ?                                 ││                                           │
-│                                                          ││                                           ││                                           │
-│                                                          ││                                           ││                                           │
-│                                                          ││                                           ││                                           │
-│                                                          ││                                           ││                                           │
+│ ○ feat/q@nuc ?                                       AC —││ ○ feat/q@nuc ? ?                          ││                                           │
+│   ?                                                      ││   roles ?                                 ││                                           │
+│▌○ @halo ?                                            AC —││ ○  ? ?                                    ││                                           │
+│▌  ?                                                      ││   roles ?                                 ││                                           │
 │                                                          ││                                           ││                                           │
 ╰──────────────────────────────────────────────────────────╯╰───────────────────────────────────────────╯╰───────────────────────────────────────────╯

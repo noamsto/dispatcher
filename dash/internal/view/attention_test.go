@@ -4,6 +4,7 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/noamsto/dispatcher/dash/internal/data"
 	"github.com/noamsto/dispatcher/dash/internal/view"
 	"github.com/noamsto/dispatcher/dash/internal/view/viewtest"
 )
@@ -122,5 +123,15 @@ func TestMergeReadyNeedsLedger(t *testing.T) {
 		if a.Kind == view.KindMergeReady {
 			t.Errorf("merge_ready without a ledger: %s", a.ID)
 		}
+	}
+}
+
+func TestLaneStaleRaisesWarning(t *testing.T) {
+	in := viewtest.Inputs()
+	in.Snap.Roster.Crews[0].Lane = &data.LaneStatus{State: "stale"}
+	a := item(t, view.BuildOverview(in), "lane_stale:c1:")
+	if a.Severity != view.SeverityWarning || a.Message != "crew stream lane is stale" || a.Action == nil || a.Action.Key != "" ||
+		!slices.Equal(a.Action.Argv, []string{"crew", "stream", "--crew", "c1", "--status"}) {
+		t.Errorf("lane_stale = %+v action %+v", a, a.Action)
 	}
 }

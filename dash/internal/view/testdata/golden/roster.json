@@ -21,6 +21,7 @@
           "host": "",
           "origin": "local",
           "host_error": null,
+          "peer_error": null,
           "title": "Task feat/a",
           "repo": null,
           "engine": "claude",
@@ -47,7 +48,8 @@
                 "--",
                 "feat/a"
               ],
-              "needs_input": false
+              "needs_input": false,
+              "pr": null
             },
             {
               "key": "n",
@@ -62,7 +64,8 @@
                 "--",
                 "otter"
               ],
-              "needs_input": false
+              "needs_input": false,
+              "pr": null
             },
             {
               "key": "r",
@@ -78,7 +81,8 @@
                 "worker:feat/a",
                 "<text>"
               ],
-              "needs_input": true
+              "needs_input": true,
+              "pr": null
             }
           ]
         },
@@ -96,6 +100,7 @@
           "host": "",
           "origin": "local",
           "host_error": null,
+          "peer_error": null,
           "title": "Task feat/b",
           "repo": null,
           "engine": "claude",
@@ -122,7 +127,8 @@
                 "--",
                 "feat/b"
               ],
-              "needs_input": false
+              "needs_input": false,
+              "pr": null
             },
             {
               "key": "n",
@@ -137,7 +143,8 @@
                 "--",
                 "heron"
               ],
-              "needs_input": false
+              "needs_input": false,
+              "pr": null
             },
             {
               "key": "r",
@@ -153,7 +160,8 @@
                 "worker:feat/b",
                 "<text>"
               ],
-              "needs_input": true
+              "needs_input": true,
+              "pr": null
             },
             {
               "key": "m",
@@ -167,7 +175,8 @@
                 "--crew",
                 "c1"
               ],
-              "needs_input": false
+              "needs_input": false,
+              "pr": 12
             }
           ]
         },
@@ -185,6 +194,7 @@
           "host": "",
           "origin": "local",
           "host_error": null,
+          "peer_error": null,
           "title": "Task feat/c",
           "repo": null,
           "engine": "claude",
@@ -211,7 +221,8 @@
                 "--",
                 "feat/c"
               ],
-              "needs_input": false
+              "needs_input": false,
+              "pr": null
             },
             {
               "key": "n",
@@ -226,7 +237,8 @@
                 "--",
                 "feat/c"
               ],
-              "needs_input": false
+              "needs_input": false,
+              "pr": null
             },
             {
               "key": "r",
@@ -242,7 +254,8 @@
                 "worker:feat/c",
                 "<text>"
               ],
-              "needs_input": true
+              "needs_input": true,
+              "pr": null
             }
           ]
         },
@@ -260,6 +273,7 @@
           "host": "",
           "origin": "local",
           "host_error": null,
+          "peer_error": null,
           "title": "Task feat/d",
           "repo": null,
           "engine": "claude",
@@ -286,7 +300,8 @@
                 "--",
                 "feat/d"
               ],
-              "needs_input": false
+              "needs_input": false,
+              "pr": null
             },
             {
               "key": "n",
@@ -301,7 +316,8 @@
                 "--",
                 "feat/d"
               ],
-              "needs_input": false
+              "needs_input": false,
+              "pr": null
             },
             {
               "key": "r",
@@ -317,7 +333,8 @@
                 "worker:feat/d",
                 "<text>"
               ],
-              "needs_input": true
+              "needs_input": true,
+              "pr": null
             }
           ]
         },
@@ -335,6 +352,7 @@
           "host": "",
           "origin": "local",
           "host_error": null,
+          "peer_error": null,
           "title": "Task feat/e",
           "repo": null,
           "engine": "claude",
@@ -361,7 +379,8 @@
                 "--",
                 "feat/e"
               ],
-              "needs_input": false
+              "needs_input": false,
+              "pr": null
             },
             {
               "key": "n",
@@ -376,7 +395,8 @@
                 "--",
                 "feat/e"
               ],
-              "needs_input": false
+              "needs_input": false,
+              "pr": null
             },
             {
               "key": "r",
@@ -392,7 +412,8 @@
                 "worker:feat/e",
                 "<text>"
               ],
-              "needs_input": true
+              "needs_input": true,
+              "pr": null
             }
           ]
         },
@@ -410,6 +431,7 @@
           "host": "",
           "origin": "local",
           "host_error": null,
+          "peer_error": null,
           "title": "Task feat/f",
           "repo": null,
           "engine": "claude",
@@ -436,7 +458,8 @@
                 "--",
                 "feat/f"
               ],
-              "needs_input": false
+              "needs_input": false,
+              "pr": null
             },
             {
               "key": "n",
@@ -451,7 +474,8 @@
                 "--",
                 "feat/f"
               ],
-              "needs_input": false
+              "needs_input": false,
+              "pr": null
             },
             {
               "key": "r",
@@ -467,7 +491,8 @@
                 "worker:feat/f",
                 "<text>"
               ],
-              "needs_input": true
+              "needs_input": true,
+              "pr": null
             }
           ]
         },
@@ -485,6 +510,7 @@
           "host": "",
           "origin": "local",
           "host_error": null,
+          "peer_error": null,
           "title": "Task feat/g",
           "repo": null,
           "engine": "claude",
@@ -511,7 +537,8 @@
                 "--",
                 "feat/g"
               ],
-              "needs_input": false
+              "needs_input": false,
+              "pr": null
             },
             {
               "key": "n",
@@ -526,7 +553,8 @@
                 "--",
                 "feat/g"
               ],
-              "needs_input": false
+              "needs_input": false,
+              "pr": null
             },
             {
               "key": "r",
@@ -542,7 +570,8 @@
                 "worker:feat/g",
                 "<text>"
               ],
-              "needs_input": true
+              "needs_input": true,
+              "pr": null
             }
           ]
         },
@@ -560,6 +589,7 @@
           "host": "",
           "origin": "local",
           "host_error": null,
+          "peer_error": null,
           "title": "Task feat/h",
           "repo": null,
           "engine": "claude",
@@ -586,7 +616,8 @@
                 "--",
                 "feat/h"
               ],
-              "needs_input": false
+              "needs_input": false,
+              "pr": null
             },
             {
               "key": "n",
@@ -601,7 +632,8 @@
                 "--",
                 "feat/h"
               ],
-              "needs_input": false
+              "needs_input": false,
+              "pr": null
             },
             {
               "key": "r",
@@ -617,7 +649,8 @@
                 "worker:feat/h",
                 "<text>"
               ],
-              "needs_input": true
+              "needs_input": true,
+              "pr": null
             }
           ]
         },
@@ -635,6 +668,7 @@
           "host": "",
           "origin": "local",
           "host_error": null,
+          "peer_error": null,
           "title": "Task feat/i",
           "repo": null,
           "engine": "claude",
@@ -661,7 +695,8 @@
                 "--",
                 "feat/i"
               ],
-              "needs_input": false
+              "needs_input": false,
+              "pr": null
             },
             {
               "key": "n",
@@ -676,7 +711,8 @@
                 "--",
                 "feat/i"
               ],
-              "needs_input": false
+              "needs_input": false,
+              "pr": null
             },
             {
               "key": "r",
@@ -692,7 +728,8 @@
                 "worker:feat/i",
                 "<text>"
               ],
-              "needs_input": true
+              "needs_input": true,
+              "pr": null
             }
           ]
         },
@@ -710,6 +747,7 @@
           "host": "halo",
           "origin": "remote_worker",
           "host_error": null,
+          "peer_error": null,
           "title": "Task feat/r",
           "repo": null,
           "engine": "codex",
@@ -736,7 +774,8 @@
                 "--",
                 "feat/r"
               ],
-              "needs_input": false
+              "needs_input": false,
+              "pr": null
             },
             {
               "key": "n",
@@ -751,7 +790,8 @@
                 "--",
                 "feat/r"
               ],
-              "needs_input": false
+              "needs_input": false,
+              "pr": null
             },
             {
               "key": "r",
@@ -767,7 +807,8 @@
                 "worker:feat/r",
                 "<text>"
               ],
-              "needs_input": true
+              "needs_input": true,
+              "pr": null
             }
           ]
         }
@@ -822,6 +863,7 @@
           "host": "",
           "origin": "local",
           "host_error": null,
+          "peer_error": null,
           "title": "Task feat/j",
           "repo": null,
           "engine": "claude",
@@ -848,7 +890,8 @@
                 "--",
                 "feat/j"
               ],
-              "needs_input": false
+              "needs_input": false,
+              "pr": null
             },
             {
               "key": "n",
@@ -863,7 +906,8 @@
                 "--",
                 "feat/j"
               ],
-              "needs_input": false
+              "needs_input": false,
+              "pr": null
             },
             {
               "key": "r",
@@ -879,7 +923,8 @@
                 "worker:feat/j",
                 "<text>"
               ],
-              "needs_input": true
+              "needs_input": true,
+              "pr": null
             }
           ]
         }
@@ -905,6 +950,65 @@
       "host": "mbp",
       "origin": "peer",
       "host_error": null,
+      "peer_error": null,
+      "title": null,
+      "repo": null,
+      "engine": null,
+      "model": null,
+      "tier": null,
+      "tmux": null,
+      "color": null,
+      "from": null,
+      "ts": null,
+      "age_s": null,
+      "live": null,
+      "exit_suspect": null,
+      "actions": []
+    },
+    {
+      "crew": "c1",
+      "branch": "feat/q",
+      "session": null,
+      "name": null,
+      "state": "",
+      "prev_state": null,
+      "detail": null,
+      "source": null,
+      "pr_url": null,
+      "pr": null,
+      "host": "nuc",
+      "origin": "peer",
+      "host_error": null,
+      "peer_error": "sync stale: last ok 900s ago",
+      "title": null,
+      "repo": null,
+      "engine": null,
+      "model": null,
+      "tier": null,
+      "tmux": null,
+      "color": null,
+      "from": null,
+      "ts": null,
+      "age_s": null,
+      "live": null,
+      "exit_suspect": null,
+      "actions": []
+    },
+    {
+      "crew": "",
+      "branch": "",
+      "session": null,
+      "name": null,
+      "state": "",
+      "prev_state": null,
+      "detail": null,
+      "source": null,
+      "pr_url": null,
+      "pr": null,
+      "host": "halo",
+      "origin": "peer",
+      "host_error": null,
+      "peer_error": "no snapshot yet",
       "title": null,
       "repo": null,
       "engine": null,
