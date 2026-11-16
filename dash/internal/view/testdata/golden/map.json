@@ -64,7 +64,7 @@
           "key": "r",
           "verb": "reply",
           "label": "reply",
-          "command": "crew reply --crew c1 -- worker:feat/a '\u003ctext\u003e'",
+          "command": "crew reply --crew c1 -- worker:feat/a '<text>'",
           "argv": [
             "crew",
             "reply",
@@ -72,7 +72,7 @@
             "c1",
             "--",
             "worker:feat/a",
-            "\u003ctext\u003e"
+            "<text>"
           ],
           "needs_input": true
         }
@@ -139,7 +139,7 @@
           "key": "r",
           "verb": "reply",
           "label": "reply",
-          "command": "crew reply --crew c1 -- worker:feat/b '\u003ctext\u003e'",
+          "command": "crew reply --crew c1 -- worker:feat/b '<text>'",
           "argv": [
             "crew",
             "reply",
@@ -147,7 +147,7 @@
             "c1",
             "--",
             "worker:feat/b",
-            "\u003ctext\u003e"
+            "<text>"
           ],
           "needs_input": true
         },
@@ -228,7 +228,7 @@
           "key": "r",
           "verb": "reply",
           "label": "reply",
-          "command": "crew reply --crew c1 -- worker:feat/c '\u003ctext\u003e'",
+          "command": "crew reply --crew c1 -- worker:feat/c '<text>'",
           "argv": [
             "crew",
             "reply",
@@ -236,7 +236,7 @@
             "c1",
             "--",
             "worker:feat/c",
-            "\u003ctext\u003e"
+            "<text>"
           ],
           "needs_input": true
         }
@@ -303,7 +303,7 @@
           "key": "r",
           "verb": "reply",
           "label": "reply",
-          "command": "crew reply --crew c1 -- worker:feat/d '\u003ctext\u003e'",
+          "command": "crew reply --crew c1 -- worker:feat/d '<text>'",
           "argv": [
             "crew",
             "reply",
@@ -311,7 +311,7 @@
             "c1",
             "--",
             "worker:feat/d",
-            "\u003ctext\u003e"
+            "<text>"
           ],
           "needs_input": true
         }
@@ -378,7 +378,7 @@
           "key": "r",
           "verb": "reply",
           "label": "reply",
-          "command": "crew reply --crew c1 -- worker:feat/e '\u003ctext\u003e'",
+          "command": "crew reply --crew c1 -- worker:feat/e '<text>'",
           "argv": [
             "crew",
             "reply",
@@ -386,7 +386,7 @@
             "c1",
             "--",
             "worker:feat/e",
-            "\u003ctext\u003e"
+            "<text>"
           ],
           "needs_input": true
         }
@@ -453,7 +453,7 @@
           "key": "r",
           "verb": "reply",
           "label": "reply",
-          "command": "crew reply --crew c1 -- worker:feat/f '\u003ctext\u003e'",
+          "command": "crew reply --crew c1 -- worker:feat/f '<text>'",
           "argv": [
             "crew",
             "reply",
@@ -461,7 +461,7 @@
             "c1",
             "--",
             "worker:feat/f",
-            "\u003ctext\u003e"
+            "<text>"
           ],
           "needs_input": true
         }
@@ -528,7 +528,7 @@
           "key": "r",
           "verb": "reply",
           "label": "reply",
-          "command": "crew reply --crew c1 -- worker:feat/g '\u003ctext\u003e'",
+          "command": "crew reply --crew c1 -- worker:feat/g '<text>'",
           "argv": [
             "crew",
             "reply",
@@ -536,7 +536,7 @@
             "c1",
             "--",
             "worker:feat/g",
-            "\u003ctext\u003e"
+            "<text>"
           ],
           "needs_input": true
         }
@@ -603,7 +603,7 @@
           "key": "r",
           "verb": "reply",
           "label": "reply",
-          "command": "crew reply --crew c1 -- worker:feat/h '\u003ctext\u003e'",
+          "command": "crew reply --crew c1 -- worker:feat/h '<text>'",
           "argv": [
             "crew",
             "reply",
@@ -611,7 +611,7 @@
             "c1",
             "--",
             "worker:feat/h",
-            "\u003ctext\u003e"
+            "<text>"
           ],
           "needs_input": true
         }
@@ -678,7 +678,7 @@
           "key": "r",
           "verb": "reply",
           "label": "reply",
-          "command": "crew reply --crew c1 -- worker:feat/i '\u003ctext\u003e'",
+          "command": "crew reply --crew c1 -- worker:feat/i '<text>'",
           "argv": [
             "crew",
             "reply",
@@ -686,7 +686,7 @@
             "c1",
             "--",
             "worker:feat/i",
-            "\u003ctext\u003e"
+            "<text>"
           ],
           "needs_input": true
         }
@@ -753,7 +753,7 @@
           "key": "r",
           "verb": "reply",
           "label": "reply",
-          "command": "crew reply --crew c1 -- worker:feat/r '\u003ctext\u003e'",
+          "command": "crew reply --crew c1 -- worker:feat/r '<text>'",
           "argv": [
             "crew",
             "reply",
@@ -761,7 +761,7 @@
             "c1",
             "--",
             "worker:feat/r",
-            "\u003ctext\u003e"
+            "<text>"
           ],
           "needs_input": true
         }
@@ -828,7 +828,7 @@
           "key": "r",
           "verb": "reply",
           "label": "reply",
-          "command": "crew reply --crew c2 -- worker:feat/j '\u003ctext\u003e'",
+          "command": "crew reply --crew c2 -- worker:feat/j '<text>'",
           "argv": [
             "crew",
             "reply",
@@ -836,7 +836,7 @@
             "c2",
             "--",
             "worker:feat/j",
-            "\u003ctext\u003e"
+            "<text>"
           ],
           "needs_input": true
         }

@@ -1,6 +1,7 @@
 package view_test
 
 import (
+	"bytes"
 	"encoding/json"
 	"flag"
 	"os"
@@ -142,6 +143,19 @@ func TestBudgetPace(t *testing.T) {
 	}
 }
 
+func TestBudgetRowsSkipNullEngine(t *testing.T) {
+	in := viewtest.Inputs()
+	in.Snap.Budget.Report = &data.BudgetReport{Engines: map[string]*data.EngineBudget{
+		"e":  {Windows: []data.Window{{Key: "a"}}},
+		"pi": nil,
+	}}
+	for _, b := range view.BuildOverview(in).Monitors.Budgets {
+		if b.Engine == "pi" {
+			t.Errorf("null engine produced budget row %q", b.Label)
+		}
+	}
+}
+
 func TestActivityNonEmpty(t *testing.T) {
 	v := view.BuildOverview(viewtest.Inputs())
 	for _, wd := range v.Monitors.Watchdogs {
@@ -167,11 +181,14 @@ func TestGoldenViews(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			got, err := json.MarshalIndent(v, "", "  ")
-			if err != nil {
+			var buf bytes.Buffer
+			enc := json.NewEncoder(&buf)
+			enc.SetEscapeHTML(false)
+			enc.SetIndent("", "  ")
+			if err := enc.Encode(v); err != nil {
 				t.Fatal(err)
 			}
-			got = append(got, '\n')
+			got := buf.Bytes()
 
 			var probe struct {
 				SchemaVersion int    `json:"schema_version"`

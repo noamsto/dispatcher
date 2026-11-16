@@ -3,9 +3,9 @@
   "view": "settings",
   "loaded": true,
   "layers": {
-    "base": "\u003cBASE\u003e",
+    "base": "<BASE>",
     "user": {
-      "path": "\u003cUSER\u003e",
+      "path": "<USER>",
       "present": true
     },
     "locked": null

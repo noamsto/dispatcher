@@ -319,6 +319,9 @@ func budgetRows(r *data.BudgetReport) []BudgetRow {
 	}
 	slices.Sort(engines)
 	for _, name := range engines {
+		if r.Engines[name] == nil {
+			continue
+		}
 		for _, win := range r.Engines[name].Windows {
 			rows = append(rows, BudgetRow{
 				Engine: name, Label: name + " " + win.Key, UsedPct: win.UsedPct,
