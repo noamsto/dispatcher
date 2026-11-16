@@ -15,10 +15,10 @@ Phase file of `WORKER_PROTOCOL.md`: it binds like the core. References to "this 
 
 ## Diagrams (standard/deep; trivial draws none)
 
-Two small D2 diagrams give reviewers and the owner the mechanism and the intended change without reading the whole spec or plan. The lead draws them from context it already holds: no subagent, no reads beyond the spec and plan. Skip both when the change is docs or config only.
+Two small D2 diagrams give reviewers and the owner the mechanism and the intended change without reading the whole spec or plan. The lead draws them from context it already holds: no subagent, no reads beyond the task doc, spec, plan and files already read. Skip both when the change is docs or config only.
 
-- Issue diagram: `<crew_dir>/artifacts/<branch>/issue.d2`, the current mechanism and where it breaks or what is missing; 5–12 nodes naming real files and functions. Deep: after the spec critic approves the spec. Standard: when the plan phase starts (`plan: provided`: when you extract the plan of record).
-- Plan diagram: `<crew_dir>/artifacts/<branch>/plan.d2`, the same scope with the change applied, new or changed pieces marked. After the plan critic approves, or immediately under `plan: provided`.
+- Issue diagram: `<crew_dir>/artifacts/<branch>/issue.d2`, the current mechanism and where it breaks or what is missing; 5–12 nodes naming real files and functions. Deep: after the spec critic approves the spec. Standard: once the plan draft exists, before the plan critic (`plan: provided`: right after you extract the plan of record).
+- Plan diagram: `<crew_dir>/artifacts/<branch>/plan.d2`, the same scope with the change applied, new or changed pieces marked. After the plan critic approves; under `plan: provided`, right after you extract the plan of record (deep: after `issue.d2`). Resuming: keep existing files, draw only a missing one whose trigger has passed.
 - The D2 source is the portable artifact; every engine writes it.
 - Cost guardrail: `d2` on PATH → `d2 validate` each file; a parse failure gets one fix attempt, then skip that diagram with a one-line note in the PR body. A missing diagram never blocks `pr_open` and is not a ledger item. The PR body carries both sources (`WORKER_SHIP`, PR body contract).
 
