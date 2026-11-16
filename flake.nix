@@ -304,8 +304,8 @@
 
           refresh-harness = pkgs.writeShellApplication {
             name = "refresh-harness";
-            runtimeInputs = (with pkgs; [coreutils curl findutils gh gnugrep gnused jq binutils]) ++ [crew dispatch];
-            text = builtins.replaceStrings ["@harnessTree@"] ["${inputs.self}"] (builtins.readFile ./adapters/core/refresh-harness.sh);
+            runtimeInputs = (with pkgs; [coreutils curl findutils gawk gnugrep gnused jq binutils]) ++ [crew dispatch];
+            text = ghFallback + builtins.replaceStrings ["@harnessTree@"] ["${inputs.self}"] (builtins.readFile ./adapters/core/refresh-harness.sh);
           };
 
           # yq-go is a runtime input, not just a devShell one: the resolver

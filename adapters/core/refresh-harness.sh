@@ -257,7 +257,7 @@ snapshot_binary() {
   local engine=$1 cli=$2
   local notes="$WORK/notes-$engine.txt" old="$WORK/old-$engine.json"
   local snap="$WORK/snap-$engine.json" diff="$WORK/diff-$engine.json"
-  local version=""
+  local version="" env_baseline
   : >"$notes"
   if ! jq -e --arg e "$engine" '.engines[$e]' "$OLD" >"$old" 2>/dev/null; then rm -f "$old"; fi
 
@@ -269,13 +269,17 @@ snapshot_binary() {
     finish_binary "$engine" "$version"
     return 0
   fi
-  version=$(probe "$cli" --version | awk 'NR == 1 {print $1}') || version=""
+  version=$(probe "$cli" --version | grep -oE '[0-9]+(\.[0-9]+)+[0-9A-Za-z.+-]*' | head -n1) || version=""
 
   : >"$WORK/env-$engine.txt"
   if [[ $engine == claude ]]; then
     resolve_chain claude
     if [[ -n $RES_BIN ]]; then
       claude_env "$RES_BIN" >"$WORK/env-$engine.txt"
+      if [[ ! -s $WORK/env-$engine.txt ]]; then
+        echo "env: no CLAUDE_CODE_* names found in $RES_BIN; previous env kept" >>"$notes"
+        if [[ -f $old ]]; then jq -r '.env[]?' "$old" >"$WORK/env-$engine.txt"; fi
+      fi
     else
       echo "env: binary not found" >>"$notes"
       if [[ -f $old ]]; then jq -r '.env[]?' "$old" >"$WORK/env-$engine.txt"; fi
@@ -287,10 +291,17 @@ snapshot_binary() {
     '{version: $v, env: $e[0], flags: $f[0]}' >"$snap"
 
   if [[ -f $old ]]; then
-    jq -n --slurpfile s "$snap" --slurpfile o "$old" \
+    env_baseline=false
+    if jq -e '(.env // []) == []' "$old" >/dev/null && [[ -s $WORK/env-$engine.txt ]]; then
+      env_baseline=true
+      echo "env: baselined" >>"$notes"
+    fi
+    jq -n --argjson eb "$env_baseline" --slurpfile s "$snap" --slurpfile o "$old" \
       '{status: "ok",
-        new_env: ($s[0].env - ($o[0].env // [])), new_flags: ($s[0].flags - ($o[0].flags // [])),
-        removed_env: (($o[0].env // []) - $s[0].env), removed_flags: (($o[0].flags // []) - $s[0].flags)}' >"$diff"
+        new_env: (if $eb then [] else $s[0].env - ($o[0].env // []) end),
+        new_flags: ($s[0].flags - ($o[0].flags // [])),
+        removed_env: (if $eb then [] else ($o[0].env // []) - $s[0].env end),
+        removed_flags: (($o[0].flags // []) - $s[0].flags)}' >"$diff"
   else
     echo '{"status":"baseline","new_env":[],"new_flags":[],"removed_env":[],"removed_flags":[]}' >"$diff"
   fi
@@ -330,7 +341,7 @@ md_bullets() {
          if (v == "") next
          t = $0
          sub(/^[[:space:]]*[-*] /, "", t)
-         gsub(/[\t\r]/, " ", t)
+         gsub(/[[:cntrl:]]/, " ", t)
          print v "\t" substr(t, 1, 400)
        }' "$1"
 }
@@ -396,7 +407,7 @@ changelog_pi() {
 changelog_codex() {
   local id=codex-releases cursor
   : >"$WORK/entries-$id.jsonl"
-  if ! gh api 'repos/openai/codex/releases?per_page=30' >"$WORK/codex.json" 2>/dev/null; then
+  if ! gh api 'repos/openai/codex/releases?per_page=100' >"$WORK/codex.json" 2>/dev/null; then
     cl_fail "$id" "fetch failed"
     return 0
   fi
@@ -410,11 +421,15 @@ changelog_codex() {
     CL_STATUS=baseline
     return 0
   fi
+  if jq -e --arg c "$cursor" '[.[].published_at] | min > $c' "$WORK/codex.json" >/dev/null; then
+    warn "$id: cursor $cursor is older than the fetched page; some releases may be missing"
+  fi
   jq -c --arg c "$cursor" '
     .[] | select(.prerelease | not) | select(.published_at > $c)
     | .tag_name as $t
-    | (.body // "" | gsub("\r"; "") | split("\n")[]
-       | select(test("^\\s*[-*] ")) | sub("^\\s*[-*] "; "") | .[:400])
+    | (.body // "" | split("\n")[]
+       | select(test("^\\s*[-*] ")) | sub("^\\s*[-*] "; "")
+       | gsub("[\u0000-\u001f\u007f]"; " ") | .[:400])
     | {version: $t, text: .}' "$WORK/codex.json" >"$WORK/entries-$id.jsonl"
 }
 
@@ -583,7 +598,7 @@ post_report() {
      top: [.engines | to_entries[] | .key as $e
            | (.value.binary.new_env[] | select(.class == "unused") | "\($e) env \(.name)"),
              (.value.binary.new_flags[] | select(.class == "unused") | "\($e) flag \(.name)"),
-             (.value.changelog.entries[] | select(.class == "unused") | "\($e) changelog \(.version): \(.text[:60])")]
+             (.value.changelog.entries[] | select(.class == "unused") | "\($e) changelog \(.version) [\(.names | map(.name) | join(","))]")]
           | .[:10]}' "$REPORT")
   if [[ -n ${CREW_ID:-} ]]; then
     post_one "$CREW_ID" . "$body"
@@ -646,11 +661,11 @@ main() {
     process_engine "$engine"
   done <"$WORK/engines.txt"
 
-  write_atomic "$STATE" <"$NEW"
   write_report
   unused=$(jq '.summary.new_unused' "$REPORT")
   any=$(jq '.summary | .new_unused + .new_used + .new_unknown' "$REPORT")
   if ((any > 0)); then append_history; fi
+  write_atomic "$STATE" <"$NEW"
   if ((unused > 0)); then
     post_report
     write_report
