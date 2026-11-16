@@ -153,8 +153,10 @@ func NewModel(deps Deps, now func() time.Time, live liveDeps) Model {
 	lv := newLiveView(msg.roster, msg.budget, live, now)
 	acts := actionDeps{ctx: ctx, runner: deps.Runner, crew: deps.Crew, inTmux: deps.InTmux}
 	lv.acts = acts
+	ov := newOverviewView(msg.in, now)
+	ov.acts = acts
 	m.views = [numTabs]view{
-		overviewTab: newOverviewView(msg.in, now),
+		overviewTab: ov,
 		liveTab:     lv,
 		boardTab:    newBoardView(msg.roster, now, acts),
 		budgetTab:   newBudgetView(msg.budget),

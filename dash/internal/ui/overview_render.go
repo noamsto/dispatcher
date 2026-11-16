@@ -35,6 +35,7 @@ type overviewState struct {
 	focus    ovPanel
 	selected workerKey
 	stripOff int
+	attn     int // strip cursor, an index into ov.Attention
 	filter   string
 }
 
@@ -577,7 +578,8 @@ func agentLines(ov vm.OverviewView, it placed, line func() *spans) []string {
 	}
 	for _, role := range a.Roles {
 		name := ovStr(role.Role, "?")
-		l2.add(stateGlyph(role.State), fg(glyphColor(role.State))).
+		state := roleState(role)
+		l2.add(stateGlyph(state), fg(glyphColor(state))).
 			add(" "+ansi.Truncate(name, 3, "")+" ", fg(colDim))
 	}
 	return []string{l1.String(), l2.String()}
@@ -651,4 +653,13 @@ func ovEventLine(ov vm.OverviewView, it placed, s *spans, iw int) string {
 		col(e.Worker, workerW, fg(colText).Bold(true), false).
 		add(" ", lipgloss.NewStyle()).
 		col(e.Text, iw-1-4-1-workerW-1, fg(colText), false).String()
+}
+
+// roleState is a role pane's state for display: a failed role, or one blocked
+// by its engine exiting, shows as failed.
+func roleState(r vm.AgentNode) string {
+	if r.State == "blocked" && strings.Contains(ovStr(r.Detail, ""), "engine exited") {
+		return "failed"
+	}
+	return r.State
 }

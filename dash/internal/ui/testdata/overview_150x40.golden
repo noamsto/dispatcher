@@ -11,7 +11,7 @@
 ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭ CHECKLISTS ─────────────────────────────── 0 of 11 done ─╮╭ AGENTS ─────────────────────── 14 agents ─╮╭ MONITORS ───────────────────── 9 watched ─╮
 │ ● otter standard                                     AC —││ ● otter sonnet standard                   ││ WATCHDOG ─────────────────────────────────│
-│   ●─●─◉─○─○─○ execute                                    ││   roles ● pla ● rev                       ││ otter      ▁█▁▁▁▁▁▁▁▁▁█▁▁▁▁▁▁█▁ ok 45s    │
+│   ●─●─◉─○─○─○ execute                                    ││   roles ● pla ✗ rev                       ││ otter      ▁█▁▁▁▁▁▁▁▁▁█▁▁▁▁▁▁█▁ ok 45s    │
 │ ● heron standard                                   AC 5/5││ ● heron sonnet standard                   ││ heron      ▁▁█▁▁▁█▁█▁▁▁▁▁▁▁▁▁▁▁ ok 10m    │
 │   ●─●─●─●─●─● pr_open                                    ││   roles —                                 ││ feat/c     ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁ ok 5m     │
 │ ● feat/c standard                                    AC —││ ● feat/c sonnet standard                  ││ feat/d     ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁ prompt 3m │

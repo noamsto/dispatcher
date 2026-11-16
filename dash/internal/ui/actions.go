@@ -23,9 +23,11 @@ const (
 	actOpenPR
 	actReply
 	actNudge
+	actPeek
+	actMerge
 )
 
-var actionNames = [...]string{"jump", "open PR", "reply", "nudge"}
+var actionNames = [...]string{"jump", "open PR", "reply", "nudge", "peek", "merge"}
 
 func (a action) String() string { return actionNames[a] }
 
