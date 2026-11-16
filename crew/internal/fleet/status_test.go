@@ -319,13 +319,13 @@ func TestStatusRemoteWorkers(t *testing.T) {
 }
 
 func TestStatusBlocked(t *testing.T) {
-	const detail = `,"detail":"waiting (cycle 7 of 24)"`
+	const detail = `,"detail":"waiting (cycle 7 of 24)","restamp":true`
 	f := newStatusFix(t,
 		// feat/b: an old run, a working row that breaks it, then three restamps.
 		wstatus(1200, "c1", "feat/b", "blocked", `,"detail":"old"`),
 		wstatus(1100, "c1", "feat/b", "working", ""),
 		wstatus(900, "c1", "feat/b", "blocked", `,"detail":"first"`),
-		wstatus(600, "c1", "feat/b", "blocked", `,"detail":"waiting (cycle 1 of 24)"`),
+		wstatus(600, "c1", "feat/b", "blocked", `,"detail":"waiting (cycle 1 of 24)","restamp":true`),
 		wstatus(300, "c1", "feat/b", "blocked", detail),
 		wmsg(200, "c1", "dispatcher:c1", "worker:feat/b#s1-1", `"go"`),
 		// feat/c: the reply predates the run; posted by the watchdog; no cycle.

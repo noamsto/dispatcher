@@ -735,7 +735,6 @@ type overseerMsg struct {
 // each rescan it per worker or crew.
 type busIndex struct {
 	status   map[crewKey][]statusEv // {crew, worker from}
-	replies  map[crewKey][]int64    // {crew, to}: msgs from dispatcher:<crew>
 	last     map[string]int64       // crew → newest event
 	holdAt   map[crewKey]int64      // {crew, hold id} → ts of its add
 	holders  map[string]bool        // crews with a hold row
@@ -746,7 +745,6 @@ type busIndex struct {
 func indexBus(events []bus.Event, host string) busIndex {
 	idx := busIndex{
 		status:  map[crewKey][]statusEv{},
-		replies: map[crewKey][]int64{},
 		last:    map[string]int64{},
 		holdAt:  map[crewKey]int64{},
 		holders: map[string]bool{},
@@ -766,10 +764,6 @@ func indexBus(events []bus.Event, host string) busIndex {
 		}
 		if e.Kind != bus.KindMsg {
 			continue
-		}
-		if e.From == "dispatcher:"+e.CrewID && e.CrewID != "" {
-			k := crewKey{e.CrewID, e.To}
-			idx.replies[k] = append(idx.replies[k], ts)
 		}
 		// Any sender may post to hold:<crew>; only the dispatcher's rows are holds.
 		if crew, ok := strings.CutPrefix(e.To, "hold:"); ok && crew == e.CrewID && e.From == "dispatcher:"+crew {
@@ -807,6 +801,9 @@ func (idx busIndex) blocked(crew string, row map[string]any) map[string]any {
 		since = float64(evs[start].ts)
 		detail = evs[len(evs)-1].detail
 	}
+	if bs, ok := number(row["blocked_since"]); ok {
+		since = bs
+	}
 	b := map[string]any{"since": int64(since), "cycle": nil, "budget_left_s": nil, "source": "worker", "answered": false}
 	if row["source"] == "watchdog" {
 		b["source"] = "watchdog"
@@ -817,11 +814,7 @@ func (idx busIndex) blocked(crew string, row map[string]any) map[string]any {
 			b["budget_left_s"] = max(blockedCycles-k, 0) * blockedCycleS
 		}
 	}
-	for _, ts := range idx.replies[crewKey{crew, from}] {
-		if ts > int64(since) {
-			b["answered"] = true
-		}
-	}
+	b["answered"] = row["state"] == "answered"
 	return b
 }
 

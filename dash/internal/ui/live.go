@@ -136,6 +136,8 @@ func stateRank(state string) int {
 	switch state {
 	case "blocked":
 		return 0
+	case "answered":
+		return 1
 	case "failed":
 		return 1
 	case "working":

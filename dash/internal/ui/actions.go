@@ -74,7 +74,7 @@ func disabledReason(a action, w data.Worker, inTmux, have bool) string {
 			return "no valid PR URL"
 		}
 	case actReply:
-		if w.State != "blocked" {
+		if w.State != "blocked" && w.State != "answered" {
 			return "not blocked"
 		}
 	case actNudge:
