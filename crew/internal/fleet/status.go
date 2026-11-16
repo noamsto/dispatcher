@@ -190,6 +190,10 @@ type RepoStatus struct {
 	// dispatcher of the crew they name; they are never shown.
 	Misrouted int          `json:"misrouted"`
 	Crews     []CrewStatus `json:"crews"`
+	// Peers and PeersError are the local peer store, absent on a served or
+	// far repo.
+	Peers      *PeerStatus `json:"peers,omitzero"`
+	PeersError *string     `json:"peers_error,omitzero"`
 }
 
 type CrewStatus struct {
@@ -201,6 +205,8 @@ type CrewStatus struct {
 	Workers       []map[string]any `json:"workers"`
 	Holds         []HoldStatus     `json:"holds"`
 	OverseerInbox []InboxMsg       `json:"overseer_inbox"`
+	// Relays are the crew's remote-worker relays; nil (omitted) on a served pull.
+	Relays []RelayStatus `json:"relays,omitzero"`
 }
 
 // Dispatcher is the crew's session: State is live, dead or closed; Lane is the
@@ -272,6 +278,9 @@ func collectStatus(ctx context.Context, req StatusRequest, stderr io.Writer, o S
 	o.Tmux = once
 	if o.Proc == nil {
 		o.Proc = proc.OS{}
+	}
+	if o.PeerHosts != nil {
+		o.PeerHosts = sync.OnceValues(o.PeerHosts)
 	}
 	now := o.Clock.Now()
 	nowMS := now.UnixMilli()
@@ -434,6 +443,9 @@ func (b *repoBuild) build() (RepoStatus, error) {
 		}
 		repo.Crews = append(repo.Crews, c)
 	}
+	if o.Served == nil {
+		repo.Peers, repo.PeersError = peerStatusOf(b.common, o.PeerHosts, b.events, b.now)
+	}
 	return repo, nil
 }
 
@@ -512,6 +524,9 @@ func (b *repoBuild) crew(id string, rows []map[string]any, live roster.Liveness,
 	}
 	c := CrewStatus{CrewID: id, Workers: []map[string]any{}, Holds: holds, OverseerInbox: b.idx.inbox(id, cutoff)}
 	c.Dispatcher = b.dispatcher(id)
+	if b.o.Served == nil {
+		c.Relays = crewRelays(b.common, id, b.o.Proc)
+	}
 	for _, row := range rows {
 		row = jsonval.Clamp(row).(map[string]any)
 		stale, _ := staleOf(row, live)

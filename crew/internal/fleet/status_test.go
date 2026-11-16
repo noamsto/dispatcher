@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -954,5 +955,101 @@ func TestStatusServedDiscovery(t *testing.T) {
 	}
 	if len(got) != 2 || !slices.Contains(got, walked) {
 		t.Errorf("walked repos = %v, want the registered bus and %s", got, walked)
+	}
+}
+
+func TestStatusRepoPeers(t *testing.T) {
+	f := newStatusFix(t, wstatus(5000, "c1", "feat/a", "working", ""))
+	f.opts.PeerHosts = peerSettings
+	writePeerFiles(t, f.common, map[string]string{
+		"mbp.link":   `{"ok":1700000098000,"err":0,"detail":""}`,
+		"mbp.roster": `{"synced":1700000099000,"rows":[{"crew_id":"c7","branch":"feat/p","name":"otter","state":"working","ts":1700000090000}]}`,
+	})
+	data, err := json.Marshal(f.collect(StatusRequest{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Repos []struct {
+			Peers *struct {
+				Links   []map[string]any `json:"links"`
+				Rows    []map[string]any `json:"rows"`
+				Dropped *int             `json:"dropped"`
+			} `json:"peers"`
+			PeersError *string `json:"peers_error"`
+		} `json:"repos"`
+	}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	p := doc.Repos[0].Peers
+	if p == nil || len(p.Links) != 1 || len(p.Rows) != 1 || p.Dropped == nil || *p.Dropped != 0 {
+		t.Fatalf("peers = %+v\n%s", p, data)
+	}
+	if p.Links[0]["err_ts"] != nil || p.Links[0]["detail"] != nil || p.Links[0]["ok_ts"] == nil {
+		t.Errorf("link = %v", p.Links[0])
+	}
+	if doc.Repos[0].PeersError != nil {
+		t.Errorf("peers_error = %q", *doc.Repos[0].PeersError)
+	}
+}
+
+func TestStatusPeersOmittedWhenServed(t *testing.T) {
+	f := newStatusFix(t, wstatus(5000, "c1", "feat/a", "working", ""))
+	f.opts.PeerHosts = peerSettings
+	writePeerFiles(t, f.common, map[string]string{"mbp.link": `{"ok":1700000098000,"err":0,"detail":""}`})
+	f.opts.Served = &ServedStatus{Origin: "halo", Since: ago(2500)}
+	data, err := json.Marshal(f.collect(StatusRequest{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), `"peers`) {
+		t.Errorf("served doc carries peers: %s", data)
+	}
+}
+
+func TestStatusPeersReadErrorDoesNotFailTheDoc(t *testing.T) {
+	f := newStatusFix(t, wstatus(5000, "c1", "feat/a", "working", ""))
+	f.opts.PeerHosts = peerSettings
+	writePeerFiles(t, f.common, map[string]string{"mbp.link": `not json`})
+	doc := f.collect(StatusRequest{})
+	if len(doc.Repos) != 1 || len(doc.Repos[0].Crews) != 1 {
+		t.Fatalf("repos = %+v, want the repo still built", doc.Repos)
+	}
+	r := doc.Repos[0]
+	if r.PeersError == nil || r.Peers == nil || len(r.Peers.Rows) != 0 {
+		t.Errorf("peers = %+v, peers_error = %v", r.Peers, r.PeersError)
+	}
+}
+
+func TestStatusCrewRelays(t *testing.T) {
+	f := newStatusFix(t, wstatus(5000, "c1", "feat/a", "working", ""), wstatus(5000, "c2", "feat/b", "working", ""))
+	mtime := time.UnixMilli(1700000010000)
+	writeRelayFile(t, f.common, "c1", "halo.lock.d/pid", "100\n", mtime)
+	writeRelayFile(t, f.common, "c1", "halo.cursor", "1\n", mtime)
+	doc := f.collect(StatusRequest{})
+	data, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ts := mtime.UnixMilli()
+	if got, want := doc.crew(t, "c1").Relays, []RelayStatus{{Host: "halo", Live: true, CursorTS: &ts}}; !reflect.DeepEqual(got, want) {
+		t.Errorf("c1 relays = %+v, want %+v", got, want)
+	}
+	if !strings.Contains(string(data), `"relays":[]`) {
+		t.Errorf("c2 relays not rendered as []: %s", data)
+	}
+}
+
+func TestStatusRelaysOmittedWhenServed(t *testing.T) {
+	f := newStatusFix(t, wstatus(5000, "c1", "feat/a", "working", ""))
+	writeRelayFile(t, f.common, "c1", "halo.cursor", "1\n", time.Now())
+	f.opts.Served = &ServedStatus{Origin: "halo", Since: ago(2500)}
+	data, err := json.Marshal(f.collect(StatusRequest{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), `"relays`) {
+		t.Errorf("served doc carries relays: %s", data)
 	}
 }

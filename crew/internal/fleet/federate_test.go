@@ -1369,8 +1369,8 @@ func typeLeaves(t reflect.Type, v any, have bool, path string, out map[string]bo
 		for f := range t.Fields() {
 			name, _, _ := strings.Cut(f.Tag.Get("json"), ",")
 			p := strings.TrimPrefix(path+"."+name, ".")
-			// peers are the local store's: no far wire carries them.
-			if name == "" || name == "-" || p == "status.hosts" || p == "status.repos[].peers" || p == "status.repos[].peers_error" {
+			// peers and relays are local reads: no far wire carries them.
+			if name == "" || name == "-" || p == "status.hosts" || p == "status.repos[].peers" || p == "status.repos[].peers_error" || p == "status.repos[].crews[].relays" {
 				continue
 			}
 			if e, ok := m[name]; ok || !have {
