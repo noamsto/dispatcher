@@ -6,13 +6,13 @@ layers: default <BASE>
   profile                             work                             🔒 locked
   freshSeams                          unset                              default
   dispatcherChrome                    unset                              default
+  dashTailscale                       unset                              default
   rosterDiagram.autoOpen              unset                              default
   overseer.autoRelaunch               unset                              default
   openrouter.monthlyUsd               20                                 default
   orchestratorDefaults.claude.effort  high                               default
   orchestratorDefaults.codex.effort   high                               default
   orchestratorDefaults.pi.effort      high                               default
-
 
 
 

@@ -278,6 +278,23 @@ ROWS
   done
 }
 
+@test "dashTailscale defaults to false and takes a boolean from the user layer" {
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 0 ]
+  jq -e '.dashTailscale == false' <<<"$output"
+  user_settings '{"dashTailscale":true}'
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 0 ]
+  jq -e '.dashTailscale == true' <<<"$output"
+}
+
+@test "dashTailscale must be a boolean" {
+  user_settings '{"dashTailscale":"yes"}'
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"dashTailscale must be a boolean"* ]]
+}
+
 @test "dispatcherMcp defaults to empty and merges per lowercased key across layers" {
   run --separate-stderr "$CONFIG"
   [ "$status" -eq 0 ]
@@ -1025,10 +1042,27 @@ laneprofiles_refuse_row() { # json fragment
 {"hosts":{"mini":{"ssh":"me@mini","chrome":1}}}|mini.chrome
 {"hosts":{"mini":{"ssh":"me@mini","peer":"yes"}}}|mini.peer
 {"hosts":{"mini":{"ssh":"me@mini","peer":1}}}|mini.peer
+{"hosts":{"mini":{"ssh":"me@mini","tailscale":"-x"}}}|mini.tailscale
+{"hosts":{"mini":{"ssh":"me@mini","tailscale":"a b"}}}|mini.tailscale
+{"hosts":{"mini":{"ssh":"me@mini","tailscale":1}}}|mini.tailscale
 {"hosts":{"mini":"me@mini"}}|mini
 {"hosts":[]}|hosts
 EOF
-  finish_rows 17
+  finish_rows 20
+}
+
+@test "hosts tailscale from the user layer reaches the merged output" {
+  user_settings '{"hosts":{"h":{"ssh":"me@h","tailscale":"box-1"}}}'
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 0 ]
+  jq -e '.hosts.h.tailscale == "box-1"' <<<"$output"
+}
+
+@test "an unknown hosts key lists tailscale among the allowed keys" {
+  user_settings '{"hosts":{"h":{"ssh":"me@h","port":22}}}'
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"one of ssh, repos, chrome, peer, tailscale"* ]]
 }
 
 # The module's strMatching "/[^[:cntrl:]]*" is byte-based: a C1 code point is
