@@ -1,0 +1,11 @@
+{"ts":1794799000000,"crew_id":"c1","from":"worker:feat/a#s1","to":"dispatcher:c1","kind":"status","body":{"state":"working","detail":"spec"}}
+{"ts":1794799100000,"crew_id":"c1","from":"worker:feat/b#s1","to":"dispatcher:c1","kind":"status","body":{"state":"working","detail":"spec"}}
+{"ts":1794799200000,"crew_id":"c1","from":"worker:feat/a#s1","to":"dispatcher:c1","kind":"status","body":{"state":"working","detail":"plan"}}
+{"ts":1794799300000,"crew_id":"c1","from":"role:feat/a:plan-critic","to":"worker:feat/a#s1","kind":"msg","body":"{\"role\":\"plan-critic\",\"seam\":\"plan\",\"verdict\":\"accept\",\"findings\":[]}"}
+{"ts":1794799400000,"crew_id":"c1","from":"worker:feat/a#s1","to":"dispatcher:c1","kind":"status","body":{"state":"working","detail":"execute"}}
+{"ts":1794799500000,"crew_id":"c1","from":"worker:feat/b#s1","to":"dispatcher:c1","kind":"status","body":{"state":"working","detail":"execute"}}
+{"ts":1794799600000,"crew_id":"c1","from":"role:feat/b:reviewer","to":"dispatcher:c1","kind":"status","body":{"state":"failed","detail":"role reviewer engine exited (pane %9)"}}
+{"ts":1794799900000,"crew_id":"c1","from":"worker:feat/b#s1","to":"dispatcher:c1","kind":"status","body":{"state":"pr_open","detail":"AC1 pass(go test); AC2 pass(bats); AC3 waived(dispatcher: n/a)"}}
+{"ts":1794799950000,"crew_id":"c1","from":"pr-watch:12","to":"dispatcher:c1","kind":"msg","body":"{\"ts\":1,\"repo\":\"o/a\",\"pr\":12,\"url\":\"https://github.com/o/a/pull/12\",\"changed\":[\"checks\"],\"state\":{\"state\":\"OPEN\",\"checks\":\"PENDING\",\"mergeable\":\"MERGEABLE\"},\"was\":{}}"}
+{"ts":1794799980000,"crew_id":"c1","from":"pr-watch:12","to":"dispatcher:c1","kind":"msg","body":"{\"ts\":1,\"repo\":\"o/a\",\"pr\":12,\"url\":\"https://github.com/o/a/pull/12\",\"changed\":[\"checks\"],\"state\":{\"state\":\"OPEN\",\"checks\":\"SUCCESS\",\"mergeable\":\"MERGEABLE\"},\"was\":{}}"}
+{"ts":1794799990000,"crew_id":"c1","from":"worker:feat/a#s1","to":"dispatcher:c1","kind":"msg","body":"progress note"}

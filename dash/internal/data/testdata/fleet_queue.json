@@ -1,0 +1,13 @@
+{
+  "ts": 1794800010000,
+  "budget": 8,
+  "free": 3,
+  "load_over": false,
+  "due": {"repo": "a", "common": "/r/a/.git", "crew_id": "c1", "id": "h-f1"},
+  "head": {"repo": "a", "common": "/r/a/.git", "crew_id": "c1", "id": "h-f1", "waited_s": 900},
+  "holds": [
+    {"repo": "a", "common": "/r/a/.git", "crew_id": "c1", "id": "h-f1", "branch": "feat/q1", "prio": "high", "repo_prio": 2, "weight": 2, "ts": 1794799100000, "waited_s": 900, "state": "due", "reason": null, "first_due": 1794799500000, "demoted_at": null},
+    {"repo": "b", "common": "/r/b/.git", "crew_id": "c5", "id": "h-f2", "branch": "feat/q2", "prio": "normal", "repo_prio": 1, "weight": 2, "ts": 1794799800000, "waited_s": 200, "state": "waiting", "reason": "load", "first_due": null, "demoted_at": null},
+    {"repo": "b", "common": "/r/b/.git", "crew_id": "c5", "id": "h-p1", "branch": "feat/q3", "prio": "low", "repo_prio": 1, "weight": 9, "ts": 1794799000000, "waited_s": 1000, "state": "parked", "reason": "oversize", "first_due": null, "demoted_at": null}
+  ]
+}

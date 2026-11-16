@@ -1,0 +1,243 @@
+package data
+
+import (
+	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+)
+
+const (
+	fleetStatusKey = "crew fleet status --json"
+	fleetQueueKey  = "crew fleet queue --json"
+	tailscaleKey   = "tailscale status --json"
+	sshHaloKey     = "ssh -o BatchMode=yes -o ConnectTimeout=3 -- halo.lan true"
+)
+
+func fleetRunner(t *testing.T) *FakeRunner {
+	t.Helper()
+	return &FakeRunner{Responses: map[string]FakeResponse{
+		fleetStatusKey: {Stdout: readTestdata(t, "fleet_status.json")},
+		fleetQueueKey:  {Stdout: readTestdata(t, "fleet_queue.json")},
+		tailscaleKey:   {Stdout: readTestdata(t, "tailscale_status.json")},
+		sshHaloKey:     {},
+	}}
+}
+
+func fleetSettings(tailscale bool) SettingsSection {
+	rows := []SettingRow{
+		leaf(`"halo.lan"`, "hosts", "halo", "ssh"),
+		leaf(`false`, "hosts", "halo", "peer"),
+		leaf(`"tp"`, "hosts", "tp", "ssh"),
+		leaf(`false`, "hosts", "tp", "peer"),
+		leaf(`"mbp.lan"`, "hosts", "mbp", "ssh"),
+		leaf(`true`, "hosts", "mbp", "peer"),
+		leaf(`"box.lan"`, "hosts", "box", "ssh"),
+		leaf(`true`, "hosts", "box", "peer"),
+		leaf(`"box-nas"`, "hosts", "box", "tailscale"),
+		leaf(`["/srv/x"]`, "hosts", "box", "repos", "x"),
+	}
+	if tailscale {
+		rows = append(rows, leaf(`true`, "dashTailscale"))
+	}
+	return SettingsSection{Rows: rows}
+}
+
+func leaf(value string, path ...string) SettingRow {
+	return SettingRow{Path: path, Value: json.RawMessage(value), Origin: "user"}
+}
+
+func sshKey(dest string) string {
+	return "ssh -o BatchMode=yes -o ConnectTimeout=3 -- " + dest + " true"
+}
+
+// allSSH adds an ok response for every probe the fleet settings configure.
+func allSSH(r *FakeRunner) {
+	for _, d := range []string{"halo.lan", "tp", "mbp.lan", "box.lan"} {
+		r.Responses[sshKey(d)] = FakeResponse{}
+	}
+}
+
+func callNames(r *FakeRunner) []string {
+	var out []string
+	for _, c := range r.CallsSnapshot() {
+		out = append(out, c.Name)
+	}
+	return out
+}
+
+func fixedProber(r Runner) *HostProber {
+	return NewHostProber(r, func() time.Time { return time.Unix(1794800000, 0) })
+}
+
+func TestFleetStatusFixtureDecodes(t *testing.T) {
+	r := fleetRunner(t)
+	allSSH(r)
+	sec := CollectFleet(context.Background(), r, baseConfig(), false, fleetSettings(false), fixedProber(r))
+	if sec.StatusError != nil || sec.QueueError != nil {
+		t.Fatalf("errors: %v %v", sec.StatusError, sec.QueueError)
+	}
+	st := sec.Status
+	if st == nil || st.Host != "lap" || len(st.Repos) != 2 {
+		t.Fatalf("status = %+v", st)
+	}
+	m := st.Machine
+	if m == nil || m.Budget != 8 || *m.Free != 3 || len(m.LocalModels) != 1 || m.LocalModels[0].MaxConcurrent != 2 {
+		t.Errorf("machine = %+v", m)
+	}
+	if !m.Engines["codex"].LimitReached || m.Engines["codex"].HotWindows[0] != "5h" {
+		t.Errorf("engines = %+v", m.Engines)
+	}
+	c1 := st.Repos[0].Crews[0]
+	if c1.Dispatcher.State != "live" || *c1.Dispatcher.PID != 4242 || len(c1.Relays) != 2 || len(c1.Holds) != 2 {
+		t.Errorf("c1 = %+v", c1)
+	}
+	if c1.Relays[1].Live || *c1.Relays[0].CursorTS != 1794800005000 {
+		t.Errorf("relays = %+v", c1.Relays)
+	}
+	if got := c1.Workers[4]["host_error"]; got == nil {
+		t.Errorf("placeholder lost host_error: %v", c1.Workers[4])
+	}
+	if _, ok := c1.Workers[0]["age_s"]; !ok {
+		t.Errorf("age_s not added: %v", c1.Workers[0])
+	}
+	p := st.Repos[0].Peers
+	if len(p.Links) != 2 || p.Dropped != 1 || len(p.Rows) != 4 || *p.Links[0].Detail != "ssh: Connection refused" {
+		t.Errorf("peers = %+v", p)
+	}
+	if st.Repos[1].Crews[0].Dispatcher.Home != nil {
+		t.Errorf("closed home should be nil")
+	}
+	if len(st.Skipped) != 1 || st.Hosts == nil || *st.Queue.Parked[0].Reason != "oversize" {
+		t.Errorf("skipped/hosts/queue = %+v %+v %+v", st.Skipped, st.Hosts, st.Queue)
+	}
+	if len(sec.Queue) != 3 || sec.Queue[0].State != "due" || sec.Queue[0].Reason != nil || *sec.Queue[1].Reason != "load" {
+		t.Errorf("queue = %+v", sec.Queue)
+	}
+	if _, err := json.Marshal(sec); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCollectFleetAgeS(t *testing.T) {
+	r := fleetRunner(t)
+	allSSH(r)
+	cfg := baseConfig()
+	cfg.Now = 1794800010
+	sec := CollectFleet(context.Background(), r, cfg, false, fleetSettings(false), fixedProber(r))
+	w := sec.Status.Repos[0].Crews[0].Workers[0]
+	if w["age_s"] != int64(20) {
+		t.Errorf("age_s = %v, want 20", w["age_s"])
+	}
+}
+
+func TestCollectFleetDegrades(t *testing.T) {
+	cases := []struct {
+		name   string
+		key    string
+		resp   FakeResponse
+		status bool
+		queue  bool
+		tsErr  bool
+	}{
+		{"status", fleetStatusKey, FakeResponse{Stderr: []byte("boom\nmore"), Err: FakeExitError{Code: 2}}, true, false, false},
+		{"status garbage", fleetStatusKey, FakeResponse{Stdout: []byte("not json")}, true, false, false},
+		{"queue", fleetQueueKey, FakeResponse{Err: FakeExitError{Code: 2}}, false, true, false},
+		{"tailscale", tailscaleKey, FakeResponse{Stderr: []byte("down"), Err: FakeExitError{Code: 1}}, false, false, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := fleetRunner(t)
+			allSSH(r)
+			r.Responses[tc.key] = tc.resp
+			sec := CollectFleet(context.Background(), r, baseConfig(), true, fleetSettings(true), fixedProber(r))
+			if (sec.StatusError != nil) != tc.status || (sec.QueueError != nil) != tc.queue || (sec.TailscaleError != nil) != tc.tsErr {
+				t.Fatalf("errors status=%v queue=%v ts=%v", sec.StatusError, sec.QueueError, sec.TailscaleError)
+			}
+			if tc.status && (sec.Status != nil || len(sec.Queue) != 3) {
+				t.Errorf("status failure leaked into other sources: %+v", sec)
+			}
+			if tc.queue && (sec.Status == nil || sec.Queue == nil || len(sec.Queue) != 0) {
+				t.Errorf("queue failure must keep status and an empty queue: %+v", sec.Queue)
+			}
+			if !tc.tsErr && sec.Reach[0].Source != "tailscale" {
+				t.Errorf("reach = %+v", sec.Reach)
+			}
+		})
+	}
+	r := fleetRunner(t)
+	allSSH(r)
+	r.Responses[fleetStatusKey] = FakeResponse{Stderr: []byte("boom\nmore"), Err: FakeExitError{Code: 2}}
+	sec := CollectFleet(context.Background(), r, baseConfig(), false, fleetSettings(false), fixedProber(r))
+	if *sec.StatusError != "boom" {
+		t.Errorf("StatusError = %q", *sec.StatusError)
+	}
+}
+
+func TestCollectFleetQueueExit1(t *testing.T) {
+	r := fleetRunner(t)
+	allSSH(r)
+	r.Responses[fleetQueueKey] = FakeResponse{Stdout: readTestdata(t, "fleet_queue.json"), Err: FakeExitError{Code: 1}}
+	sec := CollectFleet(context.Background(), r, baseConfig(), false, fleetSettings(false), fixedProber(r))
+	if sec.QueueError != nil || len(sec.Queue) != 3 {
+		t.Fatalf("queue = %+v err = %v", sec.Queue, sec.QueueError)
+	}
+	if sec.Queue[2].State != "parked" || sec.Queue[2].Weight != 9 || sec.Queue[0].RepoPrio != 2 {
+		t.Errorf("queue rows = %+v", sec.Queue)
+	}
+}
+
+func TestFleetScannersIncremental(t *testing.T) {
+	root := t.TempDir()
+	mk := func(name, src string) string {
+		common := filepath.Join(root, name, ".git")
+		if err := os.MkdirAll(filepath.Join(common, "crew"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(common, "crew", "events.jsonl"), readTestdata(t, src), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return common
+	}
+	a, b := mk("a", "fleet_events_a.jsonl"), mk("b", "fleet_events_b.jsonl")
+	idle := filepath.Join(root, "idle", ".git") // never scanned: no file at all
+	missing := filepath.Join(root, "missing", ".git")
+
+	fs := NewFleetScanners()
+	now := int64(1794800010000)
+	d, errs := fs.Scan([]string{a, b}, now)
+	if len(errs) != 0 || len(d) != 2 {
+		t.Fatalf("digests=%d errs=%v", len(d), errs)
+	}
+	if d[a].PRs[12] == nil || d[b].PRs[12] == nil {
+		t.Fatalf("PR 12 missing: %+v", d)
+	}
+	if d[a].PRs[12].Checks != "SUCCESS" || d[b].PRs[12].Checks != "PENDING" {
+		t.Errorf("PR 12 mixed across repos: a=%+v b=%+v", d[a].PRs[12], d[b].PRs[12])
+	}
+	before := len(d[a].Recent)
+
+	line := `{"ts":1794800005000,"crew_id":"c1","from":"worker:feat/a#s1","to":"dispatcher:c1","kind":"msg","body":"later"}` + "\n"
+	f, err := os.OpenFile(filepath.Join(a, "crew", "events.jsonl"), os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString(line); err != nil {
+		t.Fatal(err)
+	}
+	_ = f.Close()
+
+	d2, errs := fs.Scan([]string{a, b, missing}, now)
+	if len(d2[a].Recent) != before+1 || len(d2[b].Recent) != len(d[b].Recent) {
+		t.Errorf("only a should advance: a %d->%d b %d->%d", before, len(d2[a].Recent), len(d[b].Recent), len(d2[b].Recent))
+	}
+	if _, ok := d2[missing]; ok || errs[missing] == "" {
+		t.Errorf("missing events file: digest=%v errs=%v", d2[missing], errs)
+	}
+	d3, errs := fs.Scan([]string{b}, now)
+	if _, ok := d3[idle]; ok || len(d3) != 1 || len(errs) != 0 {
+		t.Errorf("only requested commons are scanned: %v %v", d3, errs)
+	}
+}
