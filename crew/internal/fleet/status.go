@@ -785,9 +785,10 @@ func indexBus(events []bus.Event, host string) busIndex {
 	return idx
 }
 
-// blocked is the wait of a blocked worker. since is the first row of its
-// current unbroken run of blocked rows: restamps refresh the roster's age_s,
-// which therefore understates it.
+// blocked is the wait of a blocked worker. since is the roster's blocked_since
+// (the open episode); a watchdog-posted block has none, so it falls back to the
+// first row of the trailing run of blocked rows, which restamps leave
+// understating the roster's age_s.
 func (idx busIndex) blocked(crew string, row map[string]any) map[string]any {
 	from, _ := row["from"].(string)
 	evs := idx.status[crewKey{crew, from}]
