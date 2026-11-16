@@ -20,6 +20,7 @@ const (
 	keyB1 = "lap|/r/b/.git|c1"
 	keyA3 = "lap|/r/a/.git|c3"
 	keyA4 = "lap|/r/a/.git|c4"
+	keyA6 = "lap|/r/a/.git|c6"
 	keyB5 = "lap|/r/b/.git|c5"
 )
 
@@ -97,7 +98,7 @@ func TestFleetActiveFilter(t *testing.T) {
 	if slices.Contains(crewKeys(v), keyA4) {
 		t.Errorf("closed crew with only terminal workers shown: %v", crewKeys(v))
 	}
-	if v.Summary.HiddenCrews != 1 || v.Summary.Crews != len(v.Crews) {
+	if v.Summary.HiddenCrews != 2 || v.Summary.Crews != len(v.Crews) {
 		t.Errorf("summary crews/hidden = %d/%d, rows %d", v.Summary.Crews, v.Summary.HiddenCrews, len(v.Crews))
 	}
 
@@ -107,6 +108,39 @@ func TestFleetActiveFilter(t *testing.T) {
 	v = view.BuildFleet(in)
 	if c := fleetCrew(t, v, keyA4); !c.Orphaned {
 		t.Errorf("unknown-state worker should keep c4 active and orphaned: %+v", c)
+	}
+}
+
+func TestFleetStaleWorkersDoNotKeepCrewActive(t *testing.T) {
+	in := viewtest.FleetInputs()
+	v := view.BuildFleet(in)
+	if slices.Contains(crewKeys(v), keyA6) {
+		t.Errorf("dead crew with only stale workers shown: %v", crewKeys(v))
+	}
+	for _, id := range fleetIDs(v) {
+		if strings.Contains(id, "dispatcher_gone:c6:") {
+			t.Errorf("stale-only crew produced %s", id)
+		}
+	}
+	if v.Summary.HiddenCrews != 2 {
+		t.Errorf("hidden = %d, want c4 and c6", v.Summary.HiddenCrews)
+	}
+
+	sec := data.FleetSection{Status: &data.FleetStatus{Repos: []data.FleetRepo{{
+		Repo: "a", Common: "/r/a/.git", Crews: []data.FleetCrew{*crewOf(in, "/r/a/.git", "c6")},
+	}}}}
+	if got := view.ActiveCommons(sec); len(got) != 0 {
+		t.Errorf("ActiveCommons = %v, want none for stale-only crew", got)
+	}
+
+	crewOf(in, "/r/a/.git", "c6").Workers[0]["stale"] = false
+	v = view.BuildFleet(in)
+	c := fleetCrew(t, v, keyA6)
+	if !c.Orphaned || c.Workers.Total != 2 {
+		t.Errorf("one live-looking worker should orphan c6 with total 2: %+v", c)
+	}
+	if it := fleetItem(t, v, keyA6+"#dispatcher_gone:c6:"); !strings.Contains(it.Message, "1 workers") {
+		t.Errorf("message = %q, want 1 workers", it.Message)
 	}
 }
 

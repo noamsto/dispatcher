@@ -53,6 +53,8 @@ type WorkerRow struct {
 	Live        *bool    `json:"live"`
 	ExitSuspect *bool    `json:"exit_suspect"`
 	Actions     []Action `json:"actions"`
+
+	stale bool
 }
 
 type HoldRow struct {
@@ -137,6 +139,7 @@ func WorkerRowOf(crew []string, crewID string, w map[string]any) WorkerRow {
 		AgeS:        optInt(w, "age_s"),
 		Live:        optBool(w, "live"),
 		ExitSuspect: optBool(w, "exit_suspect"),
+		stale:       w["stale"] == true,
 	}
 	name := ""
 	if row.Name != nil {

@@ -258,7 +258,8 @@ func fleetCrews(f FleetInputs) ([]fleetCrew, int) {
 }
 
 // ActiveCommons lists the local repo commons holding a crew BuildFleet will
-// not hide for lack of work: a live dispatcher or an unfinished worker.
+// not hide for lack of work: a live dispatcher or a working worker (see
+// working).
 // Collectors scan only these buses.
 func ActiveCommons(sec data.FleetSection) []string {
 	crews, _ := fleetCrews(FleetInputs{Fleet: sec})
@@ -269,7 +270,7 @@ func ActiveCommons(sec data.FleetSection) []string {
 		}
 		active := c.live()
 		for _, w := range c.local.Workers {
-			active = active || !isTerminal(WorkerRowOf(nil, c.crew, w).State)
+			active = active || WorkerRowOf(nil, c.crew, w).working()
 		}
 		if active {
 			commons = append(commons, c.repo.Common)
@@ -360,10 +361,16 @@ func CrewInputs(f FleetInputs, crewKey string) (Inputs, bool) {
 	return Inputs{}, false
 }
 
+// working is the one rule for a worker that keeps its crew active and, under
+// a dead dispatcher, orphaned: non-terminal and not stale. A stale row is
+// crew's verdict of a local row with no sign of life; it still counts in the
+// crew's worker totals and its own state items.
+func (w WorkerRow) working() bool { return !isTerminal(w.State) && !w.stale }
+
 func unfinished(rows []WorkerRow) int {
 	n := 0
 	for _, w := range rows {
-		if !isTerminal(w.State) {
+		if w.working() {
 			n++
 		}
 	}

@@ -59,8 +59,8 @@
           "dispatcher": {"state": "dead", "pid": 999, "pane": null, "lane": null, "last_event_s": 7200, "home": "/r/a/.git"},
           "attention": "unattended",
           "workers": [
-            {"branch": "feat/o1", "name": "w-o1", "state": "working", "tier": "standard", "engine": "claude", "crew_id": "c3", "ts": 1794792800000, "live": false},
-            {"branch": "feat/o2", "name": "w-o2", "state": "pr_open", "tier": "standard", "engine": "claude", "crew_id": "c3", "ts": 1794792000000, "live": false}
+            {"branch": "feat/o1", "name": "w-o1", "state": "working", "tier": "standard", "engine": "claude", "crew_id": "c3", "ts": 1794792800000, "live": false, "stale": false},
+            {"branch": "feat/o2", "name": "w-o2", "state": "pr_open", "tier": "standard", "engine": "claude", "crew_id": "c3", "ts": 1794792000000, "live": false, "stale": false}
           ],
           "holds": [],
           "relays": []
@@ -72,6 +72,17 @@
           "workers": [
             {"branch": "feat/d1", "name": "w-d1", "state": "done", "tier": "trivial", "engine": "claude", "crew_id": "c4", "ts": 1794700000000, "live": false},
             {"branch": "feat/d2", "name": "w-d2", "state": "reaped", "tier": "trivial", "engine": "claude", "crew_id": "c4", "ts": 1794700000000, "live": false}
+          ],
+          "holds": [],
+          "relays": []
+        },
+        {
+          "crew_id": "c6",
+          "dispatcher": {"state": "dead", "pid": 888, "pane": null, "lane": null, "last_event_s": 5000000, "home": "/r/a/.git"},
+          "attention": "idle",
+          "workers": [
+            {"branch": "feat/s1", "name": "w-s1", "state": "working", "tier": "standard", "engine": "claude", "crew_id": "c6", "ts": 1789800000000, "live": false, "stale": true},
+            {"branch": "feat/s2", "name": "w-s2", "state": "pr_open", "tier": "standard", "engine": "claude", "crew_id": "c6", "ts": 1789800000000, "live": false, "stale": true}
           ],
           "holds": [],
           "relays": []
