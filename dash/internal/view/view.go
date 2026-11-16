@@ -23,7 +23,6 @@ type Loaded struct {
 	Settings, Budget, Retro, Ratings, Roster, Bus bool
 }
 
-// Inputs is everything a builder reads.
 type Inputs struct {
 	Snap   data.Snapshot
 	Bus    data.BusDigest
@@ -39,7 +38,6 @@ func (in Inputs) nowSec() int64 {
 	return in.Snap.Now
 }
 
-// Build returns the named view as a JSON-marshalable struct.
 func Build(name string, in Inputs) (any, error) {
 	switch name {
 	case "overview":
@@ -97,7 +95,6 @@ func crewArgv(crew []string, sub, crewID string, target ...string) []string {
 	return append(argv, target...)
 }
 
-// NudgeTarget is the codename, else the branch.
 func NudgeTarget(name, branch string) string {
 	if name != "" {
 		return name

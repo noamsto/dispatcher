@@ -10,11 +10,8 @@ import (
 	"github.com/fsnotify/fsnotify"
 )
 
-// Watcher abstracts the roster view's two live-refresh implementations
-// (fsnotify / a poll fallback) behind one channel: the view never cares
-// which is live, only that a change fires an event. Events is buffered by
-// one (a coalescing signal, not a queue of every change) and is closed by
-// Close, so a blocked reader unblocks rather than leaking.
+// Watcher signals bus changes on Events, a one-slot coalescing channel that
+// Close closes.
 type Watcher interface {
 	Events() <-chan struct{}
 	Close() error

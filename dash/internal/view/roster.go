@@ -25,7 +25,6 @@ type CrewRow struct {
 	Lane         *string     `json:"lane"`
 }
 
-// WorkerRow is one `crew roster` row with every key a renderer reads typed.
 type WorkerRow struct {
 	Crew        string   `json:"crew"`
 	Branch      string   `json:"branch"`
@@ -56,7 +55,6 @@ type WorkerRow struct {
 	Actions     []Action `json:"actions"`
 }
 
-// HoldRow is one `crew hold list --json` row.
 type HoldRow struct {
 	ID      string  `json:"id"`
 	Kind    *string `json:"kind"`

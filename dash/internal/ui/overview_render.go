@@ -184,7 +184,6 @@ func shownPanels(w int, focus ovPanel) []ovPanel {
 	return []ovPanel{panelChecklists}
 }
 
-// panelWorkers is the distinct workers of panel p's rows, top to bottom.
 func panelWorkers(p ovPanel, ov vm.OverviewView, ix ovIndex) []int {
 	var es []entry
 	switch p {
@@ -204,7 +203,6 @@ func panelWorkers(p ovPanel, ov vm.OverviewView, ix ovIndex) []int {
 	return ws
 }
 
-// matches reports whether hay passes the filter.
 func (ix ovIndex) matches(hay string) bool {
 	return ix.needle == "" || strings.Contains(strings.ToLower(hay), ix.needle)
 }
@@ -455,7 +453,6 @@ func overviewLayout(w, h int, ov vm.OverviewView, st overviewState) overviewRect
 	return r
 }
 
-// renderOverview draws the Overview body as exactly h lines of at most w cells.
 func renderOverview(w, h int, ov vm.OverviewView, st overviewState, mode pillMode) string {
 	if w <= 0 || h <= 0 {
 		return ""
@@ -544,7 +541,6 @@ func severityGlyph(s vm.Severity) (string, lipgloss.Color) {
 	return "!", colAmber
 }
 
-// rowLines renders one placed entry as len == entry.lines lines of width iw.
 func rowLines(ov vm.OverviewView, r overviewRects, st overviewState, it placed, iw int) []string {
 	var bg lipgloss.TerminalColor = lipgloss.NoColor{}
 	selected := it.worker >= 0 && it.worker == r.sel.worker && it.kind != eHeader

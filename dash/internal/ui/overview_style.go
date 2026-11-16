@@ -49,7 +49,6 @@ func pillModeOf(getenv func(string) string, profile termenv.Profile) pillMode {
 	return pillRound
 }
 
-// pillWidth is the rendered width of a pill around textW cells of text.
 func pillWidth(textW int, mode pillMode) int {
 	if mode == pillRound {
 		return textW + 4
@@ -119,7 +118,6 @@ func phaseCells(p *vm.Phase) []trackCell {
 	return cells
 }
 
-// phaseTrack is the plain phase track; unknown phases are "?".
 func phaseTrack(p *vm.Phase) string {
 	cells := phaseCells(p)
 	if cells == nil {
@@ -176,7 +174,6 @@ func (s *spans) add(text string, st lipgloss.Style) *spans {
 	return s
 }
 
-// col appends text in a fixed-width column, truncated and padded inside one span.
 func (s *spans) col(text string, width int, st lipgloss.Style, right bool) *spans {
 	t := ansi.Truncate(cleanText(text), max0(width), "…")
 	pad := strings.Repeat(" ", max0(width-ansi.StringWidth(t)))
@@ -188,12 +185,10 @@ func (s *spans) col(text string, width int, st lipgloss.Style, right bool) *span
 	return s.add(t, st)
 }
 
-// padTo fills with background-coloured spaces up to absolute column c.
 func (s *spans) padTo(c int) *spans {
 	return s.add(strings.Repeat(" ", max0(min(c, s.limit)-s.w)), lipgloss.NewStyle())
 }
 
-// String pads the line to the limit and returns it.
 func (s *spans) String() string {
 	s.padTo(s.limit)
 	return s.sb.String()

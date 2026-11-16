@@ -307,7 +307,6 @@ func (v *mapView) selectPlanet(i int) tea.Cmd {
 	return v.request()
 }
 
-// crewIDs lists the crews that have workers to draw, in roster order.
 func (v mapView) crewIDs() []string {
 	var ids []string
 	for _, w := range v.workers {

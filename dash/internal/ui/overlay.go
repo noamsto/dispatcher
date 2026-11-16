@@ -37,7 +37,6 @@ func composite(base, box []string, x, y, w int) []string {
 	return out
 }
 
-// overlay composites the open mode's box over the Overview body lines.
 func (v overviewView) overlay(base []string, w, h int) string {
 	bw := min(w-4, overlayMaxWidth)
 	y := h / 6

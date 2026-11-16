@@ -280,7 +280,6 @@ func (u *actionUI) promptKeys() []key.Binding {
 	return nil
 }
 
-// workerFromRow maps a roster row to the Worker the actions take.
 func workerFromRow(w vm.WorkerRow) data.Worker {
 	return data.Worker{
 		Crew:    w.Crew,

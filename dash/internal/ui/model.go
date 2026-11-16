@@ -170,8 +170,6 @@ func NewModel(deps Deps, now func() time.Time, live liveDeps) Model {
 	return m
 }
 
-// viewInputs is what the view-model builders read, assembled from the root's
-// sources.
 func (m Model) viewInputs() vm.Inputs {
 	return inputsOf(m.snap, m.digest, m.loaded(), m.now().UnixMilli(), m.crew)
 }

@@ -137,7 +137,6 @@ func (v overviewView) Keys() []key.Binding {
 
 func (overviewView) Selection() data.Selection { return nil }
 
-// Capturing is true while a prompt takes every keystroke.
 func (v overviewView) Capturing() bool {
 	return v.mode == ovReply || v.mode == ovConfirm || v.mode == ovFilter
 }
@@ -177,10 +176,8 @@ func (v overviewView) layout() overviewRects {
 	return overviewLayout(w, h, v.model, v.st)
 }
 
-// sel is the selection as drawn at the last frame's size.
 func (v overviewView) sel() ovSel { return v.layout().sel }
 
-// target is the worker actions act on: the highlighted one.
 func (v overviewView) target() (vm.OverviewWorker, bool) {
 	s := v.sel()
 	if s.worker < 0 {
@@ -384,7 +381,6 @@ func workerTarget(w vm.OverviewWorker) ovTarget {
 
 var actionVerbs = map[string]string{"p": "peek", "n": "nudge", "r": "reply", "m": "merge"}
 
-// actOnSelected runs the p, n, r or m action on the selected worker.
 func (v *overviewView) actOnSelected(k string) tea.Cmd {
 	w, ok := v.target()
 	if !ok {
@@ -404,7 +400,6 @@ func (v *overviewView) actOnSelected(k string) tea.Cmd {
 	return v.dispatch(w.Actions[i], workerTarget(w))
 }
 
-// dispatch runs a, or opens its prompt (reply) or confirm (nudge, merge).
 func (v *overviewView) dispatch(a vm.Action, t ovTarget) tea.Cmd {
 	switch a.Key {
 	case "p":
@@ -477,7 +472,6 @@ func (v *overviewView) replyKey(msg tea.KeyMsg) tea.Cmd {
 	return cmd
 }
 
-// click selects what is under the pointer using the layout that was drawn.
 func (v *overviewView) click(x, y int) {
 	r := v.layout()
 	in := func(rc rect) bool { return x >= rc.x && x < rc.x+rc.w && y >= rc.y && y < rc.y+rc.h }
