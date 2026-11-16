@@ -9,6 +9,8 @@ holds, hosts).
   --view <name>  With --json: print one view model (overview, roster, budget,
                  runs, settings, map, fleet)
   --watch        With --view: one JSON line per bus change, incl. relayed
-                 remote-worker batches and peer syncs
+                 remote-worker batches and peer syncs. Fleet also emits one
+                 every 30 s as a fallback refresh, so a line is not always
+                 a change.
 
   crew dash --once

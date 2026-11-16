@@ -843,6 +843,9 @@ func TestFleetChangeCooldown(t *testing.T) {
 	if !m.fleetSettle {
 		t.Fatal("change inside the cooldown scheduled no deferred load")
 	}
+	if cmd := m.requestFleetChange(); cmd != nil {
+		t.Fatal("a second change inside the cooldown scheduled another settle")
+	}
 
 	// The deferred settle then loads once.
 	nm, cmd := m.Update(fleetSettleMsg{})

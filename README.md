@@ -905,7 +905,8 @@ live; Fleet loads on first activation (see below):
   it, Crews (one row per crew, peers as `@host`), Capacity (weight, load,
   local model slots, budget windows), Holds and Hosts (relay, sync lag,
   reachability). An orphaned crew (dispatcher dead or closed, workers unfinished)
-  raises a `dispatcher_gone` item. Fleet refreshes on `R`, on relay or peer
+  raises a `dispatcher_gone` item (critical and relaunchable when dead, a
+  warning with no action when closed). Fleet refreshes on `R`, on relay or peer
   changes while active, and every 10 s while active.
 
 `--json --view` takes `overview`, `roster`, `budget`, `runs`, `settings`,
@@ -915,8 +916,10 @@ needs, not the per-crew roster.
 
 `--watch` (every view) also fires on relayed remote-worker batches (relay
 cursors under `crew/crews/*/relay/`) and peer syncs (`crew/peers/*.link` and
-`*.roster`), polled every second. For `fleet`, it watches every repo seen in
-the last collect.
+`*.roster`), polled every second. For `fleet`, it also emits a full document
+every 30 s as a fallback refresh (reachability changes and recovery after a
+failed collect reach JSON consumers no other way), so a line is not always a
+change; it watches every repo seen in the last successful collect.
 
 Overview keys: `tab`/`shift-tab` move focus, `j`/`k` select, `1`–`9` act on
 the attention rows shown, `p` peeks, `n` nudges, `r` replies, `m` merges
@@ -931,8 +934,8 @@ Fleet keys: `tab`/`shift-tab` move focus (attention, crews, capacity, holds,
 hosts), `j`/`k` move, `enter` on a crew drills into its Overview with a
 `fleet › <repo> <crew>` breadcrumb and `esc` returns to the panels with that
 crew selected. `1`–`9` act on the attention rows shown; on Fleet they do not
-switch views, so use `[`/`]`. `L` on an orphaned crew relaunches its
-dispatcher after a y/N confirm (needs tmux). `/` filters crews by repo, crew
+switch views, so use `[`/`]`. `L` on a crew whose dispatcher is dead
+relaunches it after a y/N confirm (needs tmux); a closed one has no action. `/` filters crews by repo, crew
 or host; `?` shows help. Peer rows and their actions are read-only.
 
 Host reachability: with `dashTailscale: true` the Hosts panel reads
