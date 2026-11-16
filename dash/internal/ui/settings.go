@@ -21,6 +21,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/noamsto/dispatcher/dash/internal/data"
+	vm "github.com/noamsto/dispatcher/dash/internal/view"
 )
 
 type knobKind int
@@ -226,7 +227,7 @@ type settingsView struct {
 	warnings []string
 	err      *string
 
-	section data.SettingsSection
+	section vm.SettingsView
 	loaded  bool
 	rows    []knobRow
 	cursor  int
@@ -236,19 +237,20 @@ type settingsView struct {
 	busy    bool
 }
 
-func newSettingsView(snap data.Snapshot, loaded [numSources]bool, deps settingsDeps) settingsView {
+func newSettingsView(sv vm.SettingsView, deps settingsDeps) settingsView {
 	v := settingsView{deps: deps, input: textinput.New()}
 	v.input.Prompt = ""
 	v.input.CharLimit = 32
-	v.load(snap.Settings, loaded[srcSettings])
+	v.load(sv)
 	return v
 }
 
 // load rebuilds the rows only when the settings section changed: every source
 // landing is broadcast to every view, and an unrelated roster refresh must
 // not move the cursor or close an open input.
-func (v *settingsView) load(sec data.SettingsSection, loaded bool) {
-	v.loaded = loaded
+func (v *settingsView) load(sec vm.SettingsView) {
+	v.loaded = sec.Loaded
+	sec.Loaded = v.section.Loaded // the loaded flag alone is no reason to rebuild
 	if v.rows != nil && reflect.DeepEqual(sec, v.section) {
 		return
 	}
@@ -279,7 +281,7 @@ func (v settingsView) cur() (knobRow, bool) {
 func (v settingsView) Update(msg tea.Msg) (view, tea.Cmd) {
 	switch msg := msg.(type) {
 	case snapshotMsg:
-		v.load(msg.snap.Settings, msg.loaded[srcSettings])
+		v.load(msg.settings)
 		return v, nil
 
 	case settingsWriteMsg:

@@ -77,7 +77,7 @@ func TestBoardCardsHaveFixedWidth(t *testing.T) {
 	asciiProfile(t)
 	for _, sel := range []bool{false, true} {
 		for _, row := range boardSnapshot().Roster.Crews[0].Workers {
-			for i, l := range renderCard(row, sel) {
+			for i, l := range renderCard(workerRow("alpha", row), sel) {
 				if got := lipgloss.Width(l); got != boardCardW {
 					t.Errorf("sel=%v %v line %d is %d cells, want %d: %q", sel, row["name"], i, got, boardCardW, l)
 				}
@@ -232,10 +232,10 @@ func TestBoardResizeKeepsSelection(t *testing.T) {
 // crew/internal/rosterrender/card_test.go asserts for the SVG card
 // (TestCardFieldsMatchDashBoard): keep the two in step.
 func TestBoardCardFieldsMatchSVGCard(t *testing.T) {
-	got := fieldsOf(map[string]any{
+	got := fieldsOf(workerRow("c", map[string]any{
 		"branch": "feat/12-x", "name": "lime", "state": "pr_open", "title": "fix the bug",
 		"tier": "deep", "engine": "claude", "model": "claude-opus-5-5", "detail": "running tests",
-	})
+	}))
 	want := cardFields{
 		head: "lime · #12", state: "pr open", title: "fix the bug",
 		tier: "deep", meta: "deep·claude·opus", detail: "running tests",
@@ -247,10 +247,10 @@ func TestBoardCardFieldsMatchSVGCard(t *testing.T) {
 
 func TestBoardRemoteHostShowsOnRow3(t *testing.T) {
 	asciiProfile(t)
-	rows := cardRows(fieldsOf(map[string]any{
+	rows := cardRows(fieldsOf(workerRow("c", map[string]any{
 		"branch": "feat/1-a", "name": "a", "state": "working", "tier": "standard",
 		"engine": "claude", "model": "claude-sonnet-5-5", "host": "mini-host",
-	}), lipgloss.NewStyle())
+	})), lipgloss.NewStyle())
 	if !strings.Contains(rows[3], "@mini-host") {
 		t.Errorf("row 3 = %q lacks the host", rows[3])
 	}
@@ -304,11 +304,11 @@ func TestBoardMapOpensOnBoardSelection(t *testing.T) {
 
 func TestBoardCardCutsLongStateHostAndFirstWord(t *testing.T) {
 	asciiProfile(t)
-	card := renderCard(map[string]any{
+	card := renderCard(workerRow("c", map[string]any{
 		"branch": "feat/1-a", "name": "a", "state": "waiting_for_dispatcher_answer_now",
 		"title": strings.Repeat("x", 40) + " second words", "host": "strata.tail1234.ts.net",
 		"engine": "claude", "model": "opus", "tier": "deep",
-	}, false)
+	}), false)
 	for i, l := range card {
 		if got := lipgloss.Width(l); got != boardCardW {
 			t.Errorf("line %d is %d cells, want %d: %q", i, got, boardCardW, l)

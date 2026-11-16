@@ -70,6 +70,13 @@ func f64(p *float64) float64 {
 	return *p
 }
 
+func strOf(p *string) string {
+	if p == nil {
+		return ""
+	}
+	return *p
+}
+
 // fmt1 ports once/format.go's jq `fmt1`: one decimal place, nil in nil out.
 func fmt1(f *float64) *string {
 	if f == nil {

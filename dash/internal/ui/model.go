@@ -60,13 +60,30 @@ const (
 	numTabs
 )
 
-// snapshotMsg carries the root model's current Snapshot and per-source
-// loaded flags to every view's Update, not just the active one, so a tab
-// rebuilds its rows/tree even while off-screen.
+// snapshotMsg carries the view models built from the root's current sources
+// to every view's Update, not just the active one, so a tab rebuilds its
+// rows/tree even while off-screen.
 type snapshotMsg struct {
-	snap   data.Snapshot
-	loaded [numSources]bool
-	in     vm.Inputs // the view-model inputs the root assembled from snap and the bus digest
+	in     vm.Inputs        // the view-model inputs the root assembled from snap and the bus digest
+	loaded [numSources]bool // per source: Runs shows its two sources' loading separately
+
+	roster   vm.RosterView
+	budget   vm.BudgetView
+	runs     vm.RunsView
+	settings vm.SettingsView
+	mapv     vm.MapView
+}
+
+func newSnapshotMsg(in vm.Inputs, loaded [numSources]bool) snapshotMsg {
+	return snapshotMsg{
+		in:       in,
+		loaded:   loaded,
+		roster:   vm.BuildRoster(in),
+		budget:   vm.BuildBudget(in),
+		runs:     vm.BuildRuns(in),
+		settings: vm.BuildSettings(in),
+		mapv:     vm.BuildMap(in),
+	}
 }
 
 // requestRosterMsg asks the root to reload the roster source (emitted by the
@@ -132,37 +149,41 @@ func NewModel(deps Deps, now func() time.Time, live liveDeps) Model {
 	for i := range m.load {
 		m.load[i].inFlight = true
 	}
-	lv := newLiveView(m.snap, m.loaded(), live, now)
+	msg := newSnapshotMsg(m.viewInputs(), m.loaded())
+	lv := newLiveView(msg.roster, msg.budget, live, now)
 	acts := actionDeps{ctx: ctx, runner: deps.Runner, crew: deps.Crew, inTmux: deps.InTmux}
 	lv.acts = acts
 	m.views = [numTabs]view{
-		overviewTab: newOverviewView(m.viewInputs(), now),
+		overviewTab: newOverviewView(msg.in, now),
 		liveTab:     lv,
-		boardTab:    newBoardView(m.snap, m.loaded(), now, acts),
-		budgetTab:   newBudgetView(m.snap, m.loaded()),
-		runsTab:     newRunsView(m.snap, m.loaded()),
-		settingsTab: newSettingsView(m.snap, m.loaded(), settingsDeps{
+		boardTab:    newBoardView(msg.roster, now, acts),
+		budgetTab:   newBudgetView(msg.budget),
+		runsTab:     newRunsView(msg.runs, msg.loaded),
+		settingsTab: newSettingsView(msg.settings, settingsDeps{
 			ctx: ctx, runner: deps.Runner, bin: deps.DispatchConfig,
 			getenv: os.Getenv, exec: tea.ExecProcess,
 		}),
-		mapTab: newMapView(m.snap, deps.Map, acts),
+		mapTab: newMapView(msg.mapv, deps.Map, acts),
 	}
 	return m
 }
 
-// viewInputs is what the Overview's builders read, assembled from the root's
+// viewInputs is what the view-model builders read, assembled from the root's
 // sources.
 func (m Model) viewInputs() vm.Inputs {
-	l := m.loaded()
+	return inputsOf(m.snap, m.digest, m.loaded(), m.now().UnixMilli(), m.crew)
+}
+
+func inputsOf(snap data.Snapshot, digest data.BusDigest, l [numSources]bool, nowMS int64, crew []string) vm.Inputs {
 	return vm.Inputs{
-		Snap: m.snap,
-		Bus:  m.digest,
+		Snap: snap,
+		Bus:  digest,
 		Loaded: vm.Loaded{
 			Settings: l[srcSettings], Budget: l[srcBudget],
 			Runs: l[srcRetro] && l[srcRatings], Roster: l[srcRoster], Bus: l[srcBus],
 		},
-		NowMS: m.now().UnixMilli(),
-		Crew:  m.crew,
+		NowMS: nowMS,
+		Crew:  crew,
 	}
 }
 
@@ -361,7 +382,7 @@ func (m Model) update(msg tea.Msg) (Model, tea.Cmd) {
 
 // broadcast forwards the current Snapshot to every view.
 func (m *Model) broadcast() []tea.Cmd {
-	msg := snapshotMsg{snap: m.snap, loaded: m.loaded(), in: m.viewInputs()}
+	msg := newSnapshotMsg(m.viewInputs(), m.loaded())
 	var cmds []tea.Cmd
 	for i, v := range m.views {
 		nv, cmd := v.Update(msg)

@@ -13,6 +13,7 @@ import (
 	"github.com/muesli/termenv"
 
 	"github.com/noamsto/dispatcher/dash/internal/data"
+	vm "github.com/noamsto/dispatcher/dash/internal/view"
 )
 
 func fixedLiveNow(t *testing.T) func() time.Time {
@@ -24,7 +25,7 @@ func fixedLiveNow(t *testing.T) func() time.Time {
 func newTestLiveView(t *testing.T) liveView {
 	t.Helper()
 	snap := loadFullSnapshot(t)
-	return newLiveView(snap, allLoaded, liveDeps{}, fixedLiveNow(t))
+	return testLiveView(snap, allLoaded, liveDeps{}, fixedLiveNow(t))
 }
 
 func asciiProfile(t *testing.T) {
@@ -74,14 +75,14 @@ func TestLiveRosterErrorAndNoCrew(t *testing.T) {
 	snap := loadFullSnapshot(t)
 	msg := "exit 1"
 	snap.Roster.Error = &msg
-	out := newLiveView(snap, allLoaded, liveDeps{}, fixedLiveNow(t)).View(80, 24)
+	out := testLiveView(snap, allLoaded, liveDeps{}, fixedLiveNow(t)).View(80, 24)
 	if !strings.Contains(out, "roster unavailable: exit 1") {
 		t.Fatalf("roster error should read roster unavailable: exit 1:\n%s", out)
 	}
 
 	snap = loadFullSnapshot(t)
 	snap.Roster.Crews = nil
-	out = newLiveView(snap, allLoaded, liveDeps{}, fixedLiveNow(t)).View(80, 24)
+	out = testLiveView(snap, allLoaded, liveDeps{}, fixedLiveNow(t)).View(80, 24)
 	if !strings.Contains(out, "no active crew") {
 		t.Fatalf("empty roster should read \"no active crew\":\n%s", out)
 	}
@@ -90,7 +91,7 @@ func TestLiveRosterErrorAndNoCrew(t *testing.T) {
 func TestLiveRosterPlaceholderBeforeLoad(t *testing.T) {
 	asciiProfile(t)
 	snap := loadFullSnapshot(t)
-	out := newLiveView(snap, [numSources]bool{}, liveDeps{}, fixedLiveNow(t)).View(80, 24)
+	out := testLiveView(snap, [numSources]bool{}, liveDeps{}, fixedLiveNow(t)).View(80, 24)
 	for _, want := range []string{"loading budget…", "loading roster…"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing placeholder %q:\n%s", want, out)
@@ -105,7 +106,7 @@ func TestLiveRosterPlaceholderBeforeLoad(t *testing.T) {
 func TestLiveCrewErrorsShown(t *testing.T) {
 	asciiProfile(t)
 	snap := loadCrewErrSnapshot(t)
-	out := newLiveView(snap, allLoaded, liveDeps{}, fixedNow(snap)).View(80, 24)
+	out := testLiveView(snap, allLoaded, liveDeps{}, fixedNow(snap)).View(80, 24)
 	for _, want := range []string{"crew c2: workers unavailable: boom", "crew c3: holds unavailable: nope"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q:\n%s", want, out)
@@ -121,7 +122,7 @@ func TestLiveHoldsErrorShownWorkersStillRender(t *testing.T) {
 	snap := loadFullSnapshot(t)
 	msg := "hold boom"
 	snap.Roster.Crews[0].HoldsError = &msg
-	out := newLiveView(snap, allLoaded, liveDeps{}, fixedLiveNow(t)).View(80, 24)
+	out := testLiveView(snap, allLoaded, liveDeps{}, fixedLiveNow(t)).View(80, 24)
 	if !strings.Contains(out, "sage") || !strings.Contains(out, "coral") {
 		t.Fatalf("holds-only failure should still render the crew's workers:\n%s", out)
 	}
@@ -146,14 +147,14 @@ func TestLiveRowsSkipWorkersErrorCrew(t *testing.T) {
 	}
 	snap.Roster.Crews = append(snap.Roster.Crews, healthy)
 
-	v := newLiveView(snap, allLoaded, liveDeps{eventsPath: "testdata/events.jsonl"}, fixedLiveNow(t))
+	v := testLiveView(snap, allLoaded, liveDeps{eventsPath: "testdata/events.jsonl"}, fixedLiveNow(t))
 	if len(v.rows) != 1 {
 		t.Fatalf("rows should count only the healthy crew's workers, got %d", len(v.rows))
 	}
 
 	v = press(v, keyRune('G'))
-	if v.rows[v.cursor].crewID != "healthy" {
-		t.Fatalf("cursor after G should target the healthy crew's worker, got crewID=%q", v.rows[v.cursor].crewID)
+	if v.rows[v.cursor].Crew != "healthy" {
+		t.Fatalf("cursor after G should target the healthy crew's worker, got crewID=%q", v.rows[v.cursor].Crew)
 	}
 
 	nv, cmd := v.Update(keyType(tea.KeyEnter))
@@ -175,7 +176,7 @@ func TestLiveStateInjectionIsCleaned(t *testing.T) {
 	asciiProfile(t)
 	snap := loadFullSnapshot(t)
 	snap.Roster.Crews[0].Workers[0]["state"] = "\x1b]0;pwned\x07working\u202e"
-	out := newLiveView(snap, allLoaded, liveDeps{}, fixedLiveNow(t)).View(80, 24)
+	out := testLiveView(snap, allLoaded, liveDeps{}, fixedLiveNow(t)).View(80, 24)
 	if strings.ContainsRune(out, 0x1b) {
 		t.Errorf("rendered table contains a raw ESC from an injected state:\n%q", out)
 	}
@@ -190,7 +191,7 @@ func TestLivePRURLInjectionIsCleaned(t *testing.T) {
 	asciiProfile(t)
 	snap := loadFullSnapshot(t)
 	snap.Roster.Crews[0].Workers[0]["pr_url"] = "\x1b[2Jhttps://pr\u202e"
-	v := newLiveView(snap, allLoaded, liveDeps{}, fixedLiveNow(t))
+	v := testLiveView(snap, allLoaded, liveDeps{}, fixedLiveNow(t))
 	for _, sel := range []liveView{v, press(v, keyRune('j'))} {
 		out := sel.View(80, 24)
 		if strings.ContainsRune(out, 0x1b) {
@@ -207,7 +208,7 @@ func TestLivePRURLInjectionIsCleaned(t *testing.T) {
 func TestLiveEventKindInjectionIsCleaned(t *testing.T) {
 	asciiProfile(t)
 	deps := liveDeps{eventsPath: "testdata/events.jsonl"}
-	v := newLiveView(loadFullSnapshot(t), allLoaded, deps, fixedLiveNow(t))
+	v := testLiveView(loadFullSnapshot(t), allLoaded, deps, fixedLiveNow(t))
 	v = press(v, keyRune('j')) // sage: the worker with recorded events
 	nv, cmd := v.Update(keyType(tea.KeyEnter))
 	v = nv.(liveView)
@@ -283,7 +284,7 @@ func TestLiveAttentionLine(t *testing.T) {
 	snap := loadFullSnapshot(t)
 	snap.Roster.Crews[0].Workers = snap.Roster.Crews[0].Workers[:1] // sage only: nothing blocked
 	snap.Roster.Crews[0].Holds = nil
-	out = newLiveView(snap, allLoaded, liveDeps{}, fixedLiveNow(t)).View(80, 24)
+	out = testLiveView(snap, allLoaded, liveDeps{}, fixedLiveNow(t)).View(80, 24)
 	if strings.Contains(out, "blocked ·") || strings.Contains(out, " hold") {
 		t.Fatalf("attention line shown with nothing to report:\n%s", out)
 	}
@@ -293,7 +294,7 @@ func TestLiveTickChangesAgeWithoutCollect(t *testing.T) {
 	snap := loadFullSnapshot(t)
 	cur := fixedLiveNow(t)()
 	now := func() time.Time { return cur }
-	v := newLiveView(snap, allLoaded, liveDeps{}, now)
+	v := testLiveView(snap, allLoaded, liveDeps{}, now)
 
 	before := v.View(80, 24)
 	cur = cur.Add(2 * time.Hour)
@@ -311,7 +312,7 @@ func TestLiveTickChangesAgeWithoutCollect(t *testing.T) {
 func TestLiveDebounceRequestsRoster(t *testing.T) {
 	cur := fixedLiveNow(t)()
 	now := func() time.Time { return cur }
-	v := newLiveView(loadFullSnapshot(t), allLoaded, liveDeps{}, now)
+	v := testLiveView(loadFullSnapshot(t), allLoaded, liveDeps{}, now)
 
 	nv, cmd1 := v.Update(busChangedMsg{})
 	v = nv.(liveView)
@@ -353,7 +354,7 @@ func TestLiveDebounceRequestsRoster(t *testing.T) {
 
 func TestLiveEnterShowsRecentEvents(t *testing.T) {
 	deps := liveDeps{eventsPath: "testdata/events.jsonl"}
-	v := newLiveView(loadFullSnapshot(t), allLoaded, deps, fixedLiveNow(t))
+	v := testLiveView(loadFullSnapshot(t), allLoaded, deps, fixedLiveNow(t))
 	v = press(v, keyRune('j')) // sage: the worker with recorded events
 
 	nv, cmd := v.Update(keyType(tea.KeyEnter))
@@ -384,7 +385,7 @@ func TestLiveSelectionHasAllFields(t *testing.T) {
 	if !ok {
 		t.Fatalf("Selection() = %T, want data.Worker", v.Selection())
 	}
-	want := data.Worker{Crew: "c1", Branch: "fix/123-widget", Session: "s1", Name: "coral", State: "blocked"}
+	want := data.Worker{Crew: "c1", Branch: "fix/123-widget", Session: "s1", Name: "coral", State: "blocked", Origin: "local"}
 	if sel != want {
 		t.Fatalf("Selection() = %+v, want the blocked worker first: %+v", sel, want)
 	}
@@ -392,23 +393,23 @@ func TestLiveSelectionHasAllFields(t *testing.T) {
 	sel = press(v, keyRune('j')).Selection().(data.Worker)
 	want = data.Worker{
 		Crew: "c1", Branch: "feat/584-crew-dash", Session: "s1", Name: "sage", State: "working",
-		PRURL: "https://github.com/noamsto/dispatcher/pull/999",
+		PRURL: "https://github.com/noamsto/dispatcher/pull/999", Origin: "local",
 	}
 	if sel != want {
 		t.Fatalf("Selection() after j = %+v, want %+v", sel, want)
 	}
 
 	snap := loadCrewErrSnapshot(t)
-	host := newLiveView(snap, allLoaded, liveDeps{}, fixedNow(snap)).Selection().(data.Worker)
-	if host.Host != "mini" {
-		t.Fatalf("Selection().Host = %q, want mini", host.Host)
+	host := testLiveView(snap, allLoaded, liveDeps{}, fixedNow(snap)).Selection().(data.Worker)
+	if host.Host != "mini" || host.Origin != "remote_worker" {
+		t.Fatalf("Selection() host, origin = %q, %q; want mini, remote_worker", host.Host, host.Origin)
 	}
 }
 
 func TestLiveSelectionNilWithoutWorkers(t *testing.T) {
 	snap := loadFullSnapshot(t)
 	snap.Roster.Crews = nil
-	if sel := newLiveView(snap, allLoaded, liveDeps{}, fixedLiveNow(t)).Selection(); sel != nil {
+	if sel := testLiveView(snap, allLoaded, liveDeps{}, fixedLiveNow(t)).Selection(); sel != nil {
 		t.Fatalf("Selection() = %+v, want nil", sel)
 	}
 }
@@ -430,7 +431,7 @@ func TestLiveErrorLinesInjectionIsCleaned(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			snap := loadFullSnapshot(t)
 			c.set(&snap)
-			out := newLiveView(snap, allLoaded, liveDeps{}, fixedLiveNow(t)).View(120, 24)
+			out := testLiveView(snap, allLoaded, liveDeps{}, fixedLiveNow(t)).View(120, 24)
 			requireNoControl(t, out)
 			if !strings.Contains(out, c.want) {
 				t.Errorf("missing %q:\n%q", c.want, out)
@@ -466,7 +467,7 @@ func TestLiveFieldsInjectionAreCleaned(t *testing.T) {
 		},
 		{ID: "other"},
 	}
-	out := newLiveView(snap, allLoaded, liveDeps{}, fixedLiveNow(t)).View(160, 24)
+	out := testLiveView(snap, allLoaded, liveDeps{}, fixedLiveNow(t)).View(160, 24)
 	requireNoControl(t, out)
 	for _, want := range []string{"cboom]0;pwn", "hold hboom]0;pwned[31m: eboom]0;pwned[31m wboom", "tboom]0;pwned[31m/"} {
 		if !strings.Contains(out, want) {
@@ -478,21 +479,21 @@ func TestLiveFieldsInjectionAreCleaned(t *testing.T) {
 func TestLiveSortsBlockedFirst(t *testing.T) {
 	asciiProfile(t)
 	snap := loadManySnapshot(t)
-	v := newLiveView(snap, allLoaded, liveDeps{}, fixedNow(snap))
+	v := testLiveView(snap, allLoaded, liveDeps{}, fixedNow(snap))
 
 	frame := strings.Split(v.View(160, 40), "\n")
 	if first := frame[headerIndex(t, frame)+1]; !strings.Contains(first, "blocked") {
 		t.Errorf("first worker row is not blocked: %q", first)
 	}
 
-	state := func(r liveRow) string { s, _ := strField(r.w, "state"); return s }
+	state := func(r vm.WorkerRow) string { return r.State }
 	for i := 1; i < len(v.rows); i++ {
 		prev, cur := v.rows[i-1], v.rows[i]
 		pr, cr := stateRank(state(prev)), stateRank(state(cur))
 		if pr > cr {
 			t.Fatalf("row %d (%s) sorts after row %d (%s)", i, state(cur), i-1, state(prev))
 		}
-		if pr == cr && workerAge(prev.w, fixedNow(snap)()) < workerAge(cur.w, fixedNow(snap)()) {
+		if pr == cr && workerAge(prev, fixedNow(snap)()) < workerAge(cur, fixedNow(snap)()) {
 			t.Fatalf("rows %d and %d (%s) are not age-descending", i-1, i, state(cur))
 		}
 	}
@@ -519,8 +520,7 @@ func TestLiveStateRankOrder(t *testing.T) {
 func liveStates(v liveView) []string {
 	var states []string
 	for _, r := range v.rows {
-		s, _ := strField(r.w, "state")
-		states = append(states, s)
+		states = append(states, r.State)
 	}
 	return states
 }
@@ -528,7 +528,7 @@ func liveStates(v liveView) []string {
 func TestLiveReapedHiddenByDefault(t *testing.T) {
 	asciiProfile(t)
 	snap := loadCrewErrSnapshot(t)
-	v := newLiveView(snap, allLoaded, liveDeps{}, fixedNow(snap))
+	v := testLiveView(snap, allLoaded, liveDeps{}, fixedNow(snap))
 
 	if want := []string{"blocked", "working", "idle", "done"}; !slices.Equal(liveStates(v), want) {
 		t.Fatalf("rows = %v, want %v", liveStates(v), want)
@@ -543,7 +543,7 @@ func TestLiveReapedHiddenByDefault(t *testing.T) {
 
 	snap.Roster.Crews[0].Holds = nil
 	snap.Roster.Crews[0].Workers = snap.Roster.Crews[0].Workers[2:]
-	out = newLiveView(snap, allLoaded, liveDeps{}, fixedNow(snap)).View(120, 24)
+	out = testLiveView(snap, allLoaded, liveDeps{}, fixedNow(snap)).View(120, 24)
 	if !strings.Contains(out, "1 reaped hidden") || strings.Contains(out, "blocked") {
 		t.Errorf("hidden count should show alone:\n%s", out)
 	}
@@ -552,7 +552,7 @@ func TestLiveReapedHiddenByDefault(t *testing.T) {
 func TestLiveToggleShowsReaped(t *testing.T) {
 	asciiProfile(t)
 	snap := loadCrewErrSnapshot(t)
-	v := newLiveView(snap, allLoaded, liveDeps{}, fixedNow(snap))
+	v := testLiveView(snap, allLoaded, liveDeps{}, fixedNow(snap))
 
 	helpOf := func(v liveView) string {
 		keys := v.Keys()
@@ -595,7 +595,7 @@ func TestLiveToggleShowsReaped(t *testing.T) {
 
 func TestLiveCursorFollowsWorkerAcrossReload(t *testing.T) {
 	snap := loadManySnapshot(t)
-	v := newLiveView(snap, allLoaded, liveDeps{}, fixedNow(snap))
+	v := testLiveView(snap, allLoaded, liveDeps{}, fixedNow(snap))
 	for range 3 {
 		v = press(v, keyRune('j'))
 	}
@@ -614,7 +614,7 @@ func TestLiveCursorFollowsWorkerAcrossReload(t *testing.T) {
 		}
 	}
 	snap.Roster.Crews = crews
-	nv, _ := v.Update(snapshotMsg{snap: snap, loaded: allLoaded})
+	nv, _ := v.Update(snapMsg(snap, allLoaded))
 	v = nv.(liveView)
 
 	if v.cursor == oldCursor {
@@ -627,10 +627,10 @@ func TestLiveCursorFollowsWorkerAcrossReload(t *testing.T) {
 
 func TestLiveCursorClampsWhenWorkerVanishes(t *testing.T) {
 	snap := loadManySnapshot(t)
-	v := newLiveView(snap, allLoaded, liveDeps{}, fixedNow(snap))
+	v := testLiveView(snap, allLoaded, liveDeps{}, fixedNow(snap))
 	v = press(v, keyRune('G'))
 	snap.Roster.Crews = snap.Roster.Crews[:1]
-	nv, _ := v.Update(snapshotMsg{snap: snap, loaded: allLoaded})
+	nv, _ := v.Update(snapMsg(snap, allLoaded))
 	v = nv.(liveView)
 	if v.Selection() == nil || v.cursor != len(v.rows)-1 {
 		t.Fatalf("cursor = %d with %d rows, want clamped to the last row", v.cursor, len(v.rows))
@@ -652,12 +652,12 @@ func TestLivePRNumber(t *testing.T) {
 	}
 
 	now := fixedLiveNow(t)()
-	row := liveRow{crewID: "c1", w: map[string]any{"pr_url": "https://github.com/o/r/pull/999"}}
-	if got := liveCells(row, now)[colPR]; got != "#999" {
+	raw := map[string]any{"pr_url": "https://github.com/o/r/pull/999"}
+	if got := liveCells(workerRow("c1", raw), now)[colPR]; got != "#999" {
 		t.Errorf("pr cell = %q, want #999", got)
 	}
-	row.w["pr_url"] = nil
-	if got := liveCells(row, now)[colPR]; got != "—" {
+	raw["pr_url"] = nil
+	if got := liveCells(workerRow("c1", raw), now)[colPR]; got != "—" {
 		t.Errorf("null pr cell = %q, want —", got)
 	}
 
@@ -691,7 +691,7 @@ func TestLiveSelectedPaneShowsFullFields(t *testing.T) {
 	assertWidth(t, out, 80, 24)
 
 	snap := loadCrewErrSnapshot(t)
-	out = newLiveView(snap, allLoaded, liveDeps{}, fixedNow(snap)).View(80, 24)
+	out = testLiveView(snap, allLoaded, liveDeps{}, fixedNow(snap)).View(80, 24)
 	if !strings.Contains(out, "fix/123-widget · s1 · host mini") {
 		t.Errorf("host missing from the pane:\n%s", out)
 	}
@@ -700,7 +700,7 @@ func TestLiveSelectedPaneShowsFullFields(t *testing.T) {
 func TestLiveBudgetStrip(t *testing.T) {
 	asciiProfile(t)
 	snap := loadSnapshot(t)
-	v := newLiveView(snap, allLoaded, liveDeps{}, fixedNow(snap))
+	v := testLiveView(snap, allLoaded, liveDeps{}, fixedNow(snap))
 	out := v.View(120, 24)
 	for _, want := range []string{"claude 7d 90%", "codex 5h 30%", "cursor month 60% LIMIT", "pi ?"} {
 		if !strings.Contains(out, want) {
@@ -725,7 +725,7 @@ func TestLiveBudgetStrip(t *testing.T) {
 		t.Errorf("second strip line not ellipsized: %q", narrow[1])
 	}
 
-	loading := newLiveView(snap, [numSources]bool{}, liveDeps{}, fixedNow(snap)).View(80, 24)
+	loading := testLiveView(snap, [numSources]bool{}, liveDeps{}, fixedNow(snap)).View(80, 24)
 	if !strings.Contains(loading, "loading budget…") {
 		t.Errorf("budget placeholder missing:\n%s", loading)
 	}
@@ -756,7 +756,7 @@ func TestLiveBudgetSegmentColour(t *testing.T) {
 func TestLiveCrewColumnOnlyWithManyCrews(t *testing.T) {
 	asciiProfile(t)
 	many := loadManySnapshot(t)
-	lines := strings.Split(newLiveView(many, allLoaded, liveDeps{}, fixedNow(many)).View(120, 40), "\n")
+	lines := strings.Split(testLiveView(many, allLoaded, liveDeps{}, fixedNow(many)).View(120, 40), "\n")
 	if h := lines[headerIndex(t, lines)]; !strings.Contains(h, "crew") {
 		t.Errorf("3 crews: header lacks the crew column: %q", h)
 	}
@@ -792,7 +792,7 @@ func TestLiveTierColumnFullAt200(t *testing.T) {
 			},
 		},
 	}
-	out := newLiveView(snap, allLoaded, liveDeps{}, fixedLiveNow(t)).View(200, 24)
+	out := testLiveView(snap, allLoaded, liveDeps{}, fixedLiveNow(t)).View(200, 24)
 	if want := "standard/pi/openrouter/deepseek/deepseek-v4.1-flash"; !strings.Contains(out, want) {
 		t.Errorf("tier/engine/model truncated at 200, want %q:\n%s", want, out)
 	}
@@ -810,7 +810,7 @@ func TestLiveWidthTable(t *testing.T) {
 	for name, snap := range snaps {
 		for _, w := range []int{40, 60, 80, 100, 120, 160, 200} {
 			for _, h := range []int{12, 24, 40} {
-				v := newLiveView(snap, allLoaded, liveDeps{}, fixedNow(snap))
+				v := testLiveView(snap, allLoaded, liveDeps{}, fixedNow(snap))
 				for step := range 3 {
 					raw := strings.Split(v.tableView(w, h), "\n")
 					if len(raw) > h {
@@ -828,7 +828,7 @@ func TestLiveWidthTable(t *testing.T) {
 			cells := make([][numCols]string, 0)
 			for _, c := range snap.Roster.Crews {
 				for _, wk := range c.Workers {
-					cells = append(cells, liveCells(liveRow{crewID: c.ID, w: wk}, now))
+					cells = append(cells, liveCells(workerRow(c.ID, wk), now))
 				}
 			}
 			cols, widths := layoutColumns(liveColumns(w, len(snap.Roster.Crews) > 1), cells, w)
@@ -842,7 +842,7 @@ func TestLiveWidthTable(t *testing.T) {
 func TestLiveTinyFrames(t *testing.T) {
 	asciiProfile(t)
 	snap := loadFullSnapshot(t)
-	v := newLiveView(snap, allLoaded, liveDeps{}, fixedNow(snap))
+	v := testLiveView(snap, allLoaded, liveDeps{}, fixedNow(snap))
 	for _, sz := range [][2]int{{20, 5}, {80, 6}, {80, 8}, {1, 1}} {
 		assertWidth(t, v.View(sz[0], sz[1]), sz[0], sz[1])
 	}
@@ -851,7 +851,7 @@ func TestLiveTinyFrames(t *testing.T) {
 func TestLiveWindowKeepsCursorVisible(t *testing.T) {
 	asciiProfile(t)
 	snap := loadManySnapshot(t)
-	v := press(newLiveView(snap, allLoaded, liveDeps{}, fixedNow(snap)), keyRune('G'))
+	v := press(testLiveView(snap, allLoaded, liveDeps{}, fixedNow(snap)), keyRune('G'))
 	out := v.View(80, 24)
 	assertWidth(t, out, 80, 24)
 	if !strings.Contains(out, "›") {

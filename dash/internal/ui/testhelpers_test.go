@@ -11,6 +11,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/noamsto/dispatcher/dash/internal/data"
+	vm "github.com/noamsto/dispatcher/dash/internal/view"
 )
 
 // loadSnapshot reads the shared fixture (also used by internal/once's golden
@@ -146,4 +147,33 @@ func flattenCmd(cmd tea.Cmd) []tea.Msg {
 func sized(m Model, w, h int) Model {
 	nm, _ := m.Update(tea.WindowSizeMsg{Width: w, Height: h})
 	return nm.(Model)
+}
+
+// snapMsg is the snapshotMsg the root broadcasts once snap's sources landed
+// with these loaded flags.
+func snapMsg(snap data.Snapshot, loaded [numSources]bool) snapshotMsg {
+	return newSnapshotMsg(inputsOf(snap, data.BusDigest{}, loaded, snap.Now*1000, nil), loaded)
+}
+
+func testLiveView(snap data.Snapshot, loaded [numSources]bool, deps liveDeps, now func() time.Time) liveView {
+	msg := snapMsg(snap, loaded)
+	return newLiveView(msg.roster, msg.budget, deps, now)
+}
+
+func testBudgetView(snap data.Snapshot, loaded [numSources]bool) budgetView {
+	return newBudgetView(snapMsg(snap, loaded).budget)
+}
+
+func testRunsView(snap data.Snapshot, loaded [numSources]bool) runsView {
+	msg := snapMsg(snap, loaded)
+	return newRunsView(msg.runs, msg.loaded)
+}
+
+func testSettingsView(snap data.Snapshot, loaded [numSources]bool, deps settingsDeps) settingsView {
+	return newSettingsView(snapMsg(snap, loaded).settings, deps)
+}
+
+// workerRow types one fixture roster row of crewID.
+func workerRow(crewID string, w map[string]any) vm.WorkerRow {
+	return vm.WorkerRowOf(nil, crewID, w)
 }

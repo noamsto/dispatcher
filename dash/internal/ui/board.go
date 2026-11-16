@@ -13,6 +13,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/noamsto/dispatcher/dash/internal/data"
+	vm "github.com/noamsto/dispatcher/dash/internal/view"
 )
 
 // Card geometry: boardCardW is the outer width, border and padding included;
@@ -109,10 +110,9 @@ func modelAlias(s string) string {
 // of whitespace collapsed.
 func oneLine(s string) string { return strings.Join(strings.Fields(cleanText(s)), " ") }
 
-func fieldsOf(w map[string]any) cardFields {
-	f := func(k string) string { s, _ := strField(w, k); return s }
-	branch := f("branch")
-	codename, suffix, _ := strings.Cut(f("name"), "·")
+func fieldsOf(w vm.WorkerRow) cardFields {
+	branch := w.Branch
+	codename, suffix, _ := strings.Cut(strOf(w.Name), "·")
 	codename = oneLine(codename)
 	if codename == "" {
 		codename = "?"
@@ -133,16 +133,16 @@ func fieldsOf(w map[string]any) cardFields {
 		}
 		head += issue
 	}
-	tier := oneLine(f("tier"))
+	tier := oneLine(strOf(w.Tier))
 	c := cardFields{
 		head:   head,
-		state:  strings.ReplaceAll(oneLine(f("state")), "_", " "),
-		title:  oneLine(f("title")),
+		state:  strings.ReplaceAll(oneLine(w.State), "_", " "),
+		title:  oneLine(strOf(w.Title)),
 		tier:   tier,
-		meta:   orQ(tier) + "·" + orQ(oneLine(f("engine"))) + "·" + orQ(oneLine(modelAlias(f("model")))),
-		detail: oneLine(f("detail")),
+		meta:   orQ(tier) + "·" + orQ(oneLine(strOf(w.Engine))) + "·" + orQ(oneLine(modelAlias(strOf(w.Model)))),
+		detail: oneLine(strOf(w.Detail)),
 	}
-	if host := f("host"); host != "" {
+	if host := w.Host; host != "" {
 		if c.host = oneLine(host); c.host == "" {
 			c.host = "?"
 		}
@@ -214,9 +214,9 @@ func cardRows(c cardFields, stateSt lipgloss.Style) []string {
 
 // renderCard draws one card at exactly boardCardW cells: a rounded border in
 // the state colour, or a double one when selected (visible without colour).
-func renderCard(w map[string]any, selected bool) []string {
+func renderCard(w vm.WorkerRow, selected bool) []string {
 	c := fieldsOf(w)
-	col := stateColor(strFieldOr(w, "state"))
+	col := stateColor(w.State)
 	border := lipgloss.RoundedBorder()
 	if selected {
 		border = lipgloss.DoubleBorder()
@@ -226,21 +226,17 @@ func renderCard(w map[string]any, selected bool) []string {
 	return strings.Split(st.Render(strings.Join(rows, "\n")), "\n")
 }
 
-func strFieldOr(w map[string]any, k string) string { s, _ := strField(w, k); return s }
-
 type boardItem struct {
-	crewID string
-	repo   string
-	group  int
-	w      map[string]any
+	repo  string
+	group int
+	w     vm.WorkerRow
 }
 
 // boardView is the roster as lipgloss task cards, one column per state.
 type boardView struct {
 	actionUI
 
-	snap   data.Snapshot
-	loaded [numSources]bool
+	roster vm.RosterView
 	now    func() time.Time
 
 	items  []boardItem // display order: group, repo, then age
@@ -249,37 +245,31 @@ type boardView struct {
 	selKey string // rowKey of the selected card; it follows the worker across reloads
 }
 
-func newBoardView(snap data.Snapshot, loaded [numSources]bool, now func() time.Time, acts actionDeps) boardView {
+func newBoardView(roster vm.RosterView, now func() time.Time, acts actionDeps) boardView {
 	v := boardView{now: now}
 	v.acts = acts
-	v.load(snap, loaded)
+	v.load(roster)
 	return v
 }
 
-func (v *boardView) load(snap data.Snapshot, loaded [numSources]bool) {
-	v.snap = snap
-	v.loaded = loaded
-	v.setRoster(snap.Roster)
-}
-
-func (v *boardView) setRoster(r data.RosterSection) {
+func (v *boardView) load(roster vm.RosterView) {
+	v.roster = roster
 	var items []boardItem
 	v.failed = nil
-	for _, c := range r.Crews {
+	for _, c := range roster.Crews {
 		if c.WorkersError != nil {
 			v.failed = append(v.failed, "crew "+cleanText(c.ID)+": workers unavailable: "+cleanText(*c.WorkersError))
 			continue
 		}
 		for _, w := range c.Workers {
-			state, _ := strField(w, "state")
-			if state == "reaped" {
+			if w.State == "reaped" {
 				continue
 			}
-			repo, ok := strField(w, "repo")
-			if !ok || repo == "" {
+			repo := strOf(w.Repo)
+			if repo == "" {
 				repo = c.ID
 			}
-			items = append(items, boardItem{crewID: c.ID, repo: repo, group: boardGroup(state), w: w})
+			items = append(items, boardItem{repo: repo, group: boardGroup(w.State), w: w})
 		}
 	}
 	now := v.now()
@@ -297,7 +287,7 @@ func (v *boardView) setRoster(r data.RosterSection) {
 
 	cursor := clamp(v.cursor, 0, len(items)-1)
 	for i, it := range items {
-		if rowKey(it.crewID, it.w) == v.selKey {
+		if rowKey(it.w) == v.selKey {
 			cursor = i
 			break
 		}
@@ -309,8 +299,7 @@ func (v *boardView) moveTo(i int) {
 	v.cursor = clamp(i, 0, len(v.items)-1)
 	v.selKey = ""
 	if v.cursor < len(v.items) {
-		it := v.items[v.cursor]
-		v.selKey = rowKey(it.crewID, it.w)
+		v.selKey = rowKey(v.items[v.cursor].w)
 	}
 }
 
@@ -356,7 +345,7 @@ func (v boardView) Update(msg tea.Msg) (view, tea.Cmd) {
 		v.width = msg.Width
 		v.fit()
 	case snapshotMsg:
-		v.load(msg.snap, msg.loaded)
+		v.load(msg.roster)
 	case tea.KeyMsg:
 		if cmd, ok := v.actionUI.handleKey(msg); ok {
 			return v, cmd
@@ -414,8 +403,7 @@ func (v boardView) Selection() data.Selection {
 	if v.cursor >= len(v.items) {
 		return nil
 	}
-	it := v.items[v.cursor]
-	return workerFromRow(it.crewID, it.w)
+	return workerFromRow(v.items[v.cursor].w)
 }
 
 func (v boardView) Capturing() bool { return v.mode != modeNormal }
@@ -426,9 +414,8 @@ func (v boardView) infoLine() string {
 	if v.cursor >= len(v.items) {
 		return ""
 	}
-	it := v.items[v.cursor]
-	branch, _ := strField(it.w, "branch")
-	return cleanText(it.crewID + " · " + branch)
+	w := v.items[v.cursor].w
+	return cleanText(w.Crew + " · " + w.Branch)
 }
 
 // groupStates is a representative state per group, for the header colour.
@@ -465,10 +452,10 @@ func (v boardView) columnLines(c column, multiRepo bool) (lines []string, selSta
 // line.
 func (v boardView) View(w, h int) string {
 	switch {
-	case !v.loaded[srcRoster]:
+	case !v.roster.Loaded:
 		return loadingLine(srcRoster, w)
-	case v.snap.Roster.Error != nil:
-		return truncateLine("roster unavailable: "+cleanText(*v.snap.Roster.Error), w)
+	case v.roster.Error != nil:
+		return truncateLine("roster unavailable: "+cleanText(*v.roster.Error), w)
 	}
 
 	// Crews whose workers did not load are chrome above the columns, as on

@@ -12,6 +12,7 @@ import (
 	"github.com/noamsto/dispatcher/dash/internal/data"
 	"github.com/noamsto/dispatcher/dash/internal/kitty"
 	"github.com/noamsto/dispatcher/dash/internal/mapgeom"
+	vm "github.com/noamsto/dispatcher/dash/internal/view"
 )
 
 // MapDeps are the terminal seams the Map tab needs. TTY receives the kitty
@@ -59,8 +60,8 @@ type mapRenderedMsg struct {
 type mapView struct {
 	actionUI
 
-	deps MapDeps
-	snap data.Snapshot
+	deps    MapDeps
+	workers []vm.WorkerRow // MapView's rows; the crew's planets come from these
 
 	active bool // the tab is showing; renders only run then
 	shown  bool // a crew has been chosen
@@ -83,8 +84,8 @@ type mapView struct {
 	sig      string // roster signature of the latest request
 }
 
-func newMapView(snap data.Snapshot, deps MapDeps, acts actionDeps) mapView {
-	v := mapView{deps: deps, snap: snap}
+func newMapView(mv vm.MapView, deps MapDeps, acts actionDeps) mapView {
+	v := mapView{deps: deps, workers: mv.Workers}
 	v.acts = acts
 	return v
 }
@@ -152,7 +153,7 @@ func (v mapView) resize(w, h int) (mapView, tea.Cmd) {
 func (v mapView) Update(msg tea.Msg) (view, tea.Cmd) {
 	switch msg := msg.(type) {
 	case snapshotMsg:
-		v.snap = msg.snap
+		v.workers = msg.mapv.Workers
 		if v.shown && !slices.Contains(v.crewIDs(), v.crewID) {
 			v.setCrew(v.pickCrew(""))
 			cmd := v.request()
@@ -260,7 +261,7 @@ func (v mapView) worker() (data.Worker, bool) {
 	if v.sel.Repo != "" && v.selIndex() < 0 {
 		return data.Worker{}, false
 	}
-	return workerByBranch(v.snap, v.crewID, v.sel.Branch)
+	return workerByBranch(v.workers, v.crewID, v.sel.Branch)
 }
 
 // otherRepo reports the repo of the selected planet when it is not a home one.
@@ -306,12 +307,12 @@ func (v *mapView) selectPlanet(i int) tea.Cmd {
 	return v.request()
 }
 
-// crewIDs lists the crews that have workers to draw.
+// crewIDs lists the crews that have workers to draw, in roster order.
 func (v mapView) crewIDs() []string {
 	var ids []string
-	for _, c := range v.snap.Roster.Crews {
-		if c.WorkersError == nil && len(c.Workers) > 0 {
-			ids = append(ids, c.ID)
+	for _, w := range v.workers {
+		if !slices.Contains(ids, w.Crew) {
+			ids = append(ids, w.Crew)
 		}
 	}
 	return ids
@@ -344,18 +345,11 @@ func (v *mapView) setCrew(id string) {
 // moving a planet or its colour, so they stay out.
 func (v mapView) signature() string {
 	var rows []string
-	for _, c := range v.snap.Roster.Crews {
-		if c.ID != v.crewID || c.WorkersError != nil {
+	for _, w := range v.workers {
+		if w.Crew != v.crewID {
 			continue
 		}
-		for _, w := range c.Workers {
-			var f []string
-			for _, k := range []string{"branch", "state", "name", "pr_url", "host"} {
-				s, _ := strField(w, k)
-				f = append(f, s)
-			}
-			rows = append(rows, strings.Join(f, "\x00"))
-		}
+		rows = append(rows, strings.Join([]string{w.Branch, w.State, strOf(w.Name), strOf(w.PRURL), w.Host}, "\x00"))
 	}
 	slices.Sort(rows)
 	return strings.Join(rows, "\n")
@@ -543,7 +537,7 @@ func mapMessage(w int, reason string) string {
 		reason,
 		"The Map tab needs kitty or ghostty.",
 		"Under tmux, also run: tmux set -g allow-passthrough on",
-		"Press 1 for the Live table.",
+		"Press 2 for the Live table.",
 	}
 	for i, l := range lines {
 		lines[i] = truncateLine(cleanText(l), w)
@@ -573,13 +567,9 @@ func (v mapView) infoLine() string {
 
 func (v mapView) countsLine() string {
 	counts := map[string]int{}
-	for _, c := range v.snap.Roster.Crews {
-		if c.ID != v.crewID || c.WorkersError != nil {
-			continue
-		}
-		for _, w := range c.Workers {
-			s, _ := strField(w, "state")
-			counts[s]++
+	for _, w := range v.workers {
+		if w.Crew == v.crewID {
+			counts[w.State]++
 		}
 	}
 	return fmt.Sprintf("crew %s · %d working · %d blocked · %d pr open · %d done",

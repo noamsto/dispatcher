@@ -748,7 +748,7 @@ func TestMapRenderErrorShowsMessage(t *testing.T) {
 			}
 			m := r.open()
 			frame := m.View()
-			if !strings.Contains(frame, "render failed") || !strings.Contains(frame, "Press 1") {
+			if !strings.Contains(frame, "render failed") || !strings.Contains(frame, "Press 2") {
 				t.Fatalf("no failure message:\n%s", frame)
 			}
 			if name == "command failed" && !strings.Contains(frame, "neato not found") {
@@ -784,7 +784,7 @@ func TestMapFallbackWhenNotCapable(t *testing.T) {
 		t.Fatalf("the tab should still open")
 	}
 	frame := m.View()
-	for _, want := range []string{"needs kitty or ghostty", "allow-passthrough on", "Press 1 for the Live table"} {
+	for _, want := range []string{"needs kitty or ghostty", "allow-passthrough on", "Press 2 for the Live table"} {
 		if !strings.Contains(frame, want) {
 			t.Fatalf("fallback lacks %q:\n%s", want, frame)
 		}

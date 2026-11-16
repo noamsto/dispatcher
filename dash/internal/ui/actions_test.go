@@ -156,6 +156,18 @@ func TestActionsDisabledWithoutSelection(t *testing.T) {
 	wantStatus(t, m, "open PR: no worker selected")
 }
 
+func TestPeerWorkerRefusesEveryAction(t *testing.T) {
+	w := data.Worker{
+		Crew: "c1", Branch: "feat/a", Name: "a", State: "blocked", Host: "h",
+		PRURL: "https://github.com/o/r/pull/1", Origin: "peer",
+	}
+	for a := actJump; a <= actNudge; a++ {
+		if got := disabledReason(a, w, true, true); got != "peer worker: read-only" {
+			t.Errorf("%s on a peer = %q, want peer worker: read-only", a, got)
+		}
+	}
+}
+
 func TestOpenPRRunsGhView(t *testing.T) {
 	url := "https://github.com/noamsto/dispatcher/pull/999"
 	fake := &data.FakeRunner{Responses: map[string]data.FakeResponse{"gh pr view --web " + url: ok("")}}
@@ -347,7 +359,7 @@ func TestHelpBarKeysAreHandled(t *testing.T) {
 	snap := loadFullSnapshot(t)
 	fake := &data.FakeRunner{}
 	// coral sorts first, so j has somewhere to go.
-	v := newLiveView(snap, allLoaded, liveDeps{eventsPath: "testdata/events.jsonl"}, fixedNow(snap))
+	v := testLiveView(snap, allLoaded, liveDeps{eventsPath: "testdata/events.jsonl"}, fixedNow(snap))
 	v.acts = actionDeps{runner: fake, crew: []string{"crew"}, inTmux: true}
 	for _, b := range v.Keys() {
 		k := b.Keys()[0]
@@ -365,7 +377,7 @@ func TestHelpBarKeysAreHandled(t *testing.T) {
 
 func TestKeysPerMode(t *testing.T) {
 	snap := loadFullSnapshot(t)
-	v := newLiveView(snap, allLoaded, liveDeps{}, fixedNow(snap))
+	v := testLiveView(snap, allLoaded, liveDeps{}, fixedNow(snap))
 	v.acts = actionDeps{runner: &data.FakeRunner{}, crew: []string{"crew"}, inTmux: true}
 	helps := func(v liveView) string {
 		var parts []string
@@ -392,7 +404,7 @@ func TestSelectedPaneIsRulePlusFourLines(t *testing.T) {
 	snap := loadFullSnapshot(t)
 	long := strings.Repeat("alpha beta gamma ", 12)
 	snap.Roster.Crews[0].Workers[1]["detail"] = long
-	v := newLiveView(snap, allLoaded, liveDeps{}, fixedNow(snap))
+	v := testLiveView(snap, allLoaded, liveDeps{}, fixedNow(snap))
 	pane := v.selectedPane(40)
 	if len(pane) != 5 {
 		t.Fatalf("pane has %d lines, want 5", len(pane))
@@ -601,13 +613,14 @@ func TestWorkerByBranch(t *testing.T) {
 		return map[string]any{"branch": branch, "name": "n-" + branch, "state": state, "pr_url": "https://github.com/o/r/pull/1", "host": "h", "session": "s"}
 	}
 	want := func(crew, branch, state string) data.Worker {
-		return data.Worker{Crew: crew, Branch: branch, Session: "s", Name: "n-" + branch, State: state, PRURL: "https://github.com/o/r/pull/1", Host: "h"}
+		return data.Worker{Crew: crew, Branch: branch, Session: "s", Name: "n-" + branch, State: state, PRURL: "https://github.com/o/r/pull/1", Host: "h", Origin: "remote_worker"}
 	}
 	snap := data.Snapshot{Roster: data.RosterSection{Crews: []data.RosterCrew{
 		{ID: "c1", Workers: []map[string]any{row("feat/a", "working"), row("feat/gone", "reaped")}},
 		{ID: "c2", Workers: []map[string]any{row("feat/b", "idle")}},
-		{ID: "bad", Workers: []map[string]any{row("feat/x", "idle")}, WorkersError: &msg},
+		{ID: "bad", Workers: []map[string]any{}, WorkersError: &msg},
 	}}}
+	rows := snapMsg(snap, allLoaded).mapv.Workers
 
 	tests := []struct {
 		name, crew, branch string
@@ -622,7 +635,7 @@ func TestWorkerByBranch(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, ok := workerByBranch(snap, tt.crew, tt.branch)
+			got, ok := workerByBranch(rows, tt.crew, tt.branch)
 			if ok != tt.ok || got != tt.want {
 				t.Fatalf("workerByBranch(%q, %q) = %+v, %v; want %+v, %v", tt.crew, tt.branch, got, ok, tt.want, tt.ok)
 			}

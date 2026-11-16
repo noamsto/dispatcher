@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"fmt"
 	"reflect"
 	"slices"
 	"strings"
@@ -300,7 +301,29 @@ func TestSwitchTabLeaveBeforeEnter(t *testing.T) {
 	m.views[overviewTab] = hookView{name: "overview", log: &log}
 	m.views[mapTab] = hookView{name: "map", log: &log}
 
-	runCmd(m.switchTab(mapTab))
+	cmd := m.switchTab(mapTab)
+	if cmd == nil {
+		t.Fatal("switchTab returned no Cmd")
+	}
+	// A Batch would run the leave and enter concurrently; only a sequence
+	// guarantees the leave lands first.
+	msg := cmd()
+	if got := fmt.Sprintf("%T", msg); got != "tea.sequenceMsg" {
+		t.Fatalf("switchTab Cmd yields %s, want tea.sequenceMsg", got)
+	}
+	seq := reflect.ValueOf(msg)
+	if seq.Len() == 0 {
+		t.Fatal("empty sequence")
+	}
+	first, _ := seq.Index(0).Interface().(tea.Cmd)
+	runCmd(first)
+	if !slices.Equal(log, []string{"overview leave"}) {
+		t.Fatalf("first sequence step ran %v, want the leave alone", log)
+	}
+	for i := 1; i < seq.Len(); i++ {
+		c, _ := seq.Index(i).Interface().(tea.Cmd)
+		runCmd(c)
+	}
 
 	want := []string{"overview leave", "map enter"}
 	if !slices.Equal(log, want) {

@@ -18,6 +18,7 @@ type Worker struct {
 	State   string
 	PRURL   string
 	Host    string
+	Origin  string // view.Origin: local, remote_worker or peer
 }
 
 func (Worker) isSelection() {}
