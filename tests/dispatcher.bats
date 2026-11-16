@@ -2433,3 +2433,90 @@ $b" run run_overseer
   [[ "$output" == *"must be an absolute path string"* ]]
   if grep -q '^cwd=' "$STUB_LOG"; then return 1; fi
 }
+
+# ---- #1588: remux relaunch stamping ----------------------------------------
+
+_remux_refused() { # dir crew argv... — rc 1 and an empty outvar
+  (
+    # shellcheck source=/dev/null
+    source "$BATS_TEST_DIRNAME/../adapters/core/launcher-common.sh"
+    out=stale
+    rc=0
+    remux_command out "$@" || rc=$?
+    [ "$rc" -eq 1 ] && [ -z "$out" ]
+  )
+}
+
+@test "1588: remux_command quotes every word exactly" {
+  run bash -c 'source "$1"; remux_command out /r/x c1 dispatch resume --exec; printf "%s" "$out"' _ \
+    "$BATS_TEST_DIRNAME/../adapters/core/launcher-common.sh"
+  [ "$status" -eq 0 ]
+  [ "$output" = "cd '/r/x' && exec env CREW_ID='c1' 'dispatch' 'resume' '--exec'" ]
+}
+
+@test "1588: remux_command refuses unsafe or empty words" {
+  _remux_refused "/r/it's" c1 dispatch
+  _remux_refused '/r/a\b' c1 dispatch
+  _remux_refused $'/r/a\nb' c1 dispatch
+  _remux_refused $'/r/a\tb' c1 dispatch
+  _remux_refused '' c1 dispatch
+  _remux_refused /r/x "c'1" dispatch
+  _remux_refused /r/x 'c\1' dispatch
+  _remux_refused /r/x $'c\n1' dispatch
+  _remux_refused /r/x '' dispatch
+  _remux_refused /r/x c1 dispatch "a'b"
+  _remux_refused /r/x c1 dispatch 'a\b'
+  _remux_refused /r/x c1 dispatch $'a\tb'
+  _remux_refused /r/x c1 dispatch ''
+}
+
+@test "1588: remux_command round-trips hostile words through bash, sh and fish" {
+  local d="$BATS_TEST_TMPDIR/sp ace "'$HOME`id`;*'
+  mkdir -p "$d"
+  local tool="$BATS_TEST_TMPDIR/bin"
+  mkdir -p "$tool"
+  cat >"$tool/rt-tool" <<'TOOL'
+#!/usr/bin/env bash
+{ printf 'PWD=%s\n' "$PWD"; printf 'CREW_ID=%s\n' "$CREW_ID"; printf 'ARG=%s\n' "$@"; } >"$RT_LOG"
+TOOL
+  chmod +x "$tool/rt-tool"
+  local cmd
+  # shellcheck source=/dev/null
+  source "$BATS_TEST_DIRNAME/../adapters/core/launcher-common.sh"
+  remux_command cmd "$d" c1 rt-tool 'a b' '$(touch pwned)'
+  export RT_LOG="$BATS_TEST_TMPDIR/rt.log"
+  local sh
+  for sh in bash sh fish; do
+    if ! command -v "$sh" >/dev/null; then
+      echo "skipping $sh leg: not installed" >&3
+      continue
+    fi
+    : >"$RT_LOG"
+    PATH="$tool:$PATH" "$sh" -c "$cmd"
+    [ "$(sed -n 1p "$RT_LOG")" = "PWD=$d" ]
+    [ "$(sed -n 2p "$RT_LOG")" = "CREW_ID=c1" ]
+    [ "$(sed -n 3p "$RT_LOG")" = "ARG=a b" ]
+    [ "$(sed -n 4p "$RT_LOG")" = 'ARG=$(touch pwned)' ]
+    [ "$(wc -l <"$RT_LOG")" -eq 4 ]
+    [ -z "$(find "$BATS_TEST_TMPDIR" -name pwned)" ]
+  done
+}
+
+@test "1588: remux_stamp, remux_pin_clear and remux_clear issue the exact tmux calls" {
+  # shellcheck source=/dev/null
+  source "$BATS_TEST_DIRNAME/../adapters/core/launcher-common.sh"
+  : >"$STUB_LOG"
+  remux_stamp %7 "cd '/r' && exec env CREW_ID='c' 'x'"
+  [ "$(cat "$STUB_LOG")" = "set-option -p -t %7 @remux_relaunch cd '/r' && exec env CREW_ID='c' 'x'
+set-option -p -t %7 @remux_relaunch_pinned 1
+set-option -pu -t %7 @remux_relaunch_owner" ]
+  : >"$STUB_LOG"
+  remux_pin_clear %7
+  [ "$(cat "$STUB_LOG")" = "set-option -p -t %7 @remux_relaunch_pinned 1
+set-option -pu -t %7 @remux_relaunch
+set-option -pu -t %7 @remux_relaunch_owner" ]
+  : >"$STUB_LOG"
+  remux_clear %7
+  [ "$(cat "$STUB_LOG")" = "set-option -pu -t %7 @remux_relaunch
+set-option -pu -t %7 @remux_relaunch_pinned" ]
+}

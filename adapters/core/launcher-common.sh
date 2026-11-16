@@ -723,6 +723,51 @@ shell_quote() {
   _out="'$_res'"
 }
 
+# remux_command <var> <dir> <crew> <argv...> — set <var> to the line tmux-remux
+# execs through the user's shell on restore, or return 1 with <var> empty. Every
+# word is single-quoted, which is literal in fish, bash, zsh and sh alike; a
+# word holding `'`, a control character or an empty string is refused, and so
+# is `\`, because fish reads `\'` and `\\` specially inside single quotes. `exec`
+# replaces the restore shell, so the relaunched chain has no shell parent.
+remux_command() {
+  local -n _rc_out="$1"
+  local _rc_dir="$2" _rc_crew="$3" _rc_w
+  shift 3
+  _rc_out=''
+  for _rc_w in "$_rc_dir" "$_rc_crew" "$@"; do
+    case "$_rc_w" in
+    '' | *"'"* | *\\* | *[[:cntrl:]]*) return 1 ;;
+    esac
+  done
+  _rc_out="cd '$_rc_dir' && exec env CREW_ID='$_rc_crew'"
+  for _rc_w in "$@"; do
+    _rc_out+=" '$_rc_w'"
+  done
+}
+
+# remux_stamp <pane> <cmd> — pin <cmd> as the pane's relaunch so remux's generic
+# hook leaves it alone; pinning drops the owner mark. Best effort: inert
+# without tmux-remux.
+remux_stamp() {
+  tmux set-option -p -t "$1" @remux_relaunch "$2" 2>/dev/null || true
+  tmux set-option -p -t "$1" @remux_relaunch_pinned 1 2>/dev/null || true
+  tmux set-option -pu -t "$1" @remux_relaunch_owner 2>/dev/null || true
+}
+
+# remux_pin_clear <pane> — pin the pane with no relaunch, so restore starts
+# nothing there.
+remux_pin_clear() {
+  tmux set-option -p -t "$1" @remux_relaunch_pinned 1 2>/dev/null || true
+  tmux set-option -pu -t "$1" @remux_relaunch 2>/dev/null || true
+  tmux set-option -pu -t "$1" @remux_relaunch_owner 2>/dev/null || true
+}
+
+# remux_clear <pane> — hand the pane back to remux's generic hook.
+remux_clear() {
+  tmux set-option -pu -t "$1" @remux_relaunch 2>/dev/null || true
+  tmux set-option -pu -t "$1" @remux_relaunch_pinned 2>/dev/null || true
+}
+
 # write_launch_script <var> <cmdline> [exit] — write <cmdline> into a fresh 0700
 # script under $crew_dir/launch and set <var> to the short line that runs it. A
 # new pane's shell is often not reading yet when send-keys types into it, and
