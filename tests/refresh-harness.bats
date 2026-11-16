@@ -438,8 +438,9 @@ EOF
   [ "$status" -eq 0 ]
   jq -e '.engines.claude.changelog.entries | length == 1' "$REPORT"
   jq -e '.engines.codex.changelog.entries | length == 1' "$REPORT"
-  ! grep -q "$esc" "$REPORT"
-  ! grep -q "$esc" "$OUT/harness-report.md"
+  # jq writes a control byte as an escape in JSON, so look for the escape there.
+  run ! grep -qF '\u001b' "$REPORT"
+  run ! grep -q "$esc" "$OUT/harness-report.md"
 }
 
 @test "the bus msg carries changelog names only, never upstream text" {
@@ -451,6 +452,6 @@ EOF
   jq -e '.engines.claude.changelog.entries[0].class == "unused"' "$REPORT"
   [ "$(msg_lines)" -eq 1 ]
   grep -F 'changelog 2.1.325 [--zzz-brand-new]' "$CREW_LOG"
-  ! grep -q 'IGNORE PREVIOUS' "$CREW_LOG"
+  run ! grep -q 'IGNORE PREVIOUS' "$CREW_LOG"
   grep -q 'IGNORE PREVIOUS' "$REPORT"
 }
