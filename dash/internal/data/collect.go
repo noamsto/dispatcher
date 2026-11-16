@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"math"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -235,42 +236,96 @@ func CollectRoster(ctx context.Context, r Runner, cfg Config) RosterSection {
 
 	ids := aliveCrewIDs(out)
 	crews := make([]RosterCrew, len(ids))
+	peerRows := make([][]map[string]any, len(ids))
 	var wg sync.WaitGroup
 	for i, id := range ids {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			crews[i] = collectCrew(ctx, r, cfg, id)
+			crews[i], peerRows[i] = collectCrew(ctx, r, cfg, id)
 		}()
 	}
 	wg.Wait()
-	return RosterSection{Crews: crews, Error: nil}
+	return RosterSection{Crews: crews, Peers: mergePeers(peerRows), Error: nil}
 }
 
-// collectCrew runs one crew's roster and hold list calls concurrently.
-func collectCrew(ctx context.Context, r Runner, cfg Config, id string) RosterCrew {
+// mergePeers dedupes peer rows (every crew's roster repeats them) by
+// host|crew_id|branch, ordered by host, crew_id, branch.
+func mergePeers(perCrew [][]map[string]any) []map[string]any {
+	seen := map[string]bool{}
+	var out []map[string]any
+	for _, rows := range perCrew {
+		for _, row := range rows {
+			key := peerKey(row)
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			out = append(out, row)
+		}
+	}
+	slices.SortStableFunc(out, func(a, b map[string]any) int {
+		return strings.Compare(peerKey(a), peerKey(b))
+	})
+	return out
+}
+
+func peerKey(row map[string]any) string {
+	host, _ := row["host"].(string)
+	crew, _ := row["crew_id"].(string)
+	branch, _ := row["branch"].(string)
+	return host + "|" + crew + "|" + branch
+}
+
+// collectCrew runs one crew's roster, hold list and lane probe concurrently.
+// The roster's peer rows come back separately from the crew's own workers.
+func collectCrew(ctx context.Context, r Runner, cfg Config, id string) (RosterCrew, []map[string]any) {
 	var holds []map[string]any
 	var hErr *string
+	var lane *LaneStatus
 	var wg sync.WaitGroup
-	wg.Add(1)
+	wg.Add(2)
 	go func() {
 		defer wg.Done()
 		holds, hErr = fetchRosterList(ctx, r, cfg, crewArgs(cfg, "hold", "list", "--crew", id, "--json"))
 	}()
-	workers, wErr := fetchRosterList(ctx, r, cfg, crewArgs(cfg, "roster", id))
+	go func() {
+		defer wg.Done()
+		lane = probeLane(ctx, r, cfg, id)
+	}()
+	rows, wErr := fetchRosterList(ctx, r, cfg, crewArgs(cfg, "roster", id, "--peers"))
 	wg.Wait()
 
-	if workers == nil {
-		workers = []map[string]any{}
-	}
-	for _, w := range workers {
+	workers := []map[string]any{}
+	var peers []map[string]any
+	for _, w := range rows {
 		ts, _ := w["ts"].(float64)
 		w["age_s"] = cfg.Now - int64(math.Floor(ts/1000))
+		if isPeer, _ := w["peer"].(bool); isPeer {
+			peers = append(peers, w)
+			continue
+		}
+		workers = append(workers, w)
 	}
 	if holds == nil {
 		holds = []map[string]any{}
 	}
-	return RosterCrew{ID: id, Workers: workers, Holds: holds, WorkersError: wErr, HoldsError: hErr}
+	return RosterCrew{ID: id, Workers: workers, Holds: holds, WorkersError: wErr, HoldsError: hErr, Lane: lane}, peers
+}
+
+// probeLane reads `crew stream --crew <id> --status`. The command exits 2 for
+// a dead lane, so the state is taken from stdout whenever it parses,
+// regardless of the exit code.
+func probeLane(ctx context.Context, r Runner, cfg Config, id string) *LaneStatus {
+	out, errb, err := r.Run(ctx, cfg.Crew[0], crewArgs(cfg, "stream", "--crew", id, "--status")...)
+	var parsed struct {
+		State string `json:"state"`
+	}
+	if json.Unmarshal(out, &parsed) == nil && parsed.State != "" {
+		return &LaneStatus{State: parsed.State}
+	}
+	msg := firstLineOrExit(errb, exitCode(err))
+	return &LaneStatus{State: "unknown", Error: &msg}
 }
 
 // fetchRosterList runs one per-crew roster/hold source and classifies it the

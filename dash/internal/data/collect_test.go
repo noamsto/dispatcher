@@ -272,7 +272,7 @@ func TestRosterPerCrewFailureSetsError(t *testing.T) {
 	r.Responses["crew crews"] = FakeResponse{
 		Stdout: []byte("crew_id\tlast_event_s\tfirst_event_s\tworkers\tpid\talive\nc1\t0\t0\t0\t1\tyes\n"),
 	}
-	r.Responses["crew roster c1"] = FakeResponse{Stderr: []byte("boom\n"), Err: FakeExitError{Code: 1}}
+	r.Responses["crew roster c1 --peers"] = FakeResponse{Stderr: []byte("boom\n"), Err: FakeExitError{Code: 1}}
 	r.Responses["crew hold list --crew c1 --json"] = FakeResponse{Stdout: []byte("[]")}
 	snap := Collect(context.Background(), r, baseConfig())
 
@@ -295,7 +295,7 @@ func TestRosterPerCrewUnparseableJSONSetsError(t *testing.T) {
 	r.Responses["crew crews"] = FakeResponse{
 		Stdout: []byte("crew_id\tlast_event_s\tfirst_event_s\tworkers\tpid\talive\nc1\t0\t0\t0\t1\tyes\n"),
 	}
-	r.Responses["crew roster c1"] = FakeResponse{Stdout: []byte("not json")}
+	r.Responses["crew roster c1 --peers"] = FakeResponse{Stdout: []byte("not json")}
 	r.Responses["crew hold list --crew c1 --json"] = FakeResponse{Stdout: []byte("[]")}
 	snap := Collect(context.Background(), r, baseConfig())
 
@@ -316,7 +316,7 @@ func TestRosterHoldsFailureIsIndependentOfWorkers(t *testing.T) {
 	r.Responses["crew crews"] = FakeResponse{
 		Stdout: []byte("crew_id\tlast_event_s\tfirst_event_s\tworkers\tpid\talive\nc1\t0\t0\t0\t1\tyes\n"),
 	}
-	r.Responses["crew roster c1"] = FakeResponse{Stdout: []byte(`[{"name":"w1"},{"name":"w2"}]`)}
+	r.Responses["crew roster c1 --peers"] = FakeResponse{Stdout: []byte(`[{"name":"w1"},{"name":"w2"}]`)}
 	r.Responses["crew hold list --crew c1 --json"] = FakeResponse{Stderr: []byte("hold boom\n"), Err: FakeExitError{Code: 1}}
 	snap := Collect(context.Background(), r, baseConfig())
 
@@ -424,15 +424,15 @@ func TestCollectRosterRunsCrewsConcurrentlyKeepsOrder(t *testing.T) {
 	r.Responses["crew crews"] = FakeResponse{
 		Stdout: []byte("crew_id\tlast_event_s\tfirst_event_s\tworkers\tpid\talive\nc1\t0\t0\t0\t1\tyes\nc2\t0\t0\t0\t1\tyes\n"),
 	}
-	r.Responses["crew roster c1"] = FakeResponse{Stdout: []byte(`[{"name":"w1"}]`), Wait: gate}
-	r.Responses["crew roster c2"] = FakeResponse{Stdout: []byte(`[{"name":"w2"}]`)}
+	r.Responses["crew roster c1 --peers"] = FakeResponse{Stdout: []byte(`[{"name":"w1"}]`), Wait: gate}
+	r.Responses["crew roster c2 --peers"] = FakeResponse{Stdout: []byte(`[{"name":"w2"}]`)}
 	r.Responses["crew hold list --crew c1 --json"] = FakeResponse{Stdout: []byte("[]")}
 	r.Responses["crew hold list --crew c2 --json"] = FakeResponse{Stdout: []byte("[]")}
 
 	go func() {
 		for ctx.Err() == nil {
 			for _, c := range r.CallsSnapshot() {
-				if fakeKey(c.Name, c.Args) == "crew roster c2" {
+				if fakeKey(c.Name, c.Args) == "crew roster c2 --peers" {
 					close(gate)
 					return
 				}
@@ -467,4 +467,84 @@ func jsonEqual(t *testing.T, a, b any) bool {
 	_ = json.Unmarshal(ab, &an)
 	_ = json.Unmarshal(bb, &bn)
 	return reflect.DeepEqual(an, bn)
+}
+
+func twoCrewRunner(t *testing.T) *FakeRunner {
+	t.Helper()
+	r := allOKRunner(t)
+	r.Responses["crew crews"] = FakeResponse{
+		Stdout: []byte("crew_id\tlast_event_s\tfirst_event_s\tworkers\tpid\talive\nc1\t0\t0\t0\t1\tyes\nc2\t0\t0\t0\t1\tyes\n"),
+	}
+	for _, id := range []string{"c1", "c2"} {
+		r.Responses["crew hold list --crew "+id+" --json"] = FakeResponse{Stdout: []byte("[]")}
+	}
+	return r
+}
+
+func TestCollectRosterSplitsPeers(t *testing.T) {
+	r := twoCrewRunner(t)
+	peer := `{"name":"p","crew_id":"x","branch":"feat/p","host":"mbp","peer":true,"ts":1}`
+	r.Responses["crew roster c1 --peers"] = FakeResponse{Stdout: []byte(`[{"name":"local","branch":"feat/a"},{"name":"remote","host":"halo","branch":"feat/r"},` + peer + `]`)}
+	r.Responses["crew roster c2 --peers"] = FakeResponse{Stdout: []byte(`[` + peer + `]`)}
+
+	sec := CollectRoster(context.Background(), r, baseConfig())
+
+	c1 := sec.Crews[0]
+	if len(c1.Workers) != 2 || c1.Workers[0]["name"] != "local" || c1.Workers[1]["name"] != "remote" {
+		t.Errorf("c1 Workers = %+v, want local and host rows only", c1.Workers)
+	}
+	if len(sec.Crews[1].Workers) != 0 {
+		t.Errorf("c2 Workers = %+v, want none", sec.Crews[1].Workers)
+	}
+	if len(sec.Peers) != 1 || sec.Peers[0]["name"] != "p" {
+		t.Errorf("Peers = %+v, want the peer row once", sec.Peers)
+	}
+}
+
+func TestCollectRosterLane(t *testing.T) {
+	cases := []struct {
+		name      string
+		resp      FakeResponse
+		wantState string
+		wantErr   bool
+	}{
+		{"alive", FakeResponse{Stdout: []byte(`{"stream":"status","state":"alive"}` + "\n")}, "alive", false},
+		{"dead", FakeResponse{Stdout: []byte(`{"stream":"status","state":"dead"}` + "\n"), Err: FakeExitError{Code: 2}}, "dead", false},
+		{"garbage", FakeResponse{Stdout: []byte("nope\n"), Stderr: []byte("bad\n"), Err: FakeExitError{Code: 1}}, "unknown", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := allOKRunner(t)
+			r.Responses["crew crews"] = FakeResponse{
+				Stdout: []byte("crew_id\tlast_event_s\tfirst_event_s\tworkers\tpid\talive\nc1\t0\t0\t0\t1\tyes\n"),
+			}
+			r.Responses["crew roster c1 --peers"] = FakeResponse{Stdout: []byte("[]")}
+			r.Responses["crew hold list --crew c1 --json"] = FakeResponse{Stdout: []byte("[]")}
+			r.Responses["crew stream --crew c1 --status"] = tc.resp
+
+			lane := CollectRoster(context.Background(), r, baseConfig()).Crews[0].Lane
+			if lane == nil || lane.State != tc.wantState {
+				t.Fatalf("Lane = %+v, want state %q", lane, tc.wantState)
+			}
+			if (lane.Error != nil) != tc.wantErr {
+				t.Errorf("Lane.Error = %v, want set=%v", lane.Error, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestSnapshotJSONOmitsPeersAndLane(t *testing.T) {
+	snap := Snapshot{Roster: RosterSection{
+		Crews: []RosterCrew{{ID: "c1", Lane: &LaneStatus{State: "alive"}}},
+		Peers: []map[string]any{{"name": "p"}},
+	}}
+	b, err := json.Marshal(snap)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{`"peers"`, `"lane"`} {
+		if strings.Contains(string(b), key) {
+			t.Errorf("snapshot JSON contains %s: %s", key, b)
+		}
+	}
 }

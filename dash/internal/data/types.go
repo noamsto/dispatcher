@@ -200,9 +200,19 @@ type Note struct {
 	Detail string `json:"detail"`
 }
 
+// Peers holds other hosts' rows (`peer: true`), deduped across crews. It and
+// RosterCrew.Lane are json:"-" so the --json snapshot contract is unchanged.
 type RosterSection struct {
-	Crews []RosterCrew `json:"crews"`
-	Error *string      `json:"error"`
+	Crews []RosterCrew     `json:"crews"`
+	Peers []map[string]any `json:"-"`
+	Error *string          `json:"error"`
+}
+
+// LaneStatus is one crew's `crew stream --status` probe: State is alive,
+// dead or unknown (Error says why the probe could not tell).
+type LaneStatus struct {
+	State string
+	Error *string
 }
 
 // RosterCrew keeps workers/holds as raw maps (pass-through: crew roster and
@@ -220,4 +230,5 @@ type RosterCrew struct {
 	Holds        []map[string]any `json:"holds"`
 	WorkersError *string          `json:"workers_error"`
 	HoldsError   *string          `json:"holds_error"`
+	Lane         *LaneStatus      `json:"-"`
 }
