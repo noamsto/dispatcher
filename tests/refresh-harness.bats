@@ -1,15 +1,14 @@
 bats_require_minimum_version 1.5.0
 
-# Contract for adapters/core/refresh-harness.sh (spec #1568). The spec leaves the
-# state file's shape open; these tests pin it, and the script must write and read
-# exactly this at $XDG_DATA_HOME/crew/harness-state.json:
+# The state shape adapters/core/refresh-harness.sh writes and reads at
+# $XDG_DATA_HOME/crew/harness-state.json:
 #
 #   {"engines": {"<engine>": {"version": "...", "env": [...], "flags": [...]}},
 #    "sources": {"<source-id>": {"cursor": "..."}}}
 #
 # Source ids: claude-changelog, codex-releases, pi-changelog, cursor-changelog.
 # Cursors: claude/pi = newest heading version, codex = newest non-prerelease
-# published_at. Everything else (report JSON) follows the spec's "Report shape".
+# published_at.
 
 setup() {
   load helpers

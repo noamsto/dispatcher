@@ -246,7 +246,8 @@ resolve_chain() {
   done
 }
 
-# claude_env <binary> — CLAUDE_CODE_* names, never `grep -a` over the ELF.
+# claude_env <binary> — the CLAUDE_CODE_* names in the binary. `strings` first:
+# a wide-context `grep -a` over the ~365 MB ELF takes minutes.
 claude_env() {
   strings -n 8 "$1" | grep -oE 'CLAUDE_CODE_[A-Z0-9_]+' | sort -u || true
 }
