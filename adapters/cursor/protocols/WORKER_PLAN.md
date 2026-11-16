@@ -13,6 +13,18 @@ Phase file of `WORKER_PROTOCOL.md`: it binds like the core. References to "this 
 - Scope: only the plan phase (plan-critic included) is skipped; deep still runs its spec-critic and orchestration consult (a task doc doesn't settle framing), except under `resume: true` (the recovered `SPEC.md` passed spec-critic in the interrupted run).
 - Keep the checkpoint-peek after the extracted plan of record.
 
+## Diagrams (standard/deep; trivial draws none)
+
+Two small D2 diagrams give reviewers and the owner the mechanism and the intended change without reading the whole spec or plan. The lead draws them from context it already holds: no subagent, no reads beyond the spec and plan. Skip both when the change is docs or config only.
+
+- Issue diagram: `<crew_dir>/artifacts/<branch>/issue.d2`, the current mechanism and where it breaks or what is missing; 5–12 nodes naming real files and functions. Deep: after the spec critic approves the spec. Standard: when the plan phase starts (`plan: provided`: when you extract the plan of record).
+- Plan diagram: `<crew_dir>/artifacts/<branch>/plan.d2`, the same scope with the change applied, new or changed pieces marked. After the plan critic approves, or immediately under `plan: provided`.
+- The D2 source is the portable artifact; every engine writes it.
+<!-- only:claude -->
+- claude: also copy each file to `/tmp/claude-status/images/diagrams/src/<branch-slug>-{issue,plan}.d2`, only if that directory exists (the aeye carousel renders it), and load `aeye:diagrams` for style if the skill is listed.
+<!-- /only -->
+- Cost guardrail: `d2` on PATH → `d2 validate` each file; a parse failure gets one fix attempt, then skip that diagram with a one-line note in the PR body. A missing diagram never blocks `pr_open` and is not a ledger item. The PR body carries both sources (`WORKER_SHIP`, PR body contract).
+
 ## Orchestration consult (deep only)
 
 Unless resuming (check Resuming a killed run first), decide once before the plan phase, in the worktree (never at dispatch time), whether a top-tier consultant decomposes the task, and which.
