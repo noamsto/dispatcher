@@ -105,6 +105,7 @@ map_file() {
   adapters/claude-code/* | adapters/codex/* | adapters/cursor/*) add adapters module ;;
   adapters/pi/*) add adapters dispatch dispatch-resume ;;
   scripts/cache-report.sh | scripts/gen-adapters.sh | scripts/render-engine.sh) add adapters ;;
+  scripts/cache-built-paths.sh) ;;
   scripts/pi-subagent-contract.sh) add adapters ;;
   scripts/gen-model-map-doc.sh) add adapters model-map-doc ;;
   README.md) add adapters dispatch permission-check ;;
