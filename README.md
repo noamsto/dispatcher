@@ -266,7 +266,8 @@ programs.dispatcher = {
 ```
 
 That puts `crew`, `dispatch`, `dispatcher`, `refresh-scores`, `refresh-budget`,
-`refresh-models`, `pr-watch` and `dispatch-config` on `PATH`, exports only the
+`refresh-models`, `refresh-harness` (a weekly report of new engine env vars,
+flags and changelog entries the dispatcher does not use), `pr-watch` and `dispatch-config` on `PATH`, exports only the
 four `DISPATCHER_PROTOCOL_DIR`, `DISPATCHER_REVIEWERS_DIR`,
 `DISPATCHER_CRITICS_DIR` and `DISPATCHER_SKILLS_DIR` session variables,
 installs the Codex plugin and writes the Cursor rule, commands, skills and

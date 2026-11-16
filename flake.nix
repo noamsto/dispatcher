@@ -302,6 +302,12 @@
             text = builtins.readFile ./adapters/core/refresh-models.sh;
           };
 
+          refresh-harness = pkgs.writeShellApplication {
+            name = "refresh-harness";
+            runtimeInputs = (with pkgs; [coreutils curl findutils gh gnugrep gnused jq binutils]) ++ [crew dispatch];
+            text = builtins.replaceStrings ["@harnessTree@"] ["${inputs.self}"] (builtins.readFile ./adapters/core/refresh-harness.sh);
+          };
+
           # yq-go is a runtime input, not just a devShell one: the resolver
           # parses the harness reviewers' frontmatter with it and its preflight
           # rejects any other yq, so it must not depend on whatever yq happens
@@ -329,7 +335,7 @@
 
           default = pkgs.symlinkJoin {
             name = "dispatcher-all";
-            paths = [crew crew-dash dispatch dispatch-resume dispatch-config dispatcher lead-launcher overseer refresh-scores refresh-budget refresh-models pr-watch reviewer-roster permission-check completions];
+            paths = [crew crew-dash dispatch dispatch-resume dispatch-config dispatcher lead-launcher overseer refresh-scores refresh-budget refresh-models refresh-harness pr-watch reviewer-roster permission-check completions];
           };
         };
       in {

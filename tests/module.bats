@@ -26,7 +26,7 @@ setup_file() {
     "$root#crew" "$root#dispatch" "$root#dispatch-resume" "$root#dispatcher" \
     "$root#refresh-scores" "$root#refresh-budget" "$root#refresh-models" "$root#pr-watch" \
     "$root#reviewer-roster" "$root#permission-check" "$root#crew-dash" "$root#lead-launcher" \
-    "$root#overseer" \
+    "$root#overseer" "$root#refresh-harness" \
     >"$BATS_FILE_TMPDIR/out-paths"
 
   # The module's own eval, through a real `lib.evalModules` (not a bare call
@@ -243,6 +243,11 @@ let
     refresh.enable = false;
   };
 
+  harnessOffCfg = {
+    enable = true;
+    refreshHarness.enable = false;
+  };
+
   reapOffCfg = {
     enable = true;
     reap.enable = false;
@@ -296,6 +301,7 @@ in {
   float = mkResult floatCfg;
   refreshOff = mkResult refreshOffCfg;
   reapOff = mkResult reapOffCfg;
+  harnessOff = mkResult harnessOffCfg;
   # The launchd agent is picked by hostPlatform, so the Darwin eval takes its
   # package set rather than the host's.
   darwin = let
@@ -305,6 +311,7 @@ in {
     systemdUser = d.systemd.user;
   };
   darwinReapOff = (evalOn darwinPkgs {enable = true; reap.enable = false;}).launchd.agents;
+  darwinHarnessOff = (evalOn darwinPkgs {enable = true; refreshHarness.enable = false;}).launchd.agents;
   darwinRefreshOff = (evalOn darwinPkgs {enable = true; refresh.enable = false;}).launchd.agents;
   codexOnly = mkResult codexOnlyCfg // mkDrvs codexOnlyCfg;
   # A malformed or openrouter-provider localModels key must trip an HM
@@ -497,6 +504,7 @@ setup() {
     read -r OUT_CREW_DASH
     read -r OUT_LEAD_LAUNCHER
     read -r OUT_OVERSEER
+    read -r OUT_REFRESH_HARNESS
   } <"$BATS_FILE_TMPDIR/out-paths"
   {
     read -r OUT_MINIMAL_DISPATCH_CONFIG
@@ -512,7 +520,7 @@ setup() {
   for out in "$OUT_CREW" "$OUT_DISPATCH" "$OUT_DISPATCH_RESUME" "$OUT_DISPATCHER" \
     "$OUT_REFRESH_SCORES" "$OUT_REFRESH_BUDGET" "$OUT_REFRESH_MODELS" "$OUT_PR_WATCH" \
     "$OUT_REVIEWER_ROSTER" "$OUT_PERMISSION_CHECK" "$OUT_CREW_DASH" "$OUT_LEAD_LAUNCHER" \
-    "$OUT_OVERSEER" \
+    "$OUT_OVERSEER" "$OUT_REFRESH_HARNESS" \
     "$OUT_MINIMAL_DISPATCH_CONFIG" "$OUT_MINIMAL_DISPATCH" \
     "$OUT_CODEX_DISPATCH_CONFIG" "$OUT_CODEX_DISPATCH"; do
     [ -n "$out" ]
@@ -913,6 +921,8 @@ worktree_git_lib_crew_go_row() { # bin
   [ "$status" -eq 0 ]
   run jq -e '(.options | index("agentBrowser")) != null' "$EVAL"
   [ "$status" -eq 0 ]
+  run jq -e '(.options | index("refreshHarness")) != null' "$EVAL"
+  [ "$status" -eq 0 ]
 }
 
 @test "the laneProfiles option type rejects a name that is not a profile id" {
@@ -986,7 +996,7 @@ worktree_git_lib_crew_go_row() { # bin
   [ "$status" -eq 0 ]
   # Every CLI the module claims to install, resolved from the flake — a package
   # that isn't in `packages` fails the eval outright, not a grep.
-  for pkg in crew crew-dash dispatch dispatch-resume dispatcher refresh-scores refresh-budget refresh-models pr-watch reviewer-roster permission-check dispatch-config overseer completions; do
+  for pkg in crew crew-dash dispatch dispatch-resume dispatcher refresh-scores refresh-budget refresh-models refresh-harness pr-watch reviewer-roster permission-check dispatch-config overseer completions; do
     run jq -e --arg p "$pkg" '(.full.packageNames | index($p)) != null' "$EVAL"
     [ "$status" -eq 0 ]
   done
@@ -1055,6 +1065,37 @@ worktree_git_lib_crew_go_row() { # bin
   run jq -e '.darwin.launchdAgents["dispatcher-reap"].config.ProgramArguments | length == 3 and .[0] == "/bin/sh" and .[1] == "-c" and (.[2] | test("^/nix/store/[^/]+-crew/bin/crew reap --fleet --quiet --no-wait$"))' "$EVAL"
   [ "$status" -eq 0 ]
   run jq -e '.darwin.launchdAgents["dispatcher-reap"].config.EnvironmentVariables.CREW_RATE_AUTOSWEEP == "sync"' "$EVAL"
+  [ "$status" -eq 0 ]
+}
+
+@test "refreshHarness schedules a weekly timer and a keep-old oneshot service" {
+  run jq -e '.full.systemdUser.timers["dispatcher-refresh-harness"].Timer == {"OnCalendar": "weekly", "Persistent": true, "RandomizedDelaySec": "1h"}' "$EVAL"
+  [ "$status" -eq 0 ]
+  run jq -e '.full.systemdUser.timers["dispatcher-refresh-harness"].Install.WantedBy == ["timers.target"]' "$EVAL"
+  [ "$status" -eq 0 ]
+  run jq -e '.full.systemdUser.services["dispatcher-refresh-harness"].Service.Type == "oneshot"' "$EVAL"
+  [ "$status" -eq 0 ]
+  run jq -e '.full.systemdUser.services["dispatcher-refresh-harness"].Unit["X-SwitchMethod"] == "keep-old"' "$EVAL"
+  [ "$status" -eq 0 ]
+  run jq -e '.full.systemdUser.services["dispatcher-refresh-harness"].Service.Environment == ["PATH=/home/test/.local/bin:/home/test/.nix-profile/bin:/etc/profiles/per-user/test/bin:/run/current-system/sw/bin:/usr/bin:/bin"]' "$EVAL"
+  [ "$status" -eq 0 ]
+  run jq -e '.full.systemdUser.services["dispatcher-refresh-harness"].Service.ExecStart | length == 1 and (.[0] | test("^-/nix/store/[^/]+-refresh-harness/bin/refresh-harness$"))' "$EVAL"
+  [ "$status" -eq 0 ]
+}
+
+@test "refreshHarness runs a Monday-midnight launchd agent on Darwin" {
+  run jq -e '.darwin.launchdAgents["dispatcher-refresh-harness"] | .enable == true and .config.RunAtLoad == false and .config.StartCalendarInterval == [{"Hour": 0, "Minute": 0, "Weekday": 1}]' "$EVAL"
+  [ "$status" -eq 0 ]
+  run jq -e '.darwin.launchdAgents["dispatcher-refresh-harness"].config | .EnvironmentVariables.PATH == "/home/test/.local/bin:/home/test/.nix-profile/bin:/etc/profiles/per-user/test/bin:/run/current-system/sw/bin:/usr/bin:/bin" and .StandardErrorPath == "/home/test/Library/Logs/dispatcher-refresh-harness.log" and .StandardOutPath == .StandardErrorPath' "$EVAL"
+  [ "$status" -eq 0 ]
+  run jq -e '.darwin.launchdAgents["dispatcher-refresh-harness"].config.ProgramArguments | length == 1 and (.[0] | test("^/nix/store/[^/]+-refresh-harness/bin/refresh-harness$"))' "$EVAL"
+  [ "$status" -eq 0 ]
+}
+
+@test "refreshHarness.enable = false schedules neither unit" {
+  run jq -e '(.harnessOff.systemdUser.services["dispatcher-refresh-harness"] == null) and (.harnessOff.systemdUser.timers["dispatcher-refresh-harness"] == null) and (.harnessOff.systemdUser.services["dispatcher-refresh"] != null) and (.harnessOff.systemdUser.timers["dispatcher-reap"] != null)' "$EVAL"
+  [ "$status" -eq 0 ]
+  run jq -e '(.darwinHarnessOff["dispatcher-refresh-harness"] == null) and (.darwinHarnessOff["dispatcher-refresh"] != null) and (.darwinHarnessOff["dispatcher-reap"] != null)' "$EVAL"
   [ "$status" -eq 0 ]
 }
 
