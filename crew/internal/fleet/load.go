@@ -68,6 +68,11 @@ type LoadOptions struct {
 	// Cmd runs a host probe (nproc, sysctl) from PATH and returns its stdout,
 	// trimmed. An error is no answer.
 	Cmd func(ctx context.Context, name string, args ...string) (string, error)
+	// LocalModels resolves the localModels entries (id to maxConcurrent); nil
+	// reports none.
+	LocalModels func(ctx context.Context) (map[string]int, error)
+	// Stderr notes a failed read; nil discards.
+	Stderr io.Writer
 }
 
 // LoadRequest is `crew fleet load`'s flags. Add, when positive, asks whether a
@@ -107,6 +112,8 @@ type LoadDoc struct {
 	LoadOver   bool              `json:"load_over"`
 	Engines    map[string]Engine `json:"engines"`
 	BudgetAgeS *int              `json:"budget_age_s"`
+	// LocalModels is never nil: [] when no localModels entry is set.
+	LocalModels []LocalModel `json:"local_models"`
 
 	load1Text string // Load1 as the host printed it
 }
@@ -470,6 +477,16 @@ func measure(ctx context.Context, budget int, o LoadOptions, released []released
 		doc.LoadOver = load > float64(cores)
 	}
 	doc.Engines, doc.BudgetAgeS = budgetSummary(o.BudgetFile, o.Clock.Now().Unix())
+	doc.LocalModels = []LocalModel{}
+	if o.LocalModels != nil {
+		if entries, err := o.LocalModels(ctx); err != nil {
+			if o.Stderr != nil {
+				say(o.Stderr, "crew: fleet load: local models: %s\n", oneLine(err))
+			}
+		} else {
+			doc.LocalModels = localModelUse(ctx, o.Tmux, entries)
+		}
+	}
 	return doc, owned
 }
 

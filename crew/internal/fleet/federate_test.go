@@ -1474,6 +1474,9 @@ func maximalFar(t *testing.T) map[string]any {
 	status["machine"].(map[string]any)["leads"] = []any{
 		map[string]any{"repo": "alpha", "branch": "feat/w", "name": "remy", "tier": "standard", "weight": 2},
 	}
+	status["machine"].(map[string]any)["local_models"] = []any{
+		map[string]any{"id": "lemonade/q", "max_concurrent": 2, "in_use": 1},
+	}
 	for _, r := range status["repos"].([]any) {
 		for _, c := range r.(map[string]any)["crews"].([]any) {
 			for _, w := range c.(map[string]any)["workers"].([]any) {

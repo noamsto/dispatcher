@@ -1360,15 +1360,23 @@ func fleetRemote(e env) func(dir, crew string) roster.Capture {
 func fleetQueueOptions(e env, stderr io.Writer) fleet.QueueOptions {
 	return fleet.QueueOptions{
 		LoadOptions: fleet.LoadOptions{
-			Getenv:     os.Getenv,
-			Tmux:       tmux.Exec{},
-			Git:        git.Exec{},
-			Clock:      clock.FromEnv(),
-			BudgetFile: budgetFile(),
+			Getenv:      os.Getenv,
+			Tmux:        tmux.Exec{},
+			Git:         git.Exec{},
+			Clock:       clock.FromEnv(),
+			BudgetFile:  budgetFile(),
+			LocalModels: localModels(stderr),
+			Stderr:      stderr,
 		},
 		Proc:     e.proc,
 		Settings: fleetSettings(stderr),
 		Sender:   senderProbes(e.proc),
+	}
+}
+
+func localModels(stderr io.Writer) func(context.Context) (map[string]int, error) {
+	return func(ctx context.Context) (map[string]int, error) {
+		return fleet.ResolveLocalModels(ctx, fleet.ConfigBin(), stderr)
 	}
 }
 
@@ -1395,6 +1403,7 @@ func statusOptions(o fleet.Options, e env, stderr io.Writer) fleet.StatusOptions
 		Budget: func(ctx context.Context) (int, error) {
 			return fleet.ResolveBudget(ctx, fleet.ConfigBin(), stderr)
 		},
+		LocalModels:   localModels(stderr),
 		Settings:      fleetSettings(stderr),
 		Sender:        overseerProbes(e),
 		Federate:      remote.RunHost,
@@ -1417,11 +1426,13 @@ func overseerStatusOptions(e env, stderr io.Writer, hostSince func(host string) 
 
 func runFleetLoad(ctx context.Context, c fleetLoadCmd, stdout, stderr io.Writer) int {
 	o := fleet.LoadOptions{
-		Getenv:     os.Getenv,
-		Tmux:       tmux.Exec{},
-		Git:        git.Exec{},
-		Clock:      clock.FromEnv(),
-		BudgetFile: budgetFile(),
+		Getenv:      os.Getenv,
+		Tmux:        tmux.Exec{},
+		Git:         git.Exec{},
+		Clock:       clock.FromEnv(),
+		BudgetFile:  budgetFile(),
+		LocalModels: localModels(stderr),
+		Stderr:      stderr,
 	}
 	if c.Budget == nil {
 		o.Budget = func(ctx context.Context) (int, error) {

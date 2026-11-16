@@ -61,9 +61,10 @@ type StatusOptions struct {
 	// Host is this machine's short name, the `overseer:<host>` address.
 	Host func() (string, error)
 	// Budget, BudgetFile and Cmd are the machine document's reads (LoadOptions).
-	Budget     func(ctx context.Context) (int, error)
-	BudgetFile string
-	Cmd        func(ctx context.Context, name string, args ...string) (string, error)
+	Budget      func(ctx context.Context) (int, error)
+	BudgetFile  string
+	Cmd         func(ctx context.Context, name string, args ...string) (string, error)
+	LocalModels func(ctx context.Context) (map[string]int, error)
 	// Settings resolves the fleet queue's settings, its budget the machine
 	// document's too. nil: the defaults, with Budget's budget when it is set.
 	Settings func(ctx context.Context) (QueueSettings, error)
@@ -322,7 +323,7 @@ func collectStatus(ctx context.Context, req StatusRequest, stderr io.Writer, o S
 	if s, err := o.queueSettings(ctx); err != nil {
 		say(stderr, "crew: fleet status: machine: %s\n", oneLine(err))
 	} else {
-		lo := LoadOptions{Getenv: o.Getenv, Registry: o.Registry, Tmux: once, Git: o.Git, Clock: o.Clock, BudgetFile: o.BudgetFile, Cmd: o.Cmd}
+		lo := LoadOptions{Getenv: o.Getenv, Registry: o.Registry, Tmux: once, Git: o.Git, Clock: o.Clock, BudgetFile: o.BudgetFile, Cmd: o.Cmd, LocalModels: o.LocalModels, Stderr: stderr}
 		q := newQueue(ctx, QueueOptions{LoadOptions: lo, Proc: o.Proc}, scanFleet(o.Registry, o.Getenv, buses.read, nowMS), s, now)
 		var rec map[holdKey]dueEntry
 		rec, due = q.advance(readRecord(duePath(o.Getenv)))

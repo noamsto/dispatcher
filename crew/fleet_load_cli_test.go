@@ -23,6 +23,9 @@ func fleetLoadEnv(t *testing.T) env {
 	if err := os.WriteFile(filepath.Join(bin, "nproc"), []byte("#!/bin/sh\necho 4\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(bin, "dispatch-config"), []byte("#!/bin/sh\necho '{}'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	loadavg := filepath.Join(dir, "loadavg")
 	if err := os.WriteFile(loadavg, []byte("1.00 1.00 1.00 1/1 1\n"), 0o644); err != nil {
 		t.Fatal(err)
