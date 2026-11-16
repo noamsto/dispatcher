@@ -927,12 +927,13 @@ END {
 # not: their backticks, qx() and %x() run a shell, so their heredoc bodies keep
 # the shell-dumper scan. The sinks' own environment reads are judged by
 # awk_interp_dump, and a shell-out from their code (os.system) is a non-dumper
-# path (O4) — an accepted limit.
+# path (O4) — an accepted limit. export is a sink only because awk_lookup's
+# early vetoes every export that is not a trailing plain one.
 # shellcheck disable=SC2016
 awk_sinks='
 BEGIN {
   ok = 1
-  n = split("cat tee printf echo gh git sponge tr wc head tail grep base64 diff cmp read cd ls mkdir rm mv cp touch chmod true : test [ python python3 pypy pypy3 node nodejs deno bun", a, " ")
+  n = split("cat tee printf echo gh git sponge tr wc head tail grep base64 diff cmp read cd ls mkdir rm mv cp touch chmod true : test [ export python python3 pypy pypy3 node nodejs deno bun", a, " ")
   for (i = 1; i <= n; i++) SINK[a[i]] = 1
   n = split("commit tag notes apply am hash-object check-ignore check-attr mktag mktree", a, " ")
   for (i = 1; i <= n; i++) GITSUB[a[i]] = 1
@@ -1003,12 +1004,21 @@ END { print hit + 0 }'
 
 # Anything in a text that can change what a sink name resolves to: command
 # lookup state. One linear pass over the B=1 view (heredoc bodies and quoted
-# spans blanked, so their text is never judged). Prints 1 when the text holds:
+# spans blanked, so their text is never judged). Prints "hit early". hit is 1
+# when the text holds:
 #   - a bare assignment statement (`foo=bar`, or `PATH=$(cmd)` for a
 #     lookup-affecting variable);
 #   - an `export`/`declare`/`typeset`/`readonly`/`local`, `hash`, `enable`,
 #     `alias`/`unalias` or `source`/`.` command word;
 #   - a function definition (a `name()` word, or the `function` keyword).
+# early is 1 when some such change is not part of a trailing run of plain
+# stages, so a later command of the same text may resolve through it. A plain
+# stage is `export` (after lead words) with operands that are each a name or
+# `name=` a literal value, and opens no `(`; any other non-empty stage after
+# one sets early. A quoted operand name renders as a `_` run in this view,
+# which is safe only because bash's export rejects a non-identifier operand
+# before any expansion or assignment; declare/typeset evaluate a quoted
+# `a[...]` subscript, so they must never become plain.
 # Fail closed: a false positive is only an extra deny. The leading-assignment
 # scan mirrors awk_sinks, so a `msg=$(cat <<EOF …)` capture is not a bare
 # statement (its value is the substitution, and `msg` is not a lookup name).
@@ -1021,19 +1031,20 @@ BEGIN {
   for (i = 1; i <= n; i++) LEAD[a[i]] = 1
   n = split("PATH CDPATH BASH_ENV ENV GLOBIGNORE IFS SHELLOPTS BASHOPTS", a, " ")
   for (i = 1; i <= n; i++) VLOOK[a[i]] = 1
-  hit = 0
+  hit = early = pend = 0
 }
 {
-  if ($0 ~ /(^|[^A-Za-z0-9_])function[ \t]/) hit = 1
+  if ($0 ~ /(^|[^A-Za-z0-9_])function[ \t]/) hit = early = 1
   t = $0
   gsub(/>&/, ">\001", t); gsub(/<&/, "<\001", t); gsub(/\(/, "\002(", t)
   ns = split(t, S, /[;&|()]/)
   for (s = 1; s <= ns; s++) stage(S[s])
 }
-function stage(g,    fo, nw, j, as, cw, vn) {
+function stage(g,    fo, nw, j, k, as, cw, vn, plain) {
   fo = (substr(g, length(g)) == "\002")
   if (fo) g = substr(g, 1, length(g) - 1)
   nw = split(g, Wd)
+  if (nw == 0) return
   as = 0
   vn = ""
   for (j = 1; j <= nw && ((Wd[j] in LEAD) || Wd[j] ~ /^[A-Za-z_][A-Za-z0-9_]*\+?=/); j++) {
@@ -1042,17 +1053,21 @@ function stage(g,    fo, nw, j, as, cw, vn) {
       if (vn == "") { vn = Wd[j]; sub(/\+?=.*$/, "", vn) }
     }
   }
+  plain = (!as && !fo && j < nw && Wd[j] == "export")
+  for (k = j + 1; k <= nw && plain; k++) if (Wd[k] !~ /^[A-Za-z_][A-Za-z0-9_]*(\+?=[A-Za-z0-9_.\/:,%@+=-]*)?$/) plain = 0
+  if (plain) { hit = pend = 1; return }
+  if (pend) early = 1
   if (j > nw) {
-    if (as && (!fo || (vn in VLOOK))) hit = 1
+    if (as && (!fo || (vn in VLOOK))) hit = early = 1
     return
   }
-  if (as) hit = 1
-  if (fo && g ~ /^[A-Za-z_][A-Za-z0-9_]*$/) { hit = 1; return }
+  if (as) hit = early = 1
+  if (fo && g ~ /^[A-Za-z_][A-Za-z0-9_]*$/) { hit = early = 1; return }
   cw = Wd[j]
   sub(/[<>].*/, "", cw)
-  if (cw in LOOK) hit = 1
+  if (cw in LOOK) hit = early = 1
 }
-END { print (hit ? 1 : 0) }'
+END { print (hit ? 1 : 0), (early ? 1 : 0) }'
 
 # 1 when a text changes command lookup (see awk_lookup). Used to taint a
 # `-c` or `eval` sub-body with a lookup change made by its parent text, which
@@ -1074,7 +1089,7 @@ lookup_change() {
     echo 1
     return
   }
-  echo "$lk"
+  echo "${lk%% *}"
 }
 
 # Prints "<sink-ok> <lookup-change>" for one text: 1/0 when its heredoc bodies
@@ -1082,9 +1097,11 @@ lookup_change() {
 # awk_lookup). Text without `<<` has no text-sink heredoc, so sink-ok is 0 and
 # only a lookup change can still matter, by tainting a descendant heredoc. A
 # text holding `<<` masks its B=1 view once for the two passes; a text with no
-# `<` skips the mask entirely (see lookup_change).
+# `<` skips the mask entirely (see lookup_change). Sink-ok is vetoed by a
+# lookup change some later stage of the text may resolve through (awk_lookup's
+# early), not by a trailing plain export, which still reports lookup-change 1.
 text_verdicts() {
-  local view ok lk
+  local view ok lk early
   if [[ $1 != *'<<'* ]]; then
     if [[ $1 != *'<'* ]]; then
       echo "0 0"
@@ -1098,8 +1115,11 @@ text_verdicts() {
     return
   }
   ok=$(awk "$awk_sinks" <<<"$view") || ok=0
-  lk=$(awk "$awk_lookup" <<<"$view") || lk=1
-  if [[ $lk == 1 ]]; then ok=0; fi
+  read -r lk early < <(awk "$awk_lookup" <<<"$view" || echo "1 1")
+  if [[ $early != 0 ]]; then
+    ok=0
+    lk=1
+  fi
   echo "$ok $lk"
 }
 
@@ -1441,7 +1461,6 @@ shell)
     cur=${worklist[wi]}
     cur_t=${worklist_t[wi]}
     cur_lookup=${worklist_lookup[wi]}
-    if [[ $cur_lookup == 1 ]]; then cur_t=0; fi
     dq=$(dequote "$cur" "$cur_t")
     dequoted_views+=("$dq")
     if ((worklist_fish[wi])); then dequoted_fish_views+=("$dq"); fi
