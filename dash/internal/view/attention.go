@@ -200,7 +200,11 @@ func buildAttention(in Inputs, rows []WorkerRow) []AttentionItem {
 			byKey[data.WorkerKey{Crew: w.Crew, Branch: w.Branch}] = w
 		}
 		if kind, sev, key, ok := stateItem(w); ok {
-			items = append(items, attentionOf(w, kind, sev, key, message(w, w.State)))
+			it := attentionOf(w, kind, sev, key, message(w, w.State))
+			if kind == KindBlocked && w.BlockedSince != nil {
+				it.AgeSec = max(now-*w.BlockedSince/1000, 0)
+			}
+			items = append(items, it)
 		}
 		if mergeReady(w, in) {
 			items = append(items, attentionOf(w, KindMergeReady, SeverityReady, "m", fmt.Sprintf("PR #%d checks green, mergeable", *w.PR)))

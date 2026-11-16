@@ -319,18 +319,22 @@ func TestStatusRemoteWorkers(t *testing.T) {
 }
 
 func TestStatusBlocked(t *testing.T) {
-	const detail = `,"detail":"waiting (cycle 7 of 24)"`
+	const detail = `,"detail":"waiting (cycle 7 of 24)","restamp":true`
 	f := newStatusFix(t,
 		// feat/b: an old run, a working row that breaks it, then three restamps.
 		wstatus(1200, "c1", "feat/b", "blocked", `,"detail":"old"`),
 		wstatus(1100, "c1", "feat/b", "working", ""),
 		wstatus(900, "c1", "feat/b", "blocked", `,"detail":"first"`),
-		wstatus(600, "c1", "feat/b", "blocked", `,"detail":"waiting (cycle 1 of 24)"`),
+		wstatus(600, "c1", "feat/b", "blocked", `,"detail":"waiting (cycle 1 of 24)","restamp":true`),
 		wstatus(300, "c1", "feat/b", "blocked", detail),
 		wmsg(200, "c1", "dispatcher:c1", "worker:feat/b#s1-1", `"go"`),
 		// feat/c: the reply predates the run; posted by the watchdog; no cycle.
 		wmsg(2000, "c1", "dispatcher:c1", "worker:feat/c#s1-1", `"early"`),
 		wstatus(400, "c1", "feat/c", "blocked", `,"detail":"stalled: quiet","source":"watchdog"`),
+		// feat/g: a fresh question after the reply is a new, unanswered episode.
+		wstatus(900, "c1", "feat/g", "blocked", `,"detail":"first"`),
+		wmsg(700, "c1", "dispatcher:c1", "worker:feat/g#s1-1", `"go"`),
+		wstatus(600, "c1", "feat/g", "blocked", `,"detail":"second"`),
 		// feat/d: a msg from someone else is no answer.
 		wstatus(300, "c1", "feat/d", "blocked", ""),
 		wmsg(100, "c1", "dispatcher:other", "worker:feat/d#s1-1", `"x"`),
@@ -341,6 +345,10 @@ func TestStatusBlocked(t *testing.T) {
 	b := c.worker(t, "feat/b")["blocked"].(map[string]any)
 	if b["since"] != ago(900) || b["cycle"] != 7 || b["budget_left_s"] != 17*300 || b["source"] != "worker" || b["answered"] != true {
 		t.Errorf("feat/b blocked = %v", b)
+	}
+	b = c.worker(t, "feat/g")["blocked"].(map[string]any)
+	if b["since"] != ago(600) || b["answered"] != false {
+		t.Errorf("feat/g blocked = %v", b)
 	}
 	b = c.worker(t, "feat/c")["blocked"].(map[string]any)
 	if b["since"] != ago(400) || b["cycle"] != nil || b["budget_left_s"] != nil || b["source"] != "watchdog" || b["answered"] != false {

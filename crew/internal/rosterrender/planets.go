@@ -315,6 +315,9 @@ func classify(state string) (class string, failed bool) {
 	switch state {
 	case "blocked":
 		return classBlocked, false
+	case "answered":
+		// The dispatcher replied; the worker has not resumed, nobody is waited on.
+		return classWorking, false
 	case "pr_open":
 		return classPROpen, false
 	case "done", "reaped":

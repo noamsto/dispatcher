@@ -537,7 +537,7 @@ func stateGlyph(state string) string {
 		return "✗"
 	case "done":
 		return "✓"
-	case "working", "blocked", "pr_open":
+	case "working", "blocked", "answered", "pr_open":
 		return "●"
 	}
 	return "○"
@@ -545,7 +545,7 @@ func stateGlyph(state string) string {
 
 func glyphColor(state string) lipgloss.Color {
 	switch state {
-	case "working", "blocked", "pr_open", "failed", "exited", "done":
+	case "working", "blocked", "answered", "pr_open", "failed", "exited", "done":
 		return stateColor(state)
 	}
 	return colDim

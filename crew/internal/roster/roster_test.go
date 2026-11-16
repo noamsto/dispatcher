@@ -63,7 +63,7 @@ var cases = []rosterCase{
 			status(t0+1000, "worker:feat/33-thing#s1-1", state("working")),
 			status(t0+2000, "worker:feat/38-thing#s1-1", state("working")),
 		},
-		want: `[{"from":"worker:feat/33-thing#s1-1","branch":"feat/33-thing","session":"s1-1","state":"working","detail":null,"source":null,"ts":1700000001000,"pr_url":null,"age_s":99,"title":null,"engine":null,"model":null,"tier":null,"engine_session":null,"sessions":[{"session":"s1-1","state":"working","age_s":99}],"name":"sage","color":"green","tmux":"colour28"},{"from":"worker:feat/38-thing#s1-1","branch":"feat/38-thing","session":"s1-1","state":"working","detail":null,"source":null,"ts":1700000002000,"pr_url":null,"age_s":98,"title":null,"engine":null,"model":null,"tier":null,"engine_session":null,"sessions":[{"session":"s1-1","state":"working","age_s":98}],"name":"atlas","color":"blue","tmux":"colour32"}]`,
+		want: `[{"from":"worker:feat/33-thing#s1-1","branch":"feat/33-thing","session":"s1-1","state":"working","detail":null,"source":null,"blocked_since":null,"answered_at":null,"ts":1700000001000,"pr_url":null,"age_s":99,"title":null,"engine":null,"model":null,"tier":null,"engine_session":null,"sessions":[{"session":"s1-1","state":"working","age_s":99}],"name":"sage","color":"green","tmux":"colour28"},{"from":"worker:feat/38-thing#s1-1","branch":"feat/38-thing","session":"s1-1","state":"working","detail":null,"source":null,"blocked_since":null,"answered_at":null,"ts":1700000002000,"pr_url":null,"age_s":98,"title":null,"engine":null,"model":null,"tier":null,"engine_session":null,"sessions":[{"session":"s1-1","state":"working","age_s":98}],"name":"atlas","color":"blue","tmux":"colour32"}]`,
 	},
 	{
 		name: "sessions of one branch collapse into one row",
@@ -72,7 +72,7 @@ var cases = []rosterCase{
 			status(t0+2000, "worker:feat/x#s1-1", state("done")),
 			status(t0+3000, "worker:feat/x#s2-2", state("working")),
 		},
-		want: `[{"from":"worker:feat/x#s2-2","branch":"feat/x","session":"s2-2","state":"working","detail":null,"source":null,"ts":1700000003000,"pr_url":null,"age_s":97,"title":null,"engine":null,"model":null,"tier":null,"engine_session":null,"sessions":[{"session":"s1-1","state":"done","age_s":98},{"session":"s2-2","state":"working","age_s":97}],"name":"lagoon","color":"darkcyan","tmux":"colour31"}]`,
+		want: `[{"from":"worker:feat/x#s2-2","branch":"feat/x","session":"s2-2","state":"working","detail":null,"source":null,"blocked_since":null,"answered_at":null,"ts":1700000003000,"pr_url":null,"age_s":97,"title":null,"engine":null,"model":null,"tier":null,"engine_session":null,"sessions":[{"session":"s1-1","state":"done","age_s":98},{"session":"s2-2","state":"working","age_s":97}],"name":"lagoon","color":"darkcyan","tmux":"colour31"}]`,
 	},
 	{
 		name: "engine_session from the dispatch event",
@@ -80,7 +80,7 @@ var cases = []rosterCase{
 			status(t0+1000, "worker:feat/x#s1-1", state("working")),
 			`{"ts":1,"crew_id":"c1","kind":"dispatch","branch":"feat/x","engine_session":"aaaa"}`,
 		},
-		want: `[{"from":"worker:feat/x#s1-1","branch":"feat/x","session":"s1-1","state":"working","detail":null,"source":null,"ts":1700000001000,"pr_url":null,"age_s":99,"title":null,"engine":null,"model":null,"tier":null,"engine_session":"aaaa","sessions":[{"session":"s1-1","state":"working","age_s":99}],"name":"lagoon","color":"darkcyan","tmux":"colour31"}]`,
+		want: `[{"from":"worker:feat/x#s1-1","branch":"feat/x","session":"s1-1","state":"working","detail":null,"source":null,"blocked_since":null,"answered_at":null,"ts":1700000001000,"pr_url":null,"age_s":99,"title":null,"engine":null,"model":null,"tier":null,"engine_session":"aaaa","sessions":[{"session":"s1-1","state":"working","age_s":99}],"name":"lagoon","color":"darkcyan","tmux":"colour31"}]`,
 	},
 	{
 		name: "engine_session from a newer resume event",
@@ -89,7 +89,7 @@ var cases = []rosterCase{
 			`{"ts":1,"crew_id":"c1","kind":"dispatch","branch":"feat/x","engine_session":"aaaa"}`,
 			`{"ts":9999999999999,"crew_id":"c1","kind":"resume","branch":"feat/x","engine_session":"bbbb"}`,
 		},
-		want: `[{"from":"worker:feat/x#s1-1","branch":"feat/x","session":"s1-1","state":"working","detail":null,"source":null,"ts":1700000001000,"pr_url":null,"age_s":99,"title":null,"engine":null,"model":null,"tier":null,"engine_session":"bbbb","sessions":[{"session":"s1-1","state":"working","age_s":99}],"name":"lagoon","color":"darkcyan","tmux":"colour31"}]`,
+		want: `[{"from":"worker:feat/x#s1-1","branch":"feat/x","session":"s1-1","state":"working","detail":null,"source":null,"blocked_since":null,"answered_at":null,"ts":1700000001000,"pr_url":null,"age_s":99,"title":null,"engine":null,"model":null,"tier":null,"engine_session":"bbbb","sessions":[{"session":"s1-1","state":"working","age_s":99}],"name":"lagoon","color":"darkcyan","tmux":"colour31"}]`,
 	},
 	{
 		name: "engine_session from a newer relaunch event",
@@ -98,12 +98,12 @@ var cases = []rosterCase{
 			`{"ts":1,"crew_id":"c1","kind":"dispatch","branch":"feat/x","engine_session":"aaaa"}`,
 			`{"ts":9999999999999,"crew_id":"c1","kind":"relaunch","branch":"feat/x","engine_session":"cccc"}`,
 		},
-		want: `[{"from":"worker:feat/x#s1-1","branch":"feat/x","session":"s1-1","state":"working","detail":null,"source":null,"ts":1700000001000,"pr_url":null,"age_s":99,"title":null,"engine":null,"model":null,"tier":null,"engine_session":"cccc","sessions":[{"session":"s1-1","state":"working","age_s":99}],"name":"lagoon","color":"darkcyan","tmux":"colour31"}]`,
+		want: `[{"from":"worker:feat/x#s1-1","branch":"feat/x","session":"s1-1","state":"working","detail":null,"source":null,"blocked_since":null,"answered_at":null,"ts":1700000001000,"pr_url":null,"age_s":99,"title":null,"engine":null,"model":null,"tier":null,"engine_session":"cccc","sessions":[{"session":"s1-1","state":"working","age_s":99}],"name":"lagoon","color":"darkcyan","tmux":"colour31"}]`,
 	},
 	{
 		name:   "codename derives from the branch hash",
 		events: []string{status(t0+1000, "worker:feat/x#s1-1", state("working"))},
-		want:   `[{"from":"worker:feat/x#s1-1","branch":"feat/x","session":"s1-1","state":"working","detail":null,"source":null,"ts":1700000001000,"pr_url":null,"age_s":99,"title":null,"engine":null,"model":null,"tier":null,"engine_session":null,"sessions":[{"session":"s1-1","state":"working","age_s":99}],"name":"lagoon","color":"darkcyan","tmux":"colour31"}]`,
+		want:   `[{"from":"worker:feat/x#s1-1","branch":"feat/x","session":"s1-1","state":"working","detail":null,"source":null,"blocked_since":null,"answered_at":null,"ts":1700000001000,"pr_url":null,"age_s":99,"title":null,"engine":null,"model":null,"tier":null,"engine_session":null,"sessions":[{"session":"s1-1","state":"working","age_s":99}],"name":"lagoon","color":"darkcyan","tmux":"colour31"}]`,
 	},
 	{
 		name: "one session's exited is not resolved from another's history",
@@ -112,7 +112,7 @@ var cases = []rosterCase{
 			status(t0+2000, "worker:feat/x#s2-2", state("exited")),
 		},
 		worktrees: worktree("/wt/other", "main"),
-		want:      `[{"from":"worker:feat/x#s2-2","branch":"feat/x","session":"s2-2","state":"exited","detail":null,"source":null,"ts":1700000002000,"pr_url":null,"age_s":98,"title":null,"engine":null,"model":null,"tier":null,"engine_session":null,"sessions":[{"session":"s1-1","state":"working","age_s":99},{"session":"s2-2","state":"exited","age_s":98}],"name":"lagoon","color":"darkcyan","tmux":"colour31"}]`,
+		want:      `[{"from":"worker:feat/x#s2-2","branch":"feat/x","session":"s2-2","state":"exited","detail":null,"source":null,"blocked_since":null,"answered_at":null,"ts":1700000002000,"pr_url":null,"age_s":98,"title":null,"engine":null,"model":null,"tier":null,"engine_session":null,"sessions":[{"session":"s1-1","state":"working","age_s":99},{"session":"s2-2","state":"exited","age_s":98}],"name":"lagoon","color":"darkcyan","tmux":"colour31"}]`,
 		wantWT:    1,
 	},
 	{
@@ -123,7 +123,7 @@ var cases = []rosterCase{
 		},
 		panes:     "fish /somewhere\n.claude-wrapped /wt/live\n",
 		worktrees: worktree("/wt/other", "main") + worktree("/wt/live", "feat/roster-live"),
-		want:      `[{"from":"worker:feat/roster-live#s1-1","branch":"feat/roster-live","session":"s1-1","state":"working","detail":null,"source":null,"ts":1700000002000,"pr_url":null,"prev_state":"working","age_s":98,"title":null,"engine":null,"model":null,"tier":null,"engine_session":null,"sessions":[{"session":"s1-1","state":"exited","age_s":98}],"exit_suspect":true,"name":"ash","color":"dimgrey","tmux":"colour102"}]`,
+		want:      `[{"from":"worker:feat/roster-live#s1-1","branch":"feat/roster-live","session":"s1-1","state":"working","detail":null,"source":null,"blocked_since":null,"answered_at":null,"ts":1700000002000,"pr_url":null,"prev_state":"working","age_s":98,"title":null,"engine":null,"model":null,"tier":null,"engine_session":null,"sessions":[{"session":"s1-1","state":"exited","age_s":98}],"exit_suspect":true,"name":"ash","color":"dimgrey","tmux":"colour102"}]`,
 		wantWT:    1,
 	},
 	{
@@ -133,7 +133,7 @@ var cases = []rosterCase{
 		},
 		panes:     "node /wt/x\n",
 		worktrees: worktree("/wt/x", "feat/x"),
-		want:      `[{"from":"worker:feat/x#s1-1","branch":"feat/x","session":"s1-1","state":"working","detail":null,"source":null,"ts":1700000001000,"pr_url":null,"prev_state":null,"age_s":99,"title":null,"engine":null,"model":null,"tier":null,"engine_session":null,"sessions":[{"session":"s1-1","state":"exited","age_s":99}],"exit_suspect":true,"name":"lagoon","color":"darkcyan","tmux":"colour31"}]`,
+		want:      `[{"from":"worker:feat/x#s1-1","branch":"feat/x","session":"s1-1","state":"working","detail":null,"source":null,"blocked_since":null,"answered_at":null,"ts":1700000001000,"pr_url":null,"prev_state":null,"age_s":99,"title":null,"engine":null,"model":null,"tier":null,"engine_session":null,"sessions":[{"session":"s1-1","state":"exited","age_s":99}],"exit_suspect":true,"name":"lagoon","color":"darkcyan","tmux":"colour31"}]`,
 		wantWT:    1,
 	},
 	{
@@ -144,7 +144,7 @@ var cases = []rosterCase{
 		},
 		panes:     "fish /wt/dead\n",
 		worktrees: worktree("/wt/dead", "feat/roster-dead"),
-		want:      `[{"from":"worker:feat/roster-dead#s1-1","branch":"feat/roster-dead","session":"s1-1","state":"exited","detail":null,"source":null,"ts":1700000002000,"pr_url":null,"age_s":98,"title":null,"engine":null,"model":null,"tier":null,"engine_session":null,"sessions":[{"session":"s1-1","state":"exited","age_s":98}],"name":"coral","color":"salmon","tmux":"colour167"}]`,
+		want:      `[{"from":"worker:feat/roster-dead#s1-1","branch":"feat/roster-dead","session":"s1-1","state":"exited","detail":null,"source":null,"blocked_since":null,"answered_at":null,"ts":1700000002000,"pr_url":null,"age_s":98,"title":null,"engine":null,"model":null,"tier":null,"engine_session":null,"sessions":[{"session":"s1-1","state":"exited","age_s":98}],"name":"coral","color":"salmon","tmux":"colour167"}]`,
 		wantWT:    1,
 	},
 	{
@@ -155,7 +155,7 @@ var cases = []rosterCase{
 		},
 		panes:     ".claude-wrapped /wt/sib-sibling\nclaude /wt/si\n",
 		worktrees: worktree("/wt/sib", "feat/roster-sib"),
-		want:      `[{"from":"worker:feat/roster-sib#s1-1","branch":"feat/roster-sib","session":"s1-1","state":"exited","detail":null,"source":null,"ts":1700000002000,"pr_url":null,"age_s":98,"title":null,"engine":null,"model":null,"tier":null,"engine_session":null,"sessions":[{"session":"s1-1","state":"exited","age_s":98}],"name":"atlas","color":"blue","tmux":"colour32"}]`,
+		want:      `[{"from":"worker:feat/roster-sib#s1-1","branch":"feat/roster-sib","session":"s1-1","state":"exited","detail":null,"source":null,"blocked_since":null,"answered_at":null,"ts":1700000002000,"pr_url":null,"age_s":98,"title":null,"engine":null,"model":null,"tier":null,"engine_session":null,"sessions":[{"session":"s1-1","state":"exited","age_s":98}],"name":"atlas","color":"blue","tmux":"colour32"}]`,
 		wantWT:    1,
 	},
 	{
@@ -165,7 +165,7 @@ var cases = []rosterCase{
 		},
 		panes:     "claude /wt/gone\n",
 		worktrees: worktree("/wt/x", "feat/x"),
-		want:      `[{"from":"worker:feat/gone#s1-1","branch":"feat/gone","session":"s1-1","state":"exited","detail":null,"source":null,"ts":1700000001000,"pr_url":null,"age_s":99,"title":null,"engine":null,"model":null,"tier":null,"engine_session":null,"sessions":[{"session":"s1-1","state":"exited","age_s":99}],"name":"khaki","color":"darkkhaki","tmux":"colour101"}]`,
+		want:      `[{"from":"worker:feat/gone#s1-1","branch":"feat/gone","session":"s1-1","state":"exited","detail":null,"source":null,"blocked_since":null,"answered_at":null,"ts":1700000001000,"pr_url":null,"age_s":99,"title":null,"engine":null,"model":null,"tier":null,"engine_session":null,"sessions":[{"session":"s1-1","state":"exited","age_s":99}],"name":"khaki","color":"darkkhaki","tmux":"colour101"}]`,
 		wantWT:    1,
 	},
 	{
@@ -176,7 +176,7 @@ var cases = []rosterCase{
 		},
 		panes:     "claude /wt/a\nclaude /wt/b\nclaude /wt/a\n/wt/b\n",
 		worktrees: worktree("/wt/a", "feat/x") + worktree("/wt/b", "feat/x"),
-		want:      `[{"from":"worker:feat/x#s1-1","branch":"feat/x","session":"s1-1","state":"exited","detail":null,"source":null,"ts":1700000002000,"pr_url":null,"age_s":98,"title":null,"engine":null,"model":null,"tier":null,"engine_session":null,"sessions":[{"session":"s1-1","state":"exited","age_s":98}],"name":"lagoon","color":"darkcyan","tmux":"colour31"}]`,
+		want:      `[{"from":"worker:feat/x#s1-1","branch":"feat/x","session":"s1-1","state":"exited","detail":null,"source":null,"blocked_since":null,"answered_at":null,"ts":1700000002000,"pr_url":null,"age_s":98,"title":null,"engine":null,"model":null,"tier":null,"engine_session":null,"sessions":[{"session":"s1-1","state":"exited","age_s":98}],"name":"lagoon","color":"darkcyan","tmux":"colour31"}]`,
 		wantWT:    1,
 	},
 	{
@@ -187,7 +187,7 @@ var cases = []rosterCase{
 		},
 		panes:     "claude /wt/a\n",
 		worktrees: worktree("/wt/a b", "feat/x"),
-		want:      `[{"from":"worker:feat/x#s1-1","branch":"feat/x","session":"s1-1","state":"working","detail":null,"source":null,"ts":1700000002000,"pr_url":null,"prev_state":"working","age_s":98,"title":null,"engine":null,"model":null,"tier":null,"engine_session":null,"sessions":[{"session":"s1-1","state":"exited","age_s":98}],"exit_suspect":true,"name":"lagoon","color":"darkcyan","tmux":"colour31"}]`,
+		want:      `[{"from":"worker:feat/x#s1-1","branch":"feat/x","session":"s1-1","state":"working","detail":null,"source":null,"blocked_since":null,"answered_at":null,"ts":1700000002000,"pr_url":null,"prev_state":"working","age_s":98,"title":null,"engine":null,"model":null,"tier":null,"engine_session":null,"sessions":[{"session":"s1-1","state":"exited","age_s":98}],"exit_suspect":true,"name":"lagoon","color":"darkcyan","tmux":"colour31"}]`,
 		wantWT:    1,
 	},
 	{
@@ -198,7 +198,7 @@ var cases = []rosterCase{
 		},
 		panes:     "\n\nnode\n",
 		worktrees: worktree("node", "feat/x"),
-		want:      `[{"from":"worker:feat/x#s1-1","branch":"feat/x","session":"s1-1","state":"working","detail":null,"source":null,"ts":1700000002000,"pr_url":null,"prev_state":"working","age_s":98,"title":null,"engine":null,"model":null,"tier":null,"engine_session":null,"sessions":[{"session":"s1-1","state":"exited","age_s":98}],"exit_suspect":true,"name":"lagoon","color":"darkcyan","tmux":"colour31"}]`,
+		want:      `[{"from":"worker:feat/x#s1-1","branch":"feat/x","session":"s1-1","state":"working","detail":null,"source":null,"blocked_since":null,"answered_at":null,"ts":1700000002000,"pr_url":null,"prev_state":"working","age_s":98,"title":null,"engine":null,"model":null,"tier":null,"engine_session":null,"sessions":[{"session":"s1-1","state":"exited","age_s":98}],"exit_suspect":true,"name":"lagoon","color":"darkcyan","tmux":"colour31"}]`,
 		wantWT:    1,
 	},
 	{
@@ -209,7 +209,7 @@ var cases = []rosterCase{
 		},
 		panes:     "pi /wt/x\n",
 		worktrees: worktree("/wt/x", "feat/x"),
-		want:      `[{"from":"worker:feat/x\n#s1-1","branch":"feat/x\n","session":"s1-1","state":"exited\n","detail":null,"source":null,"ts":1700000002000,"pr_url":null,"prev_state":"exited\n","age_s":98,"title":null,"engine":null,"model":null,"tier":null,"engine_session":null,"sessions":[{"session":"s1-1","state":"exited\n","age_s":98}],"exit_suspect":true}]`,
+		want:      `[{"from":"worker:feat/x\n#s1-1","branch":"feat/x\n","session":"s1-1","state":"exited\n","detail":null,"source":null,"blocked_since":null,"answered_at":null,"ts":1700000002000,"pr_url":null,"prev_state":"exited\n","age_s":98,"title":null,"engine":null,"model":null,"tier":null,"engine_session":null,"sessions":[{"session":"s1-1","state":"exited\n","age_s":98}],"exit_suspect":true}]`,
 		wantWT:    1,
 	},
 	{
@@ -218,7 +218,7 @@ var cases = []rosterCase{
 			status(t0+1000, "worker:#s1-1", state("exited")),
 		},
 		panes:  "claude /wt/x\n",
-		want:   `[{"from":"worker:#s1-1","branch":"","session":"s1-1","state":"exited","detail":null,"source":null,"ts":1700000001000,"pr_url":null,"age_s":99,"title":null,"engine":null,"model":null,"tier":null,"engine_session":null,"sessions":[{"session":"s1-1","state":"exited","age_s":99}]}]`,
+		want:   `[{"from":"worker:#s1-1","branch":"","session":"s1-1","state":"exited","detail":null,"source":null,"blocked_since":null,"answered_at":null,"ts":1700000001000,"pr_url":null,"age_s":99,"title":null,"engine":null,"model":null,"tier":null,"engine_session":null,"sessions":[{"session":"s1-1","state":"exited","age_s":99}]}]`,
 		wantWT: 0,
 	},
 	{
@@ -230,7 +230,7 @@ var cases = []rosterCase{
 		},
 		panes:     "claude /wt/b\n",
 		worktrees: worktree("/wt/a", "feat/a") + worktree("/wt/b", "feat/b"),
-		want:      `[{"from":"worker:feat/a#s1-1","branch":"feat/a","session":"s1-1","state":"exited","detail":null,"source":null,"ts":1700000001000,"pr_url":null,"age_s":99,"title":null,"engine":null,"model":null,"tier":null,"engine_session":null,"sessions":[{"session":"s1-1","state":"exited","age_s":99}],"name":"lime","color":"lime","tmux":"colour64"},{"from":"worker:feat/b#s1-1","branch":"feat/b","session":"s1-1","state":"working","detail":null,"source":null,"ts":1700000001000,"pr_url":null,"prev_state":null,"age_s":99,"title":null,"engine":null,"model":null,"tier":null,"engine_session":null,"sessions":[{"session":"s1-1","state":"exited","age_s":99}],"exit_suspect":true,"name":"cobalt","color":"royalblue","tmux":"colour68"},{"from":"worker:feat/c#s1-1","branch":"feat/c","session":"s1-1","state":"working","detail":null,"source":null,"ts":1700000001000,"pr_url":null,"age_s":99,"title":null,"engine":null,"model":null,"tier":null,"engine_session":null,"sessions":[{"session":"s1-1","state":"working","age_s":99}],"name":"ember","color":"orange","tmux":"colour130"}]`,
+		want:      `[{"from":"worker:feat/a#s1-1","branch":"feat/a","session":"s1-1","state":"exited","detail":null,"source":null,"blocked_since":null,"answered_at":null,"ts":1700000001000,"pr_url":null,"age_s":99,"title":null,"engine":null,"model":null,"tier":null,"engine_session":null,"sessions":[{"session":"s1-1","state":"exited","age_s":99}],"name":"lime","color":"lime","tmux":"colour64"},{"from":"worker:feat/b#s1-1","branch":"feat/b","session":"s1-1","state":"working","detail":null,"source":null,"blocked_since":null,"answered_at":null,"ts":1700000001000,"pr_url":null,"prev_state":null,"age_s":99,"title":null,"engine":null,"model":null,"tier":null,"engine_session":null,"sessions":[{"session":"s1-1","state":"exited","age_s":99}],"exit_suspect":true,"name":"cobalt","color":"royalblue","tmux":"colour68"},{"from":"worker:feat/c#s1-1","branch":"feat/c","session":"s1-1","state":"working","detail":null,"source":null,"blocked_since":null,"answered_at":null,"ts":1700000001000,"pr_url":null,"age_s":99,"title":null,"engine":null,"model":null,"tier":null,"engine_session":null,"sessions":[{"session":"s1-1","state":"working","age_s":99}],"name":"ember","color":"orange","tmux":"colour130"}]`,
 		wantWT:    2,
 	},
 	{
@@ -241,7 +241,7 @@ var cases = []rosterCase{
 		},
 		panes:     "claude /wt/x\n",
 		worktrees: worktree("/wt/x", "feat/x"),
-		want:      `[{"from":"worker:feat/x#s1-1","branch":"feat/x","session":"s1-1","state":"blocked","detail":null,"source":null,"ts":1700000002000,"pr_url":null,"prev_state":"blocked","age_s":98,"title":null,"engine":null,"model":null,"tier":null,"engine_session":null,"sessions":[{"session":"s1-1","state":"exited","age_s":98}],"exit_suspect":true,"name":"lagoon","color":"darkcyan","tmux":"colour31"}]`,
+		want:      `[{"from":"worker:feat/x#s1-1","branch":"feat/x","session":"s1-1","state":"blocked","detail":null,"source":null,"blocked_since":null,"answered_at":null,"ts":1700000002000,"pr_url":null,"prev_state":"blocked","age_s":98,"title":null,"engine":null,"model":null,"tier":null,"engine_session":null,"sessions":[{"session":"s1-1","state":"exited","age_s":98}],"exit_suspect":true,"name":"lagoon","color":"darkcyan","tmux":"colour31"}]`,
 		wantWT:    1,
 	},
 	{
@@ -250,7 +250,7 @@ var cases = []rosterCase{
 			`{"ts":1,"crew_id":"c1","kind":"dispatch","branch":"feat/x","session":"s1-1","title":"Do a thing"}`,
 			status(t0+1000, "worker:feat/x#s1-1", state("working")),
 		},
-		want: `[{"from":"worker:feat/x#s1-1","branch":"feat/x","session":"s1-1","state":"working","detail":null,"source":null,"ts":1700000001000,"pr_url":null,"age_s":99,"title":"Do a thing","engine":null,"model":null,"tier":null,"engine_session":null,"sessions":[{"session":"s1-1","state":"working","age_s":99}],"name":"lagoon","color":"darkcyan","tmux":"colour31"}]`,
+		want: `[{"from":"worker:feat/x#s1-1","branch":"feat/x","session":"s1-1","state":"working","detail":null,"source":null,"blocked_since":null,"answered_at":null,"ts":1700000001000,"pr_url":null,"age_s":99,"title":"Do a thing","engine":null,"model":null,"tier":null,"engine_session":null,"sessions":[{"session":"s1-1","state":"working","age_s":99}],"name":"lagoon","color":"darkcyan","tmux":"colour31"}]`,
 	},
 	{
 		name: "engine, model and tier join on the branch",
@@ -258,7 +258,7 @@ var cases = []rosterCase{
 			`{"ts":1000,"crew_id":"c1","kind":"dispatch","branch":"feat/x","session":"s1-1","engine":"claude","model":"sonnet","tier":"standard","title":"T"}`,
 			status(t0+1000, "worker:feat/x#s1-1", state("working")),
 		},
-		want: `[{"from":"worker:feat/x#s1-1","branch":"feat/x","session":"s1-1","state":"working","detail":null,"source":null,"ts":1700000001000,"pr_url":null,"age_s":99,"title":"T","engine":"claude","model":"sonnet","tier":"standard","engine_session":null,"sessions":[{"session":"s1-1","state":"working","age_s":99}],"name":"lagoon","color":"darkcyan","tmux":"colour31"}]`,
+		want: `[{"from":"worker:feat/x#s1-1","branch":"feat/x","session":"s1-1","state":"working","detail":null,"source":null,"blocked_since":null,"answered_at":null,"ts":1700000001000,"pr_url":null,"age_s":99,"title":"T","engine":"claude","model":"sonnet","tier":"standard","engine_session":null,"sessions":[{"session":"s1-1","state":"working","age_s":99}],"name":"lagoon","color":"darkcyan","tmux":"colour31"}]`,
 	},
 	{
 		name: "the last dispatch event wins and false becomes null",
@@ -268,17 +268,17 @@ var cases = []rosterCase{
 			`{"ts":3,"crew_id":"c2","kind":"dispatch","branch":"feat/x","title":"other crew","model":"haiku"}`,
 			status(t0+1000, "worker:feat/x#s1-1", state("working")),
 		},
-		want: `[{"from":"worker:feat/x#s1-1","branch":"feat/x","session":"s1-1","state":"working","detail":null,"source":null,"ts":1700000001000,"pr_url":null,"age_s":99,"title":null,"engine":"codex","model":null,"tier":0,"engine_session":null,"sessions":[{"session":"s1-1","state":"working","age_s":99}],"name":"lagoon","color":"darkcyan","tmux":"colour31"}]`,
+		want: `[{"from":"worker:feat/x#s1-1","branch":"feat/x","session":"s1-1","state":"working","detail":null,"source":null,"blocked_since":null,"answered_at":null,"ts":1700000001000,"pr_url":null,"age_s":99,"title":null,"engine":"codex","model":null,"tier":0,"engine_session":null,"sessions":[{"session":"s1-1","state":"working","age_s":99}],"name":"lagoon","color":"darkcyan","tmux":"colour31"}]`,
 	},
 	{
 		name:   "engine, model and tier default to null with no dispatch event",
 		events: []string{status(t0+1000, "worker:feat/x", state("working"))},
-		want:   `[{"from":"worker:feat/x","branch":"feat/x","session":null,"state":"working","detail":null,"source":null,"ts":1700000001000,"pr_url":null,"age_s":99,"title":null,"engine":null,"model":null,"tier":null,"engine_session":null,"sessions":[{"session":null,"state":"working","age_s":99}],"name":"lagoon","color":"darkcyan","tmux":"colour31"}]`,
+		want:   `[{"from":"worker:feat/x","branch":"feat/x","session":null,"state":"working","detail":null,"source":null,"blocked_since":null,"answered_at":null,"ts":1700000001000,"pr_url":null,"age_s":99,"title":null,"engine":null,"model":null,"tier":null,"engine_session":null,"sessions":[{"session":null,"state":"working","age_s":99}],"name":"lagoon","color":"darkcyan","tmux":"colour31"}]`,
 	},
 	{
 		name:   "a legacy branch-keyed row still renders",
 		events: []string{status(t0+1000, "worker:feat/x", state("working"))},
-		want:   `[{"from":"worker:feat/x","branch":"feat/x","session":null,"state":"working","detail":null,"source":null,"ts":1700000001000,"pr_url":null,"age_s":99,"title":null,"engine":null,"model":null,"tier":null,"engine_session":null,"sessions":[{"session":null,"state":"working","age_s":99}],"name":"lagoon","color":"darkcyan","tmux":"colour31"}]`,
+		want:   `[{"from":"worker:feat/x","branch":"feat/x","session":null,"state":"working","detail":null,"source":null,"blocked_since":null,"answered_at":null,"ts":1700000001000,"pr_url":null,"age_s":99,"title":null,"engine":null,"model":null,"tier":null,"engine_session":null,"sessions":[{"session":null,"state":"working","age_s":99}],"name":"lagoon","color":"darkcyan","tmux":"colour31"}]`,
 	},
 	{
 		name: "a hash in the branch splits at the last hash",
@@ -287,28 +287,28 @@ var cases = []rosterCase{
 			status(t0+2000, "worker:a#b", state("working")),
 			status(t0+3000, "worker:c#", state("working")),
 		},
-		want: `[{"from":"worker:a#b","branch":"a","session":"b","state":"working","detail":null,"source":null,"ts":1700000002000,"pr_url":null,"age_s":98,"title":null,"engine":null,"model":null,"tier":null,"engine_session":null,"sessions":[{"session":"b","state":"working","age_s":98}],"name":"orchid","color":"orchid","tmux":"colour169"},{"from":"worker:a#b#s1-1","branch":"a#b","session":"s1-1","state":"working","detail":null,"source":null,"ts":1700000001000,"pr_url":null,"age_s":99,"title":null,"engine":null,"model":null,"tier":null,"engine_session":null,"sessions":[{"session":"s1-1","state":"working","age_s":99}],"name":"mauve","color":"palevioletred","tmux":"colour132"},{"from":"worker:c#","branch":"c","session":"","state":"working","detail":null,"source":null,"ts":1700000003000,"pr_url":null,"age_s":97,"title":null,"engine":null,"model":null,"tier":null,"engine_session":null,"sessions":[{"session":"","state":"working","age_s":97}],"name":"lagoon","color":"darkcyan","tmux":"colour31"}]`,
+		want: `[{"from":"worker:a#b","branch":"a","session":"b","state":"working","detail":null,"source":null,"blocked_since":null,"answered_at":null,"ts":1700000002000,"pr_url":null,"age_s":98,"title":null,"engine":null,"model":null,"tier":null,"engine_session":null,"sessions":[{"session":"b","state":"working","age_s":98}],"name":"orchid","color":"orchid","tmux":"colour169"},{"from":"worker:a#b#s1-1","branch":"a#b","session":"s1-1","state":"working","detail":null,"source":null,"blocked_since":null,"answered_at":null,"ts":1700000001000,"pr_url":null,"age_s":99,"title":null,"engine":null,"model":null,"tier":null,"engine_session":null,"sessions":[{"session":"s1-1","state":"working","age_s":99}],"name":"mauve","color":"palevioletred","tmux":"colour132"},{"from":"worker:c#","branch":"c","session":"","state":"working","detail":null,"source":null,"blocked_since":null,"answered_at":null,"ts":1700000003000,"pr_url":null,"age_s":97,"title":null,"engine":null,"model":null,"tier":null,"engine_session":null,"sessions":[{"session":"","state":"working","age_s":97}],"name":"lagoon","color":"darkcyan","tmux":"colour31"}]`,
 	},
 	{
 		name: "source is carried and a 200 char detail is cut to 120",
 		events: []string{
 			status(t0+1000, "worker:feat/x", `{"state":"blocked","detail":"quiet: `+strings.Repeat("x", 200)+`","source":"watchdog"}`),
 		},
-		want: `[{"from":"worker:feat/x","branch":"feat/x","session":null,"state":"blocked","detail":"quiet: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx","source":"watchdog","ts":1700000001000,"pr_url":null,"age_s":99,"title":null,"engine":null,"model":null,"tier":null,"engine_session":null,"sessions":[{"session":null,"state":"blocked","age_s":99}],"name":"lagoon","color":"darkcyan","tmux":"colour31"}]`,
+		want: `[{"from":"worker:feat/x","branch":"feat/x","session":null,"state":"blocked","detail":"quiet: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx","source":"watchdog","blocked_since":null,"answered_at":null,"ts":1700000001000,"pr_url":null,"age_s":99,"title":null,"engine":null,"model":null,"tier":null,"engine_session":null,"sessions":[{"session":null,"state":"blocked","age_s":99}],"name":"lagoon","color":"darkcyan","tmux":"colour31"}]`,
 	},
 	{
 		name: "detail is cut by codepoint, not byte",
 		events: []string{
 			status(t0+1000, "worker:feat/x", `{"state":"blocked","detail":"`+strings.Repeat("é世🙂", 43)+`"}`),
 		},
-		want: `[{"from":"worker:feat/x","branch":"feat/x","session":null,"state":"blocked","detail":"é世🙂é世🙂é世🙂é世🙂é世🙂é世🙂é世🙂é世🙂é世🙂é世🙂é世🙂é世🙂é世🙂é世🙂é世🙂é世🙂é世🙂é世🙂é世🙂é世🙂é世🙂é世🙂é世🙂é世🙂é世🙂é世🙂é世🙂é世🙂é世🙂é世🙂é世🙂é世🙂é世🙂é世🙂é世🙂é世🙂é世🙂é世🙂é世🙂é世🙂","source":null,"ts":1700000001000,"pr_url":null,"age_s":99,"title":null,"engine":null,"model":null,"tier":null,"engine_session":null,"sessions":[{"session":null,"state":"blocked","age_s":99}],"name":"lagoon","color":"darkcyan","tmux":"colour31"}]`,
+		want: `[{"from":"worker:feat/x","branch":"feat/x","session":null,"state":"blocked","detail":"é世🙂é世🙂é世🙂é世🙂é世🙂é世🙂é世🙂é世🙂é世🙂é世🙂é世🙂é世🙂é世🙂é世🙂é世🙂é世🙂é世🙂é世🙂é世🙂é世🙂é世🙂é世🙂é世🙂é世🙂é世🙂é世🙂é世🙂é世🙂é世🙂é世🙂é世🙂é世🙂é世🙂é世🙂é世🙂é世🙂é世🙂é世🙂é世🙂é世🙂","source":null,"blocked_since":1700000001000,"answered_at":null,"ts":1700000001000,"pr_url":null,"age_s":99,"title":null,"engine":null,"model":null,"tier":null,"engine_session":null,"sessions":[{"session":null,"state":"blocked","age_s":99}],"name":"lagoon","color":"darkcyan","tmux":"colour31"}]`,
 	},
 	{
 		name: "a worker-posted row has a null source",
 		events: []string{
 			status(t0+1000, "worker:feat/x", `{"state":"blocked","detail":"which approach?"}`),
 		},
-		want: `[{"from":"worker:feat/x","branch":"feat/x","session":null,"state":"blocked","detail":"which approach?","source":null,"ts":1700000001000,"pr_url":null,"age_s":99,"title":null,"engine":null,"model":null,"tier":null,"engine_session":null,"sessions":[{"session":null,"state":"blocked","age_s":99}],"name":"lagoon","color":"darkcyan","tmux":"colour31"}]`,
+		want: `[{"from":"worker:feat/x","branch":"feat/x","session":null,"state":"blocked","detail":"which approach?","source":null,"blocked_since":1700000001000,"answered_at":null,"ts":1700000001000,"pr_url":null,"age_s":99,"title":null,"engine":null,"model":null,"tier":null,"engine_session":null,"sessions":[{"session":null,"state":"blocked","age_s":99}],"name":"lagoon","color":"darkcyan","tmux":"colour31"}]`,
 	},
 	{
 		name: "a suppressed re-stamp still refreshes age_s",
@@ -316,14 +316,14 @@ var cases = []rosterCase{
 			status(t0+100000-30000, "worker:feat/x#s1-1", `{"state":"blocked","detail":"need a waiver (cycle 7 of 24)"}`),
 			status(t0+100000, "worker:feat/x#s1-1", `{"state":"blocked","detail":"need a waiver (cycle 8 of 24)"}`),
 		},
-		want: `[{"from":"worker:feat/x#s1-1","branch":"feat/x","session":"s1-1","state":"blocked","detail":"need a waiver (cycle 8 of 24)","source":null,"ts":1700000100000,"pr_url":null,"age_s":0,"title":null,"engine":null,"model":null,"tier":null,"engine_session":null,"sessions":[{"session":"s1-1","state":"blocked","age_s":0}],"name":"lagoon","color":"darkcyan","tmux":"colour31"}]`,
+		want: `[{"from":"worker:feat/x#s1-1","branch":"feat/x","session":"s1-1","state":"blocked","detail":"need a waiver (cycle 8 of 24)","source":null,"blocked_since":1700000100000,"answered_at":null,"ts":1700000100000,"pr_url":null,"age_s":0,"title":null,"engine":null,"model":null,"tier":null,"engine_session":null,"sessions":[{"session":"s1-1","state":"blocked","age_s":0}],"name":"lagoon","color":"darkcyan","tmux":"colour31"}]`,
 	},
 	{
 		name: "detail array is sliced to 120 elements",
 		events: []string{
 			status(t0+1000, "worker:feat/x", `{"state":"blocked","detail":[`+strings.TrimSuffix(strings.Repeat(`1.0e2,`, 130), ",")+`]}`),
 		},
-		want: `[{"from":"worker:feat/x","branch":"feat/x","session":null,"state":"blocked","detail":[1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2],"source":null,"ts":1700000001000,"pr_url":null,"age_s":99,"title":null,"engine":null,"model":null,"tier":null,"engine_session":null,"sessions":[{"session":null,"state":"blocked","age_s":99}],"name":"lagoon","color":"darkcyan","tmux":"colour31"}]`,
+		want: `[{"from":"worker:feat/x","branch":"feat/x","session":null,"state":"blocked","detail":[1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2,1.0E+2],"source":null,"blocked_since":1700000001000,"answered_at":null,"ts":1700000001000,"pr_url":null,"age_s":99,"title":null,"engine":null,"model":null,"tier":null,"engine_session":null,"sessions":[{"session":null,"state":"blocked","age_s":99}],"name":"lagoon","color":"darkcyan","tmux":"colour31"}]`,
 	},
 	{
 		name: "detail false and null are null",
@@ -331,7 +331,7 @@ var cases = []rosterCase{
 			status(t0+1000, "worker:feat/a", `{"state":"working","detail":false}`),
 			status(t0+1000, "worker:feat/b", `{"state":"working","detail":null}`),
 		},
-		want: `[{"from":"worker:feat/a","branch":"feat/a","session":null,"state":"working","detail":null,"source":null,"ts":1700000001000,"pr_url":null,"age_s":99,"title":null,"engine":null,"model":null,"tier":null,"engine_session":null,"sessions":[{"session":null,"state":"working","age_s":99}],"name":"lime","color":"lime","tmux":"colour64"},{"from":"worker:feat/b","branch":"feat/b","session":null,"state":"working","detail":null,"source":null,"ts":1700000001000,"pr_url":null,"age_s":99,"title":null,"engine":null,"model":null,"tier":null,"engine_session":null,"sessions":[{"session":null,"state":"working","age_s":99}],"name":"cobalt","color":"royalblue","tmux":"colour68"}]`,
+		want: `[{"from":"worker:feat/a","branch":"feat/a","session":null,"state":"working","detail":null,"source":null,"blocked_since":null,"answered_at":null,"ts":1700000001000,"pr_url":null,"age_s":99,"title":null,"engine":null,"model":null,"tier":null,"engine_session":null,"sessions":[{"session":null,"state":"working","age_s":99}],"name":"lime","color":"lime","tmux":"colour64"},{"from":"worker:feat/b","branch":"feat/b","session":null,"state":"working","detail":null,"source":null,"blocked_since":null,"answered_at":null,"ts":1700000001000,"pr_url":null,"age_s":99,"title":null,"engine":null,"model":null,"tier":null,"engine_session":null,"sessions":[{"session":null,"state":"working","age_s":99}],"name":"cobalt","color":"royalblue","tmux":"colour68"}]`,
 	},
 	{
 		name:    "detail number is a type error",
@@ -354,7 +354,7 @@ var cases = []rosterCase{
 			status(t0+1000, "worker:feat/x#s1-1", `{"state":"working","detail":5}`),
 			status(t0+2000, "worker:feat/x#s1-1", `{"state":"working","detail":"ok"}`),
 		},
-		want: `[{"from":"worker:feat/x#s1-1","branch":"feat/x","session":"s1-1","state":"working","detail":"ok","source":null,"ts":1700000002000,"pr_url":null,"age_s":98,"title":null,"engine":null,"model":null,"tier":null,"engine_session":null,"sessions":[{"session":"s1-1","state":"working","age_s":98}],"name":"lagoon","color":"darkcyan","tmux":"colour31"}]`,
+		want: `[{"from":"worker:feat/x#s1-1","branch":"feat/x","session":"s1-1","state":"working","detail":"ok","source":null,"blocked_since":null,"answered_at":null,"ts":1700000002000,"pr_url":null,"age_s":98,"title":null,"engine":null,"model":null,"tier":null,"engine_session":null,"sessions":[{"session":"s1-1","state":"working","age_s":98}],"name":"lagoon","color":"darkcyan","tmux":"colour31"}]`,
 	},
 	{
 		name: "pr_url is carried forward and false is kept",
@@ -365,7 +365,7 @@ var cases = []rosterCase{
 			status(t0+2000, "worker:feat/b#s1-1", `{"state":"done","pr_url":false}`),
 			status(t0+3000, "worker:feat/b#s1-1", `{"state":"done","pr_url":null}`),
 		},
-		want: `[{"from":"worker:feat/a#s1-1","branch":"feat/a","session":"s1-1","state":"done","detail":null,"source":null,"ts":1700000002000,"pr_url":"https://x/1","age_s":98,"title":null,"engine":null,"model":null,"tier":null,"engine_session":null,"sessions":[{"session":"s1-1","state":"done","age_s":98}],"name":"lime","color":"lime","tmux":"colour64"},{"from":"worker:feat/b#s1-1","branch":"feat/b","session":"s1-1","state":"done","detail":null,"source":null,"ts":1700000003000,"pr_url":false,"age_s":97,"title":null,"engine":null,"model":null,"tier":null,"engine_session":null,"sessions":[{"session":"s1-1","state":"done","age_s":97}],"name":"cobalt","color":"royalblue","tmux":"colour68"}]`,
+		want: `[{"from":"worker:feat/a#s1-1","branch":"feat/a","session":"s1-1","state":"done","detail":null,"source":null,"blocked_since":null,"answered_at":null,"ts":1700000002000,"pr_url":"https://x/1","age_s":98,"title":null,"engine":null,"model":null,"tier":null,"engine_session":null,"sessions":[{"session":"s1-1","state":"done","age_s":98}],"name":"lime","color":"lime","tmux":"colour64"},{"from":"worker:feat/b#s1-1","branch":"feat/b","session":"s1-1","state":"done","detail":null,"source":null,"blocked_since":null,"answered_at":null,"ts":1700000003000,"pr_url":false,"age_s":97,"title":null,"engine":null,"model":null,"tier":null,"engine_session":null,"sessions":[{"session":"s1-1","state":"done","age_s":97}],"name":"cobalt","color":"royalblue","tmux":"colour68"}]`,
 	},
 	{
 		name: "ties on ts pick the last event",
@@ -374,7 +374,7 @@ var cases = []rosterCase{
 			status(t0+1000, "worker:feat/x#s1-1", state("blocked")),
 			status(t0+1000, "worker:feat/x#s2-2", state("done")),
 		},
-		want: `[{"from":"worker:feat/x#s2-2","branch":"feat/x","session":"s2-2","state":"done","detail":null,"source":null,"ts":1700000001000,"pr_url":null,"age_s":99,"title":null,"engine":null,"model":null,"tier":null,"engine_session":null,"sessions":[{"session":"s1-1","state":"blocked","age_s":99},{"session":"s2-2","state":"done","age_s":99}],"name":"lagoon","color":"darkcyan","tmux":"colour31"}]`,
+		want: `[{"from":"worker:feat/x#s2-2","branch":"feat/x","session":"s2-2","state":"done","detail":null,"source":null,"blocked_since":null,"answered_at":null,"ts":1700000001000,"pr_url":null,"age_s":99,"title":null,"engine":null,"model":null,"tier":null,"engine_session":null,"sessions":[{"session":"s1-1","state":"blocked","age_s":99},{"session":"s2-2","state":"done","age_s":99}],"name":"lagoon","color":"darkcyan","tmux":"colour31"}]`,
 	},
 	{
 		name: "age_s keeps the exponent form of a huge ts",
@@ -383,7 +383,7 @@ var cases = []rosterCase{
 			`{"ts":1e30,"crew_id":"c1","kind":"status","from":"worker:feat/b","body":{"state":"working"}}`,
 			`{"ts":1.0e3,"crew_id":"c1","kind":"status","from":"worker:feat/c","body":{"state":"working"}}`,
 		},
-		want: `[{"from":"worker:feat/a","branch":"feat/a","session":null,"state":"working","detail":null,"source":null,"ts":1700000001000,"pr_url":null,"age_s":99,"title":null,"engine":null,"model":null,"tier":null,"engine_session":null,"sessions":[{"session":null,"state":"working","age_s":99}],"name":"lime","color":"lime","tmux":"colour64"},{"from":"worker:feat/b","branch":"feat/b","session":null,"state":"working","detail":null,"source":null,"ts":1E+30,"pr_url":null,"age_s":-1E+27,"title":null,"engine":null,"model":null,"tier":null,"engine_session":null,"sessions":[{"session":null,"state":"working","age_s":-1E+27}],"name":"cobalt","color":"royalblue","tmux":"colour68"},{"from":"worker:feat/c","branch":"feat/c","session":null,"state":"working","detail":null,"source":null,"ts":1.0E+3,"pr_url":null,"age_s":1700000099,"title":null,"engine":null,"model":null,"tier":null,"engine_session":null,"sessions":[{"session":null,"state":"working","age_s":1700000099}],"name":"ember","color":"orange","tmux":"colour130"}]`,
+		want: `[{"from":"worker:feat/a","branch":"feat/a","session":null,"state":"working","detail":null,"source":null,"blocked_since":null,"answered_at":null,"ts":1700000001000,"pr_url":null,"age_s":99,"title":null,"engine":null,"model":null,"tier":null,"engine_session":null,"sessions":[{"session":null,"state":"working","age_s":99}],"name":"lime","color":"lime","tmux":"colour64"},{"from":"worker:feat/b","branch":"feat/b","session":null,"state":"working","detail":null,"source":null,"blocked_since":null,"answered_at":null,"ts":1E+30,"pr_url":null,"age_s":-1E+27,"title":null,"engine":null,"model":null,"tier":null,"engine_session":null,"sessions":[{"session":null,"state":"working","age_s":-1E+27}],"name":"cobalt","color":"royalblue","tmux":"colour68"},{"from":"worker:feat/c","branch":"feat/c","session":null,"state":"working","detail":null,"source":null,"blocked_since":null,"answered_at":null,"ts":1.0E+3,"pr_url":null,"age_s":1700000099,"title":null,"engine":null,"model":null,"tier":null,"engine_session":null,"sessions":[{"session":null,"state":"working","age_s":1700000099}],"name":"ember","color":"orange","tmux":"colour130"}]`,
 	},
 	{
 		name: "other crews, other kinds and non-worker senders are ignored",
@@ -402,7 +402,7 @@ var cases = []rosterCase{
 		name:   "an empty crew selects the events whose crew_id is empty",
 		crew:   "-",
 		events: []string{`{"ts":1000,"crew_id":"","kind":"status","from":"worker:feat/x","body":{"state":"working"}}`, status(t0, "worker:feat/y", state("working"))},
-		want:   `[{"from":"worker:feat/x","branch":"feat/x","session":null,"state":"working","detail":null,"source":null,"ts":1000,"pr_url":null,"age_s":1700000099,"title":null,"engine":null,"model":null,"tier":null,"engine_session":null,"sessions":[{"session":null,"state":"working","age_s":1700000099}],"name":"lagoon","color":"darkcyan","tmux":"colour31"}]`,
+		want:   `[{"from":"worker:feat/x","branch":"feat/x","session":null,"state":"working","detail":null,"source":null,"blocked_since":null,"answered_at":null,"ts":1000,"pr_url":null,"age_s":1700000099,"title":null,"engine":null,"model":null,"tier":null,"engine_session":null,"sessions":[{"session":null,"state":"working","age_s":1700000099}],"name":"lagoon","color":"darkcyan","tmux":"colour31"}]`,
 	},
 	{
 		name:   "an empty bus is an empty roster",
@@ -421,7 +421,7 @@ var cases = []rosterCase{
 			status(t0+1000, "worker:wild#s1-1", state("working")),
 			status(t0+1000, "worker:docs/55-solo#s1-1", state("working")),
 		},
-		want: `[{"from":"worker:docs/55-solo#s1-1","branch":"docs/55-solo","session":"s1-1","state":"working","detail":null,"source":null,"ts":1700000001000,"pr_url":null,"age_s":99,"title":null,"engine":null,"model":null,"tier":null,"engine_session":null,"sessions":[{"session":"s1-1","state":"working","age_s":99}],"name":"atlas","color":"blue","tmux":"colour32"},{"from":"worker:eng-6789-stuff#s1-1","branch":"eng-6789-stuff","session":"s1-1","state":"working","detail":null,"source":null,"ts":1700000001000,"pr_url":null,"age_s":99,"title":null,"engine":null,"model":null,"tier":null,"engine_session":null,"sessions":[{"session":"s1-1","state":"working","age_s":99}],"name":"sage·eng-6789","color":"green","tmux":"colour28"},{"from":"worker:feat/207-thing#s1-1","branch":"feat/207-thing","session":"s1-1","state":"working","detail":null,"source":null,"ts":1700000001000,"pr_url":null,"age_s":99,"title":null,"engine":null,"model":null,"tier":null,"engine_session":null,"sessions":[{"session":"s1-1","state":"working","age_s":99}],"name":"sage·207","color":"green","tmux":"colour28"},{"from":"worker:wild#s1-1","branch":"wild","session":"s1-1","state":"working","detail":null,"source":null,"ts":1700000001000,"pr_url":null,"age_s":99,"title":null,"engine":null,"model":null,"tier":null,"engine_session":null,"sessions":[{"session":"s1-1","state":"working","age_s":99}],"name":"sage·wild","color":"green","tmux":"colour28"}]`,
+		want: `[{"from":"worker:docs/55-solo#s1-1","branch":"docs/55-solo","session":"s1-1","state":"working","detail":null,"source":null,"blocked_since":null,"answered_at":null,"ts":1700000001000,"pr_url":null,"age_s":99,"title":null,"engine":null,"model":null,"tier":null,"engine_session":null,"sessions":[{"session":"s1-1","state":"working","age_s":99}],"name":"atlas","color":"blue","tmux":"colour32"},{"from":"worker:eng-6789-stuff#s1-1","branch":"eng-6789-stuff","session":"s1-1","state":"working","detail":null,"source":null,"blocked_since":null,"answered_at":null,"ts":1700000001000,"pr_url":null,"age_s":99,"title":null,"engine":null,"model":null,"tier":null,"engine_session":null,"sessions":[{"session":"s1-1","state":"working","age_s":99}],"name":"sage·eng-6789","color":"green","tmux":"colour28"},{"from":"worker:feat/207-thing#s1-1","branch":"feat/207-thing","session":"s1-1","state":"working","detail":null,"source":null,"blocked_since":null,"answered_at":null,"ts":1700000001000,"pr_url":null,"age_s":99,"title":null,"engine":null,"model":null,"tier":null,"engine_session":null,"sessions":[{"session":"s1-1","state":"working","age_s":99}],"name":"sage·207","color":"green","tmux":"colour28"},{"from":"worker:wild#s1-1","branch":"wild","session":"s1-1","state":"working","detail":null,"source":null,"blocked_since":null,"answered_at":null,"ts":1700000001000,"pr_url":null,"age_s":99,"title":null,"engine":null,"model":null,"tier":null,"engine_session":null,"sessions":[{"session":"s1-1","state":"working","age_s":99}],"name":"sage·wild","color":"green","tmux":"colour28"}]`,
 	},
 	{
 		name: "a branch with a space gets no identity",
@@ -431,7 +431,7 @@ var cases = []rosterCase{
 			status(t0+1000, "worker:tab\tb#s1-1", state("working")),
 			status(t0+1000, "worker:feat/y#s1-1", state("working")),
 		},
-		want: `[{"from":"worker:feat/y#s1-1","branch":"feat/y","session":"s1-1","state":"working","detail":null,"source":null,"ts":1700000001000,"pr_url":null,"age_s":99,"title":null,"engine":null,"model":null,"tier":null,"engine_session":null,"sessions":[{"session":"s1-1","state":"working","age_s":99}],"name":"rose","color":"pink","tmux":"colour162"},{"from":"worker:has space#s1-1","branch":"has space","session":"s1-1","state":"working","detail":null,"source":null,"ts":1700000001000,"pr_url":null,"age_s":99,"title":null,"engine":null,"model":null,"tier":null,"engine_session":null,"sessions":[{"session":"s1-1","state":"working","age_s":99}]},{"from":"worker:tab\tb#s1-1","branch":"tab\tb","session":"s1-1","state":"working","detail":null,"source":null,"ts":1700000001000,"pr_url":null,"age_s":99,"title":null,"engine":null,"model":null,"tier":null,"engine_session":null,"sessions":[{"session":"s1-1","state":"working","age_s":99}]}]`,
+		want: `[{"from":"worker:feat/y#s1-1","branch":"feat/y","session":"s1-1","state":"working","detail":null,"source":null,"blocked_since":null,"answered_at":null,"ts":1700000001000,"pr_url":null,"age_s":99,"title":null,"engine":null,"model":null,"tier":null,"engine_session":null,"sessions":[{"session":"s1-1","state":"working","age_s":99}],"name":"rose","color":"pink","tmux":"colour162"},{"from":"worker:has space#s1-1","branch":"has space","session":"s1-1","state":"working","detail":null,"source":null,"blocked_since":null,"answered_at":null,"ts":1700000001000,"pr_url":null,"age_s":99,"title":null,"engine":null,"model":null,"tier":null,"engine_session":null,"sessions":[{"session":"s1-1","state":"working","age_s":99}]},{"from":"worker:tab\tb#s1-1","branch":"tab\tb","session":"s1-1","state":"working","detail":null,"source":null,"blocked_since":null,"answered_at":null,"ts":1700000001000,"pr_url":null,"age_s":99,"title":null,"engine":null,"model":null,"tier":null,"engine_session":null,"sessions":[{"session":"s1-1","state":"working","age_s":99}]}]`,
 	},
 	{
 		name: "a malformed recorded identity falls back to the hash",
@@ -441,7 +441,7 @@ var cases = []rosterCase{
 			status(t0+1000, "worker:feat/x#s1-1", state("working")),
 			status(t0+1000, "worker:feat/y#s1-1", state("working")),
 		},
-		want: `[{"from":"worker:feat/x#s1-1","branch":"feat/x","session":"s1-1","state":"working","detail":null,"source":null,"ts":1700000001000,"pr_url":null,"age_s":99,"title":null,"engine":null,"model":null,"tier":null,"engine_session":null,"sessions":[{"session":"s1-1","state":"working","age_s":99}],"name":"lagoon","color":"darkcyan","tmux":"colour31"},{"from":"worker:feat/y#s1-1","branch":"feat/y","session":"s1-1","state":"working","detail":null,"source":null,"ts":1700000001000,"pr_url":null,"age_s":99,"title":null,"engine":null,"model":null,"tier":null,"engine_session":null,"sessions":[{"session":"s1-1","state":"working","age_s":99}],"name":"sage","color":null,"tmux":"colour28"}]`,
+		want: `[{"from":"worker:feat/x#s1-1","branch":"feat/x","session":"s1-1","state":"working","detail":null,"source":null,"blocked_since":null,"answered_at":null,"ts":1700000001000,"pr_url":null,"age_s":99,"title":null,"engine":null,"model":null,"tier":null,"engine_session":null,"sessions":[{"session":"s1-1","state":"working","age_s":99}],"name":"lagoon","color":"darkcyan","tmux":"colour31"},{"from":"worker:feat/y#s1-1","branch":"feat/y","session":"s1-1","state":"working","detail":null,"source":null,"blocked_since":null,"answered_at":null,"ts":1700000001000,"pr_url":null,"age_s":99,"title":null,"engine":null,"model":null,"tier":null,"engine_session":null,"sessions":[{"session":"s1-1","state":"working","age_s":99}],"name":"sage","color":null,"tmux":"colour28"}]`,
 	},
 	{
 		name: "a dispatch event with a null branch is a type error",
@@ -471,7 +471,7 @@ var cases = []rosterCase{
 			`{"ts":1,"crew_id":"c2","kind":"dispatch","branch":null}`,
 			status(t0+1000, "worker:feat/x#s1-1", state("working")),
 		},
-		want: `[{"from":"worker:feat/x#s1-1","branch":"feat/x","session":"s1-1","state":"working","detail":null,"source":null,"ts":1700000001000,"pr_url":null,"age_s":99,"title":null,"engine":null,"model":null,"tier":null,"engine_session":null,"sessions":[{"session":"s1-1","state":"working","age_s":99}],"name":"lagoon","color":"darkcyan","tmux":"colour31"}]`,
+		want: `[{"from":"worker:feat/x#s1-1","branch":"feat/x","session":"s1-1","state":"working","detail":null,"source":null,"blocked_since":null,"answered_at":null,"ts":1700000001000,"pr_url":null,"age_s":99,"title":null,"engine":null,"model":null,"tier":null,"engine_session":null,"sessions":[{"session":"s1-1","state":"working","age_s":99}],"name":"lagoon","color":"darkcyan","tmux":"colour31"}]`,
 	},
 	{
 		name:    "a non-object event is a type error",
@@ -486,7 +486,7 @@ var cases = []rosterCase{
 	{
 		name:   "a non-string from on another crew's row is ignored",
 		events: []string{`{"ts":1,"crew_id":"c2","kind":"status","from":7}`, status(t0+1000, "worker:feat/x", state("working"))},
-		want:   `[{"from":"worker:feat/x","branch":"feat/x","session":null,"state":"working","detail":null,"source":null,"ts":1700000001000,"pr_url":null,"age_s":99,"title":null,"engine":null,"model":null,"tier":null,"engine_session":null,"sessions":[{"session":null,"state":"working","age_s":99}],"name":"lagoon","color":"darkcyan","tmux":"colour31"}]`,
+		want:   `[{"from":"worker:feat/x","branch":"feat/x","session":null,"state":"working","detail":null,"source":null,"blocked_since":null,"answered_at":null,"ts":1700000001000,"pr_url":null,"age_s":99,"title":null,"engine":null,"model":null,"tier":null,"engine_session":null,"sessions":[{"session":null,"state":"working","age_s":99}],"name":"lagoon","color":"darkcyan","tmux":"colour31"}]`,
 	},
 	{
 		name:    "a non-object body is a type error",
@@ -501,7 +501,7 @@ var cases = []rosterCase{
 	{
 		name:   "a null or missing body is a row with null fields",
 		events: []string{status(t0+1000, "worker:feat/a", `null`), `{"ts":2000,"crew_id":"c1","kind":"status","from":"worker:feat/b"}`},
-		want:   `[{"from":"worker:feat/a","branch":"feat/a","session":null,"state":null,"detail":null,"source":null,"ts":1700000001000,"pr_url":null,"age_s":99,"title":null,"engine":null,"model":null,"tier":null,"engine_session":null,"sessions":[{"session":null,"state":null,"age_s":99}],"name":"lime","color":"lime","tmux":"colour64"},{"from":"worker:feat/b","branch":"feat/b","session":null,"state":null,"detail":null,"source":null,"ts":2000,"pr_url":null,"age_s":1700000098,"title":null,"engine":null,"model":null,"tier":null,"engine_session":null,"sessions":[{"session":null,"state":null,"age_s":1700000098}],"name":"cobalt","color":"royalblue","tmux":"colour68"}]`,
+		want:   `[{"from":"worker:feat/a","branch":"feat/a","session":null,"state":null,"detail":null,"source":null,"blocked_since":null,"answered_at":null,"ts":1700000001000,"pr_url":null,"age_s":99,"title":null,"engine":null,"model":null,"tier":null,"engine_session":null,"sessions":[{"session":null,"state":null,"age_s":99}],"name":"lime","color":"lime","tmux":"colour64"},{"from":"worker:feat/b","branch":"feat/b","session":null,"state":null,"detail":null,"source":null,"blocked_since":null,"answered_at":null,"ts":2000,"pr_url":null,"age_s":1700000098,"title":null,"engine":null,"model":null,"tier":null,"engine_session":null,"sessions":[{"session":null,"state":null,"age_s":1700000098}],"name":"cobalt","color":"royalblue","tmux":"colour68"}]`,
 	},
 	{
 		name:    "a non-number ts on the latest event is a type error",
@@ -514,14 +514,14 @@ var cases = []rosterCase{
 			`{"ts":1,"crew_id":"c1","kind":"dispatch","branch":"a","tier":1e400}`,
 			`{"ts":1e400,"crew_id":"c1","kind":"status","from":"worker:a#s1-1","body":{"state":"w"}}`,
 		},
-		want: `[{"from":"worker:a#s1-1","branch":"a","session":"s1-1","state":"w","detail":null,"source":null,"ts":1.7976931348623157E+308,"pr_url":null,"age_s":-1.7976931348623157E+308,"title":null,"engine":null,"model":null,"tier":1.7976931348623157E+308,"engine_session":null,"sessions":[{"session":"s1-1","state":"w","age_s":-1.7976931348623157E+308}],"name":"orchid","color":"orchid","tmux":"colour169"}]`,
+		want: `[{"from":"worker:a#s1-1","branch":"a","session":"s1-1","state":"w","detail":null,"source":null,"blocked_since":null,"answered_at":null,"ts":1.7976931348623157E+308,"pr_url":null,"age_s":-1.7976931348623157E+308,"title":null,"engine":null,"model":null,"tier":1.7976931348623157E+308,"engine_session":null,"sessions":[{"session":"s1-1","state":"w","age_s":-1.7976931348623157E+308}],"name":"orchid","color":"orchid","tmux":"colour169"}]`,
 	},
 	{
 		name: "an overflowing literal in detail reads back clamped",
 		events: []string{
 			`{"ts":1700000001000,"crew_id":"c1","kind":"status","from":"worker:a#s1-1","body":{"state":"w","detail":[1e1000000000,-1e1000000000,1.5,100]}}`,
 		},
-		want: `[{"from":"worker:a#s1-1","branch":"a","session":"s1-1","state":"w","detail":[1.7976931348623157E+308,-1.7976931348623157E+308,1.5,100],"source":null,"ts":1700000001000,"pr_url":null,"age_s":99,"title":null,"engine":null,"model":null,"tier":null,"engine_session":null,"sessions":[{"session":"s1-1","state":"w","age_s":99}],"name":"orchid","color":"orchid","tmux":"colour169"}]`,
+		want: `[{"from":"worker:a#s1-1","branch":"a","session":"s1-1","state":"w","detail":[1.7976931348623157E+308,-1.7976931348623157E+308,1.5,100],"source":null,"blocked_since":null,"answered_at":null,"ts":1700000001000,"pr_url":null,"age_s":99,"title":null,"engine":null,"model":null,"tier":null,"engine_session":null,"sessions":[{"session":"s1-1","state":"w","age_s":99}],"name":"orchid","color":"orchid","tmux":"colour169"}]`,
 	},
 	{
 		name:    "a missing ts on the latest event is a type error",
@@ -709,5 +709,82 @@ func TestEngineCommandsMatchLocalModels(t *testing.T) {
 	}
 	if !slices.Equal(got, EngineCommands) {
 		t.Errorf("EngineCommands drifted from local-models.sh:\n bash: %v\n go:   %v", got, EngineCommands)
+	}
+}
+
+func reply(ts int64, to string) string {
+	return fmt.Sprintf(`{"ts":%d,"crew_id":"c1","kind":"msg","from":"dispatcher:c1","to":%q,"body":"go"}`, ts, to)
+}
+
+func TestFoldBlockedEpisode(t *testing.T) {
+	const w = "worker:feat/x#s1-1"
+	blocked := func(ts int64, detail, extra string) string {
+		return status(ts, w, fmt.Sprintf(`{"state":"blocked","detail":%q%s}`, detail, extra))
+	}
+	cases := []struct {
+		name         string
+		events       []string
+		state        string
+		since, reply any
+	}{
+		{"unanswered block keeps its first ts across restamps", []string{
+			blocked(t0+1000, "q", ""),
+			blocked(t0+2000, "q (cycle 1 of 24)", `,"restamp":true`),
+			blocked(t0+3000, "q (cycle 2 of 24)", `,"restamp":true`),
+			blocked(t0+4000, "q (cycle 2 of 24)", ""),
+		}, "blocked", int64(t0 + 1000), nil},
+		{"a dispatcher reply answers it without a re-stamp", []string{
+			blocked(t0+1000, "q", ""),
+			reply(t0+2000, w),
+		}, "answered", int64(t0 + 1000), int64(t0 + 2000)},
+		{"a reply to another worker answers nothing", []string{
+			blocked(t0+1000, "q", ""),
+			reply(t0+2000, "worker:feat/y#s1-1"),
+		}, "blocked", int64(t0 + 1000), nil},
+		{"a reply that predates the block answers nothing", []string{
+			reply(t0+500, w),
+			blocked(t0+1000, "q", ""),
+		}, "blocked", int64(t0 + 1000), nil},
+		{"a re-stamp after the reply clears the answer, keeping the episode", []string{
+			blocked(t0+1000, "q", ""),
+			reply(t0+2000, w),
+			blocked(t0+3000, "q (cycle 1 of 24)", `,"restamp":true`),
+		}, "blocked", int64(t0 + 1000), nil},
+		{"a fresh question after the reply starts a new episode", []string{
+			blocked(t0+1000, "q1", ""),
+			reply(t0+2000, w),
+			blocked(t0+3000, "q2", ""),
+		}, "blocked", int64(t0 + 3000), nil},
+		{"a watchdog row neither starts nor extends the episode", []string{
+			status(t0+500, w, `{"state":"blocked","detail":"quiet: x","source":"watchdog"}`),
+			blocked(t0+1000, "q", ""),
+			status(t0+1500, w, `{"state":"blocked","detail":"stalled: x","source":"watchdog"}`),
+		}, "blocked", nil, nil},
+		{"working ends the episode", []string{
+			blocked(t0+1000, "q", ""),
+			reply(t0+2000, w),
+			status(t0+3000, w, state("working")),
+		}, "working", nil, nil},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			p := Probes{Tmux: &tmuxtest.Fake{}, Worktrees: func() (string, error) { return "", nil }}
+			rows, err := Fold(t.Context(), decodeEvents(t, c.events), "c1", now, p)
+			if err != nil || len(rows) != 1 {
+				t.Fatalf("rows = %v, err = %v", rows, err)
+			}
+			row := rows[0]
+			got := func(k string) any {
+				if row[k] == nil {
+					return nil
+				}
+				n, _ := number(row[k])
+				return int64(n)
+			}
+			if row["state"] != c.state || got("blocked_since") != c.since || got("answered_at") != c.reply {
+				t.Errorf("state=%v blocked_since=%v answered_at=%v, want %v %v %v",
+					row["state"], row["blocked_since"], row["answered_at"], c.state, c.since, c.reply)
+			}
+		})
 	}
 }

@@ -3,6 +3,6 @@
 # piped the model into `jq`; `.[0]` and `[ ... ]` patch that for jqrun, which
 # returns one value.
 [ .[0] | (
-([.rows[] | select(.state == "working" or .state == "blocked" or .state == "dispatched")] | length)
+([.rows[] | select(.state == "working" or .state == "blocked" or .state == "answered" or .state == "dispatched")] | length)
                                     + (.holds | length)
 ) ]

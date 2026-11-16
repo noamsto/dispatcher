@@ -119,6 +119,8 @@
       "pr_url": null,
       "pr": null,
       "age_sec": 20,
+      "blocked_since": null,
+      "answered_at": null,
       "phase": {
         "current": "execute",
         "steps": [
@@ -225,6 +227,8 @@
       "pr_url": "https://github.com/o/a/pull/12",
       "pr": 12,
       "age_sec": 110,
+      "blocked_since": null,
+      "answered_at": null,
       "phase": {
         "current": null,
         "steps": [
@@ -350,6 +354,8 @@
       "pr_url": null,
       "pr": null,
       "age_sec": 15,
+      "blocked_since": null,
+      "answered_at": null,
       "phase": null,
       "acceptance": null,
       "actions": [
@@ -422,6 +428,8 @@
       "pr_url": null,
       "pr": null,
       "age_sec": 1010,
+      "blocked_since": null,
+      "answered_at": null,
       "phase": null,
       "acceptance": null,
       "actions": [
@@ -494,6 +502,8 @@
       "pr_url": null,
       "pr": null,
       "age_sec": 10,
+      "blocked_since": null,
+      "answered_at": null,
       "phase": null,
       "acceptance": null,
       "actions": [

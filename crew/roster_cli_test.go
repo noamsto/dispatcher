@@ -106,8 +106,8 @@ func TestRosterCLIStdoutIsThePrettyForm(t *testing.T) {
 {"ts":1700000002000,"crew_id":"c1","kind":"status","from":"worker:feat/x#s1-1","to":"dispatcher:c1","body":{"state":"done"}}
 {"ts":1700000003000,"crew_id":"c1","kind":"status","from":"worker:feat/y#s1-1","to":"dispatcher:c1","body":{"state":"blocked","detail":"which approach?"}}
 `
-	const want = `[{"from":"worker:feat/x#s1-1","branch":"feat/x","session":"s1-1","state":"done","detail":null,"source":null,"ts":1700000002000,"pr_url":null,"age_s":98,"title":null,"engine":null,"model":null,"tier":null,"engine_session":null,"sessions":[{"session":"s1-1","state":"done","age_s":98}],"name":"lagoon","color":"darkcyan","tmux":"colour31"},` +
-		`{"from":"worker:feat/y#s1-1","branch":"feat/y","session":"s1-1","state":"blocked","detail":"which approach?","source":null,"ts":1700000003000,"pr_url":null,"age_s":97,"title":null,"engine":null,"model":null,"tier":null,"engine_session":null,"sessions":[{"session":"s1-1","state":"blocked","age_s":97}],"name":"rose","color":"pink","tmux":"colour162"}]`
+	const want = `[{"from":"worker:feat/x#s1-1","branch":"feat/x","session":"s1-1","state":"done","detail":null,"source":null,"blocked_since":null,"answered_at":null,"ts":1700000002000,"pr_url":null,"age_s":98,"title":null,"engine":null,"model":null,"tier":null,"engine_session":null,"sessions":[{"session":"s1-1","state":"done","age_s":98}],"name":"lagoon","color":"darkcyan","tmux":"colour31"},` +
+		`{"from":"worker:feat/y#s1-1","branch":"feat/y","session":"s1-1","state":"blocked","detail":"which approach?","source":null,"blocked_since":1700000003000,"answered_at":null,"ts":1700000003000,"pr_url":null,"age_s":97,"title":null,"engine":null,"model":null,"tier":null,"engine_session":null,"sessions":[{"session":"s1-1","state":"blocked","age_s":97}],"name":"rose","color":"pink","tmux":"colour162"}]`
 
 	out, errOut, code := rosterArm(t, rows, "c1")
 	if code != 0 || errOut != "" {

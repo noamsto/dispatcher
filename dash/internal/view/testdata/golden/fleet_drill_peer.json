@@ -28,6 +28,8 @@
       "pr_url": null,
       "pr": null,
       "age_sec": 10,
+      "blocked_since": null,
+      "answered_at": null,
       "phase": null,
       "acceptance": null,
       "actions": []

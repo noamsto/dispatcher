@@ -26,33 +26,35 @@ type CrewRow struct {
 }
 
 type WorkerRow struct {
-	Crew        string   `json:"crew"`
-	Branch      string   `json:"branch"`
-	Session     *string  `json:"session"`
-	Name        *string  `json:"name"`
-	State       string   `json:"state"`
-	PrevState   *string  `json:"prev_state"`
-	Detail      *string  `json:"detail"`
-	Source      *string  `json:"source"`
-	PRURL       *string  `json:"pr_url"`
-	PR          *int     `json:"pr"`
-	Host        string   `json:"host"`
-	Origin      Origin   `json:"origin"`
-	HostError   *string  `json:"host_error"`
-	PeerError   *string  `json:"peer_error"`
-	Title       *string  `json:"title"`
-	Repo        *string  `json:"repo"`
-	Engine      *string  `json:"engine"`
-	Model       *string  `json:"model"`
-	Tier        *string  `json:"tier"`
-	Tmux        *string  `json:"tmux"`
-	Color       *string  `json:"color"`
-	From        *string  `json:"from"`
-	TS          *int64   `json:"ts"`
-	AgeS        *int64   `json:"age_s"`
-	Live        *bool    `json:"live"`
-	ExitSuspect *bool    `json:"exit_suspect"`
-	Actions     []Action `json:"actions"`
+	Crew         string   `json:"crew"`
+	Branch       string   `json:"branch"`
+	Session      *string  `json:"session"`
+	Name         *string  `json:"name"`
+	State        string   `json:"state"`
+	PrevState    *string  `json:"prev_state"`
+	Detail       *string  `json:"detail"`
+	Source       *string  `json:"source"`
+	PRURL        *string  `json:"pr_url"`
+	PR           *int     `json:"pr"`
+	Host         string   `json:"host"`
+	Origin       Origin   `json:"origin"`
+	HostError    *string  `json:"host_error"`
+	PeerError    *string  `json:"peer_error"`
+	Title        *string  `json:"title"`
+	Repo         *string  `json:"repo"`
+	Engine       *string  `json:"engine"`
+	Model        *string  `json:"model"`
+	Tier         *string  `json:"tier"`
+	Tmux         *string  `json:"tmux"`
+	Color        *string  `json:"color"`
+	From         *string  `json:"from"`
+	TS           *int64   `json:"ts"`
+	BlockedSince *int64   `json:"blocked_since"`
+	AnsweredAt   *int64   `json:"answered_at"`
+	AgeS         *int64   `json:"age_s"`
+	Live         *bool    `json:"live"`
+	ExitSuspect  *bool    `json:"exit_suspect"`
+	Actions      []Action `json:"actions"`
 
 	stale bool
 }
@@ -113,33 +115,35 @@ func WorkerRowOf(crew []string, crewID string, w map[string]any) WorkerRow {
 		pr = PRNumber(*prURL)
 	}
 	row := WorkerRow{
-		Crew:        crewID,
-		Branch:      str(w, "branch"),
-		Session:     optStr(w, "session"),
-		Name:        optStr(w, "name"),
-		State:       str(w, "state"),
-		PrevState:   optStr(w, "prev_state"),
-		Detail:      optStr(w, "detail"),
-		Source:      optStr(w, "source"),
-		PRURL:       prURL,
-		PR:          pr,
-		Host:        str(w, "host"),
-		Origin:      origin,
-		HostError:   optStr(w, "host_error"),
-		PeerError:   optStr(w, "peer_error"),
-		Title:       optStr(w, "title"),
-		Repo:        optStr(w, "repo"),
-		Engine:      optStr(w, "engine"),
-		Model:       optStr(w, "model"),
-		Tier:        optStr(w, "tier"),
-		Tmux:        optStr(w, "tmux"),
-		Color:       optStr(w, "color"),
-		From:        optStr(w, "from"),
-		TS:          optInt(w, "ts"),
-		AgeS:        optInt(w, "age_s"),
-		Live:        optBool(w, "live"),
-		ExitSuspect: optBool(w, "exit_suspect"),
-		stale:       w["stale"] == true,
+		Crew:         crewID,
+		Branch:       str(w, "branch"),
+		Session:      optStr(w, "session"),
+		Name:         optStr(w, "name"),
+		State:        str(w, "state"),
+		PrevState:    optStr(w, "prev_state"),
+		Detail:       optStr(w, "detail"),
+		Source:       optStr(w, "source"),
+		PRURL:        prURL,
+		PR:           pr,
+		Host:         str(w, "host"),
+		Origin:       origin,
+		HostError:    optStr(w, "host_error"),
+		PeerError:    optStr(w, "peer_error"),
+		Title:        optStr(w, "title"),
+		Repo:         optStr(w, "repo"),
+		Engine:       optStr(w, "engine"),
+		Model:        optStr(w, "model"),
+		Tier:         optStr(w, "tier"),
+		Tmux:         optStr(w, "tmux"),
+		Color:        optStr(w, "color"),
+		From:         optStr(w, "from"),
+		TS:           optInt(w, "ts"),
+		BlockedSince: optInt(w, "blocked_since"),
+		AnsweredAt:   optInt(w, "answered_at"),
+		AgeS:         optInt(w, "age_s"),
+		Live:         optBool(w, "live"),
+		ExitSuspect:  optBool(w, "exit_suspect"),
+		stale:        w["stale"] == true,
 	}
 	name := ""
 	if row.Name != nil {

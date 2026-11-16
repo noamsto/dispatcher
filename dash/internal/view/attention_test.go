@@ -1,6 +1,7 @@
 package view_test
 
 import (
+	"maps"
 	"slices"
 	"testing"
 
@@ -133,5 +134,40 @@ func TestLaneStaleRaisesWarning(t *testing.T) {
 	if a.Severity != view.SeverityWarning || a.Message != "crew stream lane is stale" || a.Action == nil || a.Action.Key != "" ||
 		!slices.Equal(a.Action.Argv, []string{"crew", "stream", "--crew", "c1", "--status"}) {
 		t.Errorf("lane_stale = %+v action %+v", a, a.Action)
+	}
+}
+
+// setWorker edits the fixture roster row of branch in place.
+func setWorker(in view.Inputs, branch string, fields map[string]any) {
+	for _, c := range in.Snap.Roster.Crews {
+		for _, w := range c.Workers {
+			if w["branch"] == branch {
+				maps.Copy(w, fields)
+			}
+		}
+	}
+}
+
+func TestAttentionBlockedAgeStartsAtBlockedSince(t *testing.T) {
+	in := viewtest.Inputs()
+	setWorker(in, "feat/c", map[string]any{"blocked_since": float64(1794800000000)})
+	v := view.BuildOverview(in)
+	if a := item(t, v, "blocked:c1:feat/c"); a.AgeSec != 600 {
+		t.Errorf("age_sec = %d, want 600 from blocked_since, not the 300s re-stamp age", a.AgeSec)
+	}
+	if w := worker(t, v, "feat/c"); w.BlockedSince == nil || *w.BlockedSince != 1794800000000 || w.AnsweredAt != nil {
+		t.Errorf("worker blocked_since/answered_at = %v/%v", w.BlockedSince, w.AnsweredAt)
+	}
+}
+
+func TestAttentionAnsweredWorkerHasNoItem(t *testing.T) {
+	in := viewtest.Inputs()
+	setWorker(in, "feat/c", map[string]any{"state": "answered", "answered_at": float64(1794800400000)})
+	v := view.BuildOverview(in)
+	if slices.Contains(ids(v), "blocked:c1:feat/c") {
+		t.Errorf("answered worker still needs attention: %v", ids(v))
+	}
+	if w := worker(t, v, "feat/c"); w.State != "answered" || w.AnsweredAt == nil || *w.AnsweredAt != 1794800400000 {
+		t.Errorf("worker = %+v", w)
 	}
 }

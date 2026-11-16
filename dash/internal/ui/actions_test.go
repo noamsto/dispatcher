@@ -642,3 +642,10 @@ func TestWorkerByBranch(t *testing.T) {
 		})
 	}
 }
+
+func TestReplyIsAllowedOnAnsweredWorker(t *testing.T) {
+	w := data.Worker{State: "answered", Branch: "feat/x", Origin: "local"}
+	if got := disabledReason(actReply, w, true, true); got != "" {
+		t.Errorf("reply on an answered worker disabled: %q", got)
+	}
+}

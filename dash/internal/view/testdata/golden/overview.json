@@ -376,6 +376,8 @@
       "pr_url": null,
       "pr": null,
       "age_sec": 45,
+      "blocked_since": null,
+      "answered_at": null,
       "phase": {
         "current": "execute",
         "steps": [
@@ -482,6 +484,8 @@
       "pr_url": "https://github.com/o/r/pull/12",
       "pr": 12,
       "age_sec": 600,
+      "blocked_since": null,
+      "answered_at": null,
       "phase": {
         "current": null,
         "steps": [
@@ -607,6 +611,8 @@
       "pr_url": null,
       "pr": null,
       "age_sec": 300,
+      "blocked_since": null,
+      "answered_at": null,
       "phase": {
         "current": null,
         "steps": [
@@ -713,6 +719,8 @@
       "pr_url": null,
       "pr": null,
       "age_sec": 200,
+      "blocked_since": null,
+      "answered_at": null,
       "phase": {
         "current": null,
         "steps": [
@@ -819,6 +827,8 @@
       "pr_url": null,
       "pr": null,
       "age_sec": 240,
+      "blocked_since": null,
+      "answered_at": null,
       "phase": {
         "current": null,
         "steps": [
@@ -925,6 +935,8 @@
       "pr_url": null,
       "pr": null,
       "age_sec": 150,
+      "blocked_since": null,
+      "answered_at": null,
       "phase": {
         "current": null,
         "steps": [
@@ -1031,6 +1043,8 @@
       "pr_url": null,
       "pr": null,
       "age_sec": 900,
+      "blocked_since": null,
+      "answered_at": null,
       "phase": {
         "current": null,
         "steps": [
@@ -1137,6 +1151,8 @@
       "pr_url": null,
       "pr": null,
       "age_sec": 1200,
+      "blocked_since": null,
+      "answered_at": null,
       "phase": {
         "current": null,
         "steps": [
@@ -1243,6 +1259,8 @@
       "pr_url": null,
       "pr": null,
       "age_sec": 420,
+      "blocked_since": null,
+      "answered_at": null,
       "phase": null,
       "acceptance": null,
       "actions": [
@@ -1315,6 +1333,8 @@
       "pr_url": null,
       "pr": null,
       "age_sec": 30,
+      "blocked_since": null,
+      "answered_at": null,
       "phase": {
         "current": "execute",
         "steps": [
@@ -1421,6 +1441,8 @@
       "pr_url": null,
       "pr": null,
       "age_sec": null,
+      "blocked_since": null,
+      "answered_at": null,
       "phase": null,
       "acceptance": null,
       "actions": []
@@ -1440,6 +1462,8 @@
       "pr_url": null,
       "pr": null,
       "age_sec": null,
+      "blocked_since": null,
+      "answered_at": null,
       "phase": null,
       "acceptance": null,
       "actions": []
@@ -1459,6 +1483,8 @@
       "pr_url": null,
       "pr": null,
       "age_sec": null,
+      "blocked_since": null,
+      "answered_at": null,
       "phase": null,
       "acceptance": null,
       "actions": []
