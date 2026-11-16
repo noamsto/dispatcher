@@ -6,17 +6,21 @@ set -euo pipefail
 
 [ "$#" -gt 0 ] || exit 0
 
+# Captured first so a failing producer fails the script instead of reading as
+# an empty result.
+drv_list=$(nix path-info --derivation "$@")
 drvs=()
 while IFS= read -r drv; do
 	[[ -n $drv ]] && drvs+=("$drv")
-done < <(nix path-info --derivation "$@")
+done <<<"$drv_list"
 [ "${#drvs[@]}" -gt 0 ] || exit 0
 
+path_list=$(nix-store --query --requisites --include-outputs "${drvs[@]}")
 paths=()
 while IFS= read -r p; do
 	[[ -z $p || $p == *.drv ]] && continue
 	paths+=("$p")
-done < <(nix-store --query --requisites --include-outputs "${drvs[@]}")
+done <<<"$path_list"
 [ "${#paths[@]}" -gt 0 ] || exit 0
 
 chunk=500

@@ -198,6 +198,7 @@ jobs:
       # other eval, so the push step has it even if enumeration fails.
       - name: build packages and checks
         id: build
+        if: ${{ !cancelled() }}
         shell: bash
         run: |
           list="$RUNNER_TEMP/cache-installables"
@@ -220,7 +221,7 @@ jobs:
           CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
         run: |
           mapfile -t installables <"$RUNNER_TEMP/cache-installables"
-          { ./scripts/cache-built-paths.sh "${installables[@]}"; nix path-info .#default; } | cachix push dispatcher
+          { ./scripts/cache-built-paths.sh "${installables[@]}" || echo "::warning::path enumeration failed"; nix path-info .#default; } | cachix push dispatcher
       # Token-free, so PR CI exercises the enumeration the main push relies on.
       - name: dry-run cache path enumeration
         if: github.event_name == 'pull_request' && !cancelled() && (steps.build.outcome == 'success' || steps.build.outcome == 'failure')
@@ -251,7 +252,7 @@ jobs:
         env:
           CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
         run: |
-          { ./scripts/cache-built-paths.sh .#default; nix path-info .#default; } | cachix push dispatcher
+          { ./scripts/cache-built-paths.sh .#default || echo "::warning::path enumeration failed"; nix path-info .#default; } | cachix push dispatcher
 
   check:
     if: always()
