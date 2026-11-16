@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "view": "settings",
+  "loaded": true,
+  "layers": {
+    "base": "\u003cBASE\u003e",
+    "user": {
+      "path": "\u003cUSER\u003e",
+      "present": true
+    },
+    "locked": null
+  },
+  "rows": [
+    {
+      "path": [
+        "engines"
+      ],
+      "value": [
+        "claude",
+        "pi"
+      ],
+      "origin": "user",
+      "locked_only": false,
+      "editable": true
+    }
+  ],
+  "warnings": [],
+  "error": null
+}

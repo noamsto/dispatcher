@@ -1,0 +1,312 @@
+{
+  "now": 1794800600,
+  "settings": {
+    "layers": {
+      "base": "<BASE>",
+      "user": {
+        "path": "<USER>",
+        "present": true
+      },
+      "locked": null
+    },
+    "rows": [
+      {
+        "path": [
+          "engines"
+        ],
+        "value": [
+          "claude",
+          "pi"
+        ],
+        "origin": "user",
+        "locked_only": false,
+        "editable": true
+      }
+    ],
+    "warnings": [],
+    "error": null
+  },
+  "budget": {
+    "report": {
+      "fetched_epoch": 1794800570,
+      "engines": {
+        "claude": {
+          "source": "oauth_usage",
+          "plan_type": null,
+          "credits_cover": false,
+          "spend_usd": null,
+          "target_usd": null,
+          "elapsed_pct": null,
+          "projected_month_end_usd": null,
+          "windows": [
+            {
+              "key": "5h",
+              "used_pct": 10,
+              "resets_at": 1794807800,
+              "resets_in_s": 7200,
+              "ahead_pts": null,
+              "verdict": null
+            },
+            {
+              "key": "7d",
+              "used_pct": 62,
+              "resets_at": 1795103000,
+              "resets_in_s": 302400,
+              "ahead_pts": 12,
+              "verdict": "ahead of pace: prefer a cheaper burn class"
+            }
+          ],
+          "projection": null,
+          "unlimited": false,
+          "limit_reached": null
+        }
+      }
+    },
+    "warnings": [],
+    "error": null
+  },
+  "runs": {
+    "retro": {
+      "tags": [],
+      "unknown": [],
+      "rows": []
+    },
+    "retro_error": null,
+    "ratings": [
+      {
+        "tier": "standard",
+        "engine": "claude",
+        "model": "sonnet",
+        "n": {
+          "value": 2,
+          "k": 2,
+          "n": 2
+        },
+        "pr_pct": {
+          "value": 100,
+          "k": 2,
+          "n": 2
+        },
+        "merge_pct": {
+          "value": 100,
+          "k": 2,
+          "n": 2
+        },
+        "burn_median": {
+          "value": null,
+          "k": 0,
+          "n": 2
+        }
+      }
+    ],
+    "ratings_error": null
+  },
+  "roster": {
+    "crews": [
+      {
+        "id": "c1",
+        "workers": [
+          {
+            "branch": "feat/a",
+            "from": "worker:feat/a",
+            "session": "s-a",
+            "state": "working",
+            "ts": 1794800555000,
+            "age_s": 45,
+            "engine": "claude",
+            "model": "sonnet",
+            "tier": "standard",
+            "title": "Task feat/a",
+            "detail": "execute",
+            "name": "otter"
+          },
+          {
+            "branch": "feat/b",
+            "from": "worker:feat/b",
+            "session": "s-b",
+            "state": "pr_open",
+            "ts": 1794800000000,
+            "age_s": 600,
+            "engine": "claude",
+            "model": "sonnet",
+            "tier": "standard",
+            "title": "Task feat/b",
+            "detail": "AC1 pass(go test); AC2-4 pass(bats); AC5 waived(dispatcher: n/a)",
+            "pr_url": "https://github.com/o/r/pull/12",
+            "name": "heron"
+          },
+          {
+            "branch": "feat/c",
+            "from": "worker:feat/c",
+            "session": "s-c",
+            "state": "blocked",
+            "ts": 1794800300000,
+            "age_s": 300,
+            "engine": "claude",
+            "model": "sonnet",
+            "tier": "standard",
+            "title": "Task feat/c",
+            "detail": "which schema should the migration target?"
+          },
+          {
+            "branch": "feat/d",
+            "from": "worker:feat/d",
+            "session": "s-d",
+            "state": "blocked",
+            "ts": 1794800400000,
+            "age_s": 200,
+            "engine": "claude",
+            "model": "sonnet",
+            "tier": "standard",
+            "title": "Task feat/d",
+            "detail": "prompt: permission dialog",
+            "source": "watchdog"
+          },
+          {
+            "branch": "feat/e",
+            "from": "worker:feat/e",
+            "session": "s-e",
+            "state": "blocked",
+            "ts": 1794800360000,
+            "age_s": 240,
+            "engine": "claude",
+            "model": "sonnet",
+            "tier": "standard",
+            "title": "Task feat/e",
+            "detail": "quiet: no output 4m",
+            "source": "watchdog"
+          },
+          {
+            "branch": "feat/f",
+            "from": "worker:feat/f",
+            "session": "s-f",
+            "state": "blocked",
+            "ts": 1794800450000,
+            "age_s": 150,
+            "engine": "claude",
+            "model": "sonnet",
+            "tier": "standard",
+            "title": "Task feat/f",
+            "detail": "runaway: 900 tool calls in 10m",
+            "source": "watchdog"
+          },
+          {
+            "branch": "feat/g",
+            "from": "worker:feat/g",
+            "session": "s-g",
+            "state": "failed",
+            "ts": 1794799700000,
+            "age_s": 900,
+            "engine": "claude",
+            "model": "sonnet",
+            "tier": "standard",
+            "title": "Task feat/g",
+            "detail": "dead: quiet: no output 20m",
+            "source": "watchdog"
+          },
+          {
+            "branch": "feat/h",
+            "from": "worker:feat/h",
+            "session": "s-h",
+            "state": "failed",
+            "ts": 1794799400000,
+            "age_s": 1200,
+            "engine": "claude",
+            "model": "sonnet",
+            "tier": "standard",
+            "title": "Task feat/h",
+            "detail": "exit 1 after test failure"
+          },
+          {
+            "branch": "feat/i",
+            "from": "worker:feat/i",
+            "session": "s-i",
+            "state": "reaped",
+            "ts": 1794797600000,
+            "age_s": 3000,
+            "engine": "claude",
+            "model": "sonnet",
+            "tier": "standard",
+            "title": "Task feat/i",
+            "detail": "merged"
+          },
+          {
+            "branch": "feat/r",
+            "from": "worker:feat/r",
+            "session": "s-r",
+            "state": "blocked",
+            "ts": 1794800180000,
+            "age_s": 420,
+            "engine": "codex",
+            "model": "gpt-5",
+            "tier": "deep",
+            "title": "Task feat/r",
+            "detail": "need the staging db password",
+            "host": "halo"
+          }
+        ],
+        "holds": [
+          {
+            "id": "h-due",
+            "wait": {
+              "kind": "window",
+              "engine": "claude",
+              "window": "5h",
+              "resets_at": 1794800480
+            },
+            "task": {
+              "title": "matured task"
+            }
+          },
+          {
+            "id": "h-later",
+            "wait": {
+              "kind": "window",
+              "engine": "claude",
+              "window": "7d",
+              "resets_at": 1794805600
+            },
+            "task": {
+              "title": "later task"
+            }
+          },
+          {
+            "id": "h-fleet",
+            "wait": {
+              "kind": "fleet",
+              "engine": "claude",
+              "resets_at": 1794800100
+            },
+            "task": {
+              "title": "fleet task"
+            }
+          }
+        ],
+        "workers_error": null,
+        "holds_error": null
+      },
+      {
+        "id": "c2",
+        "workers": [
+          {
+            "branch": "feat/j",
+            "from": "worker:feat/j",
+            "session": "s-j",
+            "state": "working",
+            "ts": 1794800570000,
+            "age_s": 30,
+            "engine": "claude",
+            "model": "sonnet",
+            "tier": "standard",
+            "title": "Task feat/j",
+            "detail": "execute"
+          }
+        ],
+        "holds": [],
+        "workers_error": null,
+        "holds_error": null
+      }
+    ],
+    "error": null
+  }
+}

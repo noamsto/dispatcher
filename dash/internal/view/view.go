@@ -43,7 +43,7 @@ func (in Inputs) nowSec() int64 {
 func Build(name string, in Inputs) (any, error) {
 	switch name {
 	case "overview":
-		return nil, fmt.Errorf("view overview: not built yet")
+		return BuildOverview(in), nil
 	case "roster":
 		return BuildRoster(in), nil
 	case "budget":
