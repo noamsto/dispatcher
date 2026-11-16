@@ -28,6 +28,10 @@ type liveDeps struct {
 	eventsPath  string
 	watcher     buswatch.Watcher
 	liveOffNote string
+
+	// fleetWatcher polls every known repo's bus, relay cursors and peer
+	// files; the root refreshes the Fleet tab on its events.
+	fleetWatcher buswatch.Watcher
 }
 
 const debounceDelay = 300 * time.Millisecond

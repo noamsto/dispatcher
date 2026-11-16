@@ -1,0 +1,62 @@
+{
+  "Version": "1.80.0",
+  "BackendState": "Running",
+  "Self": {
+    "ID": "n-self",
+    "HostName": "lap",
+    "DNSName": "lap.tail1234.ts.net.",
+    "OS": "linux",
+    "Online": true,
+    "LastSeen": "0001-01-01T00:00:00Z"
+  },
+  "Peer": {
+    "nodekey:aaa": {
+      "ID": "n-halo",
+      "HostName": "Halo",
+      "DNSName": "halo.tail1234.ts.net.",
+      "OS": "linux",
+      "Online": true,
+      "LastSeen": "2026-11-16T09:30:00Z"
+    },
+    "nodekey:bbb": {
+      "ID": "n-tp",
+      "HostName": "TP",
+      "DNSName": "tp.tail1234.ts.net.",
+      "OS": "linux",
+      "Online": false,
+      "LastSeen": "2026-11-15T22:10:05.123456789Z"
+    },
+    "nodekey:ccc": {
+      "ID": "n-mbp",
+      "HostName": "MacBook",
+      "DNSName": "MBP.tail1234.ts.net.",
+      "OS": "macOS",
+      "Online": true,
+      "LastSeen": "2026-11-16T09:59:00Z"
+    },
+    "nodekey:ddd": {
+      "ID": "n-box",
+      "HostName": "box-nas",
+      "DNSName": "box-nas.tail1234.ts.net.",
+      "OS": "linux",
+      "Online": false,
+      "LastSeen": "0001-01-01T00:00:00Z"
+    },
+    "nodekey:eee": {
+      "ID": "n-evil",
+      "HostName": "evil\u001b[31mhost",
+      "DNSName": "evil.tail1234.ts.net.",
+      "OS": "linux",
+      "Online": true,
+      "LastSeen": "2026-11-16T09:00:00Z"
+    },
+    "nodekey:fff": {
+      "ID": "n-phone",
+      "HostName": "phone",
+      "DNSName": "phone.tail1234.ts.net.",
+      "OS": "android",
+      "Online": false,
+      "LastSeen": "2026-11-14T08:00:00Z"
+    }
+  }
+}

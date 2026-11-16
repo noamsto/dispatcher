@@ -4,6 +4,7 @@
 package view
 
 import (
+	"errors"
 	"fmt"
 	"regexp"
 	"slices"
@@ -16,7 +17,7 @@ import (
 const SchemaVersion = 1
 
 // Names is every view `--view` accepts, in tab order.
-var Names = []string{"overview", "roster", "budget", "runs", "settings", "map"}
+var Names = []string{"overview", "roster", "budget", "runs", "settings", "map", "fleet"}
 
 // Loaded says which sources have delivered at least once.
 type Loaded struct {
@@ -29,6 +30,8 @@ type Inputs struct {
 	Loaded Loaded
 	NowMS  int64
 	Crew   []string
+	// Dir is the directory every action runs in; nil means dash's cwd.
+	Dir *string
 }
 
 func (in Inputs) nowSec() int64 {
@@ -52,6 +55,8 @@ func Build(name string, in Inputs) (any, error) {
 		return BuildSettings(in), nil
 	case "map":
 		return BuildMap(in), nil
+	case "fleet":
+		return nil, errors.New("view fleet is machine-wide: build it with BuildFleet from FleetInputs")
 	}
 	return nil, fmt.Errorf("unknown view %q (valid: %s)", name, strings.Join(Names, ", "))
 }
@@ -87,6 +92,7 @@ type Action struct {
 	Label      string   `json:"label"`
 	Command    string   `json:"command" dash:"raw"`
 	Argv       []string `json:"argv" dash:"raw"`
+	Dir        *string  `json:"dir" dash:"raw"`
 	NeedsInput bool     `json:"needs_input"`
 	PR         *int     `json:"pr"`
 }
@@ -147,6 +153,21 @@ func shellJoin(argv []string) string {
 
 func newAction(key, verb, label string, needsInput bool, argv []string) Action {
 	return Action{Key: key, Verb: verb, Label: label, Command: shellJoin(argv), Argv: argv, NeedsInput: needsInput}
+}
+
+// withDir returns a with its argv bound to dir; a nil dir leaves it as built.
+func withDir(a Action, dir *string) Action {
+	if dir == nil {
+		return a
+	}
+	a.Dir = dir
+	a.Command = "cd " + shellQuote(*dir) + " && " + shellJoin(a.Argv)
+	return a
+}
+
+// RelaunchArgv restarts a dead crew's dispatcher from its launch record.
+func RelaunchArgv(crewID, repoRoot string) []string {
+	return []string{"dispatcher", "--relaunch", crewID, "--repo", repoRoot}
 }
 
 // WorkerActions is the operator's menu for one worker. Peer workers belong to

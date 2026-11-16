@@ -44,7 +44,7 @@ func TestAttentionKinds(t *testing.T) {
 		{"merge_ready:c1:feat/b", "merge_ready", "ready", "merge", "m", []string{"crew", "merge", "12", "--crew", "c1"}},
 		{"lane_dead:c2:", "lane_dead", "critical", "inspect", "", []string{"crew", "stream", "--crew", "c2", "--status"}},
 		{"hold_matured:c1:h-due", "hold_matured", "warning", "inspect", "", []string{"crew", "hold", "due", "--crew", "c1"}},
-		{"blocked:c1:feat/r", "blocked", "warning", "reply", "r", nil},
+		{"blocked:halo/c1:feat/r", "blocked", "warning", "reply", "r", nil},
 	}
 	for _, c := range cases {
 		a := item(t, v, c.id)
@@ -65,7 +65,7 @@ func TestAttentionKinds(t *testing.T) {
 }
 
 func TestAttentionPeerFallback(t *testing.T) {
-	a := item(t, view.BuildOverview(viewtest.Inputs()), "blocked:c1:feat/p")
+	a := item(t, view.BuildOverview(viewtest.Inputs()), "blocked:mbp/c1:feat/p")
 	if a.Origin != view.OriginPeer || a.Action != nil || a.Severity != view.SeverityWarning {
 		t.Errorf("peer item = %+v", a)
 	}

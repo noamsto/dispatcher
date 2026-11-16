@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/noamsto/dispatcher/dash/internal/data"
@@ -86,7 +87,7 @@ func TestRemoteUnknownFields(t *testing.T) {
 			t.Error("remote activity not null")
 		}
 	}
-	item(t, v, "blocked:c1:feat/r")
+	item(t, v, "blocked:halo/c1:feat/r")
 }
 
 func TestPhase(t *testing.T) {
@@ -179,6 +180,12 @@ func TestGoldenViews(t *testing.T) {
 	for _, name := range view.Names {
 		t.Run(name, func(t *testing.T) {
 			v, err := view.Build(name, viewtest.Inputs())
+			if name == "fleet" {
+				if err == nil || !strings.Contains(err.Error(), "BuildFleet") {
+					t.Errorf("Build(fleet) err = %v, want a pointer to BuildFleet", err)
+				}
+				return
+			}
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -262,4 +269,38 @@ func TestPeerRowNeverShadowsLocalRow(t *testing.T) {
 			t.Errorf("peer row shadows %+v", w)
 		}
 	}
+}
+
+func TestOverviewInputsDir(t *testing.T) {
+	check := func(v view.OverviewView, want *string) {
+		t.Helper()
+		var acts []view.Action
+		for _, w := range v.Workers {
+			acts = append(acts, w.Actions...)
+		}
+		for _, a := range v.Attention {
+			if a.Action != nil {
+				acts = append(acts, *a.Action)
+			}
+		}
+		if len(acts) == 0 {
+			t.Fatal("no actions")
+		}
+		for _, a := range acts {
+			if want == nil {
+				if a.Dir != nil || strings.HasPrefix(a.Command, "cd ") {
+					t.Errorf("%s: dir %v command %q, want none", a.Verb, a.Dir, a.Command)
+				}
+				continue
+			}
+			if a.Dir == nil || *a.Dir != *want || !strings.HasPrefix(a.Command, "cd /r/x && ") {
+				t.Errorf("%s: dir %v command %q", a.Verb, a.Dir, a.Command)
+			}
+		}
+	}
+	dir := "/r/x"
+	in := viewtest.Inputs()
+	check(view.BuildOverview(in), nil)
+	in.Dir = &dir
+	check(view.BuildOverview(in), &dir)
 }

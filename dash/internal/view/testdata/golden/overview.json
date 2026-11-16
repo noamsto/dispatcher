@@ -18,6 +18,7 @@
   "attention": [
     {
       "id": "failed:c1:feat/h",
+      "crew_key": null,
       "crew": "c1",
       "branch": "feat/h",
       "worker": "feat/h",
@@ -40,12 +41,14 @@
           "--",
           "feat/h"
         ],
+        "dir": null,
         "needs_input": false,
         "pr": null
       }
     },
     {
       "id": "dead:c1:feat/g",
+      "crew_key": null,
       "crew": "c1",
       "branch": "feat/g",
       "worker": "feat/g",
@@ -68,12 +71,14 @@
           "--",
           "feat/g"
         ],
+        "dir": null,
         "needs_input": false,
         "pr": null
       }
     },
     {
       "id": "role_failed:c1:feat/a",
+      "crew_key": null,
       "crew": "c1",
       "branch": "feat/a",
       "worker": "otter",
@@ -96,12 +101,14 @@
           "--",
           "feat/a"
         ],
+        "dir": null,
         "needs_input": false,
         "pr": null
       }
     },
     {
       "id": "lane_dead:c2:",
+      "crew_key": null,
       "crew": "c2",
       "branch": "",
       "worker": "",
@@ -123,12 +130,14 @@
           "c2",
           "--status"
         ],
+        "dir": null,
         "needs_input": false,
         "pr": null
       }
     },
     {
-      "id": "blocked:c1:feat/r",
+      "id": "blocked:halo/c1:feat/r",
+      "crew_key": null,
       "crew": "c1",
       "branch": "feat/r",
       "worker": "feat/r",
@@ -152,12 +161,14 @@
           "worker:feat/r",
           "<text>"
         ],
+        "dir": null,
         "needs_input": true,
         "pr": null
       }
     },
     {
       "id": "blocked:c1:feat/c",
+      "crew_key": null,
       "crew": "c1",
       "branch": "feat/c",
       "worker": "feat/c",
@@ -181,12 +192,14 @@
           "worker:feat/c",
           "<text>"
         ],
+        "dir": null,
         "needs_input": true,
         "pr": null
       }
     },
     {
       "id": "stall:c1:feat/e",
+      "crew_key": null,
       "crew": "c1",
       "branch": "feat/e",
       "worker": "feat/e",
@@ -209,12 +222,14 @@
           "--",
           "feat/e"
         ],
+        "dir": null,
         "needs_input": false,
         "pr": null
       }
     },
     {
       "id": "prompt:c1:feat/d",
+      "crew_key": null,
       "crew": "c1",
       "branch": "feat/d",
       "worker": "feat/d",
@@ -237,12 +252,14 @@
           "--",
           "feat/d"
         ],
+        "dir": null,
         "needs_input": false,
         "pr": null
       }
     },
     {
       "id": "watchdog:c1:feat/f",
+      "crew_key": null,
       "crew": "c1",
       "branch": "feat/f",
       "worker": "feat/f",
@@ -265,12 +282,14 @@
           "--",
           "feat/f"
         ],
+        "dir": null,
         "needs_input": false,
         "pr": null
       }
     },
     {
       "id": "hold_matured:c1:h-due",
+      "crew_key": null,
       "crew": "c1",
       "branch": "",
       "worker": "",
@@ -292,12 +311,14 @@
           "--crew",
           "c1"
         ],
+        "dir": null,
         "needs_input": false,
         "pr": null
       }
     },
     {
-      "id": "blocked:c1:feat/p",
+      "id": "blocked:mbp/c1:feat/p",
+      "crew_key": null,
       "crew": "c1",
       "branch": "feat/p",
       "worker": "feat/p",
@@ -311,6 +332,7 @@
     },
     {
       "id": "merge_ready:c1:feat/b",
+      "crew_key": null,
       "crew": "c1",
       "branch": "feat/b",
       "worker": "heron",
@@ -332,6 +354,7 @@
           "--crew",
           "c1"
         ],
+        "dir": null,
         "needs_input": false,
         "pr": 12
       }
@@ -403,6 +426,7 @@
             "--",
             "feat/a"
           ],
+          "dir": null,
           "needs_input": false,
           "pr": null
         },
@@ -419,6 +443,7 @@
             "--",
             "otter"
           ],
+          "dir": null,
           "needs_input": false,
           "pr": null
         },
@@ -436,6 +461,7 @@
             "worker:feat/a",
             "<text>"
           ],
+          "dir": null,
           "needs_input": true,
           "pr": null
         }
@@ -509,6 +535,7 @@
             "--",
             "feat/b"
           ],
+          "dir": null,
           "needs_input": false,
           "pr": null
         },
@@ -525,6 +552,7 @@
             "--",
             "heron"
           ],
+          "dir": null,
           "needs_input": false,
           "pr": null
         },
@@ -542,6 +570,7 @@
             "worker:feat/b",
             "<text>"
           ],
+          "dir": null,
           "needs_input": true,
           "pr": null
         },
@@ -557,6 +586,7 @@
             "--crew",
             "c1"
           ],
+          "dir": null,
           "needs_input": false,
           "pr": 12
         }
@@ -627,6 +657,7 @@
             "--",
             "feat/c"
           ],
+          "dir": null,
           "needs_input": false,
           "pr": null
         },
@@ -643,6 +674,7 @@
             "--",
             "feat/c"
           ],
+          "dir": null,
           "needs_input": false,
           "pr": null
         },
@@ -660,6 +692,7 @@
             "worker:feat/c",
             "<text>"
           ],
+          "dir": null,
           "needs_input": true,
           "pr": null
         }
@@ -730,6 +763,7 @@
             "--",
             "feat/d"
           ],
+          "dir": null,
           "needs_input": false,
           "pr": null
         },
@@ -746,6 +780,7 @@
             "--",
             "feat/d"
           ],
+          "dir": null,
           "needs_input": false,
           "pr": null
         },
@@ -763,6 +798,7 @@
             "worker:feat/d",
             "<text>"
           ],
+          "dir": null,
           "needs_input": true,
           "pr": null
         }
@@ -833,6 +869,7 @@
             "--",
             "feat/e"
           ],
+          "dir": null,
           "needs_input": false,
           "pr": null
         },
@@ -849,6 +886,7 @@
             "--",
             "feat/e"
           ],
+          "dir": null,
           "needs_input": false,
           "pr": null
         },
@@ -866,6 +904,7 @@
             "worker:feat/e",
             "<text>"
           ],
+          "dir": null,
           "needs_input": true,
           "pr": null
         }
@@ -936,6 +975,7 @@
             "--",
             "feat/f"
           ],
+          "dir": null,
           "needs_input": false,
           "pr": null
         },
@@ -952,6 +992,7 @@
             "--",
             "feat/f"
           ],
+          "dir": null,
           "needs_input": false,
           "pr": null
         },
@@ -969,6 +1010,7 @@
             "worker:feat/f",
             "<text>"
           ],
+          "dir": null,
           "needs_input": true,
           "pr": null
         }
@@ -1039,6 +1081,7 @@
             "--",
             "feat/g"
           ],
+          "dir": null,
           "needs_input": false,
           "pr": null
         },
@@ -1055,6 +1098,7 @@
             "--",
             "feat/g"
           ],
+          "dir": null,
           "needs_input": false,
           "pr": null
         },
@@ -1072,6 +1116,7 @@
             "worker:feat/g",
             "<text>"
           ],
+          "dir": null,
           "needs_input": true,
           "pr": null
         }
@@ -1142,6 +1187,7 @@
             "--",
             "feat/h"
           ],
+          "dir": null,
           "needs_input": false,
           "pr": null
         },
@@ -1158,6 +1204,7 @@
             "--",
             "feat/h"
           ],
+          "dir": null,
           "needs_input": false,
           "pr": null
         },
@@ -1175,6 +1222,7 @@
             "worker:feat/h",
             "<text>"
           ],
+          "dir": null,
           "needs_input": true,
           "pr": null
         }
@@ -1211,6 +1259,7 @@
             "--",
             "feat/r"
           ],
+          "dir": null,
           "needs_input": false,
           "pr": null
         },
@@ -1227,6 +1276,7 @@
             "--",
             "feat/r"
           ],
+          "dir": null,
           "needs_input": false,
           "pr": null
         },
@@ -1244,6 +1294,7 @@
             "worker:feat/r",
             "<text>"
           ],
+          "dir": null,
           "needs_input": true,
           "pr": null
         }
@@ -1314,6 +1365,7 @@
             "--",
             "feat/j"
           ],
+          "dir": null,
           "needs_input": false,
           "pr": null
         },
@@ -1330,6 +1382,7 @@
             "--",
             "feat/j"
           ],
+          "dir": null,
           "needs_input": false,
           "pr": null
         },
@@ -1347,6 +1400,7 @@
             "worker:feat/j",
             "<text>"
           ],
+          "dir": null,
           "needs_input": true,
           "pr": null
         }

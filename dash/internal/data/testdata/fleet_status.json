@@ -1,0 +1,151 @@
+{
+  "ts": 1794800010000,
+  "host": "lap",
+  "machine": {
+    "budget": 8,
+    "weight": 5,
+    "pending": 1,
+    "free": 3,
+    "leads": [
+      {"repo": "a", "branch": "feat/a", "name": "lead-a", "tier": "standard", "weight": 2},
+      {"repo": "a", "branch": "feat/r1", "name": "lead-r1", "tier": "deep", "weight": 3}
+    ],
+    "load1": 1.5,
+    "cores": 8,
+    "load_over": false,
+    "engines": {
+      "claude": {"in_budget": true, "hot_windows": [], "limit_reached": false},
+      "codex": {"in_budget": false, "hot_windows": ["5h"], "limit_reached": true}
+    },
+    "budget_age_s": 42,
+    "local_models": [
+      {"id": "qwen", "max_concurrent": 2, "in_use": 1}
+    ]
+  },
+  "queue": {
+    "head": {"repo": "a", "crew_id": "c1", "id": "h-f1", "waited_s": 900},
+    "demoted": [],
+    "parked": [{"repo": "b", "crew_id": "c5", "id": "h-p1", "reason": "oversize"}]
+  },
+  "repos": [
+    {
+      "host": "lap",
+      "repo": "a",
+      "common": "/r/a/.git",
+      "misrouted": 0,
+      "crews": [
+        {
+          "crew_id": "c1",
+          "dispatcher": {"state": "live", "pid": 4242, "pane": "%3", "lane": "alive", "last_event_s": 4, "home": "/r/a/.git"},
+          "attention": "attended",
+          "workers": [
+            {"branch": "feat/a", "name": "w-a", "state": "working", "tier": "standard", "engine": "claude", "crew_id": "c1", "ts": 1794799990000, "live": true},
+            {"branch": "feat/b", "name": "w-b", "state": "pr_open", "pr_url": "https://github.com/o/a/pull/12", "tier": "standard", "engine": "claude", "crew_id": "c1", "ts": 1794799900000, "live": true},
+            {"branch": "feat/r1", "name": "w-r1", "state": "working", "tier": "deep", "engine": "claude", "crew_id": "c1", "ts": 1794799995000, "live": true, "host": "halo"},
+            {"branch": "feat/r2", "name": "w-r2", "state": "working", "tier": "standard", "engine": "codex", "crew_id": "c1", "ts": 1794799000000, "live": true, "host": "tp"},
+            {"branch": "feat/far", "name": "far", "host": "far", "state": null, "live": null, "ts": 1794800000000, "host_error": "ssh: connect to host far port 22: timed out"}
+          ],
+          "holds": [
+            {"id": "h-q1", "kind": "quota", "waited_s": 120, "due": true},
+            {"id": "h-f1", "kind": "fleet", "waited_s": 900, "due": true}
+          ],
+          "relays": [
+            {"host": "halo", "live": true, "cursor_ts": 1794800005000},
+            {"host": "tp", "live": false, "cursor_ts": 1794790000000}
+          ]
+        },
+        {
+          "crew_id": "c3",
+          "dispatcher": {"state": "dead", "pid": 999, "pane": null, "lane": null, "last_event_s": 7200, "home": "/r/a/.git"},
+          "attention": "unattended",
+          "workers": [
+            {"branch": "feat/o1", "name": "w-o1", "state": "working", "tier": "standard", "engine": "claude", "crew_id": "c3", "ts": 1794792800000, "live": false, "stale": false},
+            {"branch": "feat/o2", "name": "w-o2", "state": "pr_open", "tier": "standard", "engine": "claude", "crew_id": "c3", "ts": 1794792000000, "live": false, "stale": false}
+          ],
+          "holds": [],
+          "relays": []
+        },
+        {
+          "crew_id": "c4",
+          "dispatcher": {"state": "closed", "pid": null, "pane": null, "lane": null, "last_event_s": 86400, "home": "/r/a/.git"},
+          "attention": "idle",
+          "workers": [
+            {"branch": "feat/d1", "name": "w-d1", "state": "done", "tier": "trivial", "engine": "claude", "crew_id": "c4", "ts": 1794700000000, "live": false},
+            {"branch": "feat/d2", "name": "w-d2", "state": "reaped", "tier": "trivial", "engine": "claude", "crew_id": "c4", "ts": 1794700000000, "live": false}
+          ],
+          "holds": [],
+          "relays": []
+        },
+        {
+          "crew_id": "c6",
+          "dispatcher": {"state": "dead", "pid": 888, "pane": null, "lane": null, "last_event_s": 5000000, "home": "/r/a/.git"},
+          "attention": "idle",
+          "workers": [
+            {"branch": "feat/s1", "name": "w-s1", "state": "working", "tier": "standard", "engine": "claude", "crew_id": "c6", "ts": 1789800000000, "live": false, "stale": true},
+            {"branch": "feat/s2", "name": "w-s2", "state": "pr_open", "tier": "standard", "engine": "claude", "crew_id": "c6", "ts": 1789800000000, "live": false, "stale": true}
+          ],
+          "holds": [],
+          "relays": []
+        }
+      ],
+      "peers": {
+        "links": [
+          {"host": "mbp", "ok_ts": 1794799400000, "err_ts": 1794799900000, "detail": "ssh: Connection refused"},
+          {"host": "box", "ok_ts": 1794800005000, "err_ts": null, "detail": null}
+        ],
+        "rows": [
+          {"branch": "feat/p1", "name": "pw1", "state": null, "tier": "standard", "engine": "claude", "crew_id": "p1", "ts": 1794799300000, "age_s": 710, "host": "mbp", "peer": true, "live": null, "peer_error": "stale link"},
+          {"branch": "feat/shared", "name": "pw2", "state": null, "tier": "standard", "engine": "claude", "crew_id": "p2", "ts": 1794799300000, "age_s": 710, "host": "mbp", "peer": true, "live": null, "peer_error": "stale link"},
+          {"branch": "feat/shared", "name": "pw3", "state": "working", "tier": "standard", "engine": "claude", "crew_id": "p2", "ts": 1794800000000, "age_s": 10, "host": "box", "peer": true, "live": null},
+          {"branch": "feat/p3", "name": "pw4", "state": "pr_open", "tier": "deep", "engine": "codex", "crew_id": "p3", "ts": 1794800000000, "age_s": 10, "host": "box", "peer": true, "live": null}
+        ],
+        "dropped": 1
+      }
+    },
+    {
+      "host": "lap",
+      "repo": "b",
+      "common": "/r/b/.git",
+      "misrouted": 0,
+      "crews": [
+        {
+          "crew_id": "c1",
+          "dispatcher": {"state": "closed", "pid": null, "pane": null, "lane": null, "last_event_s": 300, "home": null},
+          "attention": "idle",
+          "workers": [
+            {"branch": "feat/b2", "name": "w-b2", "state": "pr_open", "pr_url": "https://github.com/o/b/pull/12", "tier": "standard", "engine": "claude", "crew_id": "c1", "ts": 1794799800000, "live": true}
+          ],
+          "holds": [],
+          "relays": []
+        },
+        {
+          "crew_id": "c5",
+          "dispatcher": {"state": "live", "pid": 5151, "pane": "%7", "lane": "stale", "last_event_s": 20, "home": "/r/b/.git"},
+          "attention": "attended",
+          "workers": [
+            {"branch": "feat/c5", "name": "w-c5", "state": "blocked", "tier": "standard", "engine": "claude", "crew_id": "c5", "ts": 1794799700000, "live": true}
+          ],
+          "holds": [
+            {"id": "h-f2", "kind": "fleet", "waited_s": 200, "due": false}
+          ],
+          "relays": []
+        }
+      ],
+      "peers": {
+        "links": [
+          {"host": "mbp", "ok_ts": 1794799400000, "err_ts": 1794799900000, "detail": "ssh: Connection refused"},
+          {"host": "box", "ok_ts": 1794800005000, "err_ts": null, "detail": null}
+        ],
+        "rows": [
+          {"branch": "feat/p1", "name": "pw1", "state": null, "tier": "standard", "engine": "claude", "crew_id": "p1", "ts": 1794799300000, "age_s": 710, "host": "mbp", "peer": true, "live": null, "peer_error": "stale link"},
+          {"branch": "feat/shared", "name": "pw3", "state": "working", "tier": "standard", "engine": "claude", "crew_id": "p2", "ts": 1794800000000, "age_s": 10, "host": "box", "peer": true, "live": null},
+          {"branch": "feat/p3", "name": "pw4", "state": "pr_open", "tier": "deep", "engine": "codex", "crew_id": "p3", "ts": 1794800000000, "age_s": 10, "host": "box", "peer": true, "live": null},
+          {"branch": "feat/x", "name": "pw5", "state": "working", "tier": "standard", "engine": "claude", "crew_id": "c3", "ts": 1794800000000, "age_s": 10, "host": "box", "peer": true, "live": null}
+        ],
+        "dropped": 0
+      }
+    }
+  ],
+  "skipped": [{"path": "/r/gone", "status": "no bus"}],
+  "hosts": []
+}

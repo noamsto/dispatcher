@@ -1,4 +1,4 @@
-  Overview │   Live │   Board │   Budget │   Runs │ ▸ Settings │   Map
+  Overview │   Live │   Board │   Budget │   Runs │ ▸ Settings │   Map │   Fleet
 layers: default <BASE>
         user    <USER> (present)
         locked  <LOCKED>
@@ -6,6 +6,7 @@ layers: default <BASE>
   profile                             work                                                                     🔒 locked
   freshSeams                          unset                                                                      default
   dispatcherChrome                    unset                                                                      default
+  dashTailscale                       unset                                                                      default
   rosterDiagram.autoOpen              unset                                                                      default
   overseer.autoRelaunch               unset                                                                      default
   openrouter.monthlyUsd               20                                                                         default
@@ -36,5 +37,4 @@ layers: default <BASE>
 
 
 
-
-j/k move • space change • +/- adjust • x reset • e edit file • v view all • 1-7 views …  refreshed 14:13:20
+j/k move • space change • +/- adjust • x reset • e edit file • v view all • 1-8 views …  refreshed 14:13:20

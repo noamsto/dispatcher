@@ -370,6 +370,10 @@ func newBarrierRunner(inner *FakeRunner, n int) *barrierRunner {
 }
 
 func (b *barrierRunner) Run(ctx context.Context, name string, args ...string) ([]byte, []byte, error) {
+	return b.RunIn(ctx, "", name, args...)
+}
+
+func (b *barrierRunner) RunIn(ctx context.Context, dir, name string, args ...string) ([]byte, []byte, error) {
 	b.mu.Lock()
 	b.arrived++
 	if b.arrived == b.n {
@@ -381,7 +385,7 @@ func (b *barrierRunner) Run(ctx context.Context, name string, args ...string) ([
 	case <-ctx.Done():
 		return nil, nil, ctx.Err()
 	}
-	return b.inner.Run(ctx, name, args...)
+	return b.inner.RunIn(ctx, dir, name, args...)
 }
 
 // TestCollectRunsSourcesConcurrently: dispatch-config's two calls,
@@ -564,5 +568,19 @@ func TestCollectRosterLeavesAgeAbsentWithoutTS(t *testing.T) {
 	}
 	if age, ok := sec.Peers[0]["age_s"]; ok {
 		t.Errorf("placeholder has age_s = %v, want absent", age)
+	}
+}
+
+func TestFakeRunnerRunInRecordsDir(t *testing.T) {
+	fr := &FakeRunner{Responses: map[string]FakeResponse{"crew x": {}}}
+	if _, _, err := fr.RunIn(context.Background(), "/r/x", "crew", "x"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := fr.Run(context.Background(), "crew", "x"); err != nil {
+		t.Fatal(err)
+	}
+	calls := fr.CallsSnapshot()
+	if len(calls) != 2 || calls[0].Dir != "/r/x" || calls[1].Dir != "" {
+		t.Errorf("calls = %+v", calls)
 	}
 }

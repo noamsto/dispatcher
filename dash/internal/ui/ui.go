@@ -33,6 +33,10 @@ type Deps struct {
 	Now            int64 // collection clock (data.Config.Now) stamped into the snapshot
 	Map            MapDeps
 	DispatchConfig string // dispatch-config binary the Settings tab writes through
+
+	// FleetWatchPaths is the glob list the Fleet tab's change poll watches,
+	// re-read every tick; nil disables it.
+	FleetWatchPaths func() []string
 }
 
 // Run starts the interactive dashboard. It resolves the roster's live bus
@@ -61,11 +65,17 @@ func Run(deps Deps) error {
 		watcher:     watcher,
 		liveOffNote: liveOff,
 	}
+	if deps.FleetWatchPaths != nil {
+		live.fleetWatcher = buswatch.NewPoll(deps.FleetWatchPaths, time.Second)
+	}
 	m := NewModel(deps, time.Now, live)
 	_, err := tea.NewProgram(m, tea.WithAltScreen()).Run()
 	deps.Map.deleteImages(deps.InTmux)
 	if watcher != nil {
 		_ = watcher.Close()
+	}
+	if live.fleetWatcher != nil {
+		_ = live.fleetWatcher.Close()
 	}
 	return err
 }

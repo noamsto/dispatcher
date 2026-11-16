@@ -95,6 +95,14 @@ type farLoad struct {
 	LoadOver   bool                `json:"load_over"`
 	Engines    map[farID]farEngine `json:"engines"`
 	BudgetAgeS *int                `json:"budget_age_s"`
+
+	LocalModels []farLocalModel `json:"local_models"`
+}
+
+type farLocalModel struct {
+	ID            farID `json:"id"`
+	MaxConcurrent int   `json:"max_concurrent"`
+	InUse         int   `json:"in_use"`
 }
 
 type farLead struct {
@@ -283,7 +291,7 @@ func (s farStatus) project(host string, label func(farID, farKey) string, labelQ
 }
 
 func (l farLoad) project() *LoadDoc {
-	d := &LoadDoc{Budget: l.Budget, Weight: l.Weight, Pending: l.Pending, Free: l.Free, Leads: []Lead{}, Load1: l.Load1,
+	d := &LoadDoc{Budget: l.Budget, Weight: l.Weight, Pending: l.Pending, Free: l.Free, Leads: []Lead{}, LocalModels: []LocalModel{}, Load1: l.Load1,
 		Cores: l.Cores, LoadOver: l.LoadOver, Engines: map[string]Engine{}, BudgetAgeS: l.BudgetAgeS}
 	for _, ld := range l.Leads {
 		if !ld.Repo.ident() || !ld.Branch.ident() || !ld.Tier.in(tiers) {
@@ -294,6 +302,11 @@ func (l farLoad) project() *LoadDoc {
 			lead.Name = string(ld.Name)
 		}
 		d.Leads = append(d.Leads, lead)
+	}
+	for _, m := range l.LocalModels {
+		if m.ID.ident() {
+			d.LocalModels = append(d.LocalModels, LocalModel{ID: string(m.ID), MaxConcurrent: m.MaxConcurrent, InUse: m.InUse})
+		}
 	}
 	for name, e := range l.Engines {
 		if !name.ident() {

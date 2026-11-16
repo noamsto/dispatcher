@@ -44,6 +44,7 @@
             "--",
             "feat/a"
           ],
+          "dir": null,
           "needs_input": false,
           "pr": null
         },
@@ -60,6 +61,7 @@
             "--",
             "otter"
           ],
+          "dir": null,
           "needs_input": false,
           "pr": null
         },
@@ -77,6 +79,7 @@
             "worker:feat/a",
             "<text>"
           ],
+          "dir": null,
           "needs_input": true,
           "pr": null
         }
@@ -123,6 +126,7 @@
             "--",
             "feat/b"
           ],
+          "dir": null,
           "needs_input": false,
           "pr": null
         },
@@ -139,6 +143,7 @@
             "--",
             "heron"
           ],
+          "dir": null,
           "needs_input": false,
           "pr": null
         },
@@ -156,6 +161,7 @@
             "worker:feat/b",
             "<text>"
           ],
+          "dir": null,
           "needs_input": true,
           "pr": null
         },
@@ -171,6 +177,7 @@
             "--crew",
             "c1"
           ],
+          "dir": null,
           "needs_input": false,
           "pr": 12
         }
@@ -217,6 +224,7 @@
             "--",
             "feat/c"
           ],
+          "dir": null,
           "needs_input": false,
           "pr": null
         },
@@ -233,6 +241,7 @@
             "--",
             "feat/c"
           ],
+          "dir": null,
           "needs_input": false,
           "pr": null
         },
@@ -250,6 +259,7 @@
             "worker:feat/c",
             "<text>"
           ],
+          "dir": null,
           "needs_input": true,
           "pr": null
         }
@@ -296,6 +306,7 @@
             "--",
             "feat/d"
           ],
+          "dir": null,
           "needs_input": false,
           "pr": null
         },
@@ -312,6 +323,7 @@
             "--",
             "feat/d"
           ],
+          "dir": null,
           "needs_input": false,
           "pr": null
         },
@@ -329,6 +341,7 @@
             "worker:feat/d",
             "<text>"
           ],
+          "dir": null,
           "needs_input": true,
           "pr": null
         }
@@ -375,6 +388,7 @@
             "--",
             "feat/e"
           ],
+          "dir": null,
           "needs_input": false,
           "pr": null
         },
@@ -391,6 +405,7 @@
             "--",
             "feat/e"
           ],
+          "dir": null,
           "needs_input": false,
           "pr": null
         },
@@ -408,6 +423,7 @@
             "worker:feat/e",
             "<text>"
           ],
+          "dir": null,
           "needs_input": true,
           "pr": null
         }
@@ -454,6 +470,7 @@
             "--",
             "feat/f"
           ],
+          "dir": null,
           "needs_input": false,
           "pr": null
         },
@@ -470,6 +487,7 @@
             "--",
             "feat/f"
           ],
+          "dir": null,
           "needs_input": false,
           "pr": null
         },
@@ -487,6 +505,7 @@
             "worker:feat/f",
             "<text>"
           ],
+          "dir": null,
           "needs_input": true,
           "pr": null
         }
@@ -533,6 +552,7 @@
             "--",
             "feat/g"
           ],
+          "dir": null,
           "needs_input": false,
           "pr": null
         },
@@ -549,6 +569,7 @@
             "--",
             "feat/g"
           ],
+          "dir": null,
           "needs_input": false,
           "pr": null
         },
@@ -566,6 +587,7 @@
             "worker:feat/g",
             "<text>"
           ],
+          "dir": null,
           "needs_input": true,
           "pr": null
         }
@@ -612,6 +634,7 @@
             "--",
             "feat/h"
           ],
+          "dir": null,
           "needs_input": false,
           "pr": null
         },
@@ -628,6 +651,7 @@
             "--",
             "feat/h"
           ],
+          "dir": null,
           "needs_input": false,
           "pr": null
         },
@@ -645,6 +669,7 @@
             "worker:feat/h",
             "<text>"
           ],
+          "dir": null,
           "needs_input": true,
           "pr": null
         }
@@ -691,6 +716,7 @@
             "--",
             "feat/i"
           ],
+          "dir": null,
           "needs_input": false,
           "pr": null
         },
@@ -707,6 +733,7 @@
             "--",
             "feat/i"
           ],
+          "dir": null,
           "needs_input": false,
           "pr": null
         },
@@ -724,6 +751,7 @@
             "worker:feat/i",
             "<text>"
           ],
+          "dir": null,
           "needs_input": true,
           "pr": null
         }
@@ -770,6 +798,7 @@
             "--",
             "feat/r"
           ],
+          "dir": null,
           "needs_input": false,
           "pr": null
         },
@@ -786,6 +815,7 @@
             "--",
             "feat/r"
           ],
+          "dir": null,
           "needs_input": false,
           "pr": null
         },
@@ -803,6 +833,7 @@
             "worker:feat/r",
             "<text>"
           ],
+          "dir": null,
           "needs_input": true,
           "pr": null
         }
@@ -849,6 +880,7 @@
             "--",
             "feat/j"
           ],
+          "dir": null,
           "needs_input": false,
           "pr": null
         },
@@ -865,6 +897,7 @@
             "--",
             "feat/j"
           ],
+          "dir": null,
           "needs_input": false,
           "pr": null
         },
@@ -882,6 +915,7 @@
             "worker:feat/j",
             "<text>"
           ],
+          "dir": null,
           "needs_input": true,
           "pr": null
         }

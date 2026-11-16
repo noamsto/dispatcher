@@ -551,8 +551,8 @@ func TestRootKeysOnOverview(t *testing.T) {
 		t.Errorf("] on Overview -> tab %d, want Live", m.active)
 	}
 	m, _ = press(base, keyRune('['))
-	if m.active != mapTab {
-		t.Errorf("[ on Overview -> tab %d, want Map", m.active)
+	if m.active != fleetTab {
+		t.Errorf("[ on Overview -> tab %d, want Fleet", m.active)
 	}
 
 	_, cmd := press(base, keyRune('R'))
@@ -562,8 +562,8 @@ func TestRootKeysOnOverview(t *testing.T) {
 			seen[sm.src] = true
 		}
 	}
-	if len(seen) != int(numSources) {
-		t.Errorf("R requested %d sources, want %d", len(seen), numSources)
+	if len(seen) != int(numSources)-1 { // fleet only once its tab opened
+		t.Errorf("R requested %d sources, want %d", len(seen), numSources-1)
 	}
 
 	live := base
@@ -661,10 +661,10 @@ func TestOverviewFooterDropsOwnedDigits(t *testing.T) {
 		m.active = tab
 		return stripped(m.renderFooter())
 	}
-	if f := footer(overviewTab); strings.Contains(f, "1-7") {
+	if f := footer(overviewTab); strings.Contains(f, "1-8") {
 		t.Errorf("Overview footer advertises view digits: %q", f)
 	}
-	if f := footer(liveTab); !strings.Contains(f, "1-7 views") {
+	if f := footer(liveTab); !strings.Contains(f, "1-8 views") {
 		t.Errorf("Live footer lacks view digits: %q", f)
 	}
 }
@@ -865,5 +865,44 @@ func TestTinyBodyNoSelection(t *testing.T) {
 	_, cmd := m.Update(keyRune('p'))
 	if got := statusText(cmd); got != actionVerbs["p"]+": no worker selected" {
 		t.Errorf("p status = %q\n%s", got, frame)
+	}
+}
+
+func TestOverviewActionsUseDir(t *testing.T) {
+	asciiProfile(t)
+	dir := "/r/x"
+	in := viewtest.Inputs()
+	in.Dir = &dir
+	resp := map[string]data.FakeResponse{
+		"crew where --crew c1 -- feat/r":                 {Stdout: []byte("feat/r on halo\n")},
+		"crew nudge --crew c1 -- feat/e":                 {Stdout: []byte("nudged\n")},
+		"crew merge 12 --crew c1":                        {Stdout: []byte("merged\n")},
+		"crew reply --crew c1 -- worker:feat/c hi there": {Stdout: []byte("sent\n")},
+	}
+	fr := &data.FakeRunner{Responses: resp}
+	v := newOverviewView(in, overviewNow)
+	v.acts = actionDeps{ctx: context.Background(), runner: fr, crew: []string{"crew"}}
+	v.View(150, 40)
+
+	run := func(branch string, keys ...string) {
+		t.Helper()
+		selectBranch(t, &v, branch)
+		var cmd tea.Cmd
+		v, cmd = ovKeys(v, keys...)
+		status(t, cmd)
+	}
+	run("feat/r", "p")
+	run("feat/e", "n", "y")
+	run("feat/b", "m", "y")
+	run("feat/c", "r", "hi there", "enter")
+
+	calls := fr.CallsSnapshot()
+	if len(calls) != 4 {
+		t.Fatalf("calls = %v", calls)
+	}
+	for _, c := range calls {
+		if c.Dir != dir {
+			t.Errorf("%s %v ran in %q, want %q", c.Name, c.Args, c.Dir, dir)
+		}
 	}
 }

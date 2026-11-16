@@ -126,18 +126,6 @@ func TestBuildRoster(t *testing.T) {
 	}
 }
 
-func TestHoldMatured(t *testing.T) {
-	h := func(kind string, at float64) map[string]any {
-		return map[string]any{"id": "h", "wait": map[string]any{"kind": kind, "resets_at": at}}
-	}
-	if !HoldRowOf(h("window", 100), 100).Matured {
-		t.Error("window at now should be matured")
-	}
-	if HoldRowOf(h("window", 101), 100).Matured || HoldRowOf(h("fleet", 1), 100).Matured {
-		t.Error("future window / fleet must not be matured")
-	}
-}
-
 func TestBuildTabs(t *testing.T) {
 	in := fullInputs(t)
 	if v := BuildBudget(in); v.View != "budget" || v.Warnings == nil || v.Now != in.Snap.Now {
@@ -269,6 +257,50 @@ func TestMergeActionCarriesPR(t *testing.T) {
 		}
 		if a.Key == "m" && *a.PR != 12 {
 			t.Errorf("merge PR = %d", *a.PR)
+		}
+	}
+}
+
+func TestActionDirCommand(t *testing.T) {
+	dir := "/r/a b"
+	a := newAction("p", "peek", "peek", false, PeekArgv([]string{"crew"}, "c1", "feat/a"))
+	got := withDir(a, &dir)
+	if want := "cd '/r/a b' && crew where --crew c1 -- feat/a"; got.Command != want {
+		t.Errorf("command = %q, want %q", got.Command, want)
+	}
+	if got.Dir == nil || *got.Dir != dir {
+		t.Errorf("dir = %v", got.Dir)
+	}
+	if plain := withDir(a, nil); plain.Command != "crew where --crew c1 -- feat/a" || plain.Dir != nil {
+		t.Errorf("nil dir changed the action: %+v", plain)
+	}
+}
+
+func TestRelaunchArgv(t *testing.T) {
+	want := []string{"dispatcher", "--relaunch", "c1", "--repo", "/r"}
+	if got := RelaunchArgv("c1", "/r"); !slices.Equal(got, want) {
+		t.Errorf("argv = %v, want %v", got, want)
+	}
+}
+
+func TestHoldMatured(t *testing.T) {
+	const now = 1000
+	cases := []struct {
+		name string
+		hold map[string]any
+		want bool
+	}{
+		{"window at now", map[string]any{"id": "h", "wait": map[string]any{"kind": "window", "resets_at": float64(1000)}}, true},
+		{"quota without wait kind, past reset", map[string]any{"id": "h", "wait": map[string]any{"resets_at": float64(900)}}, true},
+		{"future reset", map[string]any{"id": "h", "wait": map[string]any{"resets_at": float64(1100)}}, false},
+		{"fleet wait", map[string]any{"id": "h", "wait": map[string]any{"kind": "fleet", "resets_at": float64(900)}}, false},
+		{"fleet status quota due", map[string]any{"id": "h", "kind": "quota", "due": true}, true},
+		{"fleet status quota not due", map[string]any{"id": "h", "kind": "quota", "due": false}, false},
+		{"fleet status fleet due", map[string]any{"id": "h", "kind": "fleet", "due": true}, false},
+	}
+	for _, c := range cases {
+		if got := HoldRowOf(c.hold, now).Matured; got != c.want {
+			t.Errorf("%s: matured = %v, want %v", c.name, got, c.want)
 		}
 	}
 }

@@ -515,3 +515,35 @@ func encode(v any) ([]byte, error) {
 	}
 	return bytes.TrimSuffix(buf.Bytes(), []byte("\n")), nil
 }
+
+// Link is one host's `<host>.link`, in ms; 0 is never.
+type Link struct {
+	Host   string
+	OK     int64
+	Err    int64
+	Detail string
+}
+
+// Links are the stored links by host. A missing store is none.
+func (s Store) Links() ([]Link, error) {
+	ents, err := os.ReadDir(s.Dir)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var out []Link
+	for _, e := range ents {
+		host, ok := strings.CutSuffix(e.Name(), ".link")
+		if !ok {
+			continue
+		}
+		l, err := s.readLink(host)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, Link{Host: host, OK: l.OK, Err: l.Err, Detail: l.Detail})
+	}
+	return out, nil
+}

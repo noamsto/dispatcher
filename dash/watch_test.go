@@ -244,3 +244,37 @@ func TestWatchFixtureBus(t *testing.T) {
 		t.Fatalf("events after a second append = %d, want %d", got, first+2)
 	}
 }
+
+func TestWatchRelayCursor(t *testing.T) {
+	common := t.TempDir()
+	relay := filepath.Join(common, "crew", "crews", "c1", "relay")
+	if err := os.MkdirAll(relay, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(common, "crew", "events.jsonl"), []byte("{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cursor := filepath.Join(relay, "h.cursor")
+	if err := os.WriteFile(cursor, []byte("1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	w := buswatch.Merge(buswatch.NewPoll(func() []string { return watchPaths([]string{common}) }, 50*time.Millisecond))
+	t.Cleanup(func() { _ = w.Close() })
+	collect, _ := counter()
+	lines := startWatch(t, w.Events(), collect, testDebounce)
+	if n := decodeN(t, readLine(t, lines)); n != 1 {
+		t.Fatalf("start line n = %d, want 1", n)
+	}
+
+	tmp := cursor + ".tmp"
+	if err := os.WriteFile(tmp, []byte("12345\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(tmp, cursor); err != nil {
+		t.Fatal(err)
+	}
+	if n := decodeN(t, readLine(t, lines)); n != 2 {
+		t.Fatalf("line n = %d, want 2 after a cursor rewrite", n)
+	}
+}

@@ -7,6 +7,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/noamsto/dispatcher/dash/internal/data"
+	vm "github.com/noamsto/dispatcher/dash/internal/view"
 )
 
 // source is one independently loaded slice of the Snapshot. The order is
@@ -20,10 +21,11 @@ const (
 	srcRatings
 	srcRoster
 	srcBus
+	srcFleet
 	numSources
 )
 
-var sourceNames = [numSources]string{"settings", "budget", "retro", "ratings", "roster", "bus"}
+var sourceNames = [numSources]string{"settings", "budget", "retro", "ratings", "roster", "bus", "fleet"}
 
 func (s source) String() string { return sourceNames[s] }
 
@@ -36,6 +38,8 @@ type Loaders struct {
 	Ratings  func(context.Context) data.RunsSection
 	Roster   func(context.Context) data.RosterSection
 	Bus      func(context.Context) data.BusDigest
+	// Fleet is not loaded at Init: the Fleet tab requests it on first activation.
+	Fleet func(context.Context) vm.FleetInputs
 }
 
 // loadState tracks one source. again records a request that arrived while a
@@ -52,6 +56,7 @@ type sourceMsg struct {
 	src   source
 	apply func(*data.Snapshot)
 	bus   *data.BusDigest // set only by srcBus
+	fleet *vm.FleetInputs // set only by srcFleet
 }
 
 func (l Loaders) cmd(ctx context.Context, s source) tea.Cmd {
@@ -60,6 +65,13 @@ func (l Loaders) cmd(ctx context.Context, s source) tea.Cmd {
 		if s == srcBus && l.Bus != nil {
 			d := l.Bus(ctx)
 			msg.bus = &d
+		}
+		if s == srcFleet {
+			var in vm.FleetInputs
+			if l.Fleet != nil {
+				in = l.Fleet(ctx)
+			}
+			msg.fleet = &in
 		}
 		return msg
 	}

@@ -12,9 +12,11 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -78,6 +80,7 @@ func run() int {
 		scanner := data.NewBusScanner(eventsPath)
 		mapDeps, closeMap := resolveMap(runner)
 		defer closeMap()
+		fleet := newFleetCollector(runner, cfg)
 		deps := ui.Deps{
 			Ctx: ctx,
 			Load: ui.Loaders{
@@ -89,15 +92,17 @@ func run() int {
 				Bus: func(context.Context) data.BusDigest {
 					return busDigest(scanner, eventsErr, time.Now().UnixMilli())
 				},
+				Fleet: func(ctx context.Context) view.FleetInputs { return fleet.collect(ctx, time.Now().Unix()) },
 			},
-			Runner:         runner,
-			Crew:           cfg.Crew,
-			InTmux:         os.Getenv("TMUX") != "",
-			EventsPath:     eventsPath,
-			EventsPathErr:  eventsErr,
-			Now:            cfg.Now,
-			Map:            mapDeps,
-			DispatchConfig: cfg.DispatchConfigBin,
+			Runner:          runner,
+			Crew:            cfg.Crew,
+			InTmux:          os.Getenv("TMUX") != "",
+			EventsPath:      eventsPath,
+			EventsPathErr:   eventsErr,
+			Now:             cfg.Now,
+			Map:             mapDeps,
+			DispatchConfig:  cfg.DispatchConfigBin,
+			FleetWatchPaths: func() []string { return watchPaths(fleet.knownCommons()) },
 		}
 		if err := ui.Run(deps); err != nil {
 			fmt.Fprintln(os.Stderr, "crew dash: "+err.Error())
@@ -151,26 +156,44 @@ func resolveMap(runner data.Runner) (ui.MapDeps, func()) {
 		}
 }
 
-// runView prints one view: indented once, or one compact line per bus change
-// with --watch. One BusScanner serves every collect so later scans only read
-// appended lines.
+// runView prints one view: indented once, or one compact line per change
+// with --watch. One BusScanner (or FleetScanners for fleet) serves every
+// collect so later scans only read appended lines.
 func runView(ctx context.Context, cfg data.Config, o opts) int {
 	runner := data.ExecRunner{}
 	eventsPath, eventsErr := data.EventsPath(ctx, runner, cfg.Git)
-	scanner := data.NewBusScanner(eventsPath)
-	collect := func(ctx context.Context) (any, error) {
-		cfg := cfg
-		if o.watch {
-			cfg.Now = resolveNow()
+	var collect func(context.Context) (any, error)
+	var commons func() []string
+	if o.view == "fleet" {
+		fc := newFleetCollector(runner, cfg)
+		commons = fc.knownCommons
+		collect = func(ctx context.Context) (any, error) {
+			now := cfg.Now
+			if o.watch {
+				now = resolveNow()
+			}
+			return view.BuildFleet(fc.collect(ctx, now)), nil
 		}
-		nowMS := cfg.Now * 1000
-		return view.Build(o.view, view.Inputs{
-			Snap:   data.Collect(ctx, runner, cfg),
-			Bus:    busDigest(scanner, eventsErr, nowMS),
-			Loaded: view.Loaded{Settings: true, Budget: true, Retro: true, Ratings: true, Roster: true, Bus: true},
-			NowMS:  nowMS,
-			Crew:   cfg.Crew,
-		})
+	} else {
+		scanner := data.NewBusScanner(eventsPath)
+		if eventsErr == nil {
+			repo := filepath.Dir(filepath.Dir(eventsPath))
+			commons = func() []string { return []string{repo} }
+		}
+		collect = func(ctx context.Context) (any, error) {
+			cfg := cfg
+			if o.watch {
+				cfg.Now = resolveNow()
+			}
+			nowMS := cfg.Now * 1000
+			return view.Build(o.view, view.Inputs{
+				Snap:   data.Collect(ctx, runner, cfg),
+				Bus:    busDigest(scanner, eventsErr, nowMS),
+				Loaded: view.Loaded{Settings: true, Budget: true, Retro: true, Ratings: true, Roster: true, Bus: true},
+				NowMS:  nowMS,
+				Crew:   cfg.Crew,
+			})
+		}
 	}
 
 	if !o.watch {
@@ -190,18 +213,122 @@ func runView(ctx context.Context, cfg data.Config, o opts) int {
 
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	// Without a bus path nothing can change: a nil channel never fires.
-	var changes <-chan struct{}
-	if eventsErr == nil {
-		w := buswatch.New(eventsPath)
-		defer func() { _ = w.Close() }()
-		changes = w.Events()
+	// The poll covers every events.jsonl, relay cursor and peer file; the
+	// fsnotify watcher adds low latency for the current repo's bus. Fleet
+	// has no single bus to watch.
+	watchers := []buswatch.Watcher{buswatch.NewPoll(func() []string {
+		if commons == nil {
+			return nil
+		}
+		return watchPaths(commons())
+	}, time.Second)}
+	if o.view == "fleet" {
+		// Until a collect learns the repo commons nothing is polled, so a
+		// slow tick lets a consumer recover from a failed first collect.
+		watchers = append(watchers, buswatch.NewTicker(fleetWatchFallback))
+	} else if eventsErr == nil {
+		watchers = append(watchers, buswatch.New(eventsPath))
 	}
-	if err := runWatch(ctx, os.Stdout, changes, collect, 200*time.Millisecond); err != nil {
+	w := buswatch.Merge(watchers...)
+	defer func() { _ = w.Close() }()
+	if err := runWatch(ctx, os.Stdout, w.Events(), collect, 200*time.Millisecond); err != nil {
 		fmt.Fprintln(os.Stderr, "crew dash: "+err.Error())
 		return 1
 	}
 	return 0
+}
+
+const fleetWatchFallback = 30 * time.Second
+
+// watchPaths lists the change sources of each repo common as poll patterns:
+// the bus, relay cursors (a relayed remote-worker batch moves its cursor
+// without touching events.jsonl) and peer sync files.
+func watchPaths(commons []string) []string {
+	var paths []string
+	for _, common := range commons {
+		crew := filepath.Join(common, "crew")
+		paths = append(paths,
+			filepath.Join(crew, "events.jsonl"),
+			filepath.Join(crew, "crews", "*", "relay", "*.cursor"),
+			filepath.Join(crew, "peers", "*.link"),
+			filepath.Join(crew, "peers", "*.roster"),
+		)
+	}
+	return paths
+}
+
+// fleetCollector gathers the fleet view's inputs. One instance serves every
+// collect: scanners and the host prober keep state across them, and commons
+// records which repos the watcher should poll.
+type fleetCollector struct {
+	runner   data.Runner
+	cfg      data.Config
+	scanners *data.FleetScanners
+	prober   *data.HostProber
+
+	mu      sync.Mutex
+	commons []string
+}
+
+func newFleetCollector(r data.Runner, cfg data.Config) *fleetCollector {
+	return &fleetCollector{
+		runner:   r,
+		cfg:      cfg,
+		scanners: data.NewFleetScanners(),
+		prober:   data.NewHostProber(r, time.Now),
+	}
+}
+
+func (fc *fleetCollector) knownCommons() []string {
+	fc.mu.Lock()
+	defer fc.mu.Unlock()
+	return slices.Clone(fc.commons)
+}
+
+// collect gathers settings (the tailscale flag and host list feed the fleet
+// sources), then the fleet sources alongside budget, and scans only the
+// active repos' buses. There is no per-crew roster loop.
+func (fc *fleetCollector) collect(ctx context.Context, nowSec int64) view.FleetInputs {
+	cfg := fc.cfg
+	cfg.Now = nowSec
+	nowMS := nowSec * 1000
+
+	settings := data.CollectSettings(ctx, fc.runner, cfg)
+	var budget data.BudgetSection
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		budget = data.CollectBudget(ctx, fc.runner, cfg)
+	}()
+	sec := data.CollectFleet(ctx, fc.runner, cfg, data.TailscaleEnabled(settings.Rows), settings, fc.prober)
+	wg.Wait()
+
+	digests, digestErrs := fc.scanners.Scan(view.ActiveCommons(sec), nowMS)
+
+	// A failed fleet status keeps the last known commons so the watcher
+	// still polls the repos it knew.
+	if sec.Status != nil {
+		var all []string
+		for _, repo := range sec.Status.Repos {
+			if !slices.Contains(all, repo.Common) {
+				all = append(all, repo.Common)
+			}
+		}
+		fc.mu.Lock()
+		fc.commons = all
+		fc.mu.Unlock()
+	}
+
+	return view.FleetInputs{
+		Fleet:      sec,
+		Digests:    digests,
+		DigestErrs: digestErrs,
+		Snap:       data.Snapshot{Now: nowSec, Settings: settings, Budget: budget},
+		Loaded:     view.Loaded{Settings: true, Budget: true, Retro: true, Ratings: true, Roster: true, Bus: true},
+		NowMS:      nowMS,
+		Crew:       cfg.Crew,
+	}
 }
 
 // busDigest scans the bus, or returns an empty digest carrying the error so
@@ -319,6 +446,11 @@ func resolveCrew() []string {
 	bin := os.Getenv("CREW_BIN")
 	if bin == "" {
 		return []string{"crew"}
+	}
+	// Actions run in another repo's directory, so a relative path must be
+	// pinned to the dash's own cwd first.
+	if abs, err := filepath.Abs(bin); err == nil {
+		bin = abs
 	}
 	if isExecutable(bin) {
 		return []string{bin}

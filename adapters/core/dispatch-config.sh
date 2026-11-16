@@ -41,6 +41,9 @@
 # freshSeams (boolean, default false) arms dispatch's fresh lead relaunch at
 # the execute and review seams for eligible claude/pi standard/deep implement
 # workers; dispatch --fresh-seams/--no-fresh-seams override it per dispatch.
+# dashTailscale (boolean, default false) lets crew dash read `tailscale status
+# --json` for host reachability; hosts.<name>.tailscale names the host's Tailscale
+# machine name (its HostName or first MagicDNS label; default: the host name).
 # dispatcherMcp maps an owner/repo or org key to the MCP opt-ins (claudeai:
 # every claude.ai connector; analytics: the generated --mcp profile; or any
 # mcpServers name) that the dispatcher launch restores for that repo; the
@@ -87,9 +90,11 @@
 # owner/repo, for `crew remote-run`, plus an optional chrome flag marking the
 # host that runs the owner's browser, and an optional peer flag marking a peer
 # dispatcher host for `crew stream`'s peer sync (its name must equal that
-# host's short hostname); like localModels it is validated on the merged tree
-# and has no env var. Unlike grantRoots it is allowed from the user layer: an
-# entry only chooses where work is sent and grants the worker nothing.
+# host's short hostname), and an optional tailscale machine name (its HostName or
+# first MagicDNS label; default: the host name); like localModels it is validated
+# on the merged tree and has no env var. Unlike grantRoots it is allowed from the
+# user layer: an entry only chooses where work is sent and grants the worker
+# nothing.
 #
 # Tracker map keys (repoTrackers/orgTrackers) and dispatcherMcp keys are
 # lowercased within each layer before the merge, so a later layer's entry for
@@ -593,10 +598,11 @@ printf '%s\n' "$base" "$user" "$locked" "$env_layer" | jq -n --argjson show_orig
           then [$p, "a name of letters, digits, \".\", \"_\" or \"-\" starting with a letter or digit"]
           elif ($v | type) != "object" then [$p, "an object"]
           else
-            ($v | keys[] | select(IN("ssh", "repos", "chrome", "peer") | not) | [$p + [.], "one of ssh, repos, chrome, peer"]),
+            ($v | keys[] | select(IN("ssh", "repos", "chrome", "peer", "tailscale") | not) | [$p + [.], "one of ssh, repos, chrome, peer, tailscale"]),
             ($v | select((.ssh | type != "string") or ((.ssh | test("\\A[A-Za-z0-9_][A-Za-z0-9._@%+-]*\\z")) | not)) | [$p + ["ssh"], "an ssh destination of letters, digits and \"._@%+-\" not starting with \"-\" (use an ~/.ssh/config alias for options)"]),
             ($v | select(has("chrome") and ((.chrome | type) != "boolean")) | [$p + ["chrome"], "a boolean"]),
             ($v | select(has("peer") and ((.peer | type) != "boolean")) | [$p + ["peer"], "a boolean"]),
+            ($v | select(has("tailscale") and ((.tailscale | type != "string") or ((.tailscale | test("\\A[A-Za-z0-9][A-Za-z0-9.-]*\\z")) | not))) | [$p + ["tailscale"], "a Tailscale machine name of letters, digits, \".\" and \"-\" starting with a letter or digit"]),
             ($v | select(has("repos") and ((.repos | type) != "object")) | [$p + ["repos"], "an object"]),
             (($v.repos | if type == "object" then to_entries[] else empty end) as {key: $r, value: $d}
               | [$p + ["repos", $r], "an owner/repo key mapped to an absolute path without control characters"]
@@ -660,6 +666,7 @@ printf '%s\n' "$base" "$user" "$locked" "$env_layer" | jq -n --argjson show_orig
   | need(["workerDeniedMcpServers"]; "an array of MCP server names (letters, digits, \"_\", \"-\")"; string_array and all(.[]; test("^[A-Za-z0-9_-]+$")))
   | need(["dispatcherChrome"]; "a boolean"; type == "boolean")
   | need(["freshSeams"]; "a boolean"; type == "boolean")
+  | need(["dashTailscale"]; "a boolean"; type == "boolean")
   | need(["dispatcherMcp"]; "an object keyed owner/repo or org, each an array of claudeai, analytics or an mcpServers name";
       type == "object"
       and all(keys[]; test("^[a-z0-9][a-z0-9._-]*(/[a-z0-9._-]+)?$"))

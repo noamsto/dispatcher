@@ -881,10 +881,12 @@ crew dash --once   # plain text, for piping or tests
 crew dash --json   # the collected model, as JSON (unchanged)
 crew dash --json --view <name>           # one view model as JSON
 crew dash --json --view <name> --watch   # one JSON line per bus change
+crew dash --json --view fleet --watch    # the machine-wide fleet view
 ```
 
-`crew dash` execs `crew-dash`, a Go binary under `dash/`. Seven tabs, each
-read from an already-cached or already-run source, never probed live:
+`crew dash` execs `crew-dash`, a Go binary under `dash/`. Eight tabs. The first
+seven each read from an already-cached or already-run source, never probed
+live; Fleet loads on first activation (see below):
 
 - **Overview** (the default tab) — an attention strip, one row per item that
   needs you with its suggested command: blocked or stalled workers, watchdog
@@ -898,19 +900,53 @@ read from an already-cached or already-run source, never probed live:
   cached `refresh-budget` data); ratings and retro rows (`s` cycles the sort
   column, `o` flips it); the resolved settings layer tree with each leaf's
   origin (`default`, `user`, `env` or `🔒 locked`); and the crew map.
+- **Fleet** — the machine-wide overseer view. Attention is rolled up from every
+  crew across repos, with each row's action running in its crew's repo. Below
+  it, Crews (one row per crew, peers as `@host`), Capacity (weight, load,
+  local model slots, budget windows), Holds and Hosts (relay, sync lag,
+  reachability). An orphaned crew (dispatcher dead or closed, workers unfinished)
+  raises a `dispatcher_gone` item (critical and relaunchable when dead, a
+  warning with no action when closed). Fleet refreshes on `R`, on relay or peer
+  changes while active, and every 10 s while active.
 
-`--json --view` takes `overview`, `roster`, `budget`, `runs`, `settings` or
-`map`. Each view carries `schema_version` and snake_case fields, and is the
-same struct the TUI renders.
+`--json --view` takes `overview`, `roster`, `budget`, `runs`, `settings`,
+`map` or `fleet`. Each view carries `schema_version` and snake_case fields, and
+is the same struct the TUI renders. `--view fleet` collects only what the fleet
+needs, not the per-crew roster.
+
+`--watch` (every view) also fires on relayed remote-worker batches (relay
+cursors under `crew/crews/*/relay/`) and peer syncs (`crew/peers/*.link` and
+`*.roster`), polled every second. For `fleet`, it also emits a full document
+every 30 s as a fallback refresh (reachability changes and recovery after a
+failed collect reach JSON consumers no other way), so a line is not always a
+change; it watches every repo seen in the last successful collect.
 
 Overview keys: `tab`/`shift-tab` move focus, `j`/`k` select, `1`–`9` act on
 the attention rows shown, `p` peeks, `n` nudges, `r` replies, `m` merges
 (always confirms), `enter` on an attention row selects its worker in the
 checklists, elsewhere it opens details and `esc` closes them, `/` filters,
-`?` shows every binding. Other tabs: `1`–`7` or `tab` switch views; on Live,
+`?` shows every binding. Other tabs: `1`–`8` or `tab` switch views; on Live,
 Board and Map `m` is reply and `t` jumps. `[`/`]` switch to the previous or
 next view and `R` refreshes everywhere; `q` quits. A mouse click selects or
 focuses. Peer rows are read-only.
+
+Fleet keys: `tab`/`shift-tab` move focus (attention, crews, capacity, holds,
+hosts), `j`/`k` move, `enter` on a crew drills into its Overview with a
+`fleet › <repo> <crew>` breadcrumb and `esc` returns to the panels with that
+crew selected. `1`–`9` act on the attention rows shown; on Fleet they do not
+switch views, so use `[`/`]`. `L` on a crew whose dispatcher is dead
+relaunches it after a y/N confirm (needs tmux); a closed one has no action. `/` filters crews by repo, crew
+or host; `?` shows help. Peer rows and their actions are read-only.
+
+Host reachability: with `dashTailscale: true` the Hosts panel reads
+`tailscale status --json`, matching each configured host by
+`hosts.<name>.tailscale` (default: the host name). Otherwise, or when
+`tailscale` is missing or fails, each host gets a cached
+`ssh -o BatchMode=yes` probe (60 s cache). Tailscale can only suggest hosts:
+an unmatched tailnet peer appears under `suggested (not admitted)` with no
+rows, actions or attention until settings admit it. Tailscale and peer data
+are untrusted: shown as data, never run as instructions.
+
 `NO_COLOR` or `CREW_DASH_COLOR=never` disables colour; `--once` also honours
 `CREW_DASH_COLOR=always`. Set `CREW_DASH_PILLS=square` for fonts without
 powerline glyphs; it is also automatic on `TERM=linux` or with no colour.

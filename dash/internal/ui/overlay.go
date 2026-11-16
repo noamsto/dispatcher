@@ -37,43 +37,59 @@ func composite(base, box []string, x, y, w int) []string {
 	return out
 }
 
-func (v overviewView) overlay(base []string, w, h int) string {
+// drawOverlay composites the panel content(iw) builds over base: centred,
+// its top anchored h/6 down, or base unchanged when the body is too small.
+func drawOverlay(base []string, w, h int, mode pillMode, content func(iw int) (panelSpec, []string)) string {
 	bw := min(w-4, overlayMaxWidth)
 	y := h / 6
 	if bw < 8 || h-y < 3 {
 		return strings.Join(base, "\n")
 	}
-	iw := bw - 2
+	spec, lines := content(bw - 2)
+	bh := min(len(lines)+2, h-y)
+	box := renderPanel(bw, bh, spec, mode, lines)
+	return strings.Join(composite(base, box, (w-bw)/2, y, w), "\n")
+}
+
+func (v overviewView) overlay(base []string, w, h int) string {
+	return drawOverlay(base, w, h, v.pills, func(iw int) (panelSpec, []string) {
+		switch v.mode {
+		case ovDetail:
+			spec := panelSpec{title: "DETAIL", color: colTeal, focused: true}
+			var content []string
+			if s := v.sel(); s.worker >= 0 {
+				content = detailLines(v.model, s.worker, iw)
+				spec.count = cleanText(workerLabel(v.model.Workers[s.worker]))
+			}
+			return spec, content
+		case ovHelp:
+			return panelSpec{title: "HELP", color: colTeal, focused: true}, helpLines(overviewHelp)
+		}
+		return v.promptPanel(iw)
+	})
+}
+
+// promptPanel is the open reply, confirm or filter prompt as overlay content.
+func (p actionPrompt) promptPanel(iw int) (panelSpec, []string) {
 	spec := panelSpec{color: colTeal, focused: true}
 	var content []string
-	switch v.mode {
-	case ovDetail:
-		spec.title = "DETAIL"
-		if s := v.sel(); s.worker >= 0 {
-			content = detailLines(v.model, s.worker, iw)
-			spec.count = cleanText(workerLabel(v.model.Workers[s.worker]))
-		}
-	case ovHelp:
-		spec.title = "HELP"
-		content = helpLines()
+	switch p.mode {
 	case ovReply:
 		spec.title, spec.color = "REPLY", colAmber
-		in := v.input
-		in.Prompt = "reply to " + ansi.Truncate(cleanText(v.pend.target.name), max(iw/2-12, 1), "…") + ": "
+		in := p.input
+		in.Prompt = "reply to " + ansi.Truncate(cleanText(p.pend.target.name), max(iw/2-12, 1), "…") + ": "
 		in.Width = max(iw-ansi.StringWidth(in.Prompt)-1, 1)
 		content = []string{in.View()}
 	case ovConfirm:
 		spec.title, spec.color = "CONFIRM", colAmber
-		content = []string{" " + v.pend.prompt}
+		content = []string{" " + p.pend.prompt}
 	case ovFilter:
 		spec.title = "FILTER"
-		in := v.input
+		in := p.input
 		in.Width = max(iw-ansi.StringWidth(in.Prompt)-1, 1)
 		content = []string{in.View()}
 	}
-	bh := min(len(content)+2, h-y)
-	box := renderPanel(bw, bh, spec, v.pills, content)
-	return strings.Join(composite(base, box, (w-bw)/2, y, w), "\n")
+	return spec, content
 }
 
 type helpKey struct{ keys, text string }
@@ -93,11 +109,11 @@ var overviewHelp = []helpKey{
 	{"q", "quit"},
 }
 
-// helpLines is every Overview key with its meaning, written "key meaning" so
-// the text reads the same without colour.
-func helpLines() []string {
-	out := make([]string, len(overviewHelp))
-	for i, k := range overviewHelp {
+// helpLines is every key with its meaning, written "key meaning" so the text
+// reads the same without colour.
+func helpLines(keys []helpKey) []string {
+	out := make([]string, len(keys))
+	for i, k := range keys {
 		out[i] = " " + fg(colTeal).Render(k.keys) + " " + k.text
 	}
 	return out

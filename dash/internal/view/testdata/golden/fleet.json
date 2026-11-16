@@ -1,0 +1,698 @@
+{
+  "schema_version": 1,
+  "view": "fleet",
+  "generated_at": 1794800010,
+  "summary": {
+    "crews": 8,
+    "hidden_crews": 2,
+    "workers": 13,
+    "by_state": {
+      "blocked": 1,
+      "pr_open": 4,
+      "unknown": 3,
+      "working": 5
+    },
+    "attention": 9,
+    "hosts": 4,
+    "hosts_unhealthy": 3,
+    "dropped": 2
+  },
+  "attention": [
+    {
+      "id": "relay_lost::tp",
+      "crew_key": null,
+      "crew": "",
+      "branch": "",
+      "worker": "",
+      "host": "tp",
+      "origin": "remote_worker",
+      "severity": "critical",
+      "kind": "relay_lost",
+      "message": "relay to tp lost (1 remote workers)",
+      "age_sec": 10010,
+      "action": null
+    },
+    {
+      "id": "lap|/r/a/.git|c3#dispatcher_gone:c3:",
+      "crew_key": "lap|/r/a/.git|c3",
+      "crew": "c3",
+      "branch": "",
+      "worker": "",
+      "host": "",
+      "origin": "local",
+      "severity": "critical",
+      "kind": "dispatcher_gone",
+      "message": "dispatcher gone, 2 workers",
+      "age_sec": 7200,
+      "action": {
+        "key": "",
+        "verb": "relaunch",
+        "label": "relaunch dispatcher",
+        "command": "dispatcher --relaunch c3 --repo /r/a",
+        "argv": [
+          "dispatcher",
+          "--relaunch",
+          "c3",
+          "--repo",
+          "/r/a"
+        ],
+        "dir": null,
+        "needs_input": false,
+        "pr": null
+      }
+    },
+    {
+      "id": "lap|/r/a/.git|c1#role_failed:c1:feat/b",
+      "crew_key": "lap|/r/a/.git|c1",
+      "crew": "c1",
+      "branch": "feat/b",
+      "worker": "w-b",
+      "host": "",
+      "origin": "local",
+      "severity": "critical",
+      "kind": "role_failed",
+      "message": "reviewer: role reviewer engine exited (pane %9)",
+      "age_sec": 410,
+      "action": {
+        "key": "p",
+        "verb": "peek",
+        "label": "peek",
+        "command": "cd /r/a && crew where --crew c1 -- feat/b",
+        "argv": [
+          "crew",
+          "where",
+          "--crew",
+          "c1",
+          "--",
+          "feat/b"
+        ],
+        "dir": "/r/a",
+        "needs_input": false,
+        "pr": null
+      }
+    },
+    {
+      "id": "lap|/r/a/.git|c1#remote_watch_dead:far/c1:feat/far",
+      "crew_key": "lap|/r/a/.git|c1",
+      "crew": "c1",
+      "branch": "feat/far",
+      "worker": "far",
+      "host": "far",
+      "origin": "remote_worker",
+      "severity": "critical",
+      "kind": "remote_watch_dead",
+      "message": "far on far: ssh: connect to host far port 22: timed out",
+      "age_sec": 10,
+      "action": {
+        "key": "p",
+        "verb": "peek",
+        "label": "peek",
+        "command": "cd /r/a && crew where --crew c1 -- feat/far",
+        "argv": [
+          "crew",
+          "where",
+          "--crew",
+          "c1",
+          "--",
+          "feat/far"
+        ],
+        "dir": "/r/a",
+        "needs_input": false,
+        "pr": null
+      }
+    },
+    {
+      "id": "peer_stale::mbp",
+      "crew_key": null,
+      "crew": "",
+      "branch": "",
+      "worker": "",
+      "host": "mbp",
+      "origin": "peer",
+      "severity": "warning",
+      "kind": "peer_stale",
+      "message": "peer mbp sync failed: ssh: Connection refused",
+      "age_sec": 610,
+      "action": null
+    },
+    {
+      "id": "lap|/r/b/.git|c5#blocked:c5:feat/c5",
+      "crew_key": "lap|/r/b/.git|c5",
+      "crew": "c5",
+      "branch": "feat/c5",
+      "worker": "w-c5",
+      "host": "",
+      "origin": "local",
+      "severity": "warning",
+      "kind": "blocked",
+      "message": "blocked",
+      "age_sec": 310,
+      "action": {
+        "key": "r",
+        "verb": "reply",
+        "label": "reply",
+        "command": "cd /r/b && crew reply --crew c5 -- worker:feat/c5 '<text>'",
+        "argv": [
+          "crew",
+          "reply",
+          "--crew",
+          "c5",
+          "--",
+          "worker:feat/c5",
+          "<text>"
+        ],
+        "dir": "/r/b",
+        "needs_input": true,
+        "pr": null
+      }
+    },
+    {
+      "id": "lap|/r/a/.git|c1#hold_matured:c1:h-q1",
+      "crew_key": "lap|/r/a/.git|c1",
+      "crew": "c1",
+      "branch": "",
+      "worker": "",
+      "host": "",
+      "origin": "local",
+      "severity": "warning",
+      "kind": "hold_matured",
+      "message": "hold h-q1 matured",
+      "age_sec": 120,
+      "action": {
+        "key": "",
+        "verb": "inspect",
+        "label": "inspect",
+        "command": "cd /r/a && crew hold due --crew c1",
+        "argv": [
+          "crew",
+          "hold",
+          "due",
+          "--crew",
+          "c1"
+        ],
+        "dir": "/r/a",
+        "needs_input": false,
+        "pr": null
+      }
+    },
+    {
+      "id": "lap|/r/b/.git|c5#lane_stale:c5:",
+      "crew_key": "lap|/r/b/.git|c5",
+      "crew": "c5",
+      "branch": "",
+      "worker": "",
+      "host": "",
+      "origin": "local",
+      "severity": "warning",
+      "kind": "lane_stale",
+      "message": "crew stream lane is stale",
+      "age_sec": 0,
+      "action": {
+        "key": "",
+        "verb": "inspect",
+        "label": "inspect",
+        "command": "cd /r/b && crew stream --crew c5 --status",
+        "argv": [
+          "crew",
+          "stream",
+          "--crew",
+          "c5",
+          "--status"
+        ],
+        "dir": "/r/b",
+        "needs_input": false,
+        "pr": null
+      }
+    },
+    {
+      "id": "lap|/r/a/.git|c1#merge_ready:c1:feat/b",
+      "crew_key": "lap|/r/a/.git|c1",
+      "crew": "c1",
+      "branch": "feat/b",
+      "worker": "w-b",
+      "host": "",
+      "origin": "local",
+      "severity": "ready",
+      "kind": "merge_ready",
+      "message": "PR #12 checks green, mergeable",
+      "age_sec": 110,
+      "action": {
+        "key": "m",
+        "verb": "merge",
+        "label": "squash-merge",
+        "command": "cd /r/a && crew merge 12 --crew c1",
+        "argv": [
+          "crew",
+          "merge",
+          "12",
+          "--crew",
+          "c1"
+        ],
+        "dir": "/r/a",
+        "needs_input": false,
+        "pr": 12
+      }
+    }
+  ],
+  "crews": [
+    {
+      "key": "lap|/r/a/.git|c1",
+      "origin": "local",
+      "host": "lap",
+      "repo": "a",
+      "common": "/r/a/.git",
+      "crew": "c1",
+      "home_repo": "a",
+      "orphaned": false,
+      "actions": [],
+      "dispatcher": {
+        "state": "live",
+        "lane": "alive",
+        "last_event_s": 4,
+        "pid": 4242
+      },
+      "attention_state": "attended",
+      "workers": {
+        "total": 5,
+        "by_state": {
+          "pr_open": 1,
+          "unknown": 1,
+          "working": 3
+        }
+      },
+      "remote_workers": 3,
+      "attention": 4,
+      "dir": "/r/a"
+    },
+    {
+      "key": "lap|/r/b/.git|c5",
+      "origin": "local",
+      "host": "lap",
+      "repo": "b",
+      "common": "/r/b/.git",
+      "crew": "c5",
+      "home_repo": "b",
+      "orphaned": false,
+      "actions": [],
+      "dispatcher": {
+        "state": "live",
+        "lane": "stale",
+        "last_event_s": 20,
+        "pid": 5151
+      },
+      "attention_state": "attended",
+      "workers": {
+        "total": 1,
+        "by_state": {
+          "blocked": 1
+        }
+      },
+      "remote_workers": 0,
+      "attention": 2,
+      "dir": "/r/b"
+    },
+    {
+      "key": "lap|/r/a/.git|c3",
+      "origin": "local",
+      "host": "lap",
+      "repo": "a",
+      "common": "/r/a/.git",
+      "crew": "c3",
+      "home_repo": "a",
+      "orphaned": true,
+      "actions": [
+        {
+          "key": "",
+          "verb": "relaunch",
+          "label": "relaunch dispatcher",
+          "command": "dispatcher --relaunch c3 --repo /r/a",
+          "argv": [
+            "dispatcher",
+            "--relaunch",
+            "c3",
+            "--repo",
+            "/r/a"
+          ],
+          "dir": null,
+          "needs_input": false,
+          "pr": null
+        }
+      ],
+      "dispatcher": {
+        "state": "dead",
+        "lane": null,
+        "last_event_s": 7200,
+        "pid": 999
+      },
+      "attention_state": "unattended",
+      "workers": {
+        "total": 2,
+        "by_state": {
+          "pr_open": 1,
+          "working": 1
+        }
+      },
+      "remote_workers": 0,
+      "attention": 1,
+      "dir": "/r/a"
+    },
+    {
+      "key": "lap|/r/b/.git|c1",
+      "origin": "local",
+      "host": "lap",
+      "repo": "b",
+      "common": "/r/b/.git",
+      "crew": "c1",
+      "home_repo": "a",
+      "orphaned": false,
+      "actions": [],
+      "dispatcher": {
+        "state": "live",
+        "lane": "alive",
+        "last_event_s": 4,
+        "pid": 4242
+      },
+      "attention_state": "attended",
+      "workers": {
+        "total": 1,
+        "by_state": {
+          "pr_open": 1
+        }
+      },
+      "remote_workers": 0,
+      "attention": 0,
+      "dir": "/r/b"
+    },
+    {
+      "key": "mbp||p1",
+      "origin": "peer",
+      "host": "mbp",
+      "repo": null,
+      "common": null,
+      "crew": "p1",
+      "home_repo": null,
+      "orphaned": false,
+      "actions": [],
+      "dispatcher": null,
+      "attention_state": null,
+      "workers": {
+        "total": 1,
+        "by_state": {
+          "unknown": 1
+        }
+      },
+      "remote_workers": 0,
+      "attention": 0,
+      "dir": null
+    },
+    {
+      "key": "box||p2",
+      "origin": "peer",
+      "host": "box",
+      "repo": null,
+      "common": null,
+      "crew": "p2",
+      "home_repo": null,
+      "orphaned": false,
+      "actions": [],
+      "dispatcher": null,
+      "attention_state": null,
+      "workers": {
+        "total": 1,
+        "by_state": {
+          "working": 1
+        }
+      },
+      "remote_workers": 0,
+      "attention": 0,
+      "dir": null
+    },
+    {
+      "key": "mbp||p2",
+      "origin": "peer",
+      "host": "mbp",
+      "repo": null,
+      "common": null,
+      "crew": "p2",
+      "home_repo": null,
+      "orphaned": false,
+      "actions": [],
+      "dispatcher": null,
+      "attention_state": null,
+      "workers": {
+        "total": 1,
+        "by_state": {
+          "unknown": 1
+        }
+      },
+      "remote_workers": 0,
+      "attention": 0,
+      "dir": null
+    },
+    {
+      "key": "box||p3",
+      "origin": "peer",
+      "host": "box",
+      "repo": null,
+      "common": null,
+      "crew": "p3",
+      "home_repo": null,
+      "orphaned": false,
+      "actions": [],
+      "dispatcher": null,
+      "attention_state": null,
+      "workers": {
+        "total": 1,
+        "by_state": {
+          "pr_open": 1
+        }
+      },
+      "remote_workers": 0,
+      "attention": 0,
+      "dir": null
+    }
+  ],
+  "capacity": {
+    "budget": 8,
+    "weight": 5,
+    "pending": 1,
+    "free": 3,
+    "leads": [
+      {
+        "repo": "a",
+        "branch": "feat/a",
+        "name": "lead-a",
+        "tier": "standard",
+        "weight": 2
+      },
+      {
+        "repo": "a",
+        "branch": "feat/r1",
+        "name": "lead-r1",
+        "tier": "deep",
+        "weight": 3
+      }
+    ],
+    "load1": 1.5,
+    "cores": 8,
+    "load_over": false,
+    "local_models": [
+      {
+        "id": "qwen",
+        "max_concurrent": 2,
+        "in_use": 1
+      }
+    ],
+    "engines": [
+      {
+        "engine": "claude",
+        "in_budget": true,
+        "hot_windows": [],
+        "limit_reached": false
+      },
+      {
+        "engine": "codex",
+        "in_budget": false,
+        "hot_windows": [
+          "5h"
+        ],
+        "limit_reached": true
+      }
+    ],
+    "budgets": [
+      {
+        "engine": "claude",
+        "label": "claude 5h",
+        "used_pct": 10,
+        "ahead_pts": null,
+        "pace": "n/a",
+        "verdict": null
+      },
+      {
+        "engine": "claude",
+        "label": "claude 7d",
+        "used_pct": 62,
+        "ahead_pts": 12,
+        "pace": "ahead",
+        "verdict": "ahead of pace: prefer a cheaper burn class"
+      }
+    ]
+  },
+  "holds": [
+    {
+      "id": "h-f1",
+      "repo": "a",
+      "crew": "c1",
+      "branch": "feat/q1",
+      "kind": "fleet",
+      "prio": "high",
+      "repo_prio": 2,
+      "weight": 2,
+      "state": "due",
+      "reason": null,
+      "waited_s": 900,
+      "matured": true
+    },
+    {
+      "id": "h-q1",
+      "repo": "a",
+      "crew": "c1",
+      "branch": null,
+      "kind": "quota",
+      "prio": null,
+      "repo_prio": null,
+      "weight": null,
+      "state": "due",
+      "reason": null,
+      "waited_s": 120,
+      "matured": true
+    },
+    {
+      "id": "h-f2",
+      "repo": "b",
+      "crew": "c5",
+      "branch": "feat/q2",
+      "kind": "fleet",
+      "prio": "normal",
+      "repo_prio": 1,
+      "weight": 2,
+      "state": "waiting",
+      "reason": "load",
+      "waited_s": 200,
+      "matured": false
+    },
+    {
+      "id": "h-p1",
+      "repo": "b",
+      "crew": "c5",
+      "branch": "feat/q3",
+      "kind": "fleet",
+      "prio": "low",
+      "repo_prio": 1,
+      "weight": 9,
+      "state": "parked",
+      "reason": "oversize",
+      "waited_s": 1000,
+      "matured": false
+    }
+  ],
+  "hosts": [
+    {
+      "name": "box",
+      "ssh": "box.lan",
+      "peer": true,
+      "relay": {
+        "state": "idle",
+        "crews": []
+      },
+      "sync": {
+        "state": "ok",
+        "last_ok_ts": 1794800005000,
+        "lag_sec": 5,
+        "error": null
+      },
+      "reach": {
+        "source": "tailscale",
+        "online": false,
+        "last_seen": null,
+        "error": null
+      }
+    },
+    {
+      "name": "halo",
+      "ssh": "halo.lan",
+      "peer": false,
+      "relay": {
+        "state": "up",
+        "crews": [
+          "c1"
+        ]
+      },
+      "sync": {
+        "state": "n/a",
+        "last_ok_ts": null,
+        "lag_sec": null,
+        "error": null
+      },
+      "reach": {
+        "source": "tailscale",
+        "online": true,
+        "last_seen": 1794821400,
+        "error": null
+      }
+    },
+    {
+      "name": "mbp",
+      "ssh": "mbp.lan",
+      "peer": true,
+      "relay": {
+        "state": "idle",
+        "crews": []
+      },
+      "sync": {
+        "state": "failed",
+        "last_ok_ts": 1794799400000,
+        "lag_sec": 610,
+        "error": "ssh: Connection refused"
+      },
+      "reach": {
+        "source": "tailscale",
+        "online": true,
+        "last_seen": 1794823140,
+        "error": null
+      }
+    },
+    {
+      "name": "tp",
+      "ssh": "tp",
+      "peer": false,
+      "relay": {
+        "state": "down",
+        "crews": []
+      },
+      "sync": {
+        "state": "n/a",
+        "last_ok_ts": null,
+        "lag_sec": null,
+        "error": null
+      },
+      "reach": {
+        "source": "tailscale",
+        "online": false,
+        "last_seen": 1794780605,
+        "error": null
+      }
+    }
+  ],
+  "suggested_hosts": [
+    {
+      "name": "evil\u001b[31mhost",
+      "online": true
+    },
+    {
+      "name": "phone",
+      "online": false
+    }
+  ],
+  "errors": []
+}

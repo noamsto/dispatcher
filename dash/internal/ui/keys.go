@@ -13,6 +13,7 @@ type KeyMap struct {
 	Tab5     key.Binding
 	Tab6     key.Binding
 	Tab7     key.Binding
+	Tab8     key.Binding
 	Next     key.Binding
 	Prev     key.Binding
 	PrevView key.Binding
@@ -24,13 +25,14 @@ type KeyMap struct {
 
 func DefaultKeyMap() KeyMap {
 	return KeyMap{
-		Tab1:     key.NewBinding(key.WithKeys("1"), key.WithHelp("1-7", "views")),
+		Tab1:     key.NewBinding(key.WithKeys("1"), key.WithHelp("1-8", "views")),
 		Tab2:     key.NewBinding(key.WithKeys("2")),
 		Tab3:     key.NewBinding(key.WithKeys("3")),
 		Tab4:     key.NewBinding(key.WithKeys("4")),
 		Tab5:     key.NewBinding(key.WithKeys("5")),
 		Tab6:     key.NewBinding(key.WithKeys("6")),
 		Tab7:     key.NewBinding(key.WithKeys("7")),
+		Tab8:     key.NewBinding(key.WithKeys("8")),
 		Next:     key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "next view")),
 		Prev:     key.NewBinding(key.WithKeys("shift+tab"), key.WithHelp("shift+tab", "prev view")),
 		PrevView: key.NewBinding(key.WithKeys("[")),

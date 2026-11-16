@@ -61,9 +61,10 @@ type StatusOptions struct {
 	// Host is this machine's short name, the `overseer:<host>` address.
 	Host func() (string, error)
 	// Budget, BudgetFile and Cmd are the machine document's reads (LoadOptions).
-	Budget     func(ctx context.Context) (int, error)
-	BudgetFile string
-	Cmd        func(ctx context.Context, name string, args ...string) (string, error)
+	Budget      func(ctx context.Context) (int, error)
+	BudgetFile  string
+	Cmd         func(ctx context.Context, name string, args ...string) (string, error)
+	LocalModels func(ctx context.Context) (map[string]int, error)
 	// Settings resolves the fleet queue's settings, its budget the machine
 	// document's too. nil: the defaults, with Budget's budget when it is set.
 	Settings func(ctx context.Context) (QueueSettings, error)
@@ -190,6 +191,10 @@ type RepoStatus struct {
 	// dispatcher of the crew they name; they are never shown.
 	Misrouted int          `json:"misrouted"`
 	Crews     []CrewStatus `json:"crews"`
+	// Peers and PeersError are the local peer store, absent on a served or
+	// far repo.
+	Peers      *PeerStatus `json:"peers,omitzero"`
+	PeersError *string     `json:"peers_error,omitzero"`
 }
 
 type CrewStatus struct {
@@ -201,6 +206,8 @@ type CrewStatus struct {
 	Workers       []map[string]any `json:"workers"`
 	Holds         []HoldStatus     `json:"holds"`
 	OverseerInbox []InboxMsg       `json:"overseer_inbox"`
+	// Relays are the crew's remote-worker relays; nil (omitted) on a served pull.
+	Relays []RelayStatus `json:"relays,omitzero"`
 }
 
 // Dispatcher is the crew's session: State is live, dead or closed; Lane is the
@@ -273,6 +280,9 @@ func collectStatus(ctx context.Context, req StatusRequest, stderr io.Writer, o S
 	if o.Proc == nil {
 		o.Proc = proc.OS{}
 	}
+	if o.PeerHosts != nil {
+		o.PeerHosts = sync.OnceValues(o.PeerHosts)
+	}
 	now := o.Clock.Now()
 	nowMS := now.UnixMilli()
 	nowSec := float64(now.Unix()) + float64(now.Nanosecond()/1000)/1e6
@@ -313,7 +323,7 @@ func collectStatus(ctx context.Context, req StatusRequest, stderr io.Writer, o S
 	if s, err := o.queueSettings(ctx); err != nil {
 		say(stderr, "crew: fleet status: machine: %s\n", oneLine(err))
 	} else {
-		lo := LoadOptions{Getenv: o.Getenv, Registry: o.Registry, Tmux: once, Git: o.Git, Clock: o.Clock, BudgetFile: o.BudgetFile, Cmd: o.Cmd}
+		lo := LoadOptions{Getenv: o.Getenv, Registry: o.Registry, Tmux: once, Git: o.Git, Clock: o.Clock, BudgetFile: o.BudgetFile, Cmd: o.Cmd, LocalModels: o.LocalModels, Stderr: stderr}
 		q := newQueue(ctx, QueueOptions{LoadOptions: lo, Proc: o.Proc}, scanFleet(o.Registry, o.Getenv, buses.read, nowMS), s, now)
 		var rec map[holdKey]dueEntry
 		rec, due = q.advance(readRecord(duePath(o.Getenv)))
@@ -434,6 +444,9 @@ func (b *repoBuild) build() (RepoStatus, error) {
 		}
 		repo.Crews = append(repo.Crews, c)
 	}
+	if o.Served == nil {
+		repo.Peers, repo.PeersError = peerStatusOf(b.common, o.PeerHosts, b.events, b.now)
+	}
 	return repo, nil
 }
 
@@ -512,6 +525,9 @@ func (b *repoBuild) crew(id string, rows []map[string]any, live roster.Liveness,
 	}
 	c := CrewStatus{CrewID: id, Workers: []map[string]any{}, Holds: holds, OverseerInbox: b.idx.inbox(id, cutoff)}
 	c.Dispatcher = b.dispatcher(id)
+	if b.o.Served == nil {
+		c.Relays = crewRelays(b.common, id, b.o.Proc)
+	}
 	for _, row := range rows {
 		row = jsonval.Clamp(row).(map[string]any)
 		stale, _ := staleOf(row, live)

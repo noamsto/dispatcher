@@ -10,6 +10,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/noamsto/dispatcher/dash/internal/data"
@@ -39,7 +40,7 @@ func TestViewEmptyBeforeWindowSize(t *testing.T) {
 
 func TestTabSwitchingByDigits(t *testing.T) {
 	m := sized(newTestModel(t), 80, 24)
-	for want, digit := range []rune{'1', '2', '3', '4', '5', '6', '7'} {
+	for want, digit := range []rune{'1', '2', '3', '4', '5', '6', '7', '8'} {
 		m.active = liveTab // the Overview owns digits, so every press starts from Live
 		nm, _ := m.Update(keyRune(digit))
 		m = nm.(Model)
@@ -66,9 +67,9 @@ func TestTabSwitchingByTab(t *testing.T) {
 	if m.active != boardTab {
 		t.Fatalf("after shift+tab: active = %d, want %d", m.active, boardTab)
 	}
-	// wraps around
-	m.active = mapTab
-	nm, _ = m.Update(keyType(tea.KeyTab))
+	// wraps around; Fleet and Overview own tab, so ] wraps
+	m.active = fleetTab
+	nm, _ = m.Update(keyRune(']'))
 	m = nm.(Model)
 	if m.active != overviewTab {
 		t.Fatalf("tab wrap: active = %d, want %d", m.active, overviewTab)
@@ -328,5 +329,18 @@ func TestSwitchTabLeaveBeforeEnter(t *testing.T) {
 	want := []string{"overview leave", "map enter"}
 	if !slices.Equal(log, want) {
 		t.Fatalf("hook order = %v, want %v", log, want)
+	}
+}
+
+func TestRenderTabsKeepsActiveVisible(t *testing.T) {
+	asciiProfile(t)
+	for w := 60; w < 80; w++ {
+		for i, title := range tabTitles {
+			m := Model{width: w, active: i}
+			line := stripped(m.renderTabs())
+			if lipgloss.Width(line) > w || !strings.Contains(line, "▸ "+title) {
+				t.Errorf("width %d active %s: %q", w, title, line)
+			}
+		}
 	}
 }

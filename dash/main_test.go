@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"os"
 	"os/exec"
@@ -9,6 +10,9 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/noamsto/dispatcher/dash/internal/data"
+	"github.com/noamsto/dispatcher/dash/internal/view"
 )
 
 // TestMain re-executes the test binary as crew-dash itself, so the CLI tests
@@ -264,7 +268,7 @@ func TestRetroReportWithoutRowsRendersNoNotesYet(t *testing.T) {
 }
 
 const usageText = "usage: crew dash [--once | --json [--view <name> [--watch]]]\n" +
-	"views: overview, roster, budget, runs, settings, map\n"
+	"views: overview, roster, budget, runs, settings, map, fleet\n"
 
 func TestUnknownArgumentExits2WithUsage(t *testing.T) {
 	s := newSandbox(t)
@@ -306,9 +310,11 @@ func TestParseArgs(t *testing.T) {
 		{args: []string{"--json", "--view", "overview"}, want: opts{mode: "json", view: "overview"}},
 		{args: []string{"--view", "roster", "--json"}, want: opts{mode: "json", view: "roster"}},
 		{args: []string{"--json", "--view", "overview", "--watch"}, want: opts{mode: "json", view: "overview", watch: true}},
+		{args: []string{"--json", "--view", "fleet"}, want: opts{mode: "json", view: "fleet"}},
+		{args: []string{"--json", "--view", "fleet", "--watch"}, want: opts{mode: "json", view: "fleet", watch: true}},
 		{args: []string{"--view", "overview"}, wantErr: "--view needs --json"},
 		{args: []string{"--json", "--watch"}, wantErr: "--watch needs --view"},
-		{args: []string{"--json", "--view", "nope"}, wantErr: "overview, roster, budget, runs, settings, map"},
+		{args: []string{"--json", "--view", "nope"}, wantErr: "overview, roster, budget, runs, settings, map, fleet"},
 		{args: []string{"--json", "--view"}, wantErr: "--view needs a name"},
 		{args: []string{"--once", "--json"}, wantErr: "--once takes no other flags"},
 		{args: []string{"--once", "--watch"}, wantErr: "--once takes no other flags"},
@@ -399,5 +405,148 @@ func TestJSONViewBusErrorListedNotFatal(t *testing.T) {
 	}
 	if len(v.Errors) != 1 || !strings.HasPrefix(v.Errors[0], "bus: ") {
 		t.Errorf("errors = %q, want one bus error for the missing events.jsonl", v.Errors)
+	}
+}
+
+func TestWatchPaths(t *testing.T) {
+	if got := watchPaths(nil); len(got) != 0 {
+		t.Errorf("watchPaths(nil) = %v, want none", got)
+	}
+	got := watchPaths([]string{"/r/a/.git", "/r/b/.git"})
+	want := []string{
+		"/r/a/.git/crew/events.jsonl",
+		"/r/a/.git/crew/crews/*/relay/*.cursor",
+		"/r/a/.git/crew/peers/*.link",
+		"/r/a/.git/crew/peers/*.roster",
+		"/r/b/.git/crew/events.jsonl",
+		"/r/b/.git/crew/crews/*/relay/*.cursor",
+		"/r/b/.git/crew/peers/*.link",
+		"/r/b/.git/crew/peers/*.roster",
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("watchPaths = %v, want %v", got, want)
+	}
+}
+
+func TestUsageListsFleetView(t *testing.T) {
+	if !strings.Contains(usage(), "fleet") {
+		t.Errorf("usage lacks fleet: %q", usage())
+	}
+}
+
+func TestFleetCollector(t *testing.T) {
+	read := func(name string) []byte {
+		b, err := os.ReadFile(testdata + name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return b
+	}
+	r := &data.FakeRunner{Responses: map[string]data.FakeResponse{
+		"dispatch-config --show-origin":  {Stdout: read("settings_show_origin.json")},
+		"dispatch-config --layers":       {Stdout: read("settings_layers.json")},
+		"refresh-budget --report --json": {Stdout: read("budget_report.json")},
+		"crew fleet status --json":       {Stdout: read("fleet_status.json")},
+		"crew fleet queue --json":        {Stdout: read("fleet_queue.json")},
+	}}
+	cfg := data.Config{Crew: []string{"crew"}, DispatchConfigBin: "dispatch-config", RefreshBudget: "refresh-budget", Now: 1794800010}
+	fc := newFleetCollector(r, cfg)
+
+	in := fc.collect(context.Background(), 1794800010)
+	v := view.BuildFleet(in)
+	if v.Summary.Crews == 0 {
+		t.Fatalf("no crews: %+v", v.Summary)
+	}
+	active := view.ActiveCommons(in.Fleet)
+	scanned := map[string]bool{}
+	for c := range in.Digests {
+		scanned[c] = true
+	}
+	for c := range in.DigestErrs {
+		scanned[c] = true
+	}
+	if len(scanned) != len(active) {
+		t.Errorf("scanned %v, want exactly the active commons %v", scanned, active)
+	}
+	for _, c := range active {
+		if !scanned[c] {
+			t.Errorf("active common %s not scanned", c)
+		}
+	}
+	if known := fc.knownCommons(); len(known) < len(active) {
+		t.Errorf("knownCommons = %v, want every repo common (at least %v)", known, active)
+	}
+	for _, c := range r.CallsSnapshot() {
+		if c.Name == "crew" && len(c.Args) > 0 && c.Args[0] == "crews" {
+			t.Errorf("fleet collect ran the roster loop: %v", c)
+		}
+	}
+}
+
+func TestFleetCollectorKeepsCommonsAcrossFailedStatus(t *testing.T) {
+	status, err := os.ReadFile(testdata + "fleet_status.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	queue, err := os.ReadFile(testdata + "fleet_queue.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings, err := os.ReadFile(testdata + "settings_show_origin.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	layers, err := os.ReadFile(testdata + "settings_layers.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	budget, err := os.ReadFile(testdata + "budget_report.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	failing := data.FakeResponse{Err: data.FakeExitError{Code: 1}}
+	r := &data.FakeRunner{Responses: map[string]data.FakeResponse{
+		"dispatch-config --show-origin":  {Stdout: settings},
+		"dispatch-config --layers":       {Stdout: layers},
+		"refresh-budget --report --json": {Stdout: budget},
+		"crew fleet status --json":       failing,
+		"crew fleet queue --json":        {Stdout: queue},
+	}}
+	cfg := data.Config{Crew: []string{"crew"}, DispatchConfigBin: "dispatch-config", RefreshBudget: "refresh-budget", Now: 1794800010}
+	fc := newFleetCollector(r, cfg)
+
+	fc.collect(context.Background(), cfg.Now)
+	if known := fc.knownCommons(); len(known) != 0 {
+		t.Fatalf("commons after a failed first collect = %v, want none", known)
+	}
+
+	r.Responses["crew fleet status --json"] = data.FakeResponse{Stdout: status}
+	fc.collect(context.Background(), cfg.Now)
+	recovered := fc.knownCommons()
+	if len(recovered) == 0 {
+		t.Fatal("commons not recorded after recovery")
+	}
+
+	r.Responses["crew fleet status --json"] = failing
+	fc.collect(context.Background(), cfg.Now)
+	if got := fc.knownCommons(); !slices.Equal(got, recovered) {
+		t.Errorf("commons after a failed collect = %v, want the last known %v", got, recovered)
+	}
+}
+
+func TestResolveCrewMakesRelativeCrewBinAbsolute(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	if err := os.WriteFile(filepath.Join(dir, "crewbin"), []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CREW_BIN", "crewbin")
+	got := resolveCrew()
+	want, err := filepath.Abs("crewbin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(got, []string{want}) {
+		t.Errorf("resolveCrew = %v, want [%s]", got, want)
 	}
 }

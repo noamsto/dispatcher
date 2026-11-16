@@ -1369,7 +1369,8 @@ func typeLeaves(t reflect.Type, v any, have bool, path string, out map[string]bo
 		for f := range t.Fields() {
 			name, _, _ := strings.Cut(f.Tag.Get("json"), ",")
 			p := strings.TrimPrefix(path+"."+name, ".")
-			if name == "" || name == "-" || p == "status.hosts" {
+			// peers and relays are local reads: no far wire carries them.
+			if name == "" || name == "-" || p == "status.hosts" || p == "status.repos[].peers" || p == "status.repos[].peers_error" || p == "status.repos[].crews[].relays" {
 				continue
 			}
 			if e, ok := m[name]; ok || !have {
@@ -1472,6 +1473,9 @@ func maximalFar(t *testing.T) map[string]any {
 	status := a["status"].(map[string]any)
 	status["machine"].(map[string]any)["leads"] = []any{
 		map[string]any{"repo": "alpha", "branch": "feat/w", "name": "remy", "tier": "standard", "weight": 2},
+	}
+	status["machine"].(map[string]any)["local_models"] = []any{
+		map[string]any{"id": "lemonade/q", "max_concurrent": 2, "in_use": 1},
 	}
 	for _, r := range status["repos"].([]any) {
 		for _, c := range r.(map[string]any)["crews"].([]any) {

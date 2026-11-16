@@ -1365,10 +1365,17 @@ func fleetQueueOptions(e env, stderr io.Writer) fleet.QueueOptions {
 			Git:        git.Exec{},
 			Clock:      clock.FromEnv(),
 			BudgetFile: budgetFile(),
+			Stderr:     stderr,
 		},
 		Proc:     e.proc,
 		Settings: fleetSettings(stderr),
 		Sender:   senderProbes(e.proc),
+	}
+}
+
+func localModels(stderr io.Writer) func(context.Context) (map[string]int, error) {
+	return func(ctx context.Context) (map[string]int, error) {
+		return fleet.ResolveLocalModels(ctx, fleet.ConfigBin(), stderr)
 	}
 }
 
@@ -1395,6 +1402,7 @@ func statusOptions(o fleet.Options, e env, stderr io.Writer) fleet.StatusOptions
 		Budget: func(ctx context.Context) (int, error) {
 			return fleet.ResolveBudget(ctx, fleet.ConfigBin(), stderr)
 		},
+		LocalModels:   localModels(stderr),
 		Settings:      fleetSettings(stderr),
 		Sender:        overseerProbes(e),
 		Federate:      remote.RunHost,
@@ -1422,6 +1430,11 @@ func runFleetLoad(ctx context.Context, c fleetLoadCmd, stdout, stderr io.Writer)
 		Git:        git.Exec{},
 		Clock:      clock.FromEnv(),
 		BudgetFile: budgetFile(),
+		Stderr:     stderr,
+	}
+	// Only the JSON document carries local_models; the table does not read it.
+	if c.JSON {
+		o.LocalModels = localModels(stderr)
 	}
 	if c.Budget == nil {
 		o.Budget = func(ctx context.Context) (int, error) {

@@ -1,0 +1,5 @@
+{"ts":1794799500000,"crew_id":"c1","from":"worker:feat/b2#s1","to":"dispatcher:c1","kind":"status","body":{"state":"working","detail":"spec"}}
+{"ts":1794799600000,"crew_id":"c5","from":"worker:feat/c5#s1","to":"dispatcher:c5","kind":"status","body":{"state":"working","detail":"execute"}}
+{"ts":1794799700000,"crew_id":"c5","from":"worker:feat/c5#s1","to":"dispatcher:c5","kind":"status","body":{"state":"blocked","detail":"awaiting owner decision (cycle 1 of 24)"}}
+{"ts":1794799800000,"crew_id":"c1","from":"worker:feat/b2#s1","to":"dispatcher:c1","kind":"status","body":{"state":"pr_open","detail":"AC1 pass(go test)"}}
+{"ts":1794799850000,"crew_id":"c1","from":"pr-watch:12","to":"dispatcher:c1","kind":"msg","body":"{\"ts\":1,\"repo\":\"o/b\",\"pr\":12,\"url\":\"https://github.com/o/b/pull/12\",\"changed\":[\"checks\"],\"state\":{\"state\":\"OPEN\",\"checks\":\"PENDING\",\"mergeable\":\"MERGEABLE\"},\"was\":{}}"}

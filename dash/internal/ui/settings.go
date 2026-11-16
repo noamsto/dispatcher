@@ -68,6 +68,7 @@ var quickKnobs = []knob{
 	{path: kpath("profile"), kind: knobEnum, choices: []string{"personal", "work"}, def: "personal"},
 	{path: kpath("freshSeams"), kind: knobBool},
 	{path: kpath("dispatcherChrome"), kind: knobBool},
+	{path: kpath("dashTailscale"), kind: knobBool},
 	{path: kpath("rosterDiagram", "autoOpen"), kind: knobBool},
 	{path: kpath("overseer", "autoRelaunch"), kind: knobBool},
 	{path: kpath("openrouter", "monthlyUsd"), kind: knobNumber, min: 0},

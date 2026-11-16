@@ -147,6 +147,9 @@ func isTerminal(state string) bool { return slices.Contains(terminalStates, stat
 func overviewRows(in Inputs) []WorkerRow {
 	var rows []WorkerRow
 	keep := func(w WorkerRow) {
+		for i := range w.Actions {
+			w.Actions[i] = withDir(w.Actions[i], in.Dir)
+		}
 		if w.State != "reaped" {
 			rows = append(rows, w)
 		}
