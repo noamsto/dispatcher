@@ -18,6 +18,7 @@
   "attention": [
     {
       "id": "failed:c1:feat/h",
+      "crew_key": null,
       "crew": "c1",
       "branch": "feat/h",
       "worker": "feat/h",
@@ -47,6 +48,7 @@
     },
     {
       "id": "dead:c1:feat/g",
+      "crew_key": null,
       "crew": "c1",
       "branch": "feat/g",
       "worker": "feat/g",
@@ -76,6 +78,7 @@
     },
     {
       "id": "role_failed:c1:feat/a",
+      "crew_key": null,
       "crew": "c1",
       "branch": "feat/a",
       "worker": "otter",
@@ -105,6 +108,7 @@
     },
     {
       "id": "lane_dead:c2:",
+      "crew_key": null,
       "crew": "c2",
       "branch": "",
       "worker": "",
@@ -133,6 +137,7 @@
     },
     {
       "id": "blocked:halo/c1:feat/r",
+      "crew_key": null,
       "crew": "c1",
       "branch": "feat/r",
       "worker": "feat/r",
@@ -163,6 +168,7 @@
     },
     {
       "id": "blocked:c1:feat/c",
+      "crew_key": null,
       "crew": "c1",
       "branch": "feat/c",
       "worker": "feat/c",
@@ -193,6 +199,7 @@
     },
     {
       "id": "stall:c1:feat/e",
+      "crew_key": null,
       "crew": "c1",
       "branch": "feat/e",
       "worker": "feat/e",
@@ -222,6 +229,7 @@
     },
     {
       "id": "prompt:c1:feat/d",
+      "crew_key": null,
       "crew": "c1",
       "branch": "feat/d",
       "worker": "feat/d",
@@ -251,6 +259,7 @@
     },
     {
       "id": "watchdog:c1:feat/f",
+      "crew_key": null,
       "crew": "c1",
       "branch": "feat/f",
       "worker": "feat/f",
@@ -280,6 +289,7 @@
     },
     {
       "id": "hold_matured:c1:h-due",
+      "crew_key": null,
       "crew": "c1",
       "branch": "",
       "worker": "",
@@ -308,6 +318,7 @@
     },
     {
       "id": "blocked:mbp/c1:feat/p",
+      "crew_key": null,
       "crew": "c1",
       "branch": "feat/p",
       "worker": "feat/p",
@@ -321,6 +332,7 @@
     },
     {
       "id": "merge_ready:c1:feat/b",
+      "crew_key": null,
       "crew": "c1",
       "branch": "feat/b",
       "worker": "heron",

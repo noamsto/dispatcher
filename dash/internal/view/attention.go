@@ -32,12 +32,19 @@ const (
 	KindLaneDead    Kind = "lane_dead"
 	KindLaneStale   Kind = "lane_stale"
 	KindHoldMatured Kind = "hold_matured"
+
+	KindRelayLost       Kind = "relay_lost"
+	KindPeerStale       Kind = "peer_stale"
+	KindDispatcherGone  Kind = "dispatcher_gone"
+	KindRemoteWatchDead Kind = "remote_watch_dead"
 )
 
 // AttentionItem is one thing that needs the operator. Action is nil for peer
-// workers, which belong to another host's dispatcher.
+// workers, which belong to another host's dispatcher. CrewKey is the fleet
+// crew row an item came from: nil outside the fleet and for host-level items.
 type AttentionItem struct {
 	ID       string   `json:"id"`
+	CrewKey  *string  `json:"crew_key"`
 	Crew     string   `json:"crew"`
 	Branch   string   `json:"branch"`
 	Worker   string   `json:"worker"`
@@ -244,13 +251,24 @@ func buildAttention(in Inputs, rows []WorkerRow) []AttentionItem {
 			if t := deref(hr.Title); t != "" {
 				msg += ": " + t
 			}
+			// A fleet-status hold has no reset time, only how long it waited.
+			age := derefInt(optInt(h, "waited_s"))
+			if hr.ResetAt != nil {
+				age = now - *hr.ResetAt
+			}
 			items = append(items, AttentionItem{
 				ID: fmt.Sprintf("%s:%s:%s", KindHoldMatured, c.ID, hr.ID), Crew: c.ID, Origin: OriginLocal,
-				Severity: SeverityWarning, Kind: KindHoldMatured, Message: msg, AgeSec: now - derefInt(hr.ResetAt), Action: &act,
+				Severity: SeverityWarning, Kind: KindHoldMatured, Message: msg, AgeSec: age, Action: &act,
 			})
 		}
 	}
 
+	sortAttention(items)
+	return items
+}
+
+// sortAttention orders items by severity, then oldest first, then id.
+func sortAttention(items []AttentionItem) {
 	slices.SortFunc(items, func(a, b AttentionItem) int {
 		return cmp.Or(
 			cmp.Compare(severityRank[a.Severity], severityRank[b.Severity]),
@@ -258,7 +276,6 @@ func buildAttention(in Inputs, rows []WorkerRow) []AttentionItem {
 			cmp.Compare(a.ID, b.ID),
 		)
 	})
-	return items
 }
 
 var (

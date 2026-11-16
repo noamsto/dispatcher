@@ -1,0 +1,850 @@
+{
+  "schema_version": 1,
+  "view": "overview",
+  "generated_at": 1794800010,
+  "summary": {
+    "workers": 5,
+    "by_state": {
+      "pr_open": 1,
+      "unknown": 1,
+      "working": 3
+    },
+    "attention": 3,
+    "agents": 7,
+    "prs_watched": 1
+  },
+  "attention": [
+    {
+      "id": "role_failed:c1:feat/b",
+      "crew_key": null,
+      "crew": "c1",
+      "branch": "feat/b",
+      "worker": "w-b",
+      "host": "",
+      "origin": "local",
+      "severity": "critical",
+      "kind": "role_failed",
+      "message": "reviewer: role reviewer engine exited (pane %9)",
+      "age_sec": 410,
+      "action": {
+        "key": "p",
+        "verb": "peek",
+        "label": "peek",
+        "command": "cd /r/a && crew where --crew c1 -- feat/b",
+        "argv": [
+          "crew",
+          "where",
+          "--crew",
+          "c1",
+          "--",
+          "feat/b"
+        ],
+        "dir": "/r/a",
+        "needs_input": false,
+        "pr": null
+      }
+    },
+    {
+      "id": "hold_matured:c1:h-q1",
+      "crew_key": null,
+      "crew": "c1",
+      "branch": "",
+      "worker": "",
+      "host": "",
+      "origin": "local",
+      "severity": "warning",
+      "kind": "hold_matured",
+      "message": "hold h-q1 matured",
+      "age_sec": 120,
+      "action": {
+        "key": "",
+        "verb": "inspect",
+        "label": "inspect",
+        "command": "cd /r/a && crew hold due --crew c1",
+        "argv": [
+          "crew",
+          "hold",
+          "due",
+          "--crew",
+          "c1"
+        ],
+        "dir": "/r/a",
+        "needs_input": false,
+        "pr": null
+      }
+    },
+    {
+      "id": "merge_ready:c1:feat/b",
+      "crew_key": null,
+      "crew": "c1",
+      "branch": "feat/b",
+      "worker": "w-b",
+      "host": "",
+      "origin": "local",
+      "severity": "ready",
+      "kind": "merge_ready",
+      "message": "PR #12 checks green, mergeable",
+      "age_sec": 110,
+      "action": {
+        "key": "m",
+        "verb": "merge",
+        "label": "squash-merge",
+        "command": "cd /r/a && crew merge 12 --crew c1",
+        "argv": [
+          "crew",
+          "merge",
+          "12",
+          "--crew",
+          "c1"
+        ],
+        "dir": "/r/a",
+        "needs_input": false,
+        "pr": 12
+      }
+    }
+  ],
+  "workers": [
+    {
+      "crew": "c1",
+      "branch": "feat/a",
+      "name": "w-a",
+      "host": "",
+      "origin": "local",
+      "state": "working",
+      "detail": null,
+      "tier": "standard",
+      "engine": "claude",
+      "model": null,
+      "title": null,
+      "pr_url": null,
+      "pr": null,
+      "age_sec": 20,
+      "phase": {
+        "current": "execute",
+        "steps": [
+          {
+            "name": "spec",
+            "status": "done",
+            "since_sec": 1010
+          },
+          {
+            "name": "plan",
+            "status": "done",
+            "since_sec": 810
+          },
+          {
+            "name": "execute",
+            "status": "current",
+            "since_sec": 610
+          },
+          {
+            "name": "gate",
+            "status": "pending",
+            "since_sec": null
+          },
+          {
+            "name": "review",
+            "status": "pending",
+            "since_sec": null
+          },
+          {
+            "name": "ship",
+            "status": "pending",
+            "since_sec": null
+          }
+        ]
+      },
+      "acceptance": null,
+      "actions": [
+        {
+          "key": "p",
+          "verb": "peek",
+          "label": "peek",
+          "command": "cd /r/a && crew where --crew c1 -- feat/a",
+          "argv": [
+            "crew",
+            "where",
+            "--crew",
+            "c1",
+            "--",
+            "feat/a"
+          ],
+          "dir": "/r/a",
+          "needs_input": false,
+          "pr": null
+        },
+        {
+          "key": "n",
+          "verb": "nudge",
+          "label": "nudge",
+          "command": "cd /r/a && crew nudge --crew c1 -- w-a",
+          "argv": [
+            "crew",
+            "nudge",
+            "--crew",
+            "c1",
+            "--",
+            "w-a"
+          ],
+          "dir": "/r/a",
+          "needs_input": false,
+          "pr": null
+        },
+        {
+          "key": "r",
+          "verb": "reply",
+          "label": "reply",
+          "command": "cd /r/a && crew reply --crew c1 -- worker:feat/a '<text>'",
+          "argv": [
+            "crew",
+            "reply",
+            "--crew",
+            "c1",
+            "--",
+            "worker:feat/a",
+            "<text>"
+          ],
+          "dir": "/r/a",
+          "needs_input": true,
+          "pr": null
+        }
+      ]
+    },
+    {
+      "crew": "c1",
+      "branch": "feat/b",
+      "name": "w-b",
+      "host": "",
+      "origin": "local",
+      "state": "pr_open",
+      "detail": null,
+      "tier": "standard",
+      "engine": "claude",
+      "model": null,
+      "title": null,
+      "pr_url": "https://github.com/o/a/pull/12",
+      "pr": 12,
+      "age_sec": 110,
+      "phase": {
+        "current": null,
+        "steps": [
+          {
+            "name": "spec",
+            "status": "done",
+            "since_sec": 910
+          },
+          {
+            "name": "plan",
+            "status": "done",
+            "since_sec": null
+          },
+          {
+            "name": "execute",
+            "status": "done",
+            "since_sec": 510
+          },
+          {
+            "name": "gate",
+            "status": "done",
+            "since_sec": null
+          },
+          {
+            "name": "review",
+            "status": "done",
+            "since_sec": null
+          },
+          {
+            "name": "ship",
+            "status": "done",
+            "since_sec": null
+          }
+        ]
+      },
+      "acceptance": {
+        "done": 3,
+        "total": 3
+      },
+      "actions": [
+        {
+          "key": "p",
+          "verb": "peek",
+          "label": "peek",
+          "command": "cd /r/a && crew where --crew c1 -- feat/b",
+          "argv": [
+            "crew",
+            "where",
+            "--crew",
+            "c1",
+            "--",
+            "feat/b"
+          ],
+          "dir": "/r/a",
+          "needs_input": false,
+          "pr": null
+        },
+        {
+          "key": "n",
+          "verb": "nudge",
+          "label": "nudge",
+          "command": "cd /r/a && crew nudge --crew c1 -- w-b",
+          "argv": [
+            "crew",
+            "nudge",
+            "--crew",
+            "c1",
+            "--",
+            "w-b"
+          ],
+          "dir": "/r/a",
+          "needs_input": false,
+          "pr": null
+        },
+        {
+          "key": "r",
+          "verb": "reply",
+          "label": "reply",
+          "command": "cd /r/a && crew reply --crew c1 -- worker:feat/b '<text>'",
+          "argv": [
+            "crew",
+            "reply",
+            "--crew",
+            "c1",
+            "--",
+            "worker:feat/b",
+            "<text>"
+          ],
+          "dir": "/r/a",
+          "needs_input": true,
+          "pr": null
+        },
+        {
+          "key": "m",
+          "verb": "merge",
+          "label": "squash-merge",
+          "command": "cd /r/a && crew merge 12 --crew c1",
+          "argv": [
+            "crew",
+            "merge",
+            "12",
+            "--crew",
+            "c1"
+          ],
+          "dir": "/r/a",
+          "needs_input": false,
+          "pr": 12
+        }
+      ]
+    },
+    {
+      "crew": "c1",
+      "branch": "feat/r1",
+      "name": "w-r1",
+      "host": "halo",
+      "origin": "remote_worker",
+      "state": "working",
+      "detail": null,
+      "tier": "deep",
+      "engine": "claude",
+      "model": null,
+      "title": null,
+      "pr_url": null,
+      "pr": null,
+      "age_sec": 15,
+      "phase": null,
+      "acceptance": null,
+      "actions": [
+        {
+          "key": "p",
+          "verb": "peek",
+          "label": "peek",
+          "command": "cd /r/a && crew where --crew c1 -- feat/r1",
+          "argv": [
+            "crew",
+            "where",
+            "--crew",
+            "c1",
+            "--",
+            "feat/r1"
+          ],
+          "dir": "/r/a",
+          "needs_input": false,
+          "pr": null
+        },
+        {
+          "key": "n",
+          "verb": "nudge",
+          "label": "nudge",
+          "command": "cd /r/a && crew nudge --crew c1 -- w-r1",
+          "argv": [
+            "crew",
+            "nudge",
+            "--crew",
+            "c1",
+            "--",
+            "w-r1"
+          ],
+          "dir": "/r/a",
+          "needs_input": false,
+          "pr": null
+        },
+        {
+          "key": "r",
+          "verb": "reply",
+          "label": "reply",
+          "command": "cd /r/a && crew reply --crew c1 -- worker:feat/r1 '<text>'",
+          "argv": [
+            "crew",
+            "reply",
+            "--crew",
+            "c1",
+            "--",
+            "worker:feat/r1",
+            "<text>"
+          ],
+          "dir": "/r/a",
+          "needs_input": true,
+          "pr": null
+        }
+      ]
+    },
+    {
+      "crew": "c1",
+      "branch": "feat/r2",
+      "name": "w-r2",
+      "host": "tp",
+      "origin": "remote_worker",
+      "state": "working",
+      "detail": null,
+      "tier": "standard",
+      "engine": "codex",
+      "model": null,
+      "title": null,
+      "pr_url": null,
+      "pr": null,
+      "age_sec": 1010,
+      "phase": null,
+      "acceptance": null,
+      "actions": [
+        {
+          "key": "p",
+          "verb": "peek",
+          "label": "peek",
+          "command": "cd /r/a && crew where --crew c1 -- feat/r2",
+          "argv": [
+            "crew",
+            "where",
+            "--crew",
+            "c1",
+            "--",
+            "feat/r2"
+          ],
+          "dir": "/r/a",
+          "needs_input": false,
+          "pr": null
+        },
+        {
+          "key": "n",
+          "verb": "nudge",
+          "label": "nudge",
+          "command": "cd /r/a && crew nudge --crew c1 -- w-r2",
+          "argv": [
+            "crew",
+            "nudge",
+            "--crew",
+            "c1",
+            "--",
+            "w-r2"
+          ],
+          "dir": "/r/a",
+          "needs_input": false,
+          "pr": null
+        },
+        {
+          "key": "r",
+          "verb": "reply",
+          "label": "reply",
+          "command": "cd /r/a && crew reply --crew c1 -- worker:feat/r2 '<text>'",
+          "argv": [
+            "crew",
+            "reply",
+            "--crew",
+            "c1",
+            "--",
+            "worker:feat/r2",
+            "<text>"
+          ],
+          "dir": "/r/a",
+          "needs_input": true,
+          "pr": null
+        }
+      ]
+    },
+    {
+      "crew": "c1",
+      "branch": "feat/far",
+      "name": "far",
+      "host": "far",
+      "origin": "remote_worker",
+      "state": "",
+      "detail": null,
+      "tier": null,
+      "engine": null,
+      "model": null,
+      "title": null,
+      "pr_url": null,
+      "pr": null,
+      "age_sec": 10,
+      "phase": null,
+      "acceptance": null,
+      "actions": [
+        {
+          "key": "p",
+          "verb": "peek",
+          "label": "peek",
+          "command": "cd /r/a && crew where --crew c1 -- feat/far",
+          "argv": [
+            "crew",
+            "where",
+            "--crew",
+            "c1",
+            "--",
+            "feat/far"
+          ],
+          "dir": "/r/a",
+          "needs_input": false,
+          "pr": null
+        },
+        {
+          "key": "n",
+          "verb": "nudge",
+          "label": "nudge",
+          "command": "cd /r/a && crew nudge --crew c1 -- far",
+          "argv": [
+            "crew",
+            "nudge",
+            "--crew",
+            "c1",
+            "--",
+            "far"
+          ],
+          "dir": "/r/a",
+          "needs_input": false,
+          "pr": null
+        },
+        {
+          "key": "r",
+          "verb": "reply",
+          "label": "reply",
+          "command": "cd /r/a && crew reply --crew c1 -- worker:feat/far '<text>'",
+          "argv": [
+            "crew",
+            "reply",
+            "--crew",
+            "c1",
+            "--",
+            "worker:feat/far",
+            "<text>"
+          ],
+          "dir": "/r/a",
+          "needs_input": true,
+          "pr": null
+        }
+      ]
+    }
+  ],
+  "agents": [
+    {
+      "crew": "c1",
+      "branch": "feat/a",
+      "host": "",
+      "origin": "local",
+      "lead": {
+        "kind": "lead",
+        "role": null,
+        "engine": "claude",
+        "model": null,
+        "tier": "standard",
+        "state": "working",
+        "detail": null,
+        "age_sec": 20
+      },
+      "roles": [
+        {
+          "kind": "role",
+          "role": "plan-critic",
+          "engine": null,
+          "model": null,
+          "tier": null,
+          "state": "unknown",
+          "detail": null,
+          "age_sec": null
+        }
+      ],
+      "execute": []
+    },
+    {
+      "crew": "c1",
+      "branch": "feat/b",
+      "host": "",
+      "origin": "local",
+      "lead": {
+        "kind": "lead",
+        "role": null,
+        "engine": "claude",
+        "model": null,
+        "tier": "standard",
+        "state": "pr_open",
+        "detail": null,
+        "age_sec": 110
+      },
+      "roles": [
+        {
+          "kind": "role",
+          "role": "reviewer",
+          "engine": null,
+          "model": null,
+          "tier": null,
+          "state": "failed",
+          "detail": "role reviewer engine exited (pane %9)",
+          "age_sec": 410
+        }
+      ],
+      "execute": []
+    },
+    {
+      "crew": "c1",
+      "branch": "feat/r1",
+      "host": "halo",
+      "origin": "remote_worker",
+      "lead": {
+        "kind": "lead",
+        "role": null,
+        "engine": "claude",
+        "model": null,
+        "tier": "deep",
+        "state": "working",
+        "detail": null,
+        "age_sec": 15
+      },
+      "roles": null,
+      "execute": []
+    },
+    {
+      "crew": "c1",
+      "branch": "feat/r2",
+      "host": "tp",
+      "origin": "remote_worker",
+      "lead": {
+        "kind": "lead",
+        "role": null,
+        "engine": "codex",
+        "model": null,
+        "tier": "standard",
+        "state": "working",
+        "detail": null,
+        "age_sec": 1010
+      },
+      "roles": null,
+      "execute": []
+    },
+    {
+      "crew": "c1",
+      "branch": "feat/far",
+      "host": "far",
+      "origin": "remote_worker",
+      "lead": {
+        "kind": "lead",
+        "role": null,
+        "engine": null,
+        "model": null,
+        "tier": null,
+        "state": "",
+        "detail": null,
+        "age_sec": 10
+      },
+      "roles": null,
+      "execute": []
+    }
+  ],
+  "monitors": {
+    "watchdogs": [
+      {
+        "crew": "c1",
+        "branch": "feat/a",
+        "host": "",
+        "origin": "local",
+        "state": "working",
+        "label": "ok 20s",
+        "activity": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0,
+          1,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          1
+        ]
+      },
+      {
+        "crew": "c1",
+        "branch": "feat/b",
+        "host": "",
+        "origin": "local",
+        "state": "pr_open",
+        "label": "ok 1m",
+        "activity": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0
+        ]
+      },
+      {
+        "crew": "c1",
+        "branch": "feat/r1",
+        "host": "halo",
+        "origin": "remote_worker",
+        "state": "working",
+        "label": "ok 15s",
+        "activity": null
+      },
+      {
+        "crew": "c1",
+        "branch": "feat/r2",
+        "host": "tp",
+        "origin": "remote_worker",
+        "state": "working",
+        "label": "ok 16m",
+        "activity": null
+      },
+      {
+        "crew": "c1",
+        "branch": "feat/far",
+        "host": "far",
+        "origin": "remote_worker",
+        "state": "",
+        "label": "? 10s",
+        "activity": null
+      }
+    ],
+    "pr_checks": [
+      {
+        "crew": "c1",
+        "branch": "feat/b",
+        "host": "",
+        "origin": "local",
+        "pr": 12,
+        "checks": "SUCCESS",
+        "mergeable": "MERGEABLE",
+        "age_sec": 30
+      }
+    ],
+    "budgets": [
+      {
+        "engine": "claude",
+        "label": "claude 5h",
+        "used_pct": 10,
+        "ahead_pts": null,
+        "pace": "n/a",
+        "verdict": null
+      },
+      {
+        "engine": "claude",
+        "label": "claude 7d",
+        "used_pct": 62,
+        "ahead_pts": 12,
+        "pace": "ahead",
+        "verdict": "ahead of pace: prefer a cheaper burn class"
+      }
+    ]
+  },
+  "events": [
+    {
+      "ts": 1794799990,
+      "worker": "worker:feat/a#s1",
+      "text": "progress note"
+    },
+    {
+      "ts": 1794799900,
+      "worker": "worker:feat/b#s1",
+      "text": "pr_open AC1 pass(go test); AC2 pass(bats); AC3 waived(dispatcher: n/a)"
+    },
+    {
+      "ts": 1794799500,
+      "worker": "worker:feat/b#s1",
+      "text": "working execute"
+    },
+    {
+      "ts": 1794799400,
+      "worker": "worker:feat/a#s1",
+      "text": "working execute"
+    },
+    {
+      "ts": 1794799200,
+      "worker": "worker:feat/a#s1",
+      "text": "working plan"
+    },
+    {
+      "ts": 1794799100,
+      "worker": "worker:feat/b#s1",
+      "text": "working spec"
+    },
+    {
+      "ts": 1794799000,
+      "worker": "worker:feat/a#s1",
+      "text": "working spec"
+    }
+  ],
+  "errors": [
+    "host far: ssh: connect to host far port 22: timed out"
+  ]
+}

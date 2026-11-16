@@ -264,7 +264,7 @@ func TestRetroReportWithoutRowsRendersNoNotesYet(t *testing.T) {
 }
 
 const usageText = "usage: crew dash [--once | --json [--view <name> [--watch]]]\n" +
-	"views: overview, roster, budget, runs, settings, map\n"
+	"views: overview, roster, budget, runs, settings, map, fleet\n"
 
 func TestUnknownArgumentExits2WithUsage(t *testing.T) {
 	s := newSandbox(t)
@@ -308,7 +308,7 @@ func TestParseArgs(t *testing.T) {
 		{args: []string{"--json", "--view", "overview", "--watch"}, want: opts{mode: "json", view: "overview", watch: true}},
 		{args: []string{"--view", "overview"}, wantErr: "--view needs --json"},
 		{args: []string{"--json", "--watch"}, wantErr: "--watch needs --view"},
-		{args: []string{"--json", "--view", "nope"}, wantErr: "overview, roster, budget, runs, settings, map"},
+		{args: []string{"--json", "--view", "nope"}, wantErr: "overview, roster, budget, runs, settings, map, fleet"},
 		{args: []string{"--json", "--view"}, wantErr: "--view needs a name"},
 		{args: []string{"--once", "--json"}, wantErr: "--once takes no other flags"},
 		{args: []string{"--once", "--watch"}, wantErr: "--once takes no other flags"},

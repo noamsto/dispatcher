@@ -4,6 +4,7 @@
 package view
 
 import (
+	"errors"
 	"fmt"
 	"regexp"
 	"slices"
@@ -16,7 +17,7 @@ import (
 const SchemaVersion = 1
 
 // Names is every view `--view` accepts, in tab order.
-var Names = []string{"overview", "roster", "budget", "runs", "settings", "map"}
+var Names = []string{"overview", "roster", "budget", "runs", "settings", "map", "fleet"}
 
 // Loaded says which sources have delivered at least once.
 type Loaded struct {
@@ -54,6 +55,8 @@ func Build(name string, in Inputs) (any, error) {
 		return BuildSettings(in), nil
 	case "map":
 		return BuildMap(in), nil
+	case "fleet":
+		return nil, errors.New("view fleet is machine-wide: build it with BuildFleet from FleetInputs")
 	}
 	return nil, fmt.Errorf("unknown view %q (valid: %s)", name, strings.Join(Names, ", "))
 }

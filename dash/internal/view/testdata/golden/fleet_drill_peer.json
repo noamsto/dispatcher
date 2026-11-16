@@ -1,0 +1,90 @@
+{
+  "schema_version": 1,
+  "view": "overview",
+  "generated_at": 1794800010,
+  "summary": {
+    "workers": 1,
+    "by_state": {
+      "pr_open": 1
+    },
+    "attention": 0,
+    "agents": 1,
+    "prs_watched": 0
+  },
+  "attention": [],
+  "workers": [
+    {
+      "crew": "p3",
+      "branch": "feat/p3",
+      "name": "pw4",
+      "host": "box",
+      "origin": "peer",
+      "state": "pr_open",
+      "detail": null,
+      "tier": "deep",
+      "engine": "codex",
+      "model": null,
+      "title": null,
+      "pr_url": null,
+      "pr": null,
+      "age_sec": 10,
+      "phase": null,
+      "acceptance": null,
+      "actions": []
+    }
+  ],
+  "agents": [
+    {
+      "crew": "p3",
+      "branch": "feat/p3",
+      "host": "box",
+      "origin": "peer",
+      "lead": {
+        "kind": "lead",
+        "role": null,
+        "engine": "codex",
+        "model": null,
+        "tier": "deep",
+        "state": "pr_open",
+        "detail": null,
+        "age_sec": 10
+      },
+      "roles": null,
+      "execute": []
+    }
+  ],
+  "monitors": {
+    "watchdogs": [
+      {
+        "crew": "p3",
+        "branch": "feat/p3",
+        "host": "box",
+        "origin": "peer",
+        "state": "pr_open",
+        "label": "ok 10s",
+        "activity": null
+      }
+    ],
+    "pr_checks": [],
+    "budgets": [
+      {
+        "engine": "claude",
+        "label": "claude 5h",
+        "used_pct": 10,
+        "ahead_pts": null,
+        "pace": "n/a",
+        "verdict": null
+      },
+      {
+        "engine": "claude",
+        "label": "claude 7d",
+        "used_pct": 62,
+        "ahead_pts": 12,
+        "pace": "ahead",
+        "verdict": "ahead of pace: prefer a cheaper burn class"
+      }
+    ]
+  },
+  "events": [],
+  "errors": []
+}

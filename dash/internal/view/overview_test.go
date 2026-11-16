@@ -180,6 +180,12 @@ func TestGoldenViews(t *testing.T) {
 	for _, name := range view.Names {
 		t.Run(name, func(t *testing.T) {
 			v, err := view.Build(name, viewtest.Inputs())
+			if name == "fleet" {
+				if err == nil || !strings.Contains(err.Error(), "BuildFleet") {
+					t.Errorf("Build(fleet) err = %v, want a pointer to BuildFleet", err)
+				}
+				return
+			}
 			if err != nil {
 				t.Fatal(err)
 			}
