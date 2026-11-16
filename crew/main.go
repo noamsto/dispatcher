@@ -223,7 +223,7 @@ type root struct {
 	Sessions   sessionsCmd   `cmd:"" name:"sessions" help:"A branch's sessions."`
 	Inbox      inboxCmd      `cmd:"" name:"inbox" help:"Msgs addressed to one agent."`
 
-	Roster       rosterCmd       `cmd:"" name:"roster" help:"This crew's workers."`
+	Roster       rosterCmd       `cmd:"" name:"roster" help:"This crew's workers. A blocked worker the dispatcher has replied to reads state answered until it re-stamps."`
 	Report       reportCmd       `cmd:"" name:"report" help:"The crew's report."`
 	Retro        retroCmd        `cmd:"" name:"retro" help:"The retro notes."`
 	Rate         rateCmd         `cmd:"" name:"rate" help:"The ratings sweep and report."`

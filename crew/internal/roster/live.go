@@ -11,7 +11,10 @@ import (
 // LiveStates are the non-terminal states a row can hold: what `crew fleet`
 // shows without --all, and what a live diagram keeps while the row still has
 // evidence of life.
-var LiveStates = []string{"working", "blocked", "pr_open"}
+//
+// `answered` is a blocked worker whose question the dispatcher has replied to
+// and that has not yet re-stamped.
+var LiveStates = []string{"working", "blocked", "answered", "pr_open"}
 
 // waitingStates are the finished states a live view keeps while the branch's
 // worktree still stands and the row is still fresh: the worker said done, failed

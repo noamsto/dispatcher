@@ -14,15 +14,34 @@
       (map(select(.crew_id==$crew and (.kind=="dispatch" or .kind=="resume" or .kind=="relaunch")))
         | group_by(.branch)
         | map({key:.[0].branch, value:(sort_by(.ts) | last | .engine_session // null)}) | from_entries) as $esess
+      | . as $all
       | map(select(.crew_id==$crew and .kind=="status"
                    and ((.from // "") | startswith("worker:"))))
       | group_by(.from)
       | map(
           (max_by(.ts)) as $latest
+          # A blocked episode is the trailing run of worker-posted blocked
+          # rows; a row opens a new one unless it repeats the previous
+          # detail or is a --restamp. Watchdog rows never count.
+          | (map(select(.body.source != "watchdog")) | sort_by(.ts)) as $ws
+          | ($ws | to_entries | map(select(.value.body.state != "blocked")) | (last // {key: -1}) | .key) as $cut
+          | ($ws[$cut + 1:]) as $run
+          | (if ($latest.body.state == "blocked" and $latest.body.source != "watchdog" and ($run | length) > 0)
+             then ($run | to_entries
+                   | map(select(.key == 0 or (.value.body.restamp != true
+                                              and .value.body.detail != $run[.key - 1].body.detail)))
+                   | last | .value.ts) else null end) as $since
+          | (if $since == null then null
+             else ($all | map(select(.crew_id==$crew and .kind=="msg"
+                                     and .from == "dispatcher:" + $crew and .to == $latest.from
+                                     and .ts > ($run | last | .ts)))
+                   | map(.ts) | max) end) as $answered
           | {from: $latest.from,
              branch: ($latest.from | wid_branch),
              session: ($latest.from | wid_session),
-             state: $latest.body.state,
+             state: (if $answered != null then "answered" else $latest.body.state end),
+             blocked_since: $since,
+             answered_at: $answered,
              # `detail` is unbounded free text and the roster is an LLM-read
              # dashboard, so an untruncated row can crowd out the table. 120
              # fits every reserved prefix plus its payload; the full string

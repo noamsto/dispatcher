@@ -542,7 +542,7 @@ func (b *repoBuild) crew(id string, rows []map[string]any, live roster.Liveness,
 func (b *repoBuild) derive(crew string, row map[string]any) {
 	state := str(row, "state")
 	row["blocked"] = nil
-	if state == "blocked" {
+	if state == "blocked" || state == "answered" {
 		row["blocked"] = b.idx.blocked(crew, row)
 	}
 	// A finished worker still holding a window past the grace is what the reap

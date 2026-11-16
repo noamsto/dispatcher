@@ -1273,3 +1273,16 @@ func TestWatchBatchCarriesPlaybook(t *testing.T) {
 		}
 	}
 }
+
+// `answered` is a roster-derived state, never posted: neither a row carrying it
+// nor the dispatcher's reply that produces it wakes the dispatcher.
+func TestAnsweredDoesNotWake(t *testing.T) {
+	p := fixture(t)
+	writeLog(t, p,
+		status(1785951263000, "worker:feat/x#s1-1", "answered", "", ""),
+		msg(1785951265000, "dispatcher:c1", "worker:feat/x#s1-1"))
+	stdout, stderr, code, _ := run(t, p, Request{Since: since("0"), Timeout: "1", Interval: "1"})
+	if code != 0 || stdout != "" || !strings.Contains(stderr, "no new events") {
+		t.Fatalf("code %d stdout %q stderr %q", code, stdout, stderr)
+	}
+}
