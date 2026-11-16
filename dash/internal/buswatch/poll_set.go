@@ -13,10 +13,33 @@ import (
 
 // NewPoll returns a Watcher that every interval re-expands paths() as glob
 // patterns and signals when the matched files' names, sizes or mtimes change.
-// The first tick only records the baseline, so existing files do not fire.
+// The baseline is taken before NewPoll returns, so files that exist then do
+// not fire and any later change does.
 func NewPoll(paths func() []string, interval time.Duration) Watcher {
 	pw := &pollSetWatcher{events: make(chan struct{}, 1), stop: make(chan struct{}), done: make(chan struct{})}
-	go pw.loop(paths, interval)
+	go pw.loop(pollSignature(paths()), paths, interval)
+	return pw
+}
+
+// NewTicker returns a Watcher that signals every interval.
+func NewTicker(interval time.Duration) Watcher {
+	pw := &pollSetWatcher{events: make(chan struct{}, 1), stop: make(chan struct{}), done: make(chan struct{})}
+	go func() {
+		defer close(pw.done)
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-pw.stop:
+				return
+			case <-ticker.C:
+				select {
+				case pw.events <- struct{}{}:
+				default:
+				}
+			}
+		}
+	}()
 	return pw
 }
 
@@ -26,25 +49,23 @@ type pollSetWatcher struct {
 	done   chan struct{}
 }
 
-func (pw *pollSetWatcher) loop(paths func() []string, interval time.Duration) {
+func (pw *pollSetWatcher) loop(last string, paths func() []string, interval time.Duration) {
 	defer close(pw.done)
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
-	var last string
-	seeded := false
 	for {
 		select {
 		case <-pw.stop:
 			return
 		case <-ticker.C:
 			sig := pollSignature(paths())
-			if seeded && sig != last {
+			if sig != last {
 				select {
 				case pw.events <- struct{}{}:
 				default:
 				}
 			}
-			last, seeded = sig, true
+			last = sig
 		}
 	}
 }

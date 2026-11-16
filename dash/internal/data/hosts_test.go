@@ -145,7 +145,7 @@ func TestTailscaleMissingFallsBackToSSH(t *testing.T) {
 		for _, c := range r.CallsSnapshot() {
 			if c.Name == "ssh" {
 				probes++
-				if c.Args[0] != "-o" || c.Args[1] != "BatchMode=yes" || c.Args[2] != "-o" || c.Args[3] != "ConnectTimeout=3" || c.Args[4] != "--" || c.Args[6] != "true" {
+				if c.Args[0] != "-o" || c.Args[1] != "BatchMode=yes" || c.Args[2] != "-o" || c.Args[3] != "ConnectTimeout=3" || c.Args[4] != "-o" || c.Args[5] != "ServerAliveInterval=2" || c.Args[6] != "-o" || c.Args[7] != "ServerAliveCountMax=1" || c.Args[8] != "--" || c.Args[10] != "true" {
 					t.Errorf("argv = %v", c.Args)
 				}
 			}
@@ -213,5 +213,68 @@ func TestSSHProbeCache(t *testing.T) {
 	collect()
 	if got := count(); got != 8 {
 		t.Fatalf("probes after 61s = %d, want 8", got)
+	}
+}
+
+func probeOne(t *testing.T, ctx context.Context, p *HostProber, r *FakeRunner, resp FakeResponse) HostReach {
+	t.Helper()
+	r.Responses[sshKey("x")] = resp
+	return p.Probe(ctx, []HostConfig{{Name: "x"}})[0]
+}
+
+func TestProbeOnlineOnlyWhenSSHRan(t *testing.T) {
+	cases := []struct {
+		name   string
+		resp   FakeResponse
+		online *bool
+		errMsg string
+	}{
+		{"missing binary", FakeResponse{Err: os_ErrNotFound{}}, nil, os_ErrNotFound{}.Error()},
+		{"exit 127", FakeResponse{Err: FakeExitError{Code: 127}}, nil, "exit status 127"},
+		{"exit 255", FakeResponse{Stderr: []byte("refused"), Err: FakeExitError{Code: 255}}, new(bool), "refused"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := &FakeRunner{Responses: map[string]FakeResponse{}}
+			re := probeOne(t, context.Background(), NewHostProber(r, time.Now), r, tc.resp)
+			if (re.Online == nil) != (tc.online == nil) || re.Online != nil && *re.Online != *tc.online {
+				t.Errorf("online = %v, want %v", re.Online, tc.online)
+			}
+			if re.Error == nil || *re.Error != tc.errMsg {
+				t.Errorf("error = %v, want %q", re.Error, tc.errMsg)
+			}
+		})
+	}
+}
+
+func TestProbeTimeoutAndCancelAreUnknownAndUncached(t *testing.T) {
+	old := probeTimeout
+	probeTimeout = 20 * time.Millisecond
+	t.Cleanup(func() { probeTimeout = old })
+
+	r := &FakeRunner{Responses: map[string]FakeResponse{}}
+	p := NewHostProber(r, time.Now)
+	hang := FakeResponse{Wait: make(chan struct{})}
+	re := probeOne(t, context.Background(), p, r, hang)
+	if re.Online != nil || re.Error == nil || *re.Error != "timeout" {
+		t.Fatalf("timeout probe = %+v", re)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if re = probeOne(t, ctx, p, r, hang); re.Online != nil || re.Error == nil || *re.Error == "timeout" {
+		t.Fatalf("cancelled probe = %+v", re)
+	}
+	probeOne(t, context.Background(), p, r, FakeResponse{})
+	if re = probeOne(t, context.Background(), p, r, hang); re.Online == nil || !*re.Online {
+		t.Errorf("successful probe was not cached: %+v", re)
+	}
+	n := 0
+	for _, c := range r.CallsSnapshot() {
+		if c.Name == "ssh" {
+			n++
+		}
+	}
+	if n != 3 {
+		t.Errorf("ssh calls = %d, want 3 (timeout, cancel, success; the failures were not cached)", n)
 	}
 }

@@ -13,7 +13,7 @@ const (
 	fleetStatusKey = "crew fleet status --json"
 	fleetQueueKey  = "crew fleet queue --json"
 	tailscaleKey   = "tailscale status --json"
-	sshHaloKey     = "ssh -o BatchMode=yes -o ConnectTimeout=3 -- halo.lan true"
+	sshHaloKey     = "ssh -o BatchMode=yes -o ConnectTimeout=3 -o ServerAliveInterval=2 -o ServerAliveCountMax=1 -- halo.lan true"
 )
 
 func fleetRunner(t *testing.T) *FakeRunner {
@@ -50,7 +50,7 @@ func leaf(value string, path ...string) SettingRow {
 }
 
 func sshKey(dest string) string {
-	return "ssh -o BatchMode=yes -o ConnectTimeout=3 -- " + dest + " true"
+	return "ssh -o BatchMode=yes -o ConnectTimeout=3 -o ServerAliveInterval=2 -o ServerAliveCountMax=1 -- " + dest + " true"
 }
 
 // allSSH adds an ok response for every probe the fleet settings configure.
@@ -176,16 +176,13 @@ func TestCollectFleetDegrades(t *testing.T) {
 	}
 }
 
-func TestCollectFleetQueueExit1(t *testing.T) {
+func TestCollectFleetQueueExit1IsFailure(t *testing.T) {
 	r := fleetRunner(t)
 	allSSH(r)
 	r.Responses[fleetQueueKey] = FakeResponse{Stdout: readTestdata(t, "fleet_queue.json"), Err: FakeExitError{Code: 1}}
 	sec := CollectFleet(context.Background(), r, baseConfig(), false, fleetSettings(false), fixedProber(r))
-	if sec.QueueError != nil || len(sec.Queue) != 3 {
-		t.Fatalf("queue = %+v err = %v", sec.Queue, sec.QueueError)
-	}
-	if sec.Queue[2].State != "parked" || sec.Queue[2].Weight != 9 || sec.Queue[0].RepoPrio != 2 {
-		t.Errorf("queue rows = %+v", sec.Queue)
+	if sec.QueueError == nil || len(sec.Queue) != 0 {
+		t.Fatalf("queue = %+v err = %v, want an error for exit 1", sec.Queue, sec.QueueError)
 	}
 }
 

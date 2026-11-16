@@ -46,7 +46,7 @@ func fleetSettings() data.SettingsSection {
 }
 
 func sshKey(dest string) string {
-	return "ssh -o BatchMode=yes -o ConnectTimeout=3 -- " + dest + " true"
+	return "ssh -o BatchMode=yes -o ConnectTimeout=3 -o ServerAliveInterval=2 -o ServerAliveCountMax=1 -- " + dest + " true"
 }
 
 // FleetInputs is the fleet fixture: the data package's fleet status, queue

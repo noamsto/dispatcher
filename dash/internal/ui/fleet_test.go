@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/noamsto/dispatcher/dash/internal/data"
@@ -797,5 +798,64 @@ func TestFleetPollRequestsOnlyWhenActive(t *testing.T) {
 	_ = w.Close()
 	if msg := waitForFleetChange(w)(); msg != nil {
 		t.Errorf("closed watcher produced %v", msg)
+	}
+}
+
+func TestFleetDrilledKeysEscHint(t *testing.T) {
+	m := fleetSelectCrew(t, sized(fleetRootModel(t, viewtest.FleetInputs()), 120, 40), keyB5)
+	m = sweepKeys(m, keyType(tea.KeyEnter))
+	hasEsc := func(m Model) bool {
+		return slices.ContainsFunc(m.views[fleetTab].Keys(), func(b key.Binding) bool { return b.Help().Desc == "fleet" })
+	}
+	if !hasEsc(m) {
+		t.Fatal("drilled Overview with no filter: no esc -> fleet hint")
+	}
+	m = sweepKeys(m, keyRune('/'), keyRune('x'), keyType(tea.KeyEnter))
+	if hasEsc(m) {
+		t.Error("drilled Overview with a kept filter still hints esc -> fleet")
+	}
+	m = sweepKeys(m, keyType(tea.KeyEsc))
+	if !hasEsc(m) {
+		t.Error("after esc cleared the filter the esc -> fleet hint is missing")
+	}
+}
+
+func TestFleetChangeCooldown(t *testing.T) {
+	var calls atomic.Int32
+	deps := Deps{Now: viewtest.NowMS / 1000, Load: Loaders{
+		Fleet: func(context.Context) vm.FleetInputs { calls.Add(1); return viewtest.FleetInputs() },
+	}}
+	m := sized(NewModel(deps, fixedNow(loadSnapshot(t)), liveDeps{}), 120, 40)
+	m.active = liveTab
+	nm, _ := m.Update(keyRune('8'))
+	in := viewtest.FleetInputs()
+	nm, _ = nm.Update(sourceMsg{src: srcFleet, apply: func(*data.Snapshot) {}, fleet: &in})
+	m = nm.(Model)
+
+	// Inside the cooldown: no load, one deferred settle however many changes.
+	for range 3 {
+		nm, _ = m.Update(fleetChangedMsg{})
+		m = nm.(Model)
+	}
+	if m.load[srcFleet].inFlight {
+		t.Fatal("change inside the cooldown loaded the fleet")
+	}
+	if !m.fleetSettle {
+		t.Fatal("change inside the cooldown scheduled no deferred load")
+	}
+
+	// The deferred settle then loads once.
+	nm, cmd := m.Update(fleetSettleMsg{})
+	m = nm.(Model)
+	if m.fleetSettle || !m.load[srcFleet].inFlight || cmd == nil {
+		t.Fatalf("settle: pending %v, in flight %v", m.fleetSettle, m.load[srcFleet].inFlight)
+	}
+
+	// Past the cooldown a change loads at once.
+	m.load[srcFleet].inFlight = false
+	m.load[srcFleet].at = m.now().Add(-fleetCooldown)
+	nm, _ = m.Update(fleetChangedMsg{})
+	if !nm.(Model).load[srcFleet].inFlight {
+		t.Error("change after the cooldown did not load")
 	}
 }

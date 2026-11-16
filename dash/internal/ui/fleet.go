@@ -146,7 +146,7 @@ func (v fleetView) helpLines() []string {
 
 func (v fleetView) Keys() []key.Binding {
 	if v.drilled {
-		if v.drill.mode != ovNormal {
+		if v.drill.mode != ovNormal || v.drill.st.filter != "" {
 			return v.drill.Keys()
 		}
 		return append(v.drill.Keys(), key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "fleet")))

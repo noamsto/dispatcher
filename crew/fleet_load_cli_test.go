@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -23,7 +24,7 @@ func fleetLoadEnv(t *testing.T) env {
 	if err := os.WriteFile(filepath.Join(bin, "nproc"), []byte("#!/bin/sh\necho 4\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(bin, "dispatch-config"), []byte("#!/bin/sh\necho '{}'\n"), 0o755); err != nil {
+	if err := os.WriteFile(filepath.Join(bin, "dispatch-config"), []byte("#!/bin/sh\necho x >> \"${0%/*}/dispatch-config.calls\"\necho '{}'\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	loadavg := filepath.Join(dir, "loadavg")
@@ -97,4 +98,37 @@ func TestFleetLoadHelp(t *testing.T) {
 			t.Errorf("%v: exit %d %q %q", args, code, stdout.String(), stderr.String())
 		}
 	}
+}
+
+// TestFleetLoadResolvesLocalModelsOnlyForJSON: the table never reads
+// local_models, so only --json runs dispatch-config for it.
+func TestFleetLoadResolvesLocalModelsOnlyForJSON(t *testing.T) {
+	e := fleetLoadEnv(t)
+	calls := filepath.Join(filepath.Dir(mustLookPath(t, "dispatch-config")), "dispatch-config.calls")
+	var stdout, stderr bytes.Buffer
+	if code := run(context.Background(), []string{"fleet", "load", "--budget", "8"}, &stdout, &stderr, e); code != 0 {
+		t.Fatalf("exit %d, stderr %q", code, stderr.String())
+	}
+	if _, err := os.Stat(calls); err == nil {
+		t.Error("table output ran dispatch-config for local models")
+	}
+	stdout.Reset()
+	if code := run(context.Background(), []string{"fleet", "load", "--json", "--budget", "8"}, &stdout, &stderr, e); code != 0 {
+		t.Fatalf("exit %d, stderr %q", code, stderr.String())
+	}
+	if _, err := os.Stat(calls); err != nil {
+		t.Error("--json did not resolve local models")
+	}
+	if !strings.Contains(stdout.String(), `"local_models"`) {
+		t.Errorf("--json lacks local_models: %s", stdout.String())
+	}
+}
+
+func mustLookPath(t *testing.T, name string) string {
+	t.Helper()
+	p, err := exec.LookPath(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return p
 }

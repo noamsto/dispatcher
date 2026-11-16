@@ -1037,7 +1037,7 @@ laneprofiles_refuse_row() { # json fragment
 {"hosts":{"mini":{"ssh":"me@mini","repos":{"acme/widget":"/r/wid\tget"}}}}|mini.repos.acme/widget
 {"hosts":{"mini":{"ssh":"me@mini","repos":{"acme/widget":"/r/wid\u007fget"}}}}|mini.repos.acme/widget
 {"hosts":{"mini":{"ssh":"me@mini","repos":["/r"]}}}|mini.repos
-{"hosts":{"mini":{"ssh":"me@mini","port":22}}}|mini.port
+{"hosts":{"mini":{"ssh":"me@mini","port":22}}}|mini.port must be one of ssh, repos, chrome, peer, tailscale
 {"hosts":{"mini":{"ssh":"me@mini","chrome":"yes"}}}|mini.chrome
 {"hosts":{"mini":{"ssh":"me@mini","chrome":1}}}|mini.chrome
 {"hosts":{"mini":{"ssh":"me@mini","peer":"yes"}}}|mini.peer
@@ -1056,13 +1056,6 @@ EOF
   run --separate-stderr "$CONFIG"
   [ "$status" -eq 0 ]
   jq -e '.hosts.h.tailscale == "box-1"' <<<"$output"
-}
-
-@test "an unknown hosts key lists tailscale among the allowed keys" {
-  user_settings '{"hosts":{"h":{"ssh":"me@h","port":22}}}'
-  run --separate-stderr "$CONFIG"
-  [ "$status" -eq 1 ]
-  [[ "$stderr" == *"one of ssh, repos, chrome, peer, tailscale"* ]]
 }
 
 # The module's strMatching "/[^[:cntrl:]]*" is byte-based: a C1 code point is

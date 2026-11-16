@@ -482,3 +482,71 @@ func TestFleetCollector(t *testing.T) {
 		}
 	}
 }
+
+func TestFleetCollectorKeepsCommonsAcrossFailedStatus(t *testing.T) {
+	status, err := os.ReadFile(testdata + "fleet_status.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	queue, err := os.ReadFile(testdata + "fleet_queue.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings, err := os.ReadFile(testdata + "settings_show_origin.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	layers, err := os.ReadFile(testdata + "settings_layers.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	budget, err := os.ReadFile(testdata + "budget_report.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	failing := data.FakeResponse{Err: data.FakeExitError{Code: 1}}
+	r := &data.FakeRunner{Responses: map[string]data.FakeResponse{
+		"dispatch-config --show-origin":  {Stdout: settings},
+		"dispatch-config --layers":       {Stdout: layers},
+		"refresh-budget --report --json": {Stdout: budget},
+		"crew fleet status --json":       failing,
+		"crew fleet queue --json":        {Stdout: queue},
+	}}
+	cfg := data.Config{Crew: []string{"crew"}, DispatchConfigBin: "dispatch-config", RefreshBudget: "refresh-budget", Now: 1794800010}
+	fc := newFleetCollector(r, cfg)
+
+	fc.collect(context.Background(), cfg.Now)
+	if known := fc.knownCommons(); len(known) != 0 {
+		t.Fatalf("commons after a failed first collect = %v, want none", known)
+	}
+
+	r.Responses["crew fleet status --json"] = data.FakeResponse{Stdout: status}
+	fc.collect(context.Background(), cfg.Now)
+	recovered := fc.knownCommons()
+	if len(recovered) == 0 {
+		t.Fatal("commons not recorded after recovery")
+	}
+
+	r.Responses["crew fleet status --json"] = failing
+	fc.collect(context.Background(), cfg.Now)
+	if got := fc.knownCommons(); !slices.Equal(got, recovered) {
+		t.Errorf("commons after a failed collect = %v, want the last known %v", got, recovered)
+	}
+}
+
+func TestResolveCrewMakesRelativeCrewBinAbsolute(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	if err := os.WriteFile(filepath.Join(dir, "crewbin"), []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CREW_BIN", "crewbin")
+	got := resolveCrew()
+	want, err := filepath.Abs("crewbin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(got, []string{want}) {
+		t.Errorf("resolveCrew = %v, want [%s]", got, want)
+	}
+}

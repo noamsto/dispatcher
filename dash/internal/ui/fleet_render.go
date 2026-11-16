@@ -232,13 +232,21 @@ func fleetEntries(p fleetPanel, fv vm.FleetView, ix fleetIndex) []entry {
 	return hostEntries(fv)
 }
 
-// splitHeights shares total rows among panels: each gets fleetPanelMinH in
-// order while rows last, then one row at a time up to its wanted height, and
-// the last takes what is left.
-func splitHeights(total int, want []int) []int {
+// splitHeights shares total rows among panels: each gets fleetPanelMinH
+// while rows last, the focused panel (index first, -1 for none) before the
+// rest so focus is never left undrawn, then one row at a time up to its wanted
+// height, and the last takes what is left.
+func splitHeights(total int, want []int, first int) []int {
 	hs := make([]int, len(want))
 	left := total
+	if first >= 0 {
+		hs[first] = min(fleetPanelMinH, left)
+		left -= hs[first]
+	}
 	for i := range hs {
+		if i == first {
+			continue
+		}
 		hs[i] = min(fleetPanelMinH, left)
 		left -= hs[i]
 	}
@@ -307,7 +315,8 @@ func fleetLayout(w, h int, fv vm.FleetView, st fleetState) fleetRects {
 			want[i] = max(1, totalLines(fleetEntries(p, fv, ix))) + 2
 		}
 		py := y
-		for i, ph := range splitHeights(bodyH, want) {
+		focus := slices.Index(right, effectiveFleetFocus(fv, st.focus))
+		for i, ph := range splitHeights(bodyH, want, focus) {
 			if ph >= fleetPanelMinH {
 				rects[right[i]] = rect{crewsW, py, w - crewsW, ph}
 			}
@@ -499,7 +508,7 @@ func (fr fleetRow) line(it placed, iw int) string {
 		if m.InUse >= m.MaxConcurrent {
 			c = colAmber
 		}
-		return s.col(m.ID, capLabelW, fg(colText), false).add(" ", lipgloss.NewStyle()).
+		return s.col(m.ID, gaugeLabelW, fg(colText), false).add(" ", lipgloss.NewStyle()).
 			add(fmt.Sprintf("%d/%d", m.InUse, m.MaxConcurrent), fg(c)).String()
 	case eCapBudget:
 		return budgetBar(fv.Capacity.Budgets[it.idx], s, iw)
@@ -621,10 +630,8 @@ func (fr fleetRow) crewLine(c vm.FleetCrewRow, s *spans) string {
 	return s.String()
 }
 
-const capLabelW = 11
-
 func weightLine(c vm.FleetCapacity, s *spans, iw int) string {
-	s.col("weight", capLabelW, fg(colText), false).add(" ", lipgloss.NewStyle())
+	s.col("weight", gaugeLabelW, fg(colText), false).add(" ", lipgloss.NewStyle())
 	if c.Budget == nil || c.Weight == nil {
 		return s.add("?", fg(colDim)).String()
 	}
@@ -632,7 +639,7 @@ func weightLine(c vm.FleetCapacity, s *spans, iw int) string {
 	if c.Pending != nil && *c.Pending > 0 {
 		text += fmt.Sprintf(" (+%d)", *c.Pending)
 	}
-	barW := clamp(iw-1-capLabelW-1-ansi.StringWidth(text), 4, 20)
+	barW := clamp(iw-1-gaugeLabelW-1-ansi.StringWidth(text), 4, 20)
 	used, pct := 0.0, 0.0
 	if *c.Budget > 0 {
 		used = float64(*c.Weight) / float64(*c.Budget)
@@ -653,7 +660,7 @@ func derefInt(p *int) int {
 }
 
 func loadLine(c vm.FleetCapacity, s *spans) string {
-	s.col("load", capLabelW, fg(colText), false).add(" ", lipgloss.NewStyle())
+	s.col("load", gaugeLabelW, fg(colText), false).add(" ", lipgloss.NewStyle())
 	if c.Load1 == nil || c.Cores == nil {
 		return s.add("?", fg(colDim)).String()
 	}

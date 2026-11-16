@@ -267,7 +267,6 @@ func TestWatchRelayCursor(t *testing.T) {
 		t.Fatalf("start line n = %d, want 1", n)
 	}
 
-	time.Sleep(200 * time.Millisecond) // let the poll record its baseline first
 	tmp := cursor + ".tmp"
 	if err := os.WriteFile(tmp, []byte("12345\n"), 0o644); err != nil {
 		t.Fatal(err)

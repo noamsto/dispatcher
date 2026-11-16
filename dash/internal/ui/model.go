@@ -104,6 +104,13 @@ const statusTTL = 10 * time.Second
 // fleetTickEvery is the Fleet tab's refresh cadence while it is active.
 const fleetTickEvery = 10 * time.Second
 
+// fleetCooldown is the least gap between watcher-triggered fleet loads; a
+// change inside it is served by one deferred fleetSettleMsg.
+const fleetCooldown = 2 * time.Second
+
+// fleetSettleMsg ends a cooldown that swallowed a change.
+type fleetSettleMsg struct{}
+
 // fleetTickMsg refreshes the fleet source; gen ties it to one activation so a
 // quick switch away and back cannot leave two tick chains running.
 type fleetTickMsg struct{ gen int }
@@ -137,6 +144,7 @@ type Model struct {
 	fleetIn      vm.FleetInputs
 	fleetStarted bool // the Fleet tab has been activated, so its source is live
 	fleetGen     int
+	fleetSettle  bool             // a fleetSettleMsg is pending
 	fleetWatch   buswatch.Watcher // owned and closed by Run
 
 	width, height int
@@ -371,6 +379,25 @@ func (m *Model) enterFleet() tea.Cmd {
 	return tea.Batch(load, m.fleetTick())
 }
 
+// requestFleetChange loads the fleet for a watcher change, or inside the
+// cooldown (or while a load runs) defers one load to the window's end so the
+// change is served, not lost, and bursts collapse into one collect.
+func (m *Model) requestFleetChange() tea.Cmd {
+	st := m.load[srcFleet]
+	wait := fleetCooldown - m.now().Sub(st.at)
+	if st.inFlight {
+		wait = fleetCooldown
+	}
+	if wait <= 0 {
+		return m.request(srcFleet)
+	}
+	if m.fleetSettle {
+		return nil
+	}
+	m.fleetSettle = true
+	return tea.Tick(wait, func(time.Time) tea.Msg { return fleetSettleMsg{} })
+}
+
 func (m Model) fleetTick() tea.Cmd {
 	gen := m.fleetGen
 	return tea.Tick(fleetTickEvery, func(time.Time) tea.Msg { return fleetTickMsg{gen: gen} })
@@ -419,7 +446,14 @@ func (m Model) update(msg tea.Msg) (Model, tea.Cmd) {
 		if m.active != fleetTab || !m.fleetStarted {
 			return m, wait
 		}
-		return m, tea.Batch(m.request(srcFleet), wait)
+		return m, tea.Batch(m.requestFleetChange(), wait)
+
+	case fleetSettleMsg:
+		m.fleetSettle = false
+		if m.active != fleetTab {
+			return m, nil
+		}
+		return m, m.request(srcFleet)
 
 	case actionMsg:
 		m.status, m.statusErr, m.statusAt = msg.text, msg.err, m.now()
@@ -588,17 +622,24 @@ func (m Model) statusLines() []string {
 // changes) — color alone is invisible under NO_COLOR/ASCII, where
 // tabActiveStyle's bold+underline survives as no visual difference at all.
 func (m Model) renderTabs() string {
-	parts := make([]string, len(tabTitles))
-	for i, t := range tabTitles {
-		st := tabInactiveStyle
-		marker := "  "
-		if i == m.active {
-			st = tabActiveStyle
-			marker = "▸ "
+	build := func(pad string, sep string) string {
+		parts := make([]string, len(tabTitles))
+		for i, t := range tabTitles {
+			if i == m.active {
+				parts[i] = tabActiveStyle.Render("▸ " + t)
+				continue
+			}
+			parts[i] = tabInactiveStyle.Render(pad + t)
 		}
-		parts[i] = st.Render(marker + t)
+		return strings.Join(parts, tabSepStyle.Render(sep))
 	}
-	line := strings.Join(parts, tabSepStyle.Render(" │ "))
+	line := build("  ", " │ ")
+	if ansi.StringWidth(line) > m.width {
+		line = build("", "│")
+	}
+	if ansi.StringWidth(line) > m.width {
+		line = build("", "")
+	}
 	return truncateLine(line, m.width)
 }
 

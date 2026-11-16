@@ -1360,13 +1360,12 @@ func fleetRemote(e env) func(dir, crew string) roster.Capture {
 func fleetQueueOptions(e env, stderr io.Writer) fleet.QueueOptions {
 	return fleet.QueueOptions{
 		LoadOptions: fleet.LoadOptions{
-			Getenv:      os.Getenv,
-			Tmux:        tmux.Exec{},
-			Git:         git.Exec{},
-			Clock:       clock.FromEnv(),
-			BudgetFile:  budgetFile(),
-			LocalModels: localModels(stderr),
-			Stderr:      stderr,
+			Getenv:     os.Getenv,
+			Tmux:       tmux.Exec{},
+			Git:        git.Exec{},
+			Clock:      clock.FromEnv(),
+			BudgetFile: budgetFile(),
+			Stderr:     stderr,
 		},
 		Proc:     e.proc,
 		Settings: fleetSettings(stderr),
@@ -1426,13 +1425,16 @@ func overseerStatusOptions(e env, stderr io.Writer, hostSince func(host string) 
 
 func runFleetLoad(ctx context.Context, c fleetLoadCmd, stdout, stderr io.Writer) int {
 	o := fleet.LoadOptions{
-		Getenv:      os.Getenv,
-		Tmux:        tmux.Exec{},
-		Git:         git.Exec{},
-		Clock:       clock.FromEnv(),
-		BudgetFile:  budgetFile(),
-		LocalModels: localModels(stderr),
-		Stderr:      stderr,
+		Getenv:     os.Getenv,
+		Tmux:       tmux.Exec{},
+		Git:        git.Exec{},
+		Clock:      clock.FromEnv(),
+		BudgetFile: budgetFile(),
+		Stderr:     stderr,
+	}
+	// Only the JSON document carries local_models; the table does not read it.
+	if c.JSON {
+		o.LocalModels = localModels(stderr)
 	}
 	if c.Budget == nil {
 		o.Budget = func(ctx context.Context) (int, error) {

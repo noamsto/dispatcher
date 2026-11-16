@@ -108,6 +108,12 @@ func TestFleetActiveFilter(t *testing.T) {
 	v = view.BuildFleet(in)
 	if c := fleetCrew(t, v, keyA4); !c.Orphaned {
 		t.Errorf("unknown-state worker should keep c4 active and orphaned: %+v", c)
+	} else if len(c.Actions) != 0 {
+		t.Errorf("closed dispatcher offers relaunch: %+v", c.Actions)
+	}
+	it := fleetItem(t, v, keyA4+"#dispatcher_gone:c4:")
+	if it.Severity != view.SeverityWarning || it.Action != nil || it.Message != "dispatcher closed, 1 workers" {
+		t.Errorf("closed orphan item = %+v", it)
 	}
 }
 

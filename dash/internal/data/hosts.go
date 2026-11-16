@@ -16,6 +16,9 @@ const (
 	zeroTailscaleTS = "0001-01-01T00:00:00Z"
 )
 
+// probeTimeout bounds one ssh or tailscale probe; a var so tests can shorten it.
+var probeTimeout = 10 * time.Second
+
 // HostConfig is one hosts.<name> settings entry.
 type HostConfig struct {
 	Name      string  `json:"name"`
@@ -239,10 +242,12 @@ func (p *HostProber) Probe(ctx context.Context, hosts []HostConfig) []HostReach 
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			re := p.probe(ctx, h.Name, dest)
-			p.mu.Lock()
-			p.cache[key] = probeEntry{at: p.now(), reach: re}
-			p.mu.Unlock()
+			re, cacheable := p.probe(ctx, h.Name, dest)
+			if cacheable {
+				p.mu.Lock()
+				p.cache[key] = probeEntry{at: p.now(), reach: re}
+				p.mu.Unlock()
+			}
 			out[i] = re
 		}()
 	}
@@ -250,13 +255,36 @@ func (p *HostProber) Probe(ctx context.Context, hosts []HostConfig) []HostReach 
 	return out
 }
 
-func (p *HostProber) probe(ctx context.Context, name, dest string) HostReach {
-	_, errb, err := p.r.Run(ctx, "ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=3", "--", dest, "true")
-	online := err == nil
-	re := HostReach{Host: name, Source: "ssh", Online: &online}
-	if !online {
-		msg := firstLineOrExit(errb, exitCode(err))
-		re.Error = &msg
+// probe bounds one ssh attempt. Online is set only when ssh ran and exited;
+// a missing binary, a timeout or a cancelled ctx leave it unknown. The bool
+// reports whether the result is worth caching: timeouts and cancellations
+// are not.
+func (p *HostProber) probe(ctx context.Context, name, dest string) (HostReach, bool) {
+	pctx, cancel := context.WithTimeout(ctx, probeTimeout)
+	defer cancel()
+	_, errb, err := p.r.Run(pctx, "ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=3",
+		"-o", "ServerAliveInterval=2", "-o", "ServerAliveCountMax=1", "--", dest, "true")
+	re := HostReach{Host: name, Source: "ssh"}
+	setErr := func(msg string) { re.Error = &msg }
+	switch {
+	case err == nil:
+		online := true
+		re.Online = &online
+	case ctx.Err() != nil:
+		setErr(ctx.Err().Error())
+		return re, false
+	case pctx.Err() != nil:
+		setErr("timeout")
+		return re, false
+	default:
+		rc := exitCode(err)
+		if rc == 127 {
+			setErr(err.Error())
+			break
+		}
+		online := false
+		re.Online = &online
+		setErr(firstLineOrExit(errb, rc))
 	}
-	return re
+	return re, true
 }

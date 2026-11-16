@@ -222,7 +222,11 @@ func runView(ctx context.Context, cfg data.Config, o opts) int {
 		}
 		return watchPaths(commons())
 	}, time.Second)}
-	if eventsErr == nil && o.view != "fleet" {
+	if o.view == "fleet" {
+		// Until a collect learns the repo commons nothing is polled, so a
+		// slow tick lets a consumer recover from a failed first collect.
+		watchers = append(watchers, buswatch.NewTicker(fleetWatchFallback))
+	} else if eventsErr == nil {
 		watchers = append(watchers, buswatch.New(eventsPath))
 	}
 	w := buswatch.Merge(watchers...)
@@ -233,6 +237,8 @@ func runView(ctx context.Context, cfg data.Config, o opts) int {
 	}
 	return 0
 }
+
+const fleetWatchFallback = 30 * time.Second
 
 // watchPaths lists the change sources of each repo common as poll patterns:
 // the bus, relay cursors (a relayed remote-worker batch moves its cursor
@@ -300,17 +306,19 @@ func (fc *fleetCollector) collect(ctx context.Context, nowSec int64) view.FleetI
 
 	digests, digestErrs := fc.scanners.Scan(view.ActiveCommons(sec), nowMS)
 
-	var all []string
+	// A failed fleet status keeps the last known commons so the watcher
+	// still polls the repos it knew.
 	if sec.Status != nil {
+		var all []string
 		for _, repo := range sec.Status.Repos {
 			if !slices.Contains(all, repo.Common) {
 				all = append(all, repo.Common)
 			}
 		}
+		fc.mu.Lock()
+		fc.commons = all
+		fc.mu.Unlock()
 	}
-	fc.mu.Lock()
-	fc.commons = all
-	fc.mu.Unlock()
 
 	return view.FleetInputs{
 		Fleet:      sec,
@@ -438,6 +446,11 @@ func resolveCrew() []string {
 	bin := os.Getenv("CREW_BIN")
 	if bin == "" {
 		return []string{"crew"}
+	}
+	// Actions run in another repo's directory, so a relative path must be
+	// pinned to the dash's own cwd first.
+	if abs, err := filepath.Abs(bin); err == nil {
+		bin = abs
 	}
 	if isExecutable(bin) {
 		return []string{bin}

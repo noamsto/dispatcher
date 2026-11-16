@@ -198,19 +198,20 @@ func collectFleetStatus(ctx context.Context, r Runner, cfg Config) (*FleetStatus
 	return &st, nil
 }
 
-// collectFleetQueue parses stdout whenever it parses: the queue exits 1 when
-// something is due or demoted, with a complete document.
+// collectFleetQueue treats any non-zero exit as failure: the queue exits 0
+// for every document and 1 only on usage, settings or write failures.
 func collectFleetQueue(ctx context.Context, r Runner, cfg Config) ([]FleetQueueHold, *string) {
 	out, errb, err := r.Run(ctx, cfg.Crew[0], crewArgs(cfg, "fleet", "queue", "--json")...)
 	rc := exitCode(err)
 	var doc struct {
 		Holds []FleetQueueHold `json:"holds"`
 	}
-	if perr := json.Unmarshal(bytes.TrimSpace(out), &doc); perr != nil || rc > 1 {
+	if rc != 0 {
 		msg := firstLineOrExit(errb, rc)
-		if rc == 0 {
-			msg = perr.Error()
-		}
+		return []FleetQueueHold{}, &msg
+	}
+	if perr := json.Unmarshal(bytes.TrimSpace(out), &doc); perr != nil {
+		msg := perr.Error()
 		return []FleetQueueHold{}, &msg
 	}
 	if doc.Holds == nil {
@@ -223,9 +224,15 @@ func collectFleetQueue(ctx context.Context, r Runner, cfg Config) ([]FleetQueueH
 func collectReach(ctx context.Context, r Runner, tailscale bool, hosts []HostConfig, prober *HostProber) ([]HostReach, []SuggestedHost, *string) {
 	var tsErr *string
 	if tailscale {
-		out, errb, err := r.Run(ctx, "tailscale", "status", "--json")
+		tctx, cancel := context.WithTimeout(ctx, probeTimeout)
+		out, errb, err := r.Run(tctx, "tailscale", "status", "--json")
+		timedOut := tctx.Err() != nil && ctx.Err() == nil
+		cancel()
 		if rc := exitCode(err); rc != 0 {
 			msg := firstLineOrExit(errb, rc)
+			if timedOut {
+				msg = "timeout"
+			}
 			tsErr = &msg
 		} else if doc, perr := ParseTailscale(out); perr != nil {
 			msg := perr.Error()

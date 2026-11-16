@@ -92,3 +92,40 @@ func TestFleetSizeSweep(t *testing.T) {
 		}
 	}
 }
+
+// TestFleetShortWideFocusDrawn pins that at wide, short sizes the focused
+// panel is always drawn, whichever right-column panel holds focus.
+func TestFleetShortWideFocusDrawn(t *testing.T) {
+	asciiProfile(t)
+	titles := map[fleetPanel]string{
+		fpAttention: "ATTENTION", fpCrews: "CREWS", fpCapacity: "CAPACITY", fpHolds: "HOLDS", fpHosts: "HOSTS",
+	}
+	for _, h := range []int{10, 12, 14} {
+		m := sized(fleetRootModel(t, viewtest.FleetInputs()), 120, h)
+		seen := map[fleetPanel]bool{}
+		for range 6 {
+			m = sweepKeys(m, keyType(tea.KeyTab))
+			f := m.views[fleetTab].(fleetView).st.focus
+			seen[f] = true
+			frame := m.View()
+			assertWidth(t, frame, 120, h)
+			ok := false
+			for _, l := range strings.Split(stripped(frame), "\n") {
+				ok = ok || strings.Contains(l, "╭") && strings.Contains(l, titles[f])
+			}
+			if !ok {
+				t.Errorf("120x%d focus %v: panel %s not drawn", h, f, titles[f])
+			}
+		}
+		if len(seen) != int(numFleetPanels) {
+			t.Errorf("120x%d: tab visited %d focus values, want %d", h, len(seen), numFleetPanels)
+		}
+	}
+}
+
+func TestSplitHeightsFocusFirst(t *testing.T) {
+	got := splitHeights(7, []int{5, 5, 5}, 2)
+	if got[2] < fleetPanelMinH || got[0]+got[1]+got[2] != 7 {
+		t.Errorf("splitHeights focus last = %v, want the third panel >= %d", got, fleetPanelMinH)
+	}
+}

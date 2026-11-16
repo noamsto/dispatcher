@@ -18,8 +18,7 @@ func awaitEvent(t *testing.T, w Watcher, what string) {
 	}
 }
 
-// awaitTicks returns once paths has been called n times. The first call
-// only records the baseline, so waiting for two proves the baseline is set.
+// awaitTicks returns once paths has been called n times.
 func awaitTicks(t *testing.T, ticks <-chan struct{}, n int) {
 	t.Helper()
 	for range n {
@@ -45,8 +44,6 @@ func TestPollFiresOnRewriteAndNewMatch(t *testing.T) {
 	}
 	w := NewPoll(paths, 20*time.Millisecond)
 	defer func() { _ = w.Close() }()
-
-	awaitTicks(t, ticks, 2)
 
 	tmp := filepath.Join(dir, "a.tmp")
 	writeFile(t, tmp, "three three")
@@ -74,7 +71,7 @@ func TestPollStaysQuietWithoutChanges(t *testing.T) {
 	w := NewPoll(paths, 20*time.Millisecond)
 	defer func() { _ = w.Close() }()
 
-	awaitTicks(t, ticks, 6)
+	awaitTicks(t, ticks, 7)
 	select {
 	case <-w.Events():
 		t.Fatal("poll fired with no change to the matched files")
@@ -147,5 +144,24 @@ func TestMergeCloseClosesInputsAndOutput(t *testing.T) {
 		case <-time.After(testWait):
 			t.Fatalf("%s was not closed by Merge.Close", name)
 		}
+	}
+}
+
+func TestPollChangeRightAfterNewPollFires(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "a.cursor")
+	writeFile(t, file, "one")
+
+	w := NewPoll(func() []string { return []string{filepath.Join(dir, "*.cursor")} }, 50*time.Millisecond)
+	defer func() { _ = w.Close() }()
+	writeFile(t, file, "two two")
+	awaitEvent(t, w, "write between NewPoll and the first tick")
+}
+
+func TestTickerFiresAndCloses(t *testing.T) {
+	w := NewTicker(10 * time.Millisecond)
+	awaitEvent(t, w, "tick")
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
 	}
 }

@@ -377,6 +377,10 @@ func unfinished(rows []WorkerRow) int {
 	return n
 }
 
+// relaunchable is a dead dispatcher only: the protocol never relaunches a
+// closed one, and a deregister deletes its launch record.
+func (c fleetCrew) relaunchable() bool { return c.home.Dispatcher.State == "dead" }
+
 func (c fleetCrew) orphaned(rows []WorkerRow) bool {
 	if c.origin == OriginPeer {
 		return false
@@ -399,13 +403,18 @@ func (c fleetCrew) linkItems(rows []WorkerRow) []AttentionItem {
 		}
 	}
 	if c.orphaned(rows) {
-		act := c.relaunch()
-		items = append(items, AttentionItem{
+		item := AttentionItem{
 			ID: fmt.Sprintf("%s:%s:", KindDispatcherGone, c.crew), Crew: c.crew, Origin: OriginLocal,
-			Severity: SeverityCritical, Kind: KindDispatcherGone,
-			Message: fmt.Sprintf("dispatcher gone, %d workers", unfinished(rows)),
-			AgeSec:  derefInt(c.home.Dispatcher.LastEventS), Action: &act,
-		})
+			Severity: SeverityWarning, Kind: KindDispatcherGone,
+			Message: fmt.Sprintf("dispatcher closed, %d workers", unfinished(rows)),
+			AgeSec:  derefInt(c.home.Dispatcher.LastEventS),
+		}
+		if c.relaunchable() {
+			act := c.relaunch()
+			item.Severity, item.Action = SeverityCritical, &act
+			item.Message = fmt.Sprintf("dispatcher gone, %d workers", unfinished(rows))
+		}
+		items = append(items, item)
 	}
 	return items
 }
@@ -439,7 +448,9 @@ func (c fleetCrew) row(rows []WorkerRow, attention int) FleetCrewRow {
 	r.Dir = c.dir()
 	if c.orphaned(rows) {
 		r.Orphaned = true
-		r.Actions = []Action{c.relaunch()}
+		if c.relaunchable() {
+			r.Actions = []Action{c.relaunch()}
+		}
 	}
 	return r
 }

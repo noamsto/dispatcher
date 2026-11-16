@@ -10,6 +10,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/noamsto/dispatcher/dash/internal/data"
@@ -328,5 +329,18 @@ func TestSwitchTabLeaveBeforeEnter(t *testing.T) {
 	want := []string{"overview leave", "map enter"}
 	if !slices.Equal(log, want) {
 		t.Fatalf("hook order = %v, want %v", log, want)
+	}
+}
+
+func TestRenderTabsKeepsActiveVisible(t *testing.T) {
+	asciiProfile(t)
+	for w := 60; w < 80; w++ {
+		for i, title := range tabTitles {
+			m := Model{width: w, active: i}
+			line := stripped(m.renderTabs())
+			if lipgloss.Width(line) > w || !strings.Contains(line, "▸ "+title) {
+				t.Errorf("width %d active %s: %q", w, title, line)
+			}
+		}
 	}
 }
