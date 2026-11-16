@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -11,6 +12,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/noamsto/dispatcher/dash/internal/invisible"
+	vm "github.com/noamsto/dispatcher/dash/internal/view"
 )
 
 // format.go ports the small set of the once renderer's shared jq-derived
@@ -148,6 +150,25 @@ func cleanText(s string) string {
 		}
 	}
 	return invisible.Drop(b.String())
+}
+
+const controlNotice = "(command contains control bytes; see crew dash --json --view overview)"
+
+// hasControl reports whether a's command or any argv word holds a byte that
+// cleanText would drop or rewrite, so showing it could differ from what runs.
+func hasControl(a vm.Action) bool {
+	return slices.ContainsFunc(append([]string{a.Command}, a.Argv...), func(s string) bool {
+		return cleanText(s) != s
+	})
+}
+
+// shownCommand is a's command verbatim, or a fixed notice when it holds
+// control bytes: a cleaned copy could be pasted and run as something else.
+func shownCommand(a vm.Action) string {
+	if hasControl(a) {
+		return controlNotice
+	}
+	return a.Command
 }
 
 // cleanView returns a deep copy of v with every string, string pointer and

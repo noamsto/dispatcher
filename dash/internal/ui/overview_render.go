@@ -232,6 +232,15 @@ func workerLabel(w vm.OverviewWorker) string {
 	return l
 }
 
+// rowLabel names a monitor or agent row that has no worker: its own branch,
+// and its host when it has one, as the placeholder's checklist card reads.
+func rowLabel(branch, host string) string {
+	if host == "" {
+		return branch
+	}
+	return branch + "@" + host
+}
+
 func ovAge(sec int64) string {
 	switch {
 	case sec < 5:
@@ -389,7 +398,7 @@ func overviewLayout(w, h int, ov vm.OverviewView, st overviewState) overviewRect
 	}
 	var shown []ovPanel
 	bodyH := max0(h - y)
-	if bodyH >= 3 {
+	if bodyH >= 4 { // 2-row frame plus the smallest, 2-line entry
 		shown = shownPanels(w, st.focus)
 	}
 	r.sel = resolve(ov, st, ix, shown)
@@ -666,7 +675,7 @@ func phaseLabel(w vm.OverviewWorker) string {
 
 func agentLines(ov vm.OverviewView, it placed, line func() *spans) []string {
 	a := ov.Agents[it.idx]
-	label := a.Branch
+	label := rowLabel(a.Branch, a.Host)
 	if it.worker >= 0 {
 		label = workerLabel(ov.Workers[it.worker])
 	}
@@ -700,7 +709,7 @@ func headerLine(section, iw int) string {
 
 func watchLine(ov vm.OverviewView, it placed, s *spans, iw int) string {
 	w := ov.Monitors.Watchdogs[it.idx]
-	name := w.Branch
+	name := rowLabel(w.Branch, w.Host)
 	if it.worker >= 0 {
 		name = workerLabel(ov.Workers[it.worker])
 	}

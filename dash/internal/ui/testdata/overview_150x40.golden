@@ -21,7 +21,7 @@
 │ ● feat/e standard                                    AC —││ ● feat/e sonnet standard                  ││ feat/j     ▁▁▁▁█▁▁▁▁▁▁▁▁▁▁█▁▁▁▁ ok 30s    │
 │   ○─○─○─○─○─○ blocked                                    ││   roles —                                 ││ feat/p@mbp ···················· ok        │
 │ ● feat/f standard                                    AC —││ ● feat/f sonnet standard                  ││ feat/q@nuc ···················· ?         │
-│   ○─○─○─○─○─○ blocked                                    ││   roles —                                 ││            ···················· ?         │
+│   ○─○─○─○─○─○ blocked                                    ││   roles —                                 ││ @halo      ···················· ?         │
 │ ✗ feat/g standard                                    AC —││ ✗ feat/g sonnet standard                  ││ PR CHECKS ────────────────────────────────│
 │   ○─○─○─○─○─○ failed                                     ││   roles —                                 ││ #12 ● checks ● merge 10m                  │
 │▌✗ feat/h standard                                    AC —││▌✗ feat/h sonnet standard                  ││ BUDGET ───────────────────────────────────│
@@ -34,7 +34,7 @@
 │   ?                                                      ││   roles ?                                 ││                                           │
 │ ○ feat/q@nuc ?                                       AC —││ ○ feat/q@nuc ? ?                          ││                                           │
 │   ?                                                      ││   roles ?                                 ││                                           │
-│ ○ @halo ?                                            AC —││ ○  ? ?                                    ││                                           │
+│ ○ @halo ?                                            AC —││ ○ @halo ? ?                               ││                                           │
 │   ?                                                      ││   roles ?                                 ││                                           │
 │                                                          ││                                           ││                                           │
 ╰──────────────────────────────────────────────────────────╯╰───────────────────────────────────────────╯╰───────────────────────────────────────────╯

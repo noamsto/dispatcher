@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -766,5 +767,103 @@ func TestEventSenderNames(t *testing.T) {
 	text := strings.Join(lines, "\n")
 	if strings.Contains(text, "worker:") || !strings.Contains(text, "otter:reviewer") {
 		t.Errorf("events panel names senders by raw id:\n%s", text)
+	}
+}
+
+// poisonActions plants an ESC-laced word in every attention action's command
+// and argv, in the way that makes ansi.Strip eat a quote shellQuote inserted.
+func poisonActions(v overviewView, command, argv bool) overviewView {
+	for _, a := range v.model.Attention {
+		if a.Action == nil {
+			continue
+		}
+		if command {
+			a.Action.Command = "'abc\x1b'\\\\'X; id #'"
+		}
+		if argv {
+			a.Action.Argv = slices.Clone(a.Action.Argv)
+			for i := range a.Action.Argv {
+				a.Action.Argv[i] += "\x1b'\\'X; id #"
+			}
+		}
+	}
+	return v
+}
+
+func TestControlCommandNeverShownCleaned(t *testing.T) {
+	for _, p := range []struct{ command, argv bool }{{true, false}, {false, true}, {true, true}} {
+		for _, sz := range [][2]int{{150, 40}, {100, 30}, {80, 24}} {
+			v, _ := ovFixture(t, sz[0], sz[1], false, nil)
+			v = poisonActions(v, p.command, p.argv)
+			seen := false
+			for _, b := range []string{"feat/a", "feat/b", "feat/c", "feat/r"} {
+				selectBranch(t, &v, b)
+				v, _ = ovKeys(v, "enter")
+				got := stripped(v.View(sz[0], sz[1]))
+				v, _ = ovKeys(v, "esc")
+				if strings.Contains(got, "id #") || strings.Contains(got, "abc") {
+					t.Errorf("%v %v detail shows a cleaned command:\n%s", p, sz, got)
+				}
+				seen = seen || strings.Contains(got, "control bytes")
+			}
+			if !seen {
+				t.Errorf("%v %v: no detail showed the notice", p, sz)
+			}
+			for n := 1; n <= 9; n++ {
+				v, cmd := ovKeys(v, strconv.Itoa(n))
+				_ = v
+				if got := statusText(cmd); strings.HasPrefix(got, "run: ") && got != "run: "+controlNotice {
+					t.Errorf("%v %v digit %d status = %q", p, sz, n, got)
+				}
+			}
+			v, cmd := ovKeys(v, "enter")
+			if got := statusText(cmd); strings.HasPrefix(got, "run: ") && got != "run: "+controlNotice {
+				t.Errorf("%v %v enter status = %q", p, sz, got)
+			}
+		}
+	}
+}
+
+func TestCleanCommandShownVerbatim(t *testing.T) {
+	v, _ := ovFixture(t, 150, 40, false, nil)
+	var cmd string
+	for _, a := range v.model.Attention {
+		if a.Action != nil && a.Action.Key == "" {
+			cmd = a.Action.Command
+		}
+	}
+	if cmd == "" || hasControl(vm.Action{Command: cmd}) {
+		t.Fatalf("fixture has no clean inspect command (%q)", cmd)
+	}
+	for range v.model.Attention {
+		var c tea.Cmd
+		if _, c = ovKeys(v, "enter"); statusText(c) == "run: "+cmd {
+			return
+		}
+		v, _ = ovKeys(v, "j")
+	}
+	t.Errorf("no attention item reported run: %s", cmd)
+}
+
+// statusText is the text of cmd's actionMsg, or "" for any other result.
+func statusText(cmd tea.Cmd) string {
+	if cmd == nil {
+		return ""
+	}
+	am, _ := cmd().(actionMsg)
+	return am.text
+}
+
+func TestTinyBodyNoSelection(t *testing.T) {
+	asciiProfile(t)
+	m := sweepKeys(sized(sweepModel(), 80, 8), keyType(tea.KeyTab), keyRune('j'), keyRune('j'), keyRune('j'))
+	frame := stripped(m.View())
+	ov := m.views[overviewTab].(overviewView)
+	if w := ov.sel().worker; w >= 0 {
+		t.Fatalf("worker %d selected with no entry drawn:\n%s", w, frame)
+	}
+	_, cmd := m.Update(keyRune('p'))
+	if got := statusText(cmd); got != actionVerbs["p"]+": no worker selected" {
+		t.Errorf("p status = %q\n%s", got, frame)
 	}
 }

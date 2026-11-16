@@ -328,7 +328,7 @@ func (v *overviewView) enterKey() tea.Cmd {
 			v.mode = ovDetail
 		}
 	case strip && v.model.Attention[s.cursor].Action != nil:
-		return statusCmd("run: "+v.model.Attention[s.cursor].Action.Command, false)
+		return statusCmd("run: "+shownCommand(*v.model.Attention[s.cursor].Action), false)
 	}
 	return nil
 }
@@ -366,7 +366,7 @@ func (v *overviewView) digit(n int) tea.Cmd {
 		return statusCmd("peer worker: read-only", true)
 	}
 	if a.Action.Key == "" {
-		return statusCmd("run: "+a.Action.Command, false)
+		return statusCmd("run: "+shownCommand(*a.Action), false)
 	}
 	t := ovTarget{origin: a.Origin, host: a.Host, branch: a.Branch, name: a.Worker}
 	if i := newOvIndex(v.model, v.st).worker(a.Crew, a.Branch); i >= 0 {

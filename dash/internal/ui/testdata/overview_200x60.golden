@@ -21,7 +21,7 @@
 │   Task feat/c                                                                ││ ● feat/e sonnet standard                                 ││ feat/j     ▁▁▁▁▁▁▁▁▁▁▁▁▁▁█▁▁▁▁▁▁▁▁▁▁█▁▁▁▁ ok 30s         │
 │ ● feat/d standard                                                        AC —││   roles —                                                ││ feat/p@mbp ······························ ok             │
 │   ○─○─○─○─○─○ blocked                                                        ││ ● feat/f sonnet standard                                 ││ feat/q@nuc ······························ ?              │
-│   Task feat/d                                                                ││   roles —                                                ││            ······························ ?              │
+│   Task feat/d                                                                ││   roles —                                                ││ @halo      ······························ ?              │
 │ ● feat/e standard                                                        AC —││ ✗ feat/g sonnet standard                                 ││ PR CHECKS ───────────────────────────────────────────────│
 │   ○─○─○─○─○─○ blocked                                                        ││   roles —                                                ││ #12 ● checks ● merge 10m                                 │
 │   Task feat/e                                                                ││▌✗ feat/h sonnet standard                                 ││ BUDGET ──────────────────────────────────────────────────│
@@ -34,7 +34,7 @@
 │▌✗ feat/h standard                                                        AC —││   roles ?                                                ││                                                          │
 │▌  ○─○─○─○─○─○ failed                                                         ││ ○ feat/q@nuc ? ?                                         ││                                                          │
 │▌  Task feat/h                                                                ││   roles ?                                                ││                                                          │
-│ ● feat/r@halo deep                                                       AC —││ ○  ? ?                                                   ││                                                          │
+│ ● feat/r@halo deep                                                       AC —││ ○ @halo ? ?                                              ││                                                          │
 │   ?                                                                          ││   roles ?                                                ││                                                          │
 │   Task feat/r                                                                ││                                                          ││                                                          │
 │ ● feat/j standard                                                        AC —││                                                          ││                                                          │

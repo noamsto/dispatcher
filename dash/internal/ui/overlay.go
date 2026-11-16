@@ -167,10 +167,10 @@ func detailLines(ov vm.OverviewView, wi, iw int) []string {
 		n++
 		cmd := "—"
 		if a.Action != nil {
-			cmd = a.Action.Command
+			cmd = shownCommand(*a.Action)
 		}
 		glyph, gc := severityGlyph(a.Severity)
-		out = append(out, "   "+fg(gc).Render(glyph)+plain.Render(" "+cleanText(a.Message)+" ")+fg(colDim).Render("→ "+cleanText(cmd)))
+		out = append(out, "   "+fg(gc).Render(glyph)+plain.Render(" "+cleanText(a.Message)+" ")+fg(colDim).Render("→ "+cmd))
 	}
 	if n == 0 {
 		out = append(out, "   "+fg(colDim).Render("none"))

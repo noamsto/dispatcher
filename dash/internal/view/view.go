@@ -78,13 +78,14 @@ func OriginOf(row map[string]any) Origin {
 }
 
 // Action is one operator command: Command is the shell rendering of Argv, and
-// the TUI executes Argv, so the two cannot drift. Argv is tagged raw: the TUI
-// cleans every other string for display but must execute these bytes as built.
+// the TUI executes Argv, so the two cannot drift. Command and Argv are tagged
+// raw: the TUI cleans every other string for display but must show or execute
+// these bytes as built, never a cleaned approximation.
 type Action struct {
 	Key        string   `json:"key"`
 	Verb       string   `json:"verb"`
 	Label      string   `json:"label"`
-	Command    string   `json:"command"`
+	Command    string   `json:"command" dash:"raw"`
 	Argv       []string `json:"argv" dash:"raw"`
 	NeedsInput bool     `json:"needs_input"`
 	PR         *int     `json:"pr"`

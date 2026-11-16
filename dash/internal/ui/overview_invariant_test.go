@@ -1,8 +1,11 @@
 package ui
 
 import (
+	"cmp"
 	"context"
 	"fmt"
+	"hash/fnv"
+	"maps"
 	"math/rand/v2"
 	"slices"
 	"strings"
@@ -34,17 +37,37 @@ func TestOverviewSelectionInvariant(t *testing.T) {
 	}
 }
 
-func walkSeed(t *testing.T, seed uint64, steps int) {
+func walkSeed(t *testing.T, seed uint64, steps int) []uint64 {
 	t.Helper()
 	rng := rand.New(rand.NewPCG(seed, 0))
 	m := sized(sweepModel(), 150, 40)
 	var hist []string
+	var frames []uint64
 	for range steps {
 		var name string
 		m, name = walkStep(rng, m)
 		hist = append(hist, name)
+		frames = append(frames, hashFrame(m.View()))
 		if err := selectionInvariant(m); err != "" {
 			t.Fatalf("seed %d after %d steps: %s\nsteps: %s", seed, len(hist), err, strings.Join(hist, " "))
+		}
+	}
+	return frames
+}
+
+func hashFrame(s string) uint64 {
+	h := fnv.New64a()
+	h.Write([]byte(s))
+	return h.Sum64()
+}
+
+// TestOverviewWalkDeterministic guards the replay promise: a failing seed must
+// draw the same frames when run again.
+func TestOverviewWalkDeterministic(t *testing.T) {
+	asciiProfile(t)
+	for seed := uint64(1); seed <= 5; seed++ {
+		if a, b := walkSeed(t, seed, 40), walkSeed(t, seed, 40); !slices.Equal(a, b) {
+			t.Errorf("seed %d replays different frames", seed)
 		}
 	}
 }
@@ -94,6 +117,9 @@ func walkStep(rng *rand.Rand, m Model) (Model, string) {
 		return nm.(Model), fmt.Sprintf("click(%d,%d)", x, y)
 	case n < 17:
 		w, h := 80+rng.IntN(121), 24+rng.IntN(37)
+		if rng.IntN(2) == 0 { // small terminals, where panels lose their entries
+			w, h = 20+rng.IntN(60), 6+rng.IntN(7)
+		}
 		return sized(m, w, h), fmt.Sprintf("resize(%dx%d)", w, h)
 	case n < 18:
 		nm, _ := m.Update(tickMsg{})
@@ -130,7 +156,10 @@ func churnedInputs(rng *rand.Rand) vm.Inputs {
 		}
 	}
 	in.Snap.Roster.Peers = slices.DeleteFunc(in.Snap.Roster.Peers, func(map[string]any) bool { return rng.IntN(4) == 0 })
-	for k := range in.Bus.Roles {
+	keys := slices.SortedFunc(maps.Keys(in.Bus.Roles), func(a, b data.RoleKey) int {
+		return cmp.Or(cmp.Compare(a.Crew, b.Crew), cmp.Compare(a.Branch, b.Branch), cmp.Compare(a.Role, b.Role))
+	})
+	for _, k := range keys {
 		if rng.IntN(3) == 0 {
 			delete(in.Bus.Roles, k)
 		}
@@ -236,6 +265,9 @@ func selectionInvariant(m Model) string {
 	return ""
 }
 
+// narrowDetail is the width below which the detail title may omit the worker.
+const narrowDetail = 40
+
 // detailInvariant checks that the detail overlay names the worker p acts on.
 func detailInvariant(ov overviewView, lines []string) string {
 	got, text := probePeek(ov)
@@ -250,6 +282,10 @@ func detailInvariant(ov overviewView, lines []string) string {
 		if strings.Contains(l, "DETAIL") && strings.Contains(l, label) {
 			return ""
 		}
+	}
+	// The title drops the label when the box is too narrow to carry it.
+	if len(lines) > 0 && ansi.StringWidth(lines[0]) < narrowDetail {
+		return ""
 	}
 	return fmt.Sprintf("the detail overlay does not name %s, which p acts on", label)
 }

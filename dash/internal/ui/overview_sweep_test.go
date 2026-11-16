@@ -194,6 +194,11 @@ func TestOverviewPoisonedViewRendersClean(t *testing.T) {
 		{"reply", ovReply, "feat/c", []string{"r", "hi"}},
 	}
 	poisoned := cleanView(poisonedOverview())
+	// Commands are raw and never cleaned: a poisoned one shows a notice, which
+	// TestControlCommandNeverShownCleaned covers, so keep the fixture's here.
+	for i, a := range vm.BuildOverview(viewtest.Inputs()).Attention {
+		poisoned.Attention[i].Action = a.Action
+	}
 	for _, sz := range [][2]int{{80, 24}, {100, 30}, {150, 40}, {200, 60}} {
 		w, h := sz[0], sz[1]
 		for _, md := range modes {
