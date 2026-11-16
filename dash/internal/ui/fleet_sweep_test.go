@@ -129,3 +129,66 @@ func TestSplitHeightsFocusFirst(t *testing.T) {
 		t.Errorf("splitHeights focus last = %v, want the third panel >= %d", got, fleetPanelMinH)
 	}
 }
+
+// TestFleetPanelsDrawnAtLayoutRects pins that every shown panel's top border
+// is drawn on its layout rect's row and column, so hit-testing matches pixels.
+func TestFleetPanelsDrawnAtLayoutRects(t *testing.T) {
+	asciiProfile(t)
+	titles := map[fleetPanel]string{
+		fpAttention: "ATTENTION", fpCrews: "CREWS", fpCapacity: "CAPACITY", fpHolds: "HOLDS", fpHosts: "HOSTS",
+	}
+	withAttn := vm.BuildFleet(viewtest.FleetInputs())
+	allClear := withAttn
+	allClear.Attention = nil
+	allClear.Summary.Attention = 0
+	for _, c := range []struct {
+		name string
+		fv   vm.FleetView
+	}{{"attention", withAttn}, {"allclear", allClear}} {
+		fv := c.fv
+		heights := []int{}
+		for h := 3; h <= 60; h++ {
+			heights = append(heights, h)
+		}
+		for w := 100; w <= 200; w += 10 {
+			for _, h := range heights {
+				for focus := range numFleetPanels {
+					st := fleetState{focus: focus}
+					r := fleetLayout(w, h, fv, st)
+					lines := strings.Split(stripped(renderFleet(w, h, fv, st, pillRound)), "\n")
+					for p, pl := range r.panels {
+						if !pl.shown {
+							continue
+						}
+						title := titles[fleetPanel(p)]
+						if panelTopHas(lines, pl.rect, title) {
+							continue
+						}
+						{
+							row := -1
+							for i, l := range lines {
+								if strings.Contains(l, "╭") && strings.Contains(l, title) {
+									row = i
+								}
+							}
+							t.Errorf("%s %dx%d focus %d: %s rect (%d,%d) but title drawn on row %d", c.name, w, h, focus, title, pl.rect.x, pl.rect.y, row)
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+// panelTopHas reports whether the frame row at r.y has a top-left corner at
+// column r.x and the title within the panel's width.
+func panelTopHas(lines []string, r rect, title string) bool {
+	if r.y >= len(lines) {
+		return false
+	}
+	rs := []rune(lines[r.y])
+	if r.x >= len(rs) || rs[r.x] != '╭' {
+		return false
+	}
+	return strings.Contains(string(rs[r.x:min(r.x+r.w, len(rs))]), title)
+}

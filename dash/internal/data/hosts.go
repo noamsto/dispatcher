@@ -203,7 +203,8 @@ func ReachFromTailscale(hosts []HostConfig, doc TailscaleDoc) ([]HostReach, []Su
 }
 
 // HostProber runs and caches ssh reachability probes; it lives across
-// collects so a host is probed at most once per sshProbeTTL.
+// collects so a host is probed at most once per sshProbeTTL, timeouts included
+// so a host that always stalls does not slow every collect.
 type HostProber struct {
 	r   Runner
 	now func() time.Time
@@ -257,8 +258,8 @@ func (p *HostProber) Probe(ctx context.Context, hosts []HostConfig) []HostReach 
 
 // probe bounds one ssh attempt. Online is set only when ssh ran and exited;
 // a missing binary, a timeout or a cancelled ctx leave it unknown. The bool
-// reports whether the result is worth caching: timeouts and cancellations
-// are not.
+// reports whether the result is worth caching: everything but a cancelled
+// parent ctx, which says nothing about the host.
 func (p *HostProber) probe(ctx context.Context, name, dest string) (HostReach, bool) {
 	pctx, cancel := context.WithTimeout(ctx, probeTimeout)
 	defer cancel()
@@ -275,7 +276,6 @@ func (p *HostProber) probe(ctx context.Context, name, dest string) (HostReach, b
 		return re, false
 	case pctx.Err() != nil:
 		setErr("timeout")
-		return re, false
 	default:
 		rc := exitCode(err)
 		if rc == 127 {

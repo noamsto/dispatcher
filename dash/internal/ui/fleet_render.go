@@ -412,9 +412,14 @@ func renderFleet(w, h int, fv vm.FleetView, st fleetState, mode pillMode) string
 	if left := r.panels[fpCrews]; left.shown && left.rect.w < w {
 		var right []string
 		for _, p := range []fleetPanel{fpCapacity, fpHolds, fpHosts} {
-			if r.panels[p].shown {
-				right = append(right, body(p)...)
+			pl := r.panels[p]
+			if !pl.shown {
+				continue
 			}
+			for len(right) < pl.rect.y-left.rect.y {
+				right = append(right, strings.Repeat(" ", w-left.rect.w))
+			}
+			right = append(right, body(p)...)
 		}
 		blank := strings.Repeat(" ", w-left.rect.w)
 		for i, l := range body(fpCrews) {

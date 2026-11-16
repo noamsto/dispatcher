@@ -247,34 +247,55 @@ func TestProbeOnlineOnlyWhenSSHRan(t *testing.T) {
 	}
 }
 
-func TestProbeTimeoutAndCancelAreUnknownAndUncached(t *testing.T) {
-	old := probeTimeout
-	probeTimeout = 20 * time.Millisecond
-	t.Cleanup(func() { probeTimeout = old })
-
+func TestProbeCancelIsUnknownAndUncached(t *testing.T) {
 	r := &FakeRunner{Responses: map[string]FakeResponse{}}
 	p := NewHostProber(r, time.Now)
 	hang := FakeResponse{Wait: make(chan struct{})}
-	re := probeOne(t, context.Background(), p, r, hang)
-	if re.Online != nil || re.Error == nil || *re.Error != "timeout" {
-		t.Fatalf("timeout probe = %+v", re)
-	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if re = probeOne(t, ctx, p, r, hang); re.Online != nil || re.Error == nil || *re.Error == "timeout" {
+	if re := probeOne(t, ctx, p, r, hang); re.Online != nil || re.Error == nil || *re.Error == "timeout" {
 		t.Fatalf("cancelled probe = %+v", re)
 	}
 	probeOne(t, context.Background(), p, r, FakeResponse{})
-	if re = probeOne(t, context.Background(), p, r, hang); re.Online == nil || !*re.Online {
+	if re := probeOne(t, context.Background(), p, r, hang); re.Online == nil || !*re.Online {
 		t.Errorf("successful probe was not cached: %+v", re)
 	}
+	if n := sshCalls(r); n != 2 {
+		t.Errorf("ssh calls = %d, want 2 (cancel, success; the cancel was not cached)", n)
+	}
+}
+
+func sshCalls(r *FakeRunner) int {
 	n := 0
 	for _, c := range r.CallsSnapshot() {
 		if c.Name == "ssh" {
 			n++
 		}
 	}
-	if n != 3 {
-		t.Errorf("ssh calls = %d, want 3 (timeout, cancel, success; the failures were not cached)", n)
+	return n
+}
+
+func TestProbeTimeoutCachedPerTTL(t *testing.T) {
+	old := probeTimeout
+	probeTimeout = 20 * time.Millisecond
+	t.Cleanup(func() { probeTimeout = old })
+
+	clock := &fakeClock{t: time.Unix(1_000_000, 0)}
+	r := &FakeRunner{Responses: map[string]FakeResponse{}}
+	p := NewHostProber(r, clock.Now)
+	hang := FakeResponse{Wait: make(chan struct{})}
+	for i := range 2 {
+		re := probeOne(t, context.Background(), p, r, hang)
+		if re.Online != nil || re.Error == nil || *re.Error != "timeout" {
+			t.Fatalf("probe %d = %+v, want unknown/timeout", i, re)
+		}
+	}
+	if n := sshCalls(r); n != 1 {
+		t.Fatalf("ssh calls within TTL = %d, want 1", n)
+	}
+	clock.Advance(sshProbeTTL + time.Second)
+	probeOne(t, context.Background(), p, r, hang)
+	if n := sshCalls(r); n != 2 {
+		t.Errorf("ssh calls after TTL = %d, want 2", n)
 	}
 }

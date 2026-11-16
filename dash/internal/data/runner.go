@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+	"time"
 )
 
 // Runner is the seam every read-only source call goes through — an exec
@@ -29,6 +30,9 @@ func (e ExecRunner) Run(ctx context.Context, name string, args ...string) ([]byt
 func (ExecRunner) RunIn(ctx context.Context, dir, name string, args ...string) ([]byte, []byte, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = dir
+	// A grandchild (e.g. an ssh ProxyCommand) can keep the pipes open after the
+	// kill; WaitDelay bounds Wait so the context deadline still holds.
+	cmd.WaitDelay = 2 * time.Second
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
