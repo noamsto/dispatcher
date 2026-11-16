@@ -2,9 +2,12 @@ package ui
 
 import (
 	"context"
+	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
+	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
 
@@ -35,7 +38,8 @@ func TestViewEmptyBeforeWindowSize(t *testing.T) {
 
 func TestTabSwitchingByDigits(t *testing.T) {
 	m := sized(newTestModel(t), 80, 24)
-	for want, digit := range []rune{'1', '2', '3', '4', '5', '6'} {
+	for want, digit := range []rune{'1', '2', '3', '4', '5', '6', '7'} {
+		m.active = liveTab // the Overview owns digits, so every press starts from Live
 		nm, _ := m.Update(keyRune(digit))
 		m = nm.(Model)
 		if m.active != want {
@@ -48,25 +52,25 @@ func TestTabSwitchingByTab(t *testing.T) {
 	m := sized(newTestModel(t), 80, 24)
 	nm, _ := m.Update(keyType(tea.KeyTab))
 	m = nm.(Model)
-	if m.active != 1 {
-		t.Fatalf("after tab: active = %d, want 1", m.active)
+	if m.active != boardTab {
+		t.Fatalf("after tab: active = %d, want %d", m.active, boardTab)
 	}
 	nm, _ = m.Update(keyType(tea.KeyTab))
 	m = nm.(Model)
-	if m.active != 2 {
-		t.Fatalf("after tab tab: active = %d, want 2", m.active)
+	if m.active != budgetTab {
+		t.Fatalf("after tab tab: active = %d, want %d", m.active, budgetTab)
 	}
 	nm, _ = m.Update(keyType(tea.KeyShiftTab))
 	m = nm.(Model)
-	if m.active != 1 {
-		t.Fatalf("after shift+tab: active = %d, want 1", m.active)
+	if m.active != boardTab {
+		t.Fatalf("after shift+tab: active = %d, want %d", m.active, boardTab)
 	}
 	// wraps around
 	m.active = mapTab
 	nm, _ = m.Update(keyType(tea.KeyTab))
 	m = nm.(Model)
-	if m.active != 0 {
-		t.Fatalf("tab wrap: active = %d, want 0", m.active)
+	if m.active != overviewTab {
+		t.Fatalf("tab wrap: active = %d, want %d", m.active, overviewTab)
 	}
 }
 
@@ -104,7 +108,7 @@ func TestRefreshReplacesSnapshot(t *testing.T) {
 	if cmd == nil {
 		t.Fatalf("r did not return a Cmd")
 	}
-	if got := m.loadStatus(); got != "loading settings, budget, retro, ratings, roster…" {
+	if got := m.loadStatus(); got != "loading settings, budget, retro, ratings, roster, bus…" {
 		t.Fatalf("status after r = %q, want every source loading", got)
 	}
 	var sm sourceMsg
@@ -133,7 +137,7 @@ func TestRefreshReplacesSnapshot(t *testing.T) {
 func TestFooterLoadStatus(t *testing.T) {
 	snap := loadSnapshot(t)
 	m := sized(loadingModel(Deps{Now: snap.Now}), 120, 24)
-	if got := m.loadStatus(); got != "loading settings, budget, retro, ratings, roster…" {
+	if got := m.loadStatus(); got != "loading settings, budget, retro, ratings, roster, bus…" {
 		t.Fatalf("fresh status = %q", got)
 	}
 	m = sized(testModel(snap), 120, 24)
@@ -189,7 +193,7 @@ func TestNumberInputSwallowsGlobalKeys(t *testing.T) {
 		}
 	}
 
-	nm, _ = m.Update(keyRune('2'))
+	nm, _ = m.Update(keyRune('3'))
 	m = nm.(Model)
 	if m.active != settingsTab {
 		t.Fatalf("digit switched tab while capturing: active = %d", m.active)
@@ -233,7 +237,7 @@ func TestResizeAllViewsExactFrame(t *testing.T) {
 func TestResizeLiveRunsWithContentExactFrame(t *testing.T) {
 	snap := loadFullSnapshot(t)
 	sizes := [][2]int{{80, 24}, {60, 20}, {120, 40}, {20, 5}}
-	for _, view := range []int{0, 2} {
+	for _, view := range []int{liveTab, budgetTab} {
 		for _, sz := range sizes {
 			m := sized(testModel(snap), sz[0], sz[1])
 			m.active = view
@@ -248,5 +252,58 @@ func TestResizeLiveRunsWithContentExactFrame(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+// hookView is a view whose enter and leave hooks record the order they run in.
+type hookView struct {
+	name string
+	log  *[]string
+}
+
+func (v hookView) Update(tea.Msg) (view, tea.Cmd) { return v, nil }
+func (hookView) View(int, int) string             { return "" }
+func (hookView) Keys() []key.Binding              { return nil }
+func (hookView) Selection() data.Selection        { return nil }
+func (hookView) Capturing() bool                  { return false }
+
+func (v hookView) enter(data.Selection) (view, tea.Cmd) {
+	return v, func() tea.Msg { *v.log = append(*v.log, v.name+" enter"); return nil }
+}
+
+func (v hookView) leave() (view, tea.Cmd) {
+	return v, func() tea.Msg { *v.log = append(*v.log, v.name+" leave"); return nil }
+}
+
+// runCmd runs cmd, descending into tea.Sequence and tea.Batch messages in
+// order.
+func runCmd(cmd tea.Cmd) {
+	if cmd == nil {
+		return
+	}
+	msg := cmd()
+	v := reflect.ValueOf(msg)
+	if v.Kind() != reflect.Slice {
+		return
+	}
+	for i := range v.Len() {
+		if c, ok := v.Index(i).Interface().(tea.Cmd); ok {
+			runCmd(c)
+		}
+	}
+}
+
+func TestSwitchTabLeaveBeforeEnter(t *testing.T) {
+	var log []string
+	m := newTestModel(t) // not sized: syncMapBox stays idle with fake views
+	m.active = overviewTab
+	m.views[overviewTab] = hookView{name: "overview", log: &log}
+	m.views[mapTab] = hookView{name: "map", log: &log}
+
+	runCmd(m.switchTab(mapTab))
+
+	want := []string{"overview leave", "map enter"}
+	if !slices.Equal(log, want) {
+		t.Fatalf("hook order = %v, want %v", log, want)
 	}
 }

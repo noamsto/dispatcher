@@ -75,6 +75,7 @@ func run() int {
 	case "interactive":
 		eventsPath, eventsErr := data.EventsPath(ctx, data.ExecRunner{}, cfg.Git)
 		runner := data.ExecRunner{}
+		scanner := data.NewBusScanner(eventsPath)
 		mapDeps, closeMap := resolveMap(runner)
 		defer closeMap()
 		deps := ui.Deps{
@@ -85,6 +86,9 @@ func run() int {
 				Retro:    func(ctx context.Context) data.RunsSection { return data.CollectRetro(ctx, runner, cfg) },
 				Ratings:  func(ctx context.Context) data.RunsSection { return data.CollectRatings(ctx, runner, cfg) },
 				Roster:   func(ctx context.Context) data.RosterSection { return data.CollectRoster(ctx, runner, cfg) },
+				Bus: func(context.Context) data.BusDigest {
+					return busDigest(scanner, eventsErr, time.Now().UnixMilli())
+				},
 			},
 			Runner:         runner,
 			Crew:           cfg.Crew,

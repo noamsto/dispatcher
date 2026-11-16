@@ -26,7 +26,7 @@ func actionModel(t *testing.T, snap data.Snapshot, fake *data.FakeRunner, inTmux
 func selectName(t *testing.T, m Model, name string) Model {
 	t.Helper()
 	for range 20 {
-		if w, _ := m.views[0].Selection().(data.Worker); w.Name == name {
+		if w, _ := m.views[liveTab].Selection().(data.Worker); w.Name == name {
 			return m
 		}
 		m = send(m, keyRune('j'))
@@ -136,7 +136,7 @@ func TestJumpDisabledOnHostRow(t *testing.T) {
 	snap := loadCrewErrSnapshot(t)
 	m := actionModel(t, snap, fake, true)
 	for range 20 {
-		if w, _ := m.views[0].Selection().(data.Worker); w.Host != "" {
+		if w, _ := m.views[liveTab].Selection().(data.Worker); w.Host != "" {
 			break
 		}
 		m = send(m, keyRune('j'))
@@ -186,7 +186,7 @@ func TestReplySendsText(t *testing.T) {
 	m = send(m, keyType(tea.KeyEnter))
 	wantCalls(t, fake, []string{"crew", "reply", "--crew", "c1", "--", "worker:fix/123-widget", "go ahead"})
 	wantStatus(t, m, "reply: sent")
-	if m.views[0].Capturing() {
+	if m.views[liveTab].Capturing() {
 		t.Fatalf("prompt should close after sending")
 	}
 }
@@ -200,7 +200,7 @@ func TestReplyEmptyTextRefused(t *testing.T) {
 		m = send(m, keyType(tea.KeyEnter))
 		wantCalls(t, fake)
 		wantStatus(t, m, "reply: text required")
-		if !m.views[0].Capturing() {
+		if !m.views[liveTab].Capturing() {
 			t.Fatalf("prompt must stay open after an empty reply (text %q)", text)
 		}
 	}
@@ -213,7 +213,7 @@ func TestReplyEscCancels(t *testing.T) {
 	m = typeText(m, "hello")
 	m = send(m, keyType(tea.KeyEsc))
 	wantCalls(t, fake)
-	if m.views[0].Capturing() {
+	if m.views[liveTab].Capturing() {
 		t.Fatalf("esc should close the prompt")
 	}
 }
@@ -224,7 +224,7 @@ func TestReplyDisabledWhenNotBlocked(t *testing.T) {
 	m = send(m, keyRune('m'))
 	wantCalls(t, fake)
 	wantStatus(t, m, "reply: not blocked")
-	if m.views[0].Capturing() {
+	if m.views[liveTab].Capturing() {
 		t.Fatalf("no prompt should open on a worker that is not blocked")
 	}
 }
@@ -249,7 +249,7 @@ func TestNudgeDeclined(t *testing.T) {
 	m = send(m, keyRune('n'))
 	wantCalls(t, fake)
 	wantStatus(t, m, "nudge: cancelled")
-	if m.views[0].Capturing() {
+	if m.views[liveTab].Capturing() {
 		t.Fatalf("declining should close the confirm")
 	}
 }
@@ -303,10 +303,10 @@ func TestGlobalKeysGoToPromptWhileCapturing(t *testing.T) {
 			}
 		}
 	}
-	if m.active != 0 {
+	if m.active != liveTab {
 		t.Fatalf("digit switched tab to %d while the prompt was open", m.active)
 	}
-	if got := m.views[0].(liveView).input.Value(); got != "q1r" {
+	if got := m.views[liveTab].(liveView).input.Value(); got != "q1r" {
 		t.Fatalf("prompt text = %q, want q1r", got)
 	}
 	wantCalls(t, fake)
@@ -475,7 +475,7 @@ func TestReplyCtrlCCancels(t *testing.T) {
 		}
 	}
 	wantCalls(t, fake)
-	if m.views[0].Capturing() {
+	if m.views[liveTab].Capturing() {
 		t.Fatalf("ctrl+c should close the prompt")
 	}
 }
@@ -553,7 +553,7 @@ func TestReplyLongPromptKeepsTailVisibleOnNarrowWidth(t *testing.T) {
 	}
 	m := actionModel(t, snap, &data.FakeRunner{}, true)
 	for range 20 {
-		if w, _ := m.views[0].Selection().(data.Worker); w.Branch == branch {
+		if w, _ := m.views[liveTab].Selection().(data.Worker); w.Branch == branch {
 			break
 		}
 		m = send(m, keyRune('j'))
@@ -589,7 +589,7 @@ func TestFooterKeepsWholeLoadStatusWhenKeysOverflow(t *testing.T) {
 	snap := loadFullSnapshot(t)
 	m := sized(loadingModel(Deps{Now: snap.Now}), 160, 40)
 	foot := footerOf(m)
-	if want := "loading settings, budget, retro, ratings, roster…"; !strings.Contains(foot, want) {
+	if want := "loading settings, budget, retro, ratings, roster, bus…"; !strings.Contains(foot, want) {
 		t.Fatalf("footer cut the load status, want %q in %q", want, foot)
 	}
 	assertWidth(t, foot, 160, 1)

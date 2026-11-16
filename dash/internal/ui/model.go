@@ -15,6 +15,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/noamsto/dispatcher/dash/internal/data"
+	vm "github.com/noamsto/dispatcher/dash/internal/view"
 )
 
 // view is the interface every tab's sub-model satisfies. Capturing is true
@@ -28,6 +29,11 @@ type view interface {
 	Capturing() bool
 }
 
+// keyOwner is implemented by a view that sometimes wants a global key (tab,
+// digits, r, ?) for itself; the root then forwards it instead of acting. It
+// is never consulted for quit, `[`/`]` or `R`.
+type keyOwner interface{ ownsKey(tea.KeyMsg) bool }
+
 // tabOwner is implemented by a view that sometimes wants tab and shift+tab
 // for itself; the root then forwards them instead of switching views.
 type tabOwner interface{ ownsTab() bool }
@@ -40,13 +46,19 @@ type tabHooks interface {
 	leave() (view, tea.Cmd)
 }
 
-var tabTitles = []string{"Live", "Board", "Budget", "Runs", "Settings", "Map"}
+var tabTitles = []string{"Overview", "Live", "Board", "Budget", "Runs", "Settings", "Map"}
 
-// mapTab is the Map view's index in Model.views.
-const mapTab = 5
-
-// settingsTab is the Settings view's index in Model.views.
-const settingsTab = 4
+// Tab indexes into Model.views and tabTitles.
+const (
+	overviewTab = iota
+	liveTab
+	boardTab
+	budgetTab
+	runsTab
+	settingsTab
+	mapTab
+	numTabs
+)
 
 // snapshotMsg carries the root model's current Snapshot and per-source
 // loaded flags to every view's Update, not just the active one, so a tab
@@ -54,6 +66,7 @@ const settingsTab = 4
 type snapshotMsg struct {
 	snap   data.Snapshot
 	loaded [numSources]bool
+	in     vm.Inputs // the view-model inputs the root assembled from snap and the bus digest
 }
 
 // requestRosterMsg asks the root to reload the roster source (emitted by the
@@ -72,8 +85,10 @@ type Model struct {
 	ctx     context.Context
 	loaders Loaders
 
-	snap data.Snapshot
-	load [numSources]loadState
+	snap   data.Snapshot
+	digest data.BusDigest
+	crew   []string
+	load   [numSources]loadState
 
 	width, height int
 	ready         bool
@@ -82,8 +97,8 @@ type Model struct {
 	statusErr bool
 	statusAt  time.Time
 
-	active int
-	views  [6]view
+	active int // overviewTab at start
+	views  [numTabs]view
 
 	help help.Model
 	keys KeyMap
@@ -107,6 +122,7 @@ func NewModel(deps Deps, now func() time.Time, live liveDeps) Model {
 			Now:    deps.Now,
 			Roster: data.RosterSection{Crews: []data.RosterCrew{}},
 		},
+		crew: deps.Crew,
 		keys: DefaultKeyMap(),
 		help: help.New(),
 	}
@@ -119,18 +135,35 @@ func NewModel(deps Deps, now func() time.Time, live liveDeps) Model {
 	lv := newLiveView(m.snap, m.loaded(), live, now)
 	acts := actionDeps{ctx: ctx, runner: deps.Runner, crew: deps.Crew, inTmux: deps.InTmux}
 	lv.acts = acts
-	m.views = [6]view{
-		lv,
-		newBoardView(m.snap, m.loaded(), now, acts),
-		newBudgetView(m.snap, m.loaded()),
-		newRunsView(m.snap, m.loaded()),
-		newSettingsView(m.snap, m.loaded(), settingsDeps{
+	m.views = [numTabs]view{
+		overviewTab: newOverviewView(m.viewInputs(), now),
+		liveTab:     lv,
+		boardTab:    newBoardView(m.snap, m.loaded(), now, acts),
+		budgetTab:   newBudgetView(m.snap, m.loaded()),
+		runsTab:     newRunsView(m.snap, m.loaded()),
+		settingsTab: newSettingsView(m.snap, m.loaded(), settingsDeps{
 			ctx: ctx, runner: deps.Runner, bin: deps.DispatchConfig,
 			getenv: os.Getenv, exec: tea.ExecProcess,
 		}),
-		newMapView(m.snap, deps.Map, acts),
+		mapTab: newMapView(m.snap, deps.Map, acts),
 	}
 	return m
+}
+
+// viewInputs is what the Overview's builders read, assembled from the root's
+// sources.
+func (m Model) viewInputs() vm.Inputs {
+	l := m.loaded()
+	return vm.Inputs{
+		Snap: m.snap,
+		Bus:  m.digest,
+		Loaded: vm.Loaded{
+			Settings: l[srcSettings], Budget: l[srcBudget],
+			Runs: l[srcRetro] && l[srcRatings], Roster: l[srcRoster], Bus: l[srcBus],
+		},
+		NowMS: m.now().UnixMilli(),
+		Crew:  m.crew,
+	}
 }
 
 func (m Model) loaded() [numSources]bool {
@@ -171,9 +204,10 @@ func (m Model) Init() tea.Cmd {
 	for s := source(0); s < numSources; s++ {
 		cmds = append(cmds, m.loaders.cmd(m.ctx, s))
 	}
-	if lv, ok := m.views[0].(liveView); ok {
+	if lv, ok := m.views[liveTab].(liveView); ok {
 		cmds = append(cmds, lv.Init())
 	}
+	cmds = append(cmds, tea.EnableMouseCellMotion)
 	return tea.Batch(cmds...)
 }
 
@@ -210,7 +244,7 @@ func (m Model) handoffSelection() data.Selection {
 			return sel
 		}
 	}
-	return m.views[0].Selection()
+	return m.views[liveTab].Selection()
 }
 
 // switchTab makes tab i active, running the leaving and entering views'
@@ -219,21 +253,23 @@ func (m *Model) switchTab(i int) tea.Cmd {
 	if i == m.active {
 		return nil
 	}
-	var cmds []tea.Cmd
+	var leaveCmd, enterCmd tea.Cmd
 	if h, ok := m.views[m.active].(tabHooks); ok {
-		nv, cmd := h.leave()
+		var nv view
+		nv, leaveCmd = h.leave()
 		m.views[m.active] = nv
-		cmds = append(cmds, cmd)
 	}
 	first := m.handoffSelection()
 	m.active = i
-	cmds = append(cmds, m.syncMapBox())
+	sync := m.syncMapBox()
 	if h, ok := m.views[i].(tabHooks); ok {
-		nv, cmd := h.enter(first)
+		var nv view
+		nv, enterCmd = h.enter(first)
 		m.views[i] = nv
-		cmds = append(cmds, cmd)
 	}
-	return tea.Batch(cmds...)
+	// Map and Overview both toggle mouse reporting: the leave must land
+	// before the enter, which a plain Batch does not guarantee.
+	return tea.Sequence(leaveCmd, tea.Batch(sync, enterCmd))
 }
 
 func (m Model) update(msg tea.Msg) (Model, tea.Cmd) {
@@ -241,10 +277,10 @@ func (m Model) update(msg tea.Msg) (Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		m.ready = true
-		// The Live and Board views keep the width for their reply prompt
+		// The Live, Board and Overview views keep the width for their reply prompt
 		// and key handling.
 		var cmds []tea.Cmd
-		for _, i := range []int{0, 1} {
+		for _, i := range []int{liveTab, boardTab, overviewTab} {
 			nv, cmd := m.views[i].Update(msg)
 			m.views[i] = nv
 			cmds = append(cmds, cmd)
@@ -253,6 +289,9 @@ func (m Model) update(msg tea.Msg) (Model, tea.Cmd) {
 
 	case sourceMsg:
 		msg.apply(&m.snap)
+		if msg.bus != nil {
+			m.digest = *msg.bus
+		}
 		st := &m.load[msg.src]
 		st.inFlight, st.loaded, st.at = false, true, m.now()
 		cmds := m.broadcast()
@@ -274,14 +313,20 @@ func (m Model) update(msg tea.Msg) (Model, tea.Cmd) {
 		return m, nil
 
 	case requestRosterMsg:
-		return m, m.request(srcRoster)
+		return m, tea.Batch(m.request(srcRoster), m.request(srcBus))
 
 	case rosterMsg:
 		// The live view's background watcher/ticker loop must keep
 		// running (and its results must land) regardless of which tab is
-		// active — route straight to views[0] rather than m.active.
-		nv, cmd := m.views[0].Update(msg)
-		m.views[0] = nv
+		// active — route straight to liveTab rather than m.active. The tick
+		// also refreshes the Overview's ages.
+		nv, cmd := m.views[liveTab].Update(msg)
+		m.views[liveTab] = nv
+		if _, ok := msg.(tickMsg); ok {
+			ov, ocmd := m.views[overviewTab].Update(msg)
+			m.views[overviewTab] = ov
+			cmd = tea.Batch(cmd, ocmd)
+		}
 		return m, cmd
 
 	case requestSettingsMsg:
@@ -316,7 +361,7 @@ func (m Model) update(msg tea.Msg) (Model, tea.Cmd) {
 
 // broadcast forwards the current Snapshot to every view.
 func (m *Model) broadcast() []tea.Cmd {
-	msg := snapshotMsg{snap: m.snap, loaded: m.loaded()}
+	msg := snapshotMsg{snap: m.snap, loaded: m.loaded(), in: m.viewInputs()}
 	var cmds []tea.Cmd
 	for i, v := range m.views {
 		nv, cmd := v.Update(msg)
@@ -328,33 +373,50 @@ func (m *Model) broadcast() []tea.Cmd {
 
 func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 	if !m.views[m.active].Capturing() {
-		owner, _ := m.views[m.active].(tabOwner)
-		ownsTab := owner != nil && owner.ownsTab()
-		switch {
-		case key.Matches(msg, m.keys.Quit):
+		if key.Matches(msg, m.keys.Quit) {
 			return m, tea.Quit
-		case key.Matches(msg, m.keys.Help):
-			m.help.ShowAll = !m.help.ShowAll
-			return m, nil
-		case key.Matches(msg, m.keys.Refresh):
-			return m, m.requestAll()
-		case key.Matches(msg, m.keys.Next) && !ownsTab:
-			cmd := m.switchTab((m.active + 1) % len(m.views))
+		}
+		if cmd, handled := m.handleGlobalKey(msg); handled {
 			return m, cmd
-		case key.Matches(msg, m.keys.Prev) && !ownsTab:
-			cmd := m.switchTab((m.active - 1 + len(m.views)) % len(m.views))
-			return m, cmd
-		default:
-			if i := tabIndex(msg.String()); i >= 0 {
-				cmd := m.switchTab(i)
-				return m, cmd
-			}
 		}
 	}
 
 	nv, cmd := m.views[m.active].Update(msg)
 	m.views[m.active] = nv
 	return m, cmd
+}
+
+// handleGlobalKey acts on the keys every view shares unless the active view
+// owns the key. `[`, `]` and `R` are never owned.
+func (m *Model) handleGlobalKey(msg tea.KeyMsg) (tea.Cmd, bool) {
+	switch {
+	case key.Matches(msg, m.keys.PrevView):
+		return m.switchTab((m.active - 1 + numTabs) % numTabs), true
+	case key.Matches(msg, m.keys.NextView):
+		return m.switchTab((m.active + 1) % numTabs), true
+	case msg.String() == "R":
+		return m.requestAll(), true
+	}
+	if owner, ok := m.views[m.active].(keyOwner); ok && owner.ownsKey(msg) {
+		return nil, false
+	}
+	owner, _ := m.views[m.active].(tabOwner)
+	ownsTab := owner != nil && owner.ownsTab()
+	switch {
+	case key.Matches(msg, m.keys.Help):
+		m.help.ShowAll = !m.help.ShowAll
+		return nil, true
+	case key.Matches(msg, m.keys.Refresh):
+		return m.requestAll(), true
+	case key.Matches(msg, m.keys.Next) && !ownsTab:
+		return m.switchTab((m.active + 1) % numTabs), true
+	case key.Matches(msg, m.keys.Prev) && !ownsTab:
+		return m.switchTab((m.active - 1 + numTabs) % numTabs), true
+	}
+	if i := tabIndex(msg.String()); i >= 0 {
+		return m.switchTab(i), true
+	}
+	return nil, false
 }
 
 func (m Model) View() string {

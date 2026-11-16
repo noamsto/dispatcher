@@ -133,7 +133,7 @@ func (r *mapRig) model(w, h int) Model {
 
 // open sizes the model to 100x30 and shows the Map tab, running its render.
 func (r *mapRig) open() Model {
-	return r.press(r.model(100, 30), keyRune('6'))
+	return r.press(r.model(100, 30), keyRune('7'))
 }
 
 // press delivers msg and runs the Cmds it leads to: renders land, action
@@ -516,7 +516,7 @@ func TestMapActionsDispatchLiveArgv(t *testing.T) {
 func TestMapKeysWhileCapturingGoToThePrompt(t *testing.T) {
 	r := newMapRig(t, false, true)
 	m := r.press(r.open(), keyRune('m'))
-	for _, k := range []tea.KeyMsg{keyRune('q'), keyRune('6'), keyType(tea.KeyTab), keyRune('l')} {
+	for _, k := range []tea.KeyMsg{keyRune('q'), keyRune('7'), keyType(tea.KeyTab), keyRune('l')} {
 		nm, cmd := m.Update(k)
 		m = nm.(Model)
 		if cmd != nil && k.Type != tea.KeyRunes {
@@ -549,7 +549,7 @@ func TestMapHasNoMergeOrReapedKey(t *testing.T) {
 }
 
 func rosterMsgOf(mutate func(*data.RosterSection)) sourceMsg {
-	return sourceMsg{srcRoster, func(s *data.Snapshot) { mutate(&s.Roster) }}
+	return sourceMsg{src: srcRoster, apply: func(s *data.Snapshot) { mutate(&s.Roster) }}
 }
 
 func TestMapPlanetWithoutWorkerReportsNotInRoster(t *testing.T) {
@@ -623,7 +623,7 @@ func TestMapSnapshotRendersOnlyWhenTheCrewChanged(t *testing.T) {
 			r := newMapRig(t, false, true)
 			m := r.open()
 			before := renders(r.fake)
-			r.press(m, sourceMsg{src, apply})
+			r.press(m, sourceMsg{src: src, apply: apply})
 			if got := renders(r.fake) - before; got != 0 {
 				t.Fatalf("%d renders, want none", got)
 			}
@@ -659,13 +659,13 @@ func TestMapSnapshotRendersOnlyWhenTheCrewChanged(t *testing.T) {
 
 func TestMapInactiveTabRendersOnEnter(t *testing.T) {
 	r := newMapRig(t, false, true)
-	m := r.press(r.open(), keyRune('1'))
+	m := r.press(r.open(), keyRune('2'))
 	before := renders(r.fake)
 	m = r.press(m, rosterMsgOf(func(ro *data.RosterSection) { ro.Crews[0].Workers[0]["state"] = "blocked" }))
 	if got := renders(r.fake) - before; got != 0 {
 		t.Fatalf("%d renders while the tab is hidden, want none", got)
 	}
-	m = r.press(m, keyRune('6'))
+	m = r.press(m, keyRune('7'))
 	if got := renders(r.fake) - before; got != 1 {
 		t.Fatalf("%d renders on enter, want 1", got)
 	}
@@ -802,12 +802,12 @@ func TestMapFallbackWhenNotCapable(t *testing.T) {
 		t.Fatalf("the fallback advertises map keys")
 	}
 	m = r.press(m, keyType(tea.KeyTab))
-	if m.active != 0 {
+	if m.active != overviewTab {
 		t.Fatalf("tab did not switch views: active %d", m.active)
 	}
-	m = r.press(m, keyRune('6'))
+	m = r.press(m, keyRune('['))
 	m = r.press(m, keyType(tea.KeyShiftTab))
-	if m.active != 4 {
+	if m.active != settingsTab {
 		t.Fatalf("shift+tab did not switch views: active %d", m.active)
 	}
 }
@@ -854,7 +854,7 @@ func TestMapBlockIsCentredAndClicksFollowIt(t *testing.T) {
 		}
 		return g
 	}())
-	m = r.press(m, keyRune('6'))
+	m = r.press(m, keyRune('7'))
 	mv := m.views[mapTab].(mapView)
 	if mv.place.Cols != 297 {
 		t.Fatalf("cols = %d, want the 297 cap", mv.place.Cols)
@@ -939,7 +939,7 @@ func TestMapTransmitsAlternatingIDsAndDeletesOnLeave(t *testing.T) {
 		t.Fatalf("%d mouse enables, want 1", got)
 	}
 	mark := r.tty.Len()
-	m = r.press(m, keyRune('1'))
+	m = r.press(m, keyRune('2'))
 	tail := r.tty.String()[mark:]
 	if want := kitty.Delete(mapBase+1, false) + kitty.Delete(mapBase+2, false); tail != want {
 		t.Fatalf("leaving wrote %q, want deletes of both ids", tail)
@@ -952,7 +952,7 @@ func TestMapTransmitsAlternatingIDsAndDeletesOnLeave(t *testing.T) {
 	}
 
 	// Re-entering stores again and repaints once more.
-	r.press(m, keyRune('6'))
+	r.press(m, keyRune('7'))
 	if got := r.count("tea.clearScreenMsg"); got != 2 {
 		t.Fatalf("%d repaints after re-entering, want 2", got)
 	}
@@ -979,7 +979,7 @@ func TestMapTabKeyMovesSelectionWhenOwnedElseSwitchesViews(t *testing.T) {
 
 	// Before the first image lands the tab does not own tab.
 	loading := r.model(100, 30)
-	nm, _ := loading.Update(keyRune('6'))
+	nm, _ := loading.Update(keyRune('7'))
 	nm, _ = nm.Update(keyType(tea.KeyTab))
 	if nm.(Model).active != 0 {
 		t.Fatalf("tab while rendering: active %d, want a switch to view 0", nm.(Model).active)
@@ -990,7 +990,7 @@ func TestMapTabBarShowsFiveTabs(t *testing.T) {
 	asciiProfile(t)
 	m := sized(testModel(loadFullSnapshot(t)), 80, 24)
 	head := strings.Split(m.View(), "\n")[0]
-	if got := strings.Fields(strings.ReplaceAll(strings.ReplaceAll(head, "│", " "), "▸", " ")); !slices.Equal(got, tabTitles) || len(tabTitles) != 6 {
+	if got := strings.Fields(strings.ReplaceAll(strings.ReplaceAll(head, "│", " "), "▸", " ")); !slices.Equal(got, tabTitles) || len(tabTitles) != numTabs {
 		t.Fatalf("tab bar = %q", head)
 	}
 }
@@ -1041,7 +1041,7 @@ func goldenMap(t *testing.T, prefix string, capable bool) {
 	asciiProfile(t)
 	for _, sz := range [][2]int{{80, 24}, {160, 40}} {
 		r := newMapRig(t, false, capable)
-		m := r.press(r.model(sz[0], sz[1]), keyRune('6'))
+		m := r.press(r.model(sz[0], sz[1]), keyRune('7'))
 		checkGolden(t, fmt.Sprintf("%s_%dx%d.golden", prefix, sz[0], sz[1]), m.View(), sz[0], sz[1])
 	}
 }
@@ -1061,7 +1061,7 @@ func TestMapRenderErrorRetriesOnTheNextSnapshotOfTheSameRoster(t *testing.T) {
 		t.Fatalf("the render did not fail")
 	}
 	before := renders(r.fake)
-	r.press(m, sourceMsg{srcRoster, func(s *data.Snapshot) {}})
+	r.press(m, sourceMsg{src: srcRoster, apply: func(s *data.Snapshot) {}})
 	if got := renders(r.fake) - before; got != 1 {
 		t.Fatalf("%d renders after a snapshot of the same roster, want 1 retry", got)
 	}
@@ -1086,7 +1086,7 @@ func footer(m Model) string {
 
 func TestMapHelpAdvertisesTabAsSelectionOnlyWhileItOwnsTab(t *testing.T) {
 	r := newMapRig(t, false, true)
-	bar := footer(r.press(r.model(160, 40), keyRune('6')))
+	bar := footer(r.press(r.model(160, 40), keyRune('7')))
 	if strings.Contains(bar, "next view") || !strings.Contains(bar, "←/→/tab select") {
 		t.Fatalf("owning map footer: %q", bar)
 	}
@@ -1103,7 +1103,7 @@ func TestMapHelpAdvertisesTabAsSelectionOnlyWhileItOwnsTab(t *testing.T) {
 	}
 
 	loading := r.model(160, 40)
-	nm, _ := loading.Update(keyRune('6'))
+	nm, _ := loading.Update(keyRune('7'))
 	if bar := footer(nm.(Model)); !strings.Contains(bar, "tab next view") {
 		t.Fatalf("map before its image lands lost %q: %q", "tab next view", bar)
 	} else if strings.Contains(bar, "←/→/tab") || !strings.Contains(bar, "←/→ select") {
@@ -1111,7 +1111,7 @@ func TestMapHelpAdvertisesTabAsSelectionOnlyWhileItOwnsTab(t *testing.T) {
 	}
 
 	off := newMapRig(t, false, false)
-	if bar := footer(off.press(off.model(160, 40), keyRune('6'))); !strings.Contains(bar, "tab next view") {
+	if bar := footer(off.press(off.model(160, 40), keyRune('7'))); !strings.Contains(bar, "tab next view") {
 		t.Fatalf("fallback footer lost %q: %q", "tab next view", bar)
 	} else if strings.Contains(bar, "←/→/tab") {
 		t.Fatalf("fallback footer advertises tab as selection: %q", bar)

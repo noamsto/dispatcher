@@ -26,7 +26,9 @@ func startCmds(cmd tea.Cmd, out chan<- tea.Msg) {
 			}
 			return
 		}
-		out <- msg
+		if _, ok := msg.(sourceMsg); ok {
+			out <- msg
+		}
 	}()
 }
 
@@ -61,7 +63,9 @@ func TestFirstViewBeforeAnySourceReturns(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	m := sized(loadingModel(Deps{Ctx: ctx, Load: collectLoaders(r, cfg), Now: 1}), 80, 24)
+	loaders := collectLoaders(r, cfg)
+	loaders.Bus = func(context.Context) data.BusDigest { <-never; return data.BusDigest{} }
+	m := sized(loadingModel(Deps{Ctx: ctx, Load: loaders, Now: 1}), 80, 24)
 	results := make(chan tea.Msg, 16)
 	startCmds(m.Init(), results)
 
@@ -74,11 +78,11 @@ func TestFirstViewBeforeAnySourceReturns(t *testing.T) {
 	}
 
 	for tab, want := range map[string][]string{
-		"1": {"loading budget…", "loading roster…"},
-		"2": {"loading roster…"},
-		"3": {"loading budget…"},
-		"4": {"loading ratings…", "loading retro…"},
-		"5": {"loading settings…"},
+		"2": {"loading budget…", "loading roster…"},
+		"3": {"loading roster…"},
+		"4": {"loading budget…"},
+		"5": {"loading ratings…", "loading retro…"},
+		"6": {"loading settings…"},
 	} {
 		frame := switchTab(t, m, tab).View()
 		for _, w := range want {
@@ -87,7 +91,7 @@ func TestFirstViewBeforeAnySourceReturns(t *testing.T) {
 			}
 		}
 	}
-	if !strings.Contains(m.View(), "loading settings, budget, retro, ratings, roster…") {
+	if !strings.Contains(m.View(), "loading settings, budget, retro, ratings, roster, bus…") {
 		t.Errorf("footer does not list the in-flight sources:\n%s", m.View())
 	}
 	select {
@@ -110,6 +114,7 @@ func TestAllLoadersStartConcurrently(t *testing.T) {
 		Retro:    func(context.Context) data.RunsSection { block(srcRetro); return data.RunsSection{} },
 		Ratings:  func(context.Context) data.RunsSection { block(srcRatings); return data.RunsSection{} },
 		Roster:   func(context.Context) data.RosterSection { block(srcRoster); return data.RosterSection{} },
+		Bus:      func(context.Context) data.BusDigest { block(srcBus); return data.BusDigest{} },
 	}
 	results := make(chan tea.Msg, 16)
 	startCmds(loadingModel(Deps{Load: loaders}).Init(), results)
@@ -143,6 +148,7 @@ func TestRequestWhileInFlightSetsAgain(t *testing.T) {
 		Retro:    func(context.Context) data.RunsSection { count(srcRetro); return data.RunsSection{} },
 		Ratings:  func(context.Context) data.RunsSection { count(srcRatings); return data.RunsSection{} },
 		Roster:   func(context.Context) data.RosterSection { count(srcRoster); return data.RosterSection{} },
+		Bus:      func(context.Context) data.BusDigest { count(srcBus); return data.BusDigest{} },
 	}
 	snap := loadSnapshot(t)
 	m := loadedModel(snap, Deps{Now: snap.Now, Load: loaders})
@@ -211,6 +217,7 @@ func TestRefreshIsNonBlocking(t *testing.T) {
 		Retro:    func(context.Context) data.RunsSection { wait(); return data.RunsSection{} },
 		Ratings:  func(context.Context) data.RunsSection { wait(); return data.RunsSection{} },
 		Roster:   func(context.Context) data.RosterSection { wait(); return data.RosterSection{} },
+		Bus:      func(context.Context) data.BusDigest { wait(); return data.BusDigest{} },
 	}
 	snap := loadSnapshot(t)
 	m := sized(loadedModel(snap, Deps{Now: snap.Now, Load: loaders}), 80, 24)
@@ -233,10 +240,10 @@ func TestRefreshIsNonBlocking(t *testing.T) {
 func TestRunsPlaceholdersAreIndependent(t *testing.T) {
 	snap := loadFullSnapshot(t)
 	m := sized(loadingModel(Deps{Now: snap.Now}), 80, 24)
-	nm, _ := m.Update(sourceMsg{srcRatings, func(s *data.Snapshot) {
+	nm, _ := m.Update(sourceMsg{src: srcRatings, apply: func(s *data.Snapshot) {
 		s.Runs.Ratings, s.Runs.RatingsGroups, s.Runs.RatingsError = snap.Runs.Ratings, snap.Runs.RatingsGroups, snap.Runs.RatingsError
 	}})
-	frame := switchTab(t, nm.(Model), "4").View()
+	frame := switchTab(t, nm.(Model), "5").View()
 	if !strings.Contains(frame, "loading retro…") {
 		t.Errorf("retro pane lacks its placeholder:\n%s", frame)
 	}
@@ -247,10 +254,10 @@ func TestRunsPlaceholdersAreIndependent(t *testing.T) {
 
 func TestSettingsCursorSurvivesOtherSourceLanding(t *testing.T) {
 	snap := loadSnapshot(t)
-	var nm tea.Model = switchTab(t, sized(testModel(snap), 120, 40), "5")
+	var nm tea.Model = switchTab(t, sized(testModel(snap), 120, 40), "6")
 	nm, _ = nm.Update(keyRune('j'))
 	nm, _ = nm.Update(keyRune('j'))
-	nm, _ = nm.Update(sourceMsg{srcRoster, func(s *data.Snapshot) { s.Roster = snap.Roster }})
+	nm, _ = nm.Update(sourceMsg{src: srcRoster, apply: func(s *data.Snapshot) { s.Roster = snap.Roster }})
 	if got := nm.(Model).views[settingsTab].(settingsView).cursor; got != 2 {
 		t.Fatalf("an unrelated source landing moved the settings cursor: %d, want 2", got)
 	}
