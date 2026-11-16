@@ -15,16 +15,17 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/noamsto/dispatcher/dash/internal/buswatch"
 	"github.com/noamsto/dispatcher/dash/internal/data"
 )
 
 // liveDeps bundles the live view's live-refresh seams. eventsPath and
-// watcher are resolved/started once by ui.Run (not here — see watcher.go
+// watcher are resolved/started once by ui.Run (not here — see buswatch
 // and ui.go): eventsPath "" disables the enter-to-drill-in Cmd, watcher nil
 // disables the bus-change reload (liveOffNote explains why).
 type liveDeps struct {
 	eventsPath  string
-	watcher     busWatcher
+	watcher     buswatch.Watcher
 	liveOffNote string
 }
 
@@ -57,7 +58,7 @@ func tickCmd() tea.Cmd {
 // watcher's channel, re-arming happens by the caller issuing this Cmd again
 // in response to the busChangedMsg it produces. A closed channel (watcher
 // shutting down) ends the loop with no message, never a panic.
-func waitForBusChange(w busWatcher) tea.Cmd {
+func waitForBusChange(w buswatch.Watcher) tea.Cmd {
 	return func() tea.Msg {
 		if _, ok := <-w.Events(); !ok {
 			return nil

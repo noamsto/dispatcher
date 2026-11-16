@@ -12,6 +12,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/muesli/termenv"
 
+	"github.com/noamsto/dispatcher/dash/internal/buswatch"
 	"github.com/noamsto/dispatcher/dash/internal/data"
 )
 
@@ -43,10 +44,10 @@ func Run(deps Deps) error {
 		lipgloss.SetColorProfile(termenv.Ascii)
 	}
 
-	var watcher busWatcher
+	var watcher buswatch.Watcher
 	liveOff := ""
 	if deps.EventsPath != "" {
-		watcher = newBusWatcher(deps.EventsPath, nil)
+		watcher = buswatch.New(deps.EventsPath)
 	} else {
 		reason := "bus log path unavailable"
 		if deps.EventsPathErr != nil {

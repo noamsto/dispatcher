@@ -1,4 +1,6 @@
-package ui
+// Package buswatch signals changes to the crew bus log, using fsnotify with
+// a poll fallback.
+package buswatch
 
 import (
 	"os"
@@ -8,21 +10,24 @@ import (
 	"github.com/fsnotify/fsnotify"
 )
 
-// busWatcher abstracts the roster view's two live-refresh implementations
+// Watcher abstracts the roster view's two live-refresh implementations
 // (fsnotify / a poll fallback) behind one channel: the view never cares
 // which is live, only that a change fires an event. Events is buffered by
 // one (a coalescing signal, not a queue of every change) and is closed by
 // Close, so a blocked reader unblocks rather than leaking.
-type busWatcher interface {
+type Watcher interface {
 	Events() <-chan struct{}
 	Close() error
 }
 
-// newBusWatcher tries ctor (fsnotify by default — nil picks
+// New returns a Watcher for path: fsnotify, or a poll when that is unavailable.
+func New(path string) Watcher { return newWatcher(path, nil) }
+
+// newWatcher tries ctor (fsnotify by default — nil picks
 // newFsnotifyWatcher) and falls back to a 2s poll of size+mtime when the
 // watcher cannot be constructed (fsnotify.NewWatcher or Add failing — e.g.
 // an inotify-instance limit, or a sandboxed FS that doesn't support it).
-func newBusWatcher(path string, ctor func(string) (busWatcher, error)) busWatcher {
+func newWatcher(path string, ctor func(string) (Watcher, error)) Watcher {
 	if ctor == nil {
 		ctor = newFsnotifyWatcher
 	}
@@ -41,7 +46,7 @@ type fsnotifyWatcher struct {
 	done   chan struct{}
 }
 
-func newFsnotifyWatcher(path string) (busWatcher, error) {
+func newFsnotifyWatcher(path string) (Watcher, error) {
 	w, err := fsnotify.NewWatcher()
 	if err != nil {
 		return nil, err
@@ -99,7 +104,7 @@ type pollWatcher struct {
 	done   chan struct{}
 }
 
-func newPollWatcher(path string, interval time.Duration) busWatcher {
+func newPollWatcher(path string, interval time.Duration) Watcher {
 	pw := &pollWatcher{events: make(chan struct{}, 1), stop: make(chan struct{}), done: make(chan struct{})}
 	go pw.loop(path, interval)
 	return pw
