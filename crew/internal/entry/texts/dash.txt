@@ -1,12 +1,14 @@
 usage: crew dash [--once | --json [--view <name> [--watch]]]
 
 Terminal dashboard over the crew bus: Overview (attention strip), roster,
-budget, holds, retro.
+budget, holds, retro, and Fleet (machine-wide attention, crews, capacity,
+holds, hosts).
 
   --once         Print one snapshot and exit instead of running the UI
   --json         Emit that snapshot as JSON
   --view <name>  With --json: print one view model (overview, roster, budget,
-                 runs, settings, map)
-  --watch        With --view: one JSON line per bus change
+                 runs, settings, map, fleet)
+  --watch        With --view: one JSON line per bus change, incl. relayed
+                 remote-worker batches and peer syncs
 
   crew dash --once
