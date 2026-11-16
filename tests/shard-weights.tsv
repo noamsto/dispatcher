@@ -97,6 +97,7 @@ tests/refresh-budget.bats	cursor individual plan	!timing	1304
 tests/refresh-budget.bats	cursor team plan	!timing	1280
 tests/refresh-budget.bats	local slots	!timing	3249
 tests/refresh-budget.bats	the key file is exclusive	!timing	1531
+tests/refresh-harness.bats	*	!timing	4620
 tests/refresh-models.bats	*	!timing	1757
 tests/refresh-scores.bats	*	!timing	4961
 tests/secret-read-guard.bats	secret-read-guard	!timing	327738

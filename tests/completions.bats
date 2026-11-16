@@ -39,7 +39,7 @@ crew_script() {
 }
 
 @test "every launcher has a completion file and nothing else is shipped" {
-  names="dispatch dispatch-config dispatch-resume dispatcher lead-launcher overseer permission-check pr-watch refresh-budget refresh-models refresh-scores reviewer-roster"
+  names="dispatch dispatch-config dispatch-resume dispatcher lead-launcher overseer permission-check pr-watch refresh-budget refresh-harness refresh-models refresh-scores reviewer-roster"
   for n in $names; do
     [ -f "$COMP/$n.fish" ]
   done

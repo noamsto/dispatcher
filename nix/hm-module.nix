@@ -201,6 +201,7 @@ self: {
     "/bin"
   ];
   refreshLog = "${config.home.homeDirectory}/Library/Logs/dispatcher-refresh.log";
+  harnessLog = "${config.home.homeDirectory}/Library/Logs/dispatcher-refresh-harness.log";
   reapLog = "${config.home.homeDirectory}/Library/Logs/dispatcher-reap.log";
 in {
   options.programs.dispatcher = {
@@ -642,6 +643,29 @@ in {
       };
     };
 
+    refreshHarness = {
+      enable = lib.mkOption {
+        type = lib.types.bool;
+        default = true;
+        description = ''
+          Run `refresh-harness` once a week without a dispatcher session: it
+          reports engine features the dispatcher does not use yet and writes
+          the harness report under the crew data dir. A systemd user timer on
+          Linux, a launchd agent on Darwin. Set false to schedule nothing.
+        '';
+      };
+
+      interval = lib.mkOption {
+        type = lib.types.str;
+        default = "weekly";
+        example = "Mon *-*-* 06:00:00";
+        description = ''
+          systemd `OnCalendar` value for the Linux timer. The Darwin agent
+          always runs on Mondays, at midnight.
+        '';
+      };
+    };
+
     reap = {
       enable = lib.mkOption {
         type = lib.types.bool;
@@ -882,7 +906,7 @@ in {
     # One `home` attrset, not four `home.*` assignments — statix flags the
     # repeated key.
     home = {
-      packages = [pkgsFor.crew pkgsFor.crew-dash pkgsFor.dispatch pkgsFor.dispatch-resume pkgsFor.dispatcher pkgsFor.refresh-scores pkgsFor.refresh-budget pkgsFor.refresh-models pkgsFor.pr-watch pkgsFor.reviewer-roster pkgsFor.permission-check pkgsFor.dispatch-config pkgsFor.overseer pkgsFor.completions] ++ lib.optional (cfg.agentBrowser.package != null) agentBrowserPackage;
+      packages = [pkgsFor.crew pkgsFor.crew-dash pkgsFor.dispatch pkgsFor.dispatch-resume pkgsFor.dispatcher pkgsFor.refresh-scores pkgsFor.refresh-budget pkgsFor.refresh-models pkgsFor.refresh-harness pkgsFor.pr-watch pkgsFor.reviewer-roster pkgsFor.permission-check pkgsFor.dispatch-config pkgsFor.overseer pkgsFor.completions] ++ lib.optional (cfg.agentBrowser.package != null) agentBrowserPackage;
 
       sessionVariables = {
         # Exported, not merely baked into the CLIs. The `dispatcher` slash
@@ -997,7 +1021,7 @@ in {
     # Each command may fail alone (cursor-agent missing must not skip scores),
     # so systemd's `-` prefix and the `;` in the launchd shell both run the
     # second one regardless.
-    systemd.user = lib.optionalAttrs ((cfg.refresh.enable || cfg.reap.enable) && pkgs.stdenv.hostPlatform.isLinux) (lib.mkMerge [
+    systemd.user = lib.optionalAttrs ((cfg.refresh.enable || cfg.reap.enable || cfg.refreshHarness.enable) && pkgs.stdenv.hostPlatform.isLinux) (lib.mkMerge [
       (lib.optionalAttrs cfg.refresh.enable {
         services.dispatcher-refresh = {
           Unit.Description = "Refresh the dispatcher model and score caches";
@@ -1041,9 +1065,30 @@ in {
           Install.WantedBy = ["timers.target"];
         };
       })
+      (lib.optionalAttrs cfg.refreshHarness.enable {
+        services.dispatcher-refresh-harness = {
+          Unit.Description = "Report new engine harness features the dispatcher does not use";
+          # A switch must not block on, or restart, a running report; the timer runs the new unit.
+          Unit."X-SwitchMethod" = "keep-old";
+          Service = {
+            Type = "oneshot";
+            Environment = ["PATH=${refreshPath}"];
+            ExecStart = ["-${pkgsFor.refresh-harness}/bin/refresh-harness"];
+          };
+        };
+        timers.dispatcher-refresh-harness = {
+          Unit.Description = "Weekly harness-feature check";
+          Timer = {
+            OnCalendar = cfg.refreshHarness.interval;
+            Persistent = true;
+            RandomizedDelaySec = "1h";
+          };
+          Install.WantedBy = ["timers.target"];
+        };
+      })
     ]);
 
-    launchd.agents = lib.optionalAttrs ((cfg.refresh.enable || cfg.reap.enable) && pkgs.stdenv.hostPlatform.isDarwin) (lib.mkMerge [
+    launchd.agents = lib.optionalAttrs ((cfg.refresh.enable || cfg.reap.enable || cfg.refreshHarness.enable) && pkgs.stdenv.hostPlatform.isDarwin) (lib.mkMerge [
       (lib.optionalAttrs cfg.refresh.enable {
         dispatcher-refresh = {
           enable = true;
@@ -1072,6 +1117,25 @@ in {
             StandardOutPath = reapLog;
             StandardErrorPath = reapLog;
             StartInterval = 600;
+            RunAtLoad = false;
+          };
+        };
+      })
+      (lib.optionalAttrs cfg.refreshHarness.enable {
+        dispatcher-refresh-harness = {
+          enable = true;
+          config = {
+            ProgramArguments = ["${pkgsFor.refresh-harness}/bin/refresh-harness"];
+            EnvironmentVariables.PATH = refreshPath;
+            StandardOutPath = harnessLog;
+            StandardErrorPath = harnessLog;
+            StartCalendarInterval = [
+              {
+                Weekday = 1;
+                Hour = 0;
+                Minute = 0;
+              }
+            ];
             RunAtLoad = false;
           };
         };

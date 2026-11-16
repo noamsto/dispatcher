@@ -91,6 +91,7 @@ map_file() {
   adapters/core/pr-watch.sh) add adapters dispatch module pr-watch ;;
   adapters/core/public-leak-guard.sh) add "${dispatch_set[@]}" public-leak-guard ;;
   adapters/core/refresh-budget.sh) add adapters dispatch module refresh-budget ;;
+  adapters/core/refresh-harness.sh) add adapters dispatch module refresh-harness ;;
   adapters/core/refresh-models.sh) add adapters dispatch module refresh-models ;;
   adapters/core/refresh-scores.sh) add adapters dispatch module refresh-scores ;;
   adapters/core/secret-read-guard.sh) add adapters dispatch secret-read-guard ;;
