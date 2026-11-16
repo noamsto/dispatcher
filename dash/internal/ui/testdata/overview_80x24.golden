@@ -1,0 +1,24 @@
+╭ ▸ ATTENTION ──────────────────────────────────────────────── 12 need action ─╮
+│▌1 ✗ feat/h exit 1 after test failure                           20m → peek    │
+│ 2 ✗ feat/g dead: quiet: no output 20m                          15m → peek    │
+│ 3 ✗ otter  reviewer: role reviewer engine exited (pane %9)      6m → peek    │
+│ 4 ✗ c2     crew stream lane is dead                            now → inspect │
+╰──────────────────────────────────────────────────────────────────────────────╯
+╭ CHECKLISTS ─────────────────────────────────────────────────── 0 of 11 done ─╮
+│ ● otter standard                                                         AC —│
+│   ●─●─◉─○─○─○ execute                                                        │
+│ ● heron standard                                                       AC 5/5│
+│   ●─●─●─●─●─● pr_open                                                        │
+│ ● feat/c standard                                                        AC —│
+│   ○─○─○─○─○─○ blocked                                                        │
+│ ● feat/d standard                                                        AC —│
+│   ○─○─○─○─○─○ blocked                                                        │
+│ ● feat/e standard                                                        AC —│
+│   ○─○─○─○─○─○ blocked                                                        │
+│ ● feat/f standard                                                        AC —│
+│   ○─○─○─○─○─○ blocked                                                        │
+│ ✗ feat/g standard                                                        AC —│
+│   ○─○─○─○─○─○ failed                                                         │
+│▌✗ feat/h standard                                                        AC —│
+│▌  ○─○─○─○─○─○ failed                                                         │
+╰──────────────────────────────────────────────────────────────────────────────╯

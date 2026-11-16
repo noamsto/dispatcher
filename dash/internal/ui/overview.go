@@ -1,12 +1,12 @@
 package ui
 
 import (
-	"fmt"
-	"strings"
+	"os"
 	"time"
 
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/noamsto/dispatcher/dash/internal/data"
 	vm "github.com/noamsto/dispatcher/dash/internal/view"
@@ -19,10 +19,12 @@ type overviewView struct {
 	now   func() time.Time
 	in    vm.Inputs
 	model vm.OverviewView
+	st    overviewState
+	pills pillMode
 }
 
 func newOverviewView(in vm.Inputs, now func() time.Time) overviewView {
-	v := overviewView{now: now, in: in}
+	v := overviewView{now: now, in: in, pills: pillModeOf(os.Getenv, lipgloss.ColorProfile())}
 	v.model = vm.BuildOverview(v.in)
 	return v
 }
@@ -40,18 +42,7 @@ func (v overviewView) Update(msg tea.Msg) (view, tea.Cmd) {
 }
 
 func (v overviewView) View(w, h int) string {
-	line := "all clear"
-	if n := len(v.model.Attention); n > 0 {
-		line = fmt.Sprintf("%d need action", n)
-	}
-	lines := make([]string, max0(h))
-	for i := range lines {
-		lines[i] = ""
-	}
-	if len(lines) > 0 {
-		lines[0] = truncateLine(line, w)
-	}
-	return strings.Join(lines, "\n")
+	return renderOverview(w, h, v.model, v.st, v.pills)
 }
 
 func (overviewView) Keys() []key.Binding       { return nil }
