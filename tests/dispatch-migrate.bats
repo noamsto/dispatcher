@@ -112,6 +112,31 @@ refused_as_held_by() { # <holder text>
   [[ $stderr == *"dispatch: $BRANCH runs on host mini — dispatch --host mini … to resume it there"* ]]
 }
 
+@test "a remote dispatch row older than a day no longer blocks a plain local dispatch" {
+  seed_local_worker
+  jq -nc --arg b "$BRANCH" --argjson ts "$((($(date +%s) - 25 * 3600) * 1000))" \
+    '{ts: $ts, crew_id: "c1", kind: "dispatch", branch: $b, worker_id: "w-remote", host: "mini", remote: true}' >>"$LBUS"
+
+  run --separate-stderr dispatch standard sonnet --effort medium --crew-id c1 7 x
+  [[ $stderr != *"runs on host"* ]]
+  [ "$status" -eq 0 ] || {
+    echo "$stderr" >&2
+    false
+  }
+}
+
+@test "a plain local dispatch of a Linear branch released to mini is refused before any side effect" {
+  BRANCH=eng-7-x
+  seed_local_worker
+  mark_migrated_to mini
+  before="$(wc -l <"$LBUS")"
+
+  TMUX_PANE=%0 run --separate-stderr dispatch standard sonnet --effort medium --crew-id c1 ENG-7 x
+  [ "$status" -eq 1 ]
+  [[ $stderr == *"dispatch: $BRANCH was migrated to host mini — dispatch --host mini …"* ]]
+  [ "$(wc -l <"$LBUS")" -eq "$before" ]
+}
+
 # --- the remote half: a hand-built bundle carried by DISPATCH_MIGRATE_BUNDLE ---
 
 SID=0b5c2d3e-1f2a-4b3c-8d4e-5f6a7b8c9d0e
@@ -324,6 +349,130 @@ migrate_dispatch() { # dispatch_remote --host mini 7 x carrying $BUNDLE
   run --separate-stderr on_remote "$REMOTE_CLONE" dispatch --migrate-check "$BRANCH"
   [ "$status" -eq 2 ]
   [[ $stderr == *"not an ancestor"* ]]
+}
+
+# fail_remote_window_once — the remote's first tmux new-window/new-session fails,
+# so a migrate-in dies after its worktree is built and its patch applied.
+fail_remote_window_once() {
+  cat >"$RBINS/tmux" <<EOF
+#!/usr/bin/env bash
+case "\${1:-}" in
+new-window | new-session)
+  if [ ! -e "$BATS_TEST_TMPDIR/window-failed" ]; then
+    : >"$BATS_TEST_TMPDIR/window-failed"
+    echo "tmux: simulated failure" >&2
+    exit 1
+  fi
+  ;;
+esac
+exec "$STUB_DIR/tmux" "\$@"
+EOF
+  chmod +x "$RBINS/tmux"
+}
+
+@test "a migrate-in that died after building its worktree retries: migrate-check passes and the re-run applies nothing twice" {
+  seed_pushed_branch
+  make_bundle
+  fail_remote_window_once
+
+  migrate_dispatch
+  [ "$status" -ne 0 ]
+  [ -e "$BATS_TEST_TMPDIR/window-failed" ]
+  wt="$(remote_wt "$BRANCH")"
+  [ -d "$wt" ]
+  [ "$(scratch_tree "$wt" "$TIP")" = "$TREE" ]
+  [ -z "$(local_dispatch_rows)" ]
+
+  run --separate-stderr on_remote "$REMOTE_CLONE" dispatch --migrate-check "$BRANCH"
+  [ "$status" -eq 0 ] || {
+    echo "$stderr" >&2
+    false
+  }
+  [ "$output" = "migrate-check: v1 ok" ]
+
+  migrate_dispatch
+  [ "$status" -eq 0 ] || {
+    echo "$stderr" >&2
+    false
+  }
+  [ "$(remote_wt "$BRANCH")" = "$wt" ]
+  [ "$(git -C "$REMOTE_CLONE" rev-parse "refs/heads/$BRANCH")" = "$TIP" ]
+  [ "$(scratch_tree "$wt" "$TIP")" = "$TREE" ]
+  [ "$(cat "$wt/tracked.txt")" = $'one\ntwo' ]
+  [ "$(local_dispatch_rows | wc -l)" -eq 1 ]
+}
+
+@test "a migrate-in onto a branch checked out in a worktree dispatch did not build is refused" {
+  seed_pushed_branch
+  make_bundle
+  git -C "$REMOTE_CLONE" fetch -q origin "refs/heads/$BRANCH:refs/heads/$BRANCH"
+  git -C "$REMOTE_CLONE" worktree add -q "$BATS_TEST_TMPDIR/remote-human" "$BRANCH"
+
+  migrate_dispatch
+  [ "$status" -ne 0 ]
+  [[ $stderr == *"checked out"* ]]
+  [ -z "$(local_dispatch_rows)" ]
+  [ ! -e "$BATS_TEST_TMPDIR/remote-human/untracked.txt" ]
+}
+
+@test "a migrate-in is not refused by the target's own record of the branch running on another host" {
+  seed_pushed_branch
+  make_bundle
+  mkdir -p "$(remote_crew_dir)"
+  jq -nc --arg b "$BRANCH" '{ts: (now * 1000 | floor), crew_id: "c1", kind: "dispatch", branch: $b, worker_id: "w-there", host: "laptop", remote: true}' \
+    >>"$(remote_crew_dir)/events.jsonl"
+
+  migrate_dispatch
+  [ "$status" -eq 0 ] || {
+    echo "$stderr" >&2
+    false
+  }
+  [ "$(scratch_tree "$(remote_wt "$BRANCH")" "$TIP")" = "$TREE" ]
+}
+
+@test "the migrate-in fetch runs no reference-transaction hook" {
+  seed_pushed_branch
+  make_bundle
+  hooks="$(git -C "$REMOTE_CLONE" rev-parse --path-format=absolute --git-common-dir)/hooks"
+  mkdir -p "$hooks"
+  printf '#!/bin/sh\necho "$@" >>%q\n' "$BATS_TEST_TMPDIR/hook-ran" >"$hooks/reference-transaction"
+  chmod +x "$hooks/reference-transaction"
+
+  migrate_dispatch
+  [ "$status" -eq 0 ] || {
+    echo "$stderr" >&2
+    false
+  }
+  [ "$(git -C "$REMOTE_CLONE" rev-parse "refs/heads/$BRANCH")" = "$TIP" ]
+  [ ! -e "$BATS_TEST_TMPDIR/hook-ran" ]
+}
+
+@test "dispatch --migrate-check refuses a git config that drifted from the baseline" {
+  seed_pushed_branch
+  run --separate-stderr on_remote "$REMOTE_CLONE" dispatch --migrate-check "$BRANCH"
+  [ "$status" -eq 0 ]
+  git -C "$REMOTE_CLONE" config core.fsmonitor "touch $BATS_TEST_TMPDIR/fsmonitor-ran"
+
+  run --separate-stderr on_remote "$REMOTE_CLONE" dispatch --migrate-check "$BRANCH"
+  [ "$status" -eq 2 ]
+  [ "$output" != "migrate-check: v1 ok" ]
+  grep -q '^migrate-check: ' <<<"$stderr"
+}
+
+@test "dispatch --migrate-check names a failed fetch of origin's branch" {
+  seed_pushed_branch
+  cat >"$RBINS/git" <<EOF
+#!/usr/bin/env bash
+for a in "\$@"; do
+  [ "\$a" != fetch ] || exit 128
+done
+exec $(command -v git) "\$@"
+EOF
+  chmod +x "$RBINS/git"
+
+  run --separate-stderr on_remote "$REMOTE_CLONE" dispatch --migrate-check "$BRANCH"
+  [ "$status" -eq 2 ]
+  [[ $stderr == *"migrate-check: could not fetch origin's $BRANCH"* ]]
 }
 
 # --- dispatch migrate: a real local worker moved to mini ---

@@ -1,7 +1,7 @@
 usage: crew migrate stop [--crew C] <branch> [--timeout S]
        crew migrate snapshot [--crew C] <branch>
        crew migrate mark [--crew C] <branch> --to-host H --mode coop|now
-                         --tip T --tree S [--patch P]
+                         --tip T --tree S --dir D [--patch P]
 
 The dispatcher's steps for moving a running worker to another host (dispatch
 migrate runs them; they are rarely typed by hand).
@@ -10,23 +10,27 @@ migrate runs them; they are rarely typed by hand).
             never a name) and every process rooted in its worktree, then wait
             up to S seconds (default 30) until none is left. Exits 1 naming
             the pane or pid that survived
-  snapshot  Save the worktree's uncommitted state (tracked, staged and
-            untracked files, plus the root SPEC.md, PLAN.md, DECOMPOSITION.md,
-            REVIEW_NOTES.md and PLAN_ROUND<n>.md even when gitignored; never
-            WORKER_TASK.md) as a patch against the branch tip, written to
-            <crew_dir>/artifacts/<branch>/migrate-<UTC>/patch. Prints one line
-            {"dir","patch","tree","tip"}: dir is the migration's bundle dir,
-            created only when there is a patch; patch is "" for a clean tree;
-            tree is the scratch-index tree the patch reproduces on tip.
-            Refused, with nothing written, when an engine runs at the
-            worktree, the cwd is inside it, or on reap --discard's tree
-            gates (admin dir, gitlink, config.worktree, submodules, an
-            embedded repository, git-config drift). Never changes the
-            worktree or its index
+  snapshot  Make the migration's bundle dir <crew_dir>/migrate/<branch>/<UTC>
+            (0700, outside the worker-writable artifacts dir; always made, a
+            clean tree's included; refused when it already exists or a
+            symlink is on its path) and save the worktree's uncommitted state
+            there as <dir>/patch: tracked, staged and untracked files, plus
+            the root SPEC.md, PLAN.md, DECOMPOSITION.md, REVIEW_NOTES.md and
+            PLAN_ROUND<n>.md even when gitignored; never WORKER_TASK.md. The
+            patch is against the branch tip. Prints one line
+            {"dir","patch","tree","tip"}: dir is the bundle dir; patch is
+            "" for a clean tree; tree is the scratch-index tree the patch
+            reproduces on tip. Refused, with nothing written, when an engine
+            runs at the worktree, the cwd is inside it, or on reap
+            --discard's tree gates (admin dir, gitlink, config.worktree,
+            submodules, an embedded repository, git-config drift). Never
+            changes the worktree or its index
   mark      Post the releasing `migrated` status row (source "migrate") as the
             branch's newest worker session: the branch is then released to
             host H only. H is a host name ([A-Za-z0-9][A-Za-z0-9._-]*), T and
-            S full object ids, P a patch snapshot wrote for this branch
+            S full object ids, D the bundle dir snapshot printed for this
+            branch (a real directory, no symlink on its path), P "" or
+            exactly D/patch, a regular file. The row records D as dir
 
 Run inside the repo, from the primary checkout or a worker worktree (git then
 runs from the primary checkout). The branch reaches its worktree only through
@@ -37,4 +41,4 @@ crew_id, else CREW_ID. Exits 1 on any refusal.
 
   crew migrate stop feat/12-x --timeout 60
   crew migrate snapshot feat/12-x
-  crew migrate mark feat/12-x --to-host studio --mode now --tip <sha> --tree <sha>
+  crew migrate mark feat/12-x --to-host studio --mode now --tip <sha> --tree <sha> --dir <dir>

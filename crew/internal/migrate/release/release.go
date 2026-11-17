@@ -7,7 +7,7 @@ import "github.com/noamsto/dispatcher/crew/internal/bus"
 // Release is a branch's active migrate mark: the host it is released to and
 // the snapshot that travelled.
 type Release struct {
-	ToHost, Mode, Tip, Tree, Patch string
+	ToHost, Mode, Tip, Tree, Dir, Patch string
 }
 
 // Active is the C2 rule: the newest worker's newest status row that is
@@ -35,7 +35,7 @@ func Active(rows []bus.Event, branch string) (Release, bool) {
 	}
 	return Release{
 		ToHost: field(last, "to_host"), Mode: field(last, "mode"),
-		Tip: field(last, "tip"), Tree: field(last, "tree"), Patch: field(last, "patch"),
+		Tip: field(last, "tip"), Tree: field(last, "tree"), Dir: field(last, "dir"), Patch: field(last, "patch"),
 	}, true
 }
 

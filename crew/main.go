@@ -1509,7 +1509,7 @@ func runMigrate(ctx context.Context, p crewArgs, e env, paths bus.Paths, cwd str
 		c := m.Mark
 		req := migrate.MarkRequest{
 			Request: migrate.Request{Crew: cmp.Or(str(c.Crew), bus.CrewID(ctx, cwd)), Branch: c.Branch},
-			ToHost:  c.ToHost, Mode: c.Mode, Tip: c.Tip, Tree: c.Tree, Patch: c.Patch,
+			ToHost:  c.ToHost, Mode: c.Mode, Tip: c.Tip, Tree: c.Tree, Dir: c.Dir, Patch: c.Patch,
 		}
 		return migrate.Mark(ctx, req, paths, cwd, stdout, stderr, o)
 	}

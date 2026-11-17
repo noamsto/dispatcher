@@ -186,13 +186,15 @@ func (f *fx) snapOut() snapOut {
 }
 
 func (f *fx) migrateDir() string {
-	return f.paths.Dir + "/artifacts/" + mb + "/migrate-" + time.Unix(nowUnix, 0).UTC().Format("20060102T150405Z")
+	return f.paths.Dir + "/migrate/" + mb + "/" + time.Unix(nowUnix, 0).UTC().Format("20060102T150405Z")
 }
 
 func (f *fx) noArtifacts() {
 	f.t.Helper()
-	if _, err := os.Lstat(f.paths.Dir + "/artifacts"); !os.IsNotExist(err) {
-		f.t.Fatalf("artifacts written: %v", err)
+	for _, d := range []string{"/artifacts", "/migrate"} {
+		if _, err := os.Lstat(f.paths.Dir + d); !os.IsNotExist(err) {
+			f.t.Fatalf("%s written: %v", d, err)
+		}
 	}
 	if m, _ := filepath.Glob(f.paths.Dir + "/migrate.*"); len(m) != 0 {
 		f.t.Fatalf("scratch dirs left: %q", m)
@@ -228,6 +230,7 @@ func TestSnapshotCarriesTrackedStagedUntrackedAndIgnoredScaffold(t *testing.T) {
 	if out.Dir != dir || out.Patch != dir+"/patch" {
 		t.Fatalf("dir=%q patch=%q, want %q", out.Dir, out.Patch, dir)
 	}
+	f.freshBundleDir(dir)
 	if out.Tip != runGit(t, f.main, "rev-parse", "refs/heads/"+mb) {
 		t.Fatalf("tip=%q", out.Tip)
 	}
@@ -265,7 +268,20 @@ func TestSnapshotWithOnlySpecPresent(t *testing.T) {
 	}
 }
 
-// A clean tree has no patch; its dir is named for the bundle but not made.
+// freshBundleDir checks dir is a real 0700 directory snapshot made, outside
+// the worker-writable artifacts tree.
+func (f *fx) freshBundleDir(dir string) {
+	f.t.Helper()
+	fi, err := os.Lstat(dir)
+	if err != nil || !fi.IsDir() || fi.Mode().Perm() != 0o700 {
+		f.t.Fatalf("bundle dir %s: %v %v", dir, fi, err)
+	}
+	if _, err := os.Lstat(f.paths.Dir + "/artifacts"); !os.IsNotExist(err) {
+		f.t.Fatalf("artifacts written: %v", err)
+	}
+}
+
+// A clean tree has no patch, but its bundle dir is still made.
 func TestSnapshotCleanTree(t *testing.T) {
 	f := newFx(t)
 	if rc := f.snapshot(f.main); rc != 0 {
@@ -278,7 +294,64 @@ func TestSnapshotCleanTree(t *testing.T) {
 	if out.Tree != runGit(t, f.main, "rev-parse", out.Tip+"^{tree}") {
 		t.Fatalf("tree %s is not the tip's", out.Tree)
 	}
-	f.noArtifacts()
+	f.freshBundleDir(out.Dir)
+	if ents, _ := os.ReadDir(out.Dir); len(ents) != 0 {
+		t.Fatalf("clean bundle dir holds %v", ents)
+	}
+}
+
+// The bundle dir is always snapshot's own: one already there (a second
+// snapshot in the same second, or one planted ahead) is refused, and so is a
+// symlink on the path to it.
+func TestSnapshotRefusesAnExistingOrLinkedBundleDir(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		plant func(f *fx)
+		why   string
+	}{
+		{"clean tree, dir exists", func(f *fx) {
+			if err := os.MkdirAll(f.migrateDir(), 0o755); err != nil {
+				f.t.Fatal(err)
+			}
+		}, "bundle dir already exists: "},
+		{"dirty tree, dir exists", func(f *fx) {
+			write(f.t, f.wt+"/a.txt", "dirty\n")
+			if err := os.MkdirAll(f.migrateDir(), 0o755); err != nil {
+				f.t.Fatal(err)
+			}
+		}, "bundle dir already exists: "},
+		{"leaf is a symlink", func(f *fx) {
+			if err := os.MkdirAll(filepath.Dir(f.migrateDir()), 0o755); err != nil {
+				f.t.Fatal(err)
+			}
+			if err := os.Symlink(f.root, f.migrateDir()); err != nil {
+				f.t.Fatal(err)
+			}
+		}, " is a symlink or not a directory"},
+		{"parent is a symlink", func(f *fx) {
+			write(f.t, f.wt+"/a.txt", "dirty\n")
+			if err := os.MkdirAll(f.paths.Dir+"/migrate", 0o755); err != nil {
+				f.t.Fatal(err)
+			}
+			if err := os.Symlink(f.root, f.paths.Dir+"/migrate/feat"); err != nil {
+				f.t.Fatal(err)
+			}
+		}, " is a symlink or not a directory"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFx(t)
+			tc.plant(f)
+			if rc := f.snapshot(f.main); rc != 1 || f.stdout.String() != "" || !strings.Contains(f.stderr.String(), tc.why) {
+				t.Fatalf("rc=%d stdout=%q stderr=%q, want %q", rc, f.stdout.String(), f.stderr.String(), tc.why)
+			}
+			if _, err := os.Lstat(f.migrateDir() + "/patch"); !os.IsNotExist(err) {
+				t.Fatalf("patch written: %v", err)
+			}
+			if _, err := os.Lstat(f.root + "/m"); !os.IsNotExist(err) {
+				t.Fatalf("wrote through the symlink: %v", err)
+			}
+		})
+	}
 }
 
 func TestSnapshotRefusals(t *testing.T) {
@@ -379,15 +452,25 @@ const (
 	tree40 = "89abcdef0123456789abcdef0123456789abcdef"
 )
 
+// bundleDir makes branch's bundle dir as snapshot does and returns it.
+func (f *fx) bundleDir(branch, ts string) string {
+	f.t.Helper()
+	dir := f.paths.Dir + "/migrate/" + branch + "/" + ts
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		f.t.Fatal(err)
+	}
+	return dir
+}
+
+const markTS = "20270115T080000Z"
+
 func TestMarkAppendsTheReleasingRow(t *testing.T) {
 	f := newFx(t)
 	f.bus(dispatchRow("s1-1"), resumeRow("s1-1", "s2-1"), statusRow("s2-1", `{"state":"working"}`))
-	patch := f.migrateDir() + "/patch"
-	if err := os.MkdirAll(filepath.Dir(patch), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	dir := f.bundleDir(mb, markTS)
+	patch := dir + "/patch"
 	write(t, patch, "diff\n")
-	req := MarkRequest{Request: Request{Crew: "c1", Branch: mb}, ToHost: "mbp", Mode: "now", Tip: tip40, Tree: tree40, Patch: patch}
+	req := MarkRequest{Request: Request{Crew: "c1", Branch: mb}, ToHost: "mbp", Mode: "now", Tip: tip40, Tree: tree40, Dir: dir, Patch: patch}
 	if rc := f.mark(req); rc != 0 {
 		t.Fatalf("rc=%d stderr=%q", rc, f.stderr.String())
 	}
@@ -397,8 +480,8 @@ func TestMarkAppendsTheReleasingRow(t *testing.T) {
 	}
 	row := evs[3].Doc.(map[string]any)
 	got, _ := json.Marshal(row)
-	want := fmt.Sprintf(`{"body":{"detail":"moved to mbp","mode":"now","patch":%q,"source":"migrate","state":"migrated","tip":%q,"to_host":"mbp","tree":%q},"crew_id":"c1","from":"worker:feat/m#s2-1","kind":"status","to":"dispatcher:c1","ts":%d}`,
-		patch, tip40, tree40, nowUnix*1000)
+	want := fmt.Sprintf(`{"body":{"detail":"moved to mbp","dir":%q,"mode":"now","patch":%q,"source":"migrate","state":"migrated","tip":%q,"to_host":"mbp","tree":%q},"crew_id":"c1","from":"worker:feat/m#s2-1","kind":"status","to":"dispatcher:c1","ts":%d}`,
+		dir, patch, tip40, tree40, nowUnix*1000)
 	if string(got) != want {
 		t.Fatalf("row\n got %s\nwant %s", got, want)
 	}
@@ -406,17 +489,17 @@ func TestMarkAppendsTheReleasingRow(t *testing.T) {
 		t.Fatal("not released after the mark")
 	}
 	rel, ok := release.Active(evs, mb)
-	if !ok || rel != (release.Release{ToHost: "mbp", Mode: "now", Tip: tip40, Tree: tree40, Patch: patch}) {
+	if !ok || rel != (release.Release{ToHost: "mbp", Mode: "now", Tip: tip40, Tree: tree40, Dir: dir, Patch: patch}) {
 		t.Fatalf("release %+v %v", rel, ok)
 	}
 
-	// Without a patch the row records "".
+	// Without a patch the row records "", and still names the bundle dir.
 	req.Patch, req.Mode = "", "coop"
 	if rc := f.mark(req); rc != 0 {
 		t.Fatalf("rc=%d stderr=%q", rc, f.stderr.String())
 	}
 	evs, _ = bus.ReadEvents(f.paths.Log)
-	if rel, ok := release.Active(evs, mb); !ok || rel.Patch != "" || rel.Mode != "coop" {
+	if rel, ok := release.Active(evs, mb); !ok || rel.Patch != "" || rel.Mode != "coop" || rel.Dir != dir {
 		t.Fatalf("release %+v %v", rel, ok)
 	}
 }
@@ -425,9 +508,35 @@ func TestMarkRefusals(t *testing.T) {
 	f := newFx(t)
 	f.bus(dispatchRow("s1-1"))
 	before, _ := os.ReadFile(f.paths.Log)
-	good := MarkRequest{Request: Request{Crew: "c1", Branch: mb}, ToHost: "mbp", Mode: "coop", Tip: tip40, Tree: tree40}
+	dir := f.bundleDir(mb, markTS)
+	noneDir := f.bundleDir("feat/none", markTS)
+	other := f.bundleDir(mb, "20270115T080001Z")
+	write(t, other+"/patch", "diff\n")
+	good := MarkRequest{Request: Request{Crew: "c1", Branch: mb}, ToHost: "mbp", Mode: "coop", Tip: tip40, Tree: tree40, Dir: dir}
 	outside := filepath.Join(f.root, "patch")
 	write(t, outside, "diff\n")
+	if err := os.Symlink(outside, dir+"/patch"); err != nil {
+		t.Fatal(err)
+	}
+	// Well-shaped bundle dirs that are not real directories snapshot made.
+	linked := f.paths.Dir + "/migrate/" + mb + "/20270115T080002Z"
+	if err := os.Symlink(f.root, linked); err != nil {
+		t.Fatal(err)
+	}
+	file := f.paths.Dir + "/migrate/" + mb + "/20270115T080003Z"
+	write(t, file, "")
+	missing := f.paths.Dir + "/migrate/" + mb + "/20270115T080004Z"
+	f.bundleDir("feat/real", markTS)
+	if err := os.Symlink(f.paths.Dir+"/migrate/feat/real", f.paths.Dir+"/migrate/feat/lnk"); err != nil {
+		t.Fatal(err)
+	}
+	linkedParent := f.paths.Dir + "/migrate/feat/lnk/" + markTS
+	artifacts := f.paths.Dir + "/artifacts/" + mb + "/migrate-" + markTS
+	if err := os.MkdirAll(artifacts, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	notDir := func(d string) string { return "--dir " + d + " is not a migrate bundle dir of feat/m" }
+	notPatch := func(p string) string { return "--patch " + p + " is not a migrate patch of feat/m" }
 	for _, c := range []struct {
 		why string
 		mut func(*MarkRequest)
@@ -438,8 +547,20 @@ func TestMarkRefusals(t *testing.T) {
 		{"--tip must be a full commit id (got 'abc')", func(r *MarkRequest) { r.Tip = "abc" }},
 		{"--tip must be a full commit id (got '" + strings.ToUpper(tip40) + "')", func(r *MarkRequest) { r.Tip = strings.ToUpper(tip40) }},
 		{"--tree must be a full tree id (got 'x')", func(r *MarkRequest) { r.Tree = "x" }},
-		{"--patch " + outside + " is not a migrate patch of feat/m", func(r *MarkRequest) { r.Patch = outside }},
-		{"no dispatch row for it", func(r *MarkRequest) { r.Branch = "feat/none" }},
+		{notDir(""), func(r *MarkRequest) { r.Dir = "" }},
+		{notDir(f.root), func(r *MarkRequest) { r.Dir = f.root }},
+		{notDir(artifacts), func(r *MarkRequest) { r.Dir = artifacts }},
+		{notDir(dir + "/"), func(r *MarkRequest) { r.Dir = dir + "/" }},
+		{notDir(f.paths.Dir + "/migrate/" + mb + "/notatime"), func(r *MarkRequest) { r.Dir = f.paths.Dir + "/migrate/" + mb + "/notatime" }},
+		{notDir(noneDir), func(r *MarkRequest) { r.Dir = noneDir }},
+		{notDir(linked), func(r *MarkRequest) { r.Dir = linked }},
+		{notDir(file), func(r *MarkRequest) { r.Dir = file }},
+		{notDir(missing), func(r *MarkRequest) { r.Dir = missing }},
+		{"--dir " + linkedParent + " is not a migrate bundle dir of feat/lnk", func(r *MarkRequest) { r.Branch, r.Dir = "feat/lnk", linkedParent }},
+		{notPatch(outside), func(r *MarkRequest) { r.Patch = outside }},
+		{notPatch(other + "/patch"), func(r *MarkRequest) { r.Patch = other + "/patch" }},
+		{notPatch(dir + "/patch"), func(r *MarkRequest) { r.Patch = dir + "/patch" }},
+		{"no dispatch row for it", func(r *MarkRequest) { r.Branch, r.Dir = "feat/none", noneDir }},
 		{"not a valid branch name", func(r *MarkRequest) { r.Branch = "feat/..x" }},
 		{"only the dispatcher posts as dispatcher:<crew>", func(*MarkRequest) { f.env["CREW_WORKER_ID"] = "worker:feat/m#s1-1" }},
 	} {

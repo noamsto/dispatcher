@@ -565,7 +565,7 @@ func fromCwd(cwd, path string) string {
 // readMigrateDir packs a migrate bundle dir: meta.json, checked as the remote
 // will check it, and the optional patch and transcript.jsonl.
 func readMigrateDir(dir string) (*Migrate, error) {
-	raw, err := os.ReadFile(filepath.Join(dir, "meta.json"))
+	raw, err := readRegular(filepath.Join(dir, "meta.json"))
 	if err != nil {
 		return nil, err
 	}
@@ -588,10 +588,35 @@ func readMigrateDir(dir string) (*Migrate, error) {
 	return m, nil
 }
 
+// readRegular is the content of path, which must be a regular file: a
+// symlink is not followed, so a bundle never carries what one points at.
+func readRegular(path string) ([]byte, error) {
+	notRegular := fmt.Errorf("%s is not a regular file", path)
+	fi, err := os.Lstat(path)
+	if err != nil {
+		return nil, err
+	}
+	if !fi.Mode().IsRegular() {
+		return nil, notRegular
+	}
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = f.Close() }()
+	if fi, err = f.Stat(); err != nil {
+		return nil, err
+	}
+	if !fi.Mode().IsRegular() {
+		return nil, notRegular
+	}
+	return io.ReadAll(f)
+}
+
 // gzipFile is path's content gzipped then base64-encoded, "" when it does
 // not exist.
 func gzipFile(path string) (string, error) {
-	data, err := os.ReadFile(path)
+	data, err := readRegular(path)
 	if errors.Is(err, fs.ErrNotExist) {
 		return "", nil
 	}

@@ -15,11 +15,12 @@ func TestMigrateGrammarRefusals(t *testing.T) {
 		{"migrate", "stop", "feat/x", "--timeout", "-1"},
 		{"migrate", "stop", "feat/x", "--crew"},
 		{"migrate", "snapshot", "feat/x", "extra"},
-		{"migrate", "mark", "feat/x", "--mode", "now", "--tip", sha, "--tree", sha},
-		{"migrate", "mark", "feat/x", "--to-host", "h", "--tip", sha, "--tree", sha},
-		{"migrate", "mark", "feat/x", "--to-host", "h", "--mode", "now", "--tree", sha},
-		{"migrate", "mark", "feat/x", "--to-host", "h", "--mode", "now", "--tip", sha},
-		{"migrate", "mark", "feat/x", "--to-host", "h", "--mode", "now", "--tip", sha, "--tree", sha, "--bogus"},
+		{"migrate", "mark", "feat/x", "--mode", "now", "--tip", sha, "--tree", sha, "--dir", "d"},
+		{"migrate", "mark", "feat/x", "--to-host", "h", "--tip", sha, "--tree", sha, "--dir", "d"},
+		{"migrate", "mark", "feat/x", "--to-host", "h", "--mode", "now", "--tree", sha, "--dir", "d"},
+		{"migrate", "mark", "feat/x", "--to-host", "h", "--mode", "now", "--tip", sha, "--dir", "d"},
+		{"migrate", "mark", "feat/x", "--to-host", "h", "--mode", "now", "--tip", sha, "--tree", sha},
+		{"migrate", "mark", "feat/x", "--to-host", "h", "--mode", "now", "--tip", sha, "--tree", sha, "--dir", "d", "--bogus"},
 	} {
 		if code, out, errs := crewRun(t, e, args...); code != exitFailure || out != "" || errs != migrateUsage+"\n" {
 			t.Errorf("crew %v: %d %q %q", args, code, out, errs)
@@ -33,7 +34,7 @@ func TestMigrateRefusesAWorker(t *testing.T) {
 	for _, args := range [][]string{
 		{"migrate", "stop", "feat/x"},
 		{"migrate", "snapshot", "feat/x"},
-		{"migrate", "mark", "feat/x", "--to-host", "h", "--mode", "now", "--tip", "x", "--tree", "x"},
+		{"migrate", "mark", "feat/x", "--to-host", "h", "--mode", "now", "--tip", "x", "--tree", "x", "--dir", "d"},
 	} {
 		code, out, errs := crewRun(t, e, args...)
 		if code != exitFailure || out != "" || !strings.HasPrefix(errs, "crew migrate: refusing "+args[1]+" feat/x — this is a worker or role session") {

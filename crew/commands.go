@@ -444,6 +444,7 @@ type migrateMarkCmd struct {
 	Mode   string  `name:"mode"`
 	Tip    string  `name:"tip"`
 	Tree   string  `name:"tree"`
+	Dir    string  `name:"dir"`
 	Patch  string  `name:"patch"`
 	Branch string  `arg:"" name:"branch"`
 }
@@ -604,7 +605,7 @@ const (
 	decideUsage       = `usage: crew decide "<text>"`
 	decisionsUsage    = "usage: crew decisions [--json] [--since <ms|duration> | --all]"
 	classUsage        = "usage: crew class revert <engine> <class> | crew class promote <engine> <class> <id>"
-	migrateUsage      = "usage: crew migrate stop [--crew C] <branch> [--timeout S] | crew migrate snapshot [--crew C] <branch> | crew migrate mark [--crew C] <branch> --to-host H --mode coop|now --tip T --tree S [--patch P]"
+	migrateUsage      = "usage: crew migrate stop [--crew C] <branch> [--timeout S] | crew migrate snapshot [--crew C] <branch> | crew migrate mark [--crew C] <branch> --to-host H --mode coop|now --tip T --tree S --dir D [--patch P]"
 	specLintUsage     = "usage: crew spec-lint <file> [--issue N]... [--no-host-checks]"
 )
 
@@ -1231,7 +1232,7 @@ func validate(sub string, r *root) *refusal {
 			return fail(migrateUsage)
 		}
 	case "migrate mark":
-		if c := r.Migrate.Mark; given(c.Crew) || c.ToHost == "" || c.Mode == "" || c.Tip == "" || c.Tree == "" {
+		if c := r.Migrate.Mark; given(c.Crew) || c.ToHost == "" || c.Mode == "" || c.Tip == "" || c.Tree == "" || c.Dir == "" {
 			return fail(migrateUsage)
 		}
 	case "followups":

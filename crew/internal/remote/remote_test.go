@@ -517,6 +517,43 @@ func TestRunMigrateDirRefusals(t *testing.T) {
 	}
 }
 
+// A bundle file that is a symlink (or anything but a regular file) is refused
+// before ssh: the bundle must not carry what a link points at.
+func TestRunMigrateDirRefusesNonRegular(t *testing.T) {
+	repo := cloneOf(t, "git@github.com:acme/widget.git")
+	t.Setenv("DISPATCH_CONFIG_BIN", configBin(t, mini))
+	secret := filepath.Join(t.TempDir(), "secret")
+	if err := os.WriteFile(secret, []byte("secret\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	meta := testMeta()
+	delete(meta, "session")
+	for _, name := range []string{"meta.json", "patch", "transcript.jsonl"} {
+		t.Run(name, func(t *testing.T) {
+			var dir string
+			if name == "meta.json" {
+				dir = writeBundle(t, nil, map[string]string{})
+			} else {
+				dir = writeBundle(t, meta, map[string]string{})
+			}
+			if err := os.Symlink(secret, filepath.Join(dir, name)); err != nil {
+				t.Fatal(err)
+			}
+			rc, sent, stderr := runMigrate(t, repo, dir)
+			if want := filepath.Join(dir, name) + " is not a regular file"; rc != 2 || sent != "" || !strings.Contains(stderr, want) {
+				t.Fatalf("rc %d, sent %q, stderr %q, want rc 2 naming %q", rc, sent, stderr, want)
+			}
+		})
+	}
+	dir := writeBundle(t, meta, map[string]string{})
+	if err := os.Mkdir(filepath.Join(dir, "patch"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if rc, sent, stderr := runMigrate(t, repo, dir); rc != 2 || sent != "" || !strings.Contains(stderr, "patch is not a regular file") {
+		t.Fatalf("dir patch: rc %d, sent %q, stderr %q", rc, sent, stderr)
+	}
+}
+
 func TestBuildHostRequest(t *testing.T) {
 	data, err := BuildHostRequest([]string{"crew", "overseer", "status", "--origin", "halo"})
 	if err != nil {

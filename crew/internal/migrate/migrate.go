@@ -65,13 +65,17 @@ type StopRequest struct {
 // host it releases the branch to.
 type MarkRequest struct {
 	Request
-	ToHost, Mode, Tip, Tree, Patch string
+	ToHost, Mode, Tip, Tree, Dir, Patch string
 }
 
 var (
-	hostRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
-	oidRe  = regexp.MustCompile(`^[0-9a-f]{40}([0-9a-f]{24})?$`)
+	hostRe  = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+	oidRe   = regexp.MustCompile(`^[0-9a-f]{40}([0-9a-f]{24})?$`)
+	stampRe = regexp.MustCompile(`^[0-9]{8}T[0-9]{6}Z$`)
 )
+
+// bundleStamp is the UTC time format naming a bundle dir.
+const bundleStamp = "20060102T150405Z"
 
 const panesFormat = "#{window_id}\t#{pane_id}\t#{pane_current_command}\t#{pane_current_path}"
 
@@ -253,11 +257,12 @@ type snapshotLine struct {
 }
 
 // Snapshot saves the worker's uncommitted state, gitignored root scaffold
-// included, as a patch against its branch tip under
-// <crew_dir>/artifacts/<branch>/migrate-<UTC>/ and prints
-// {"dir","patch","tree","tip"}. A clean tree prints patch "" and makes no dir;
-// dir still names where the migration's bundle goes. It refuses on everything
-// reap --discard refuses on, and never changes the worktree or its index.
+// included, as a patch against its branch tip in the bundle dir
+// <crew_dir>/migrate/<branch>/<UTC>, and prints {"dir","patch","tree","tip"}.
+// The bundle dir lives outside the worker-writable artifacts tree and is
+// always made here, a clean tree's (patch "") included; one already there is
+// refused. It refuses on everything reap --discard refuses on, and never
+// changes the worktree or its index.
 func Snapshot(ctx context.Context, req Request, paths bus.Paths, cwd string, stdout, stderr io.Writer, o Options) int {
 	r, code := prelude(ctx, "snapshot", req, paths, cwd, stdout, stderr, o)
 	if r == nil {
@@ -282,17 +287,20 @@ func Snapshot(ctx context.Context, req Request, paths bus.Paths, cwd string, std
 		return r.refuse("could not save uncommitted state")
 	}
 	defer func() { _ = os.RemoveAll(tmp) }()
-	artifacts := paths.Dir + "/artifacts"
-	dir := req.Branch + "/migrate-" + o.Now().UTC().Format("20060102T150405Z")
+	root := paths.Dir + "/migrate"
+	dir := req.Branch + "/" + o.Now().UTC().Format(bundleStamp)
 	snap, err := reap.Snapshot(ctx, reap.SnapshotRequest{
 		Admin: admin, WtPath: wt, Branch: req.Branch, Tmp: tmp,
-		Root: artifacts, Dir: dir, Name: "patch", IgnoredScaffold: true, Stderr: stderr,
+		Root: root, Dir: dir, Name: "patch", FreshDir: true, IgnoredScaffold: true, Stderr: stderr,
 	})
+	if errors.Is(err, reap.ErrDirExists) {
+		return r.refuse("bundle dir already exists: " + root + "/" + dir)
+	}
 	if err != nil {
 		return r.refuse(err.Error())
 	}
 	var b strings.Builder
-	_ = jsonval.Encode(&b, snapshotLine{Dir: artifacts + "/" + dir, Patch: snap.Patch, Tree: snap.Tree, Tip: snap.Tip}, false)
+	_ = jsonval.Encode(&b, snapshotLine{Dir: root + "/" + dir, Patch: snap.Patch, Tree: snap.Tree, Tip: snap.Tip}, false)
 	_, _ = io.WriteString(stdout, b.String())
 	return 0
 }
@@ -343,6 +351,7 @@ type markBody struct {
 	Mode   string `json:"mode"`
 	Tip    string `json:"tip"`
 	Tree   string `json:"tree"`
+	Dir    string `json:"dir"`
 	Patch  string `json:"patch"`
 	Detail string `json:"detail"`
 }
@@ -363,7 +372,9 @@ func Mark(ctx context.Context, req MarkRequest, paths bus.Paths, cwd string, std
 		return r.refuse("--tip must be a full commit id (got '" + req.Tip + "')")
 	case !oidRe.MatchString(req.Tree):
 		return r.refuse("--tree must be a full tree id (got '" + req.Tree + "')")
-	case req.Patch != "" && !r.migratePatch(req.Patch):
+	case !r.bundleDir(req.Dir):
+		return r.refuse("--dir " + req.Dir + " is not a migrate bundle dir of " + req.Branch)
+	case req.Patch != "" && !migratePatch(req.Dir, req.Patch):
 		return r.refuse("--patch " + req.Patch + " is not a migrate patch of " + req.Branch)
 	}
 	evs, err := bus.ReadEvents(paths.Log)
@@ -379,7 +390,7 @@ func Mark(ctx context.Context, req MarkRequest, paths bus.Paths, cwd string, std
 		TS: o.Now().UnixMilli(), CrewID: req.Crew, From: worker, To: "dispatcher:" + req.Crew, Kind: "status",
 		Body: markBody{
 			State: string(bus.StateMigrated), ToHost: req.ToHost, Source: "migrate", Mode: req.Mode,
-			Tip: req.Tip, Tree: req.Tree, Patch: req.Patch, Detail: "moved to " + req.ToHost,
+			Tip: req.Tip, Tree: req.Tree, Dir: req.Dir, Patch: req.Patch, Detail: "moved to " + req.ToHost,
 		},
 	}, false)
 	if err := o.Append(paths.Log, strings.TrimSuffix(b.String(), "\n")); err != nil {
@@ -390,12 +401,24 @@ func Mark(ctx context.Context, req MarkRequest, paths bus.Paths, cwd string, std
 	return 0
 }
 
-// migratePatch is a regular file at <crew_dir>/artifacts/<branch>/migrate-*/patch,
-// where snapshot writes one.
-func (r *run) migratePatch(p string) bool {
-	dir := filepath.Dir(p)
-	if filepath.Clean(p) != p || filepath.Base(p) != "patch" || !strings.HasPrefix(filepath.Base(dir), "migrate-") ||
-		filepath.Dir(dir) != r.paths.Dir+"/artifacts/"+r.req.Branch {
+// bundleDir is a real directory at <crew_dir>/migrate/<branch>/<UTC>, where
+// snapshot makes one: no symlink anywhere from the crew dir down.
+func (r *run) bundleDir(dir string) bool {
+	base := r.paths.Dir + "/migrate/" + r.req.Branch
+	if filepath.Clean(dir) != dir || filepath.Dir(dir) != base || !stampRe.MatchString(filepath.Base(dir)) {
+		return false
+	}
+	if fi, err := os.Lstat(dir); err != nil || !fi.IsDir() {
+		return false
+	}
+	resolved, err := filepath.EvalSymlinks(dir)
+	crewDir, crewErr := filepath.EvalSymlinks(r.paths.Dir)
+	return err == nil && crewErr == nil && resolved == crewDir+strings.TrimPrefix(dir, r.paths.Dir)
+}
+
+// migratePatch is the regular file <dir>/patch, where snapshot writes one.
+func migratePatch(dir, p string) bool {
+	if p != dir+"/patch" {
 		return false
 	}
 	fi, err := os.Lstat(p)

@@ -1026,6 +1026,23 @@ _branch_wts() { # <branch> — porcelain on stdin -> every worktree whose HEAD n
   awk -v b="refs/heads/$1" '/^worktree /{p=$2} $0=="branch "b{print p}'
 }
 
+# _migrate_retry_wt <branch> <tip> <held> — 0 when <held>, the worktrees holding
+# <branch>, is one worktree dispatch built for <branch> in this crew (its anchored
+# record says so) with HEAD at <tip>: a migrate-in that died after building it,
+# being retried. Any other checked-out branch stays git's refusal.
+_migrate_retry_wt() {
+  local branch="$1" tip="$2" wt="$3" rec admin
+  local -a lines
+  [ -n "$wt" ] && [[ $wt != *$'\n'* ]] || return 1
+  rec="$(_worktree_anchor_path "$wt")" || return 1
+  [ ! -L "$rec" ] && [ -f "$rec" ] || return 1
+  admin="$(_wt_admin_dir "${crew_dir%/crew}" "$wt")" || return 1
+  mapfile -t lines <"$rec"
+  [ "${lines[0]:-}" = "$(realpath -e -- "$wt")" ] && [ "${lines[1]:-}" = "$(realpath -m -- "$crew_dir")" ] &&
+    [ "${lines[2]:-}" = "$branch" ] && [ "${lines[3]:-}" = "$admin" ] &&
+    [ "$(_wt_git "$admin" "$wt" rev-parse --verify -q HEAD)" = "$tip" ]
+}
+
 # Unconditional, unlike the advisory hint lib: without it dispatch must abort,
 # never fall back to discovery in a worker's worktree (#539).
 wt_git_lib="${WORKTREE_GIT_LIB:-@worktreeGitLib@}"
@@ -2363,36 +2380,60 @@ fi
 # a worker moves to, before anything stops: can this clone's remote half fetch
 # origin's <branch> into refs/heads/<branch>? Read-only: origin's tip lands in
 # FETCH_HEAD alone (--refmap= skips the remote-tracking update). The versioned
-# ok line is what tells migrate this dispatch knows the remote half.
+# ok line is what tells migrate this dispatch knows the remote half; every
+# refusal says migrate-check: so migrate tells it from a dispatch without one.
 if [ "${1:-}" = --migrate-check ]; then
   mc_branch="${2:-}"
   if [ $# -ne 2 ] || [[ $mc_branch == -* ]] || ! _plain_branch_name "$mc_branch"; then
-    echo "usage: dispatch --migrate-check <branch>" >&2
+    echo "migrate-check: usage: dispatch --migrate-check <branch>" >&2
     exit 2
   fi
   crew_dir="$(git rev-parse --path-format=absolute --git-common-dir)/crew"
-  _wt_trusted_cwd "${crew_dir%/crew}" || exit 2
+  if ! _wt_trusted_cwd "${crew_dir%/crew}" || ! _wt_cfg_baseline_init "${crew_dir%/crew}" ||
+    ! _wt_cfg_guard_cwd "${crew_dir%/crew}"; then
+    echo "migrate-check: refusing this clone's git (above)" >&2
+    exit 2
+  fi
+  mc_git=()
+  _wt_common_argv "${crew_dir%/crew}" mc_git
   mc_rc=0
-  mc_remote="$(git ls-remote --exit-code origin "refs/heads/$mc_branch")" || mc_rc=$?
+  mc_remote="$("${mc_git[@]}" ls-remote --exit-code origin "refs/heads/$mc_branch")" || mc_rc=$?
   case "$mc_rc" in
-  0) git fetch -q --no-recurse-submodules --refmap= origin "refs/heads/$mc_branch" || exit 2 ;;
+  0)
+    if ! "${mc_git[@]}" fetch -q --no-recurse-submodules --refmap= origin "refs/heads/$mc_branch"; then
+      echo "migrate-check: could not fetch origin's $mc_branch" >&2
+      exit 2
+    fi
+    ;;
   2) mc_remote="" ;;
   *)
     echo "migrate-check: could not list origin's branches (git ls-remote exit $mc_rc)" >&2
     exit 2
     ;;
   esac
-  if git show-ref --verify --quiet "refs/heads/$mc_branch"; then
-    mc_held="$(git worktree list --porcelain | _branch_wts "$mc_branch")"
-    if [ -n "$mc_held" ]; then
+  mc_rc=0
+  "${mc_git[@]}" show-ref --verify --quiet "refs/heads/$mc_branch" || mc_rc=$?
+  case "$mc_rc" in
+  0)
+    mc_held="$("${mc_git[@]}" worktree list --porcelain | _branch_wts "$mc_branch")" || {
+      echo "migrate-check: could not list this clone's worktrees" >&2
+      exit 2
+    }
+    if [ -n "$mc_held" ] && ! _migrate_retry_wt "$mc_branch" "${mc_remote%%[[:space:]]*}" "$mc_held"; then
       echo "migrate-check: $mc_branch is checked out here at $(head -1 <<<"$mc_held") — the migrated worker needs its own worktree" >&2
       exit 2
     fi
-    if [ -z "$mc_remote" ] || ! git merge-base --is-ancestor "refs/heads/$mc_branch" "${mc_remote%%[[:space:]]*}"; then
+    if [ -z "$mc_remote" ] || ! "${mc_git[@]}" merge-base --is-ancestor "refs/heads/$mc_branch" "${mc_remote%%[[:space:]]*}"; then
       echo "migrate-check: the local branch $mc_branch here is not an ancestor of origin's — a fetch into it would be refused" >&2
       exit 2
     fi
-  fi
+    ;;
+  1) ;;
+  *)
+    echo "migrate-check: could not read the local branch $mc_branch (git show-ref exit $mc_rc)" >&2
+    exit 2
+    ;;
+  esac
   echo "migrate-check: v1 ok"
   exit 0
 fi
@@ -4204,15 +4245,45 @@ if [ -n "$migrate_dir" ]; then
     echo "dispatch: migrate: a migrated dispatch names the issue or Linear id of $mig_branch" >&2
     exit 1
   fi
-  if ! mig_out="$(git fetch -q --no-recurse-submodules origin "refs/heads/$mig_branch:refs/heads/$mig_branch" 2>&1)"; then
-    printf '%s\n' "$mig_out" >&2
-    echo "dispatch: migrate: could not fetch origin's $mig_branch into the local branch here" >&2
-    exit 1
+  # A retry of a migrate-in that built its worktree finds the branch checked out
+  # there at the tip, which git would refuse to fetch into.
+  mig_held="$(_wt_git_common "${crew_dir%/crew}" worktree list --porcelain | _branch_wts "$mig_branch")"
+  if [ -z "$mig_held" ] || ! _migrate_retry_wt "$mig_branch" "$mig_tip" "$mig_held"; then
+    if ! mig_out="$(_wt_git_common "${crew_dir%/crew}" fetch -q --no-recurse-submodules origin "refs/heads/$mig_branch:refs/heads/$mig_branch" 2>&1)"; then
+      printf '%s\n' "$mig_out" >&2
+      echo "dispatch: migrate: could not fetch origin's $mig_branch into the local branch here" >&2
+      exit 1
+    fi
   fi
   mig_ref="$(git rev-parse --verify -q "refs/heads/$mig_branch^{commit}")" || mig_ref=""
   if [ "$mig_ref" != "$mig_tip" ]; then
     echo "dispatch: migrate: $mig_branch here is at ${mig_ref:-nothing}, not the migrated tip $mig_tip — the tip must be pushed to origin first" >&2
     exit 1
+  fi
+fi
+
+# A branch dispatch migrate moved to host H, or one dispatched there within a
+# day (the claims-index aging rule), must not take the claim gate's resume
+# exemption and fork a second worker here: it resumes on H, or here only through
+# dispatch resume, whose `working` row ends an unfinished migration's release. A
+# migrate-in is that move landing here, already checked against its meta.
+if [ -n "$gh_issue$linear_id" ] && [ -z "$migrate_dir" ]; then
+  if [ -n "$linear_id" ]; then
+    guard_branch="$(printf '%s' "$linear_id" | tr '[:upper:]' '[:lower:]')-$slug"
+  else
+    guard_branch="$branch"
+  fi
+  if git show-ref --verify --quiet "refs/heads/$guard_branch" && [ -r "$crew_dir/events.jsonl" ]; then
+    if migrated_to="$(_branch_release_host "$guard_branch")"; then
+      echo "dispatch: $guard_branch was migrated to host $migrated_to — dispatch --host $migrated_to … to resume it there, or dispatch resume $guard_branch here to abandon an unfinished migration" >&2
+      exit 1
+    fi
+    runs_on="$(jq -nrR --arg b "$guard_branch" --argjson fresh "$(($(date +%s) * 1000 - _CLAIM_STALE_MS))" '[inputs | fromjson? | objects | select(.kind=="dispatch" and (.branch // "") == $b)] | last
+      | select(.remote == true and ((.ts | numbers) // 0) >= $fresh) | .host | strings' "$crew_dir/events.jsonl")"
+    if [ -n "$runs_on" ]; then
+      echo "dispatch: $guard_branch runs on host $runs_on — dispatch --host $runs_on … to resume it there" >&2
+      exit 1
+    fi
   fi
 fi
 
@@ -4225,22 +4296,6 @@ fi
 # loses on the label read, not after building a worktree. gh has no
 # compare-and-swap, so this narrows that race rather than closing it.
 if [ -n "$gh_issue" ]; then
-  # A branch dispatch migrate moved to host H, or one dispatched there, must not
-  # take the resume exemption below and fork a second worker here: it resumes on
-  # H, or here only through dispatch resume, whose `working` row ends an
-  # unfinished migration's release.
-  if git show-ref --verify --quiet "refs/heads/$branch" && [ -r "$crew_dir/events.jsonl" ]; then
-    if migrated_to="$(_branch_release_host "$branch")"; then
-      echo "dispatch: $branch was migrated to host $migrated_to — dispatch --host $migrated_to … to resume it there, or dispatch resume $branch here to abandon an unfinished migration" >&2
-      exit 1
-    fi
-    runs_on="$(jq -nrR --arg b "$branch" '[inputs | fromjson? | objects | select(.kind=="dispatch" and (.branch // "") == $b)] | last
-      | select(.remote == true) | .host | strings' "$crew_dir/events.jsonl")"
-    if [ -n "$runs_on" ]; then
-      echo "dispatch: $branch runs on host $runs_on — dispatch --host $runs_on … to resume it there" >&2
-      exit 1
-    fi
-  fi
   _ensure_dispatched_label
   issue_labels="$(gh issue view "$gh_issue" --json labels --jq '.labels[].name')" || {
     echo "dispatch: could not read labels for issue #$gh_issue" >&2

@@ -19,4 +19,8 @@ to that exact session is undelivered: the refusal prints each one on stderr, as
 a JSON line in inbox's form, and marks it delivered, so handle them, then post
 again.
 
+A worker session posts migrated only when the newest migrate directive its
+dispatcher sent to that exact session ({"directive":"migrate","to_host":"H"})
+names the --to-host host and no {"directive":"migrate-cancel"} came after it.
+
   crew status "$CREW_WORKER_ID" working "execute: tests"

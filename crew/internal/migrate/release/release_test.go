@@ -45,7 +45,7 @@ func events(t *testing.T, rows ...string) []bus.Event {
 	return evs
 }
 
-const markJSON = `{"state":"migrated","to_host":"mbp","source":"migrate","mode":"now","tip":"` + tip40 + `","tree":"` + tree40 + `","patch":"","detail":"moved to mbp"}`
+const markJSON = `{"state":"migrated","to_host":"mbp","source":"migrate","mode":"now","tip":"` + tip40 + `","tree":"` + tree40 + `","dir":"/c/migrate/feat/m/20270115T080000Z","patch":"","detail":"moved to mbp"}`
 
 func TestReleased(t *testing.T) {
 	d := dispatchRow("s1-1")
@@ -79,7 +79,7 @@ func TestReleased(t *testing.T) {
 
 func TestActiveRelease(t *testing.T) {
 	rel, ok := Active(events(t, dispatchRow("s1-1"), statusRow("s1-1", markJSON), remoteRow("s9-1", "mbp")), mb)
-	if !ok || rel != (Release{ToHost: "mbp", Mode: "now", Tip: tip40, Tree: tree40}) {
+	if !ok || rel != (Release{ToHost: "mbp", Mode: "now", Tip: tip40, Tree: tree40, Dir: "/c/migrate/feat/m/20270115T080000Z"}) {
 		t.Fatalf("release %+v %v", rel, ok)
 	}
 }

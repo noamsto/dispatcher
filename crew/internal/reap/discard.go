@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"io"
+	"io/fs"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/noamsto/dispatcher/crew/internal/filekind"
@@ -177,11 +179,18 @@ type SnapshotRequest struct {
 	// The patch lands at Root/Dir/Name. Dir is worker-writable, so a symlink on
 	// any of its components is refused; Root is trusted.
 	Root, Dir, Name string
+	// FreshDir makes Root/Dir here, a clean tree included, and refuses with
+	// ErrDirExists when it is already there: only its parents are made with
+	// MkdirAll, the leaf with one 0700 Mkdir.
+	FreshDir bool
 	// IgnoredScaffold is ScratchTree's ignoredScaffold.
 	IgnoredScaffold bool
 	// Stderr receives git's own errors for the index reads.
 	Stderr io.Writer
 }
+
+// ErrDirExists is a FreshDir Snapshot whose Root/Dir already exists.
+var ErrDirExists = errors.New("the snapshot dir already exists")
 
 // SnapshotResult is a saved snapshot: Patch is "" when nothing was
 // uncommitted, Tree the scratch-index tree and Tip the commit the patch
@@ -220,19 +229,38 @@ func Snapshot(ctx context.Context, req SnapshotRequest) (SnapshotResult, error) 
 		return SnapshotResult{}, errSave
 	}
 	res := SnapshotResult{Tree: tree, Tip: tip}
-	if fi, err := os.Stat(tmpPatch); err != nil || fi.Size() == 0 {
+	fi, err := os.Stat(tmpPatch)
+	clean := err != nil || fi.Size() == 0
+	if clean && !req.FreshDir {
 		return res, nil
 	}
 	if bad := chainBad(req.Root, req.Dir); bad != "" {
 		return SnapshotResult{}, errors.New(bad + " is a symlink or not a directory")
 	}
-	if os.MkdirAll(req.Root+"/"+req.Dir, 0o755) != nil {
+	dir := req.Root + "/" + req.Dir
+	mkdir := dir
+	if req.FreshDir {
+		mkdir = filepath.Dir(dir)
+	}
+	if os.MkdirAll(mkdir, 0o755) != nil {
 		return SnapshotResult{}, errSave
 	}
 	if bad := chainBad(req.Root, req.Dir); bad != "" {
 		return SnapshotResult{}, errors.New(bad + " is a symlink or not a directory")
 	}
-	patch := req.Root + "/" + req.Dir + "/" + req.Name
+	if req.FreshDir {
+		err := os.Mkdir(dir, 0o700)
+		if errors.Is(err, fs.ErrExist) {
+			return SnapshotResult{}, ErrDirExists
+		}
+		if err != nil {
+			return SnapshotResult{}, errSave
+		}
+		if clean {
+			return res, nil
+		}
+	}
+	patch := dir + "/" + req.Name
 	if _, err := os.Lstat(patch); err == nil {
 		return SnapshotResult{}, errors.New(patch + " already exists")
 	}
