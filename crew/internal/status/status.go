@@ -25,6 +25,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
@@ -143,6 +144,7 @@ type statusBody struct {
 	Detail  string `json:"detail,omitempty"`
 	PRURL   string `json:"pr_url,omitempty"`
 	Restamp bool   `json:"restamp,omitempty"`
+	ToHost  string `json:"to_host,omitempty"`
 }
 
 // encodeLine is v as one compact JSON line. Unescaped <>& keep the measured
@@ -164,11 +166,13 @@ func post(sub string, paths bus.Paths, stderr io.Writer, build func(text string)
 	return 0
 }
 
-// StatusRequest is `crew status <from> <state> [detail] [pr_url] [--restamp]`.
+// StatusRequest is `crew status <from> <state> [detail] [pr_url] [--restamp] [--to-host <h>]`.
 type StatusRequest struct {
-	From, State, Detail, PR string
-	Restamp                 bool
+	From, State, Detail, PR, ToHost string
+	Restamp                         bool
 }
+
+var hostName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 
 // RunStatus posts a worker's state.
 func RunStatus(ctx context.Context, req StatusRequest, paths bus.Paths, stderr io.Writer, o Options) int {
@@ -178,7 +182,7 @@ func RunStatus(ctx context.Context, req StatusRequest, paths bus.Paths, stderr i
 		return exitFailure
 	}
 
-	from, state, detail, pr, restamp := req.From, req.State, req.Detail, req.PR, req.Restamp
+	from, state, detail, pr, restamp, toHost := req.From, req.State, req.Detail, req.PR, req.Restamp, req.ToHost
 	if refuseSender(ctx, "status", from, crew, o, stderr) {
 		return exitFailure
 	}
@@ -188,9 +192,9 @@ func RunStatus(ctx context.Context, req StatusRequest, paths bus.Paths, stderr i
 	}
 
 	switch state {
-	case "working", "blocked", "pr_open", "done", "failed", "exited", "reaped":
+	case "working", "blocked", "pr_open", "done", "failed", "exited", "reaped", "migrated":
 	default:
-		say(stderr, "crew: status state must be one of working|blocked|pr_open|done|failed|exited|reaped (got '%s')\n", state)
+		say(stderr, "crew: status state must be one of working|blocked|pr_open|done|failed|exited|reaped|migrated (got '%s')\n", state)
 		return exitFailure
 	}
 	if state == "reaped" && (strings.HasPrefix(from, "worker:") || strings.HasPrefix(from, "role:")) {
@@ -201,11 +205,22 @@ func RunStatus(ctx context.Context, req StatusRequest, paths bus.Paths, stderr i
 		say(stderr, "crew: --restamp is only valid with blocked\n")
 		return exitFailure
 	}
+	switch {
+	case state != "migrated" && toHost != "":
+		say(stderr, "crew: status: --to-host is only valid with migrated\n")
+		return exitFailure
+	case state == "migrated" && toHost == "":
+		say(stderr, "crew: status: migrated requires --to-host <host>\n")
+		return exitFailure
+	case state == "migrated" && !hostName.MatchString(toHost):
+		say(stderr, "crew: status: invalid --to-host '%s'\n", toHost)
+		return exitFailure
+	}
 
 	// Terminal states are posted once: a re-announced pr_open/done wakes `watch`
 	// twice with an identical batch.
 	switch state {
-	case "pr_open", "done", "failed", "exited", "reaped":
+	case "pr_open", "done", "failed", "exited", "reaped", "migrated":
 		if lastPosted(paths.Log, crew, from) == state+"\t"+pr {
 			clearRelaunch(ctx, o, from, state)
 			return 0
@@ -225,7 +240,7 @@ func RunStatus(ctx context.Context, req StatusRequest, paths bus.Paths, stderr i
 	code := post("status", paths, stderr, func(d string) string {
 		return encodeLine(row[statusBody]{
 			TS: ts, CrewID: crew, From: from, To: "dispatcher:" + crew, Kind: bus.KindStatus,
-			Body: statusBody{State: state, Detail: d, PRURL: pr, Restamp: restamp},
+			Body: statusBody{State: state, Detail: d, PRURL: pr, Restamp: restamp, ToHost: toHost},
 		})
 	}, detail)
 	if code != 0 {
@@ -264,7 +279,7 @@ func publishPane(ctx context.Context, o Options, state, detail string) {
 // to done.
 // Best effort: it must never fail the write that precedes it.
 func clearRelaunch(ctx context.Context, o Options, from, state string) {
-	if state != "done" && state != "failed" {
+	if state != "done" && state != "failed" && state != "migrated" {
 		return
 	}
 	pane := o.Sender.Getenv("TMUX_PANE")

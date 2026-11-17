@@ -67,7 +67,7 @@ real_end_still_posts_exited() {
 
 # seed_status <state> — a prior status from the live session.
 seed_status() {
-  CREW_ID=c1 "$CREW" status 'worker:feat/x#s1-1' "$1"
+  CREW_ID=c1 "$CREW" status 'worker:feat/x#s1-1' "$@"
 }
 
 # task_doc [pane] — the doc the hook keys on. `crew_id:` is load-bearing: without it
@@ -198,6 +198,17 @@ stub_tmux() {
 
   [ "$(grep -c display-message "$STUB_LOG")" -eq 1 ]
   grep -q 'display-message -t %9' "$STUB_LOG"
+}
+
+@test "notify: a worker that already reported migrated is not given an exited row" {
+  stub_tmux
+  task_doc %9
+  seed_status migrated --to-host mini
+
+  CREW_WORKER_ID='worker:feat/x#s1-1' run run_notify
+  [ "$status" -eq 0 ]
+
+  run ! grep -q '"state":"exited"' "$LOG"
 }
 
 @test "notify: a worker that already reported done is not overridden" {

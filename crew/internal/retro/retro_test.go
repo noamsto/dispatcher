@@ -721,3 +721,18 @@ func jsonString(s string) string {
 	b, _ := json.Marshal(s)
 	return string(b)
 }
+
+// A migrated worker continues on another host and is written up there, so the
+// draft leaves it out.
+func TestDraftSkipsMigratedWorkers(t *testing.T) {
+	events := oneRun +
+		`{"ts":3000,"crew_id":"c1","kind":"dispatch","branch":"feat/moved","engine":"claude","model":"m","tier":"standard","title":"t"}` + "\n" +
+		`{"ts":3100,"crew_id":"c1","kind":"status","from":"worker:feat/moved#s1","to":"dispatcher:c1","body":{"state":"migrated","to_host":"mini"}}` + "\n"
+	out, errb, code := run(t, events, Request{Draft: true, Crew: "c1", All: true})
+	if code != 0 {
+		t.Fatalf("exit %d, stderr: %s", code, errb)
+	}
+	if !strings.Contains(out, "failed") || strings.Contains(out, "migrated") {
+		t.Errorf("draft = %q, want the failed worker's line and no migrated one", out)
+	}
+}

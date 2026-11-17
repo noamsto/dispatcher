@@ -2,6 +2,7 @@ package reap
 
 import (
 	"context"
+	"errors"
 	"io"
 	"os"
 	"strings"
@@ -86,7 +87,9 @@ func (r *run) discardBranch(ctx context.Context) int {
 	if err != nil {
 		return r.refuse("git status failed")
 	}
-	patch := r.paths.Dir + "/artifacts/" + c.branch + "/discarded-" + r.p.Clock.Now().UTC().Format("20060102T150405Z") + ".patch"
+	artifacts := r.paths.Dir + "/artifacts"
+	name := "discarded-" + r.p.Clock.Now().UTC().Format("20060102T150405Z") + ".patch"
+	patch := artifacts + "/" + c.branch + "/" + name
 	if r.dry {
 		if preSt != "" {
 			r.say("would save uncommitted state to " + patch)
@@ -102,23 +105,25 @@ func (r *run) discardBranch(ctx context.Context) int {
 		return r.refuse("could not save uncommitted state")
 	}
 	r.clean.setTmp(tmp)
-	saved, tree, why := r.savePatch(ctx, c, tmp, patch)
+	snap, err := Snapshot(ctx, SnapshotRequest{
+		Admin: c.admin, WtPath: wt, Branch: c.branch, Tmp: tmp,
+		Root: artifacts, Dir: c.branch, Name: name, Stderr: r.stderr,
+	})
 	_ = os.RemoveAll(tmp)
 	r.clean.setTmp("")
-	if why != "" {
-		return r.refuse(why)
+	if err != nil {
+		return r.refuse(err.Error())
 	}
-	if saved {
-		r.say("saved uncommitted state to " + patch)
+	if snap.Patch != "" {
+		r.say("saved uncommitted state to " + snap.Patch)
 	} else {
-		patch = ""
 		r.say("no uncommitted changes to save")
 	}
 	if postSt, err := wtgit.Status(ctx, c.admin, wt, wtgit.Opts{Stderr: r.stderr}, "--untracked-files=all"); err != nil || postSt != preSt {
 		r.keepSay(c, "changed while saving")
 		return 1
 	}
-	r.discardPatch, r.discardSt, r.discardTree = patch, preSt, tree
+	r.discardPatch, r.discardSt, r.discardTree = snap.Patch, preSt, snap.Tree
 	removed, code := r.remove(ctx, c)
 	if code != 0 {
 		return code
@@ -158,72 +163,102 @@ func (r *run) discardGates(ctx context.Context, c *candidate) string {
 	return ""
 }
 
-// savePatch builds the scratch-index tree in tmp and, when it differs from
-// the branch tip, moves its patch to the artifacts path without clobbering.
-// It returns whether a patch was saved, the tree, and why the save was
-// refused ("" when it was not).
-func (r *run) savePatch(ctx context.Context, c *candidate, tmp, patch string) (saved bool, tree, why string) {
-	const failed = "could not save uncommitted state"
-	idx := tmp + "/index"
-	if !r.scratchTree(ctx, c, idx) {
-		return false, "", failed
+// errSave is every Snapshot failure that is not one of its named refusals.
+var errSave = errors.New("could not save uncommitted state")
+
+// SnapshotRequest names a linked worktree whose uncommitted state is saved as
+// a patch against its branch tip, and where the patch goes.
+type SnapshotRequest struct {
+	// Admin is the worktree's git admin dir, WtPath the worktree, Branch its branch.
+	Admin, WtPath, Branch string
+	// Tmp is the caller's scratch dir for the index and the patch draft; the
+	// caller removes it.
+	Tmp string
+	// The patch lands at Root/Dir/Name. Dir is worker-writable, so a symlink on
+	// any of its components is refused; Root is trusted.
+	Root, Dir, Name string
+	// IgnoredScaffold is ScratchTree's ignoredScaffold.
+	IgnoredScaffold bool
+	// Stderr receives git's own errors for the index reads.
+	Stderr io.Writer
+}
+
+// SnapshotResult is a saved snapshot: Patch is "" when nothing was
+// uncommitted, Tree the scratch-index tree and Tip the commit the patch
+// applies to.
+type SnapshotResult struct {
+	Patch, Tree, Tip string
+}
+
+// Snapshot builds the scratch-index tree in req.Tmp and, when it differs from
+// the branch tip, moves its patch to Root/Dir/Name without clobbering. It
+// never touches the worktree or its index. The error is why the save was
+// refused.
+func Snapshot(ctx context.Context, req SnapshotRequest) (SnapshotResult, error) {
+	// One resolved tip seeds the index and bases the diff, so a branch moving
+	// mid-save cannot split the two.
+	tip, ok := indexOutput(ctx, req.Admin, req.WtPath, "", io.Discard, "rev-parse", "--verify", "refs/heads/"+req.Branch)
+	if !ok {
+		return SnapshotResult{}, errSave
+	}
+	idx := req.Tmp + "/index"
+	tree, err := ScratchTree(ctx, req.Admin, req.WtPath, tip, idx, req.IgnoredScaffold, req.Stderr)
+	if err != nil {
+		return SnapshotResult{}, errSave
 	}
 	// add -A stages an untracked nested repo as a bare gitlink: the patch would
 	// hold only its commit id while the removal deletes its contents.
-	stage, ok := r.wtIndexOutput(ctx, c, idx, r.stderr, "ls-files", "--stage")
+	stage, ok := indexOutput(ctx, req.Admin, req.WtPath, idx, req.Stderr, "ls-files", "--stage")
 	if !ok {
-		return false, "", failed
+		return SnapshotResult{}, errSave
 	}
 	if hasGitlink(stage) {
-		return false, "", "it holds an embedded git repository"
+		return SnapshotResult{}, errors.New("it holds an embedded git repository")
 	}
-	tree, ok = r.wtIndexOutput(ctx, c, idx, r.stderr, "write-tree")
-	if !ok {
-		return false, "", failed
+	tmpPatch := req.Tmp + "/patch"
+	if !writeDiff(ctx, req.Admin, req.WtPath, idx, tip, tmpPatch) {
+		return SnapshotResult{}, errSave
 	}
-	tmpPatch := tmp + "/patch"
-	if !r.writeDiff(ctx, c, idx, tmpPatch) {
-		return false, "", failed
-	}
+	res := SnapshotResult{Tree: tree, Tip: tip}
 	if fi, err := os.Stat(tmpPatch); err != nil || fi.Size() == 0 {
-		return false, tree, ""
+		return res, nil
 	}
-	// artifacts/<branch> is worker-writable: a symlink on it redirects the patch.
-	artifacts := r.paths.Dir + "/artifacts"
-	if bad := chainBad(artifacts, c.branch); bad != "" {
-		return false, "", bad + " is a symlink or not a directory"
+	if bad := chainBad(req.Root, req.Dir); bad != "" {
+		return SnapshotResult{}, errors.New(bad + " is a symlink or not a directory")
 	}
-	if os.MkdirAll(artifacts+"/"+c.branch, 0o755) != nil {
-		return false, "", failed
+	if os.MkdirAll(req.Root+"/"+req.Dir, 0o755) != nil {
+		return SnapshotResult{}, errSave
 	}
-	if bad := chainBad(artifacts, c.branch); bad != "" {
-		return false, "", bad + " is a symlink or not a directory"
+	if bad := chainBad(req.Root, req.Dir); bad != "" {
+		return SnapshotResult{}, errors.New(bad + " is a symlink or not a directory")
 	}
+	patch := req.Root + "/" + req.Dir + "/" + req.Name
 	if _, err := os.Lstat(patch); err == nil {
-		return false, "", patch + " already exists"
+		return SnapshotResult{}, errors.New(patch + " already exists")
 	}
 	if os.Link(tmpPatch, patch) == nil {
 		_ = os.Remove(tmpPatch)
 	}
 	_, leftErr := os.Lstat(tmpPatch)
 	if fi, err := os.Lstat(patch); leftErr == nil || err != nil || !fi.Mode().IsRegular() {
-		return false, "", failed
+		return SnapshotResult{}, errSave
 	}
-	return true, tree, ""
+	res.Patch = patch
+	return res, nil
 }
 
-// writeDiff writes the scratch index's diff against the branch tip to path.
+// writeDiff writes the scratch index's diff against base to path.
 // Pinned diff options: the operator's diff.* and color.* config would
 // otherwise reshape the patch so `git apply` rejects it.
-func (r *run) writeDiff(ctx context.Context, c *candidate, idx, path string) bool {
+func writeDiff(ctx context.Context, admin, wt, idx, base, path string) bool {
 	out, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
 	if err != nil {
 		return false
 	}
 	defer func() { _ = out.Close() }()
-	cmd, err := wtgit.Command(ctx, c.admin, c.wtpath, wtgit.Opts{Stderr: io.Discard, IndexFile: idx},
+	cmd, err := wtgit.Command(ctx, admin, wt, wtgit.Opts{Stderr: io.Discard, IndexFile: idx},
 		"diff", "--cached", "--binary", "--full-index", "--no-color", "--src-prefix=a/", "--dst-prefix=b/",
-		"--no-relative", "--no-ext-diff", "--no-textconv", "refs/heads/"+c.branch, "--")
+		"--no-relative", "--no-ext-diff", "--no-textconv", base, "--")
 	if err != nil {
 		return false
 	}

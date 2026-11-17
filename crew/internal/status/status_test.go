@@ -231,7 +231,7 @@ func TestMkdirBeforeParse(t *testing.T) {
 }
 
 func TestArgs(t *testing.T) {
-	const badState = "crew: status state must be one of working|blocked|pr_open|done|failed|exited|reaped (got '%s')\n"
+	const badState = "crew: status state must be one of working|blocked|pr_open|done|failed|exited|reaped|migrated (got '%s')\n"
 	cases := []struct {
 		name string
 		req  StatusRequest
@@ -247,6 +247,13 @@ func TestArgs(t *testing.T) {
 		{"no state", StatusRequest{From: worker}, 1, strings.Replace(badState, "%s", "", 1), ""},
 		{"no args", StatusRequest{}, 1, strings.Replace(badState, "%s", "", 1), ""},
 		{"restamp needs blocked", StatusRequest{From: worker, State: "working", Restamp: true}, 1, "crew: --restamp is only valid with blocked\n", ""},
+		{"migrated", StatusRequest{From: worker, State: "migrated", ToHost: "mini"}, 0, "", `{"state":"migrated","to_host":"mini"}`},
+		{"migrated with detail", StatusRequest{From: worker, State: "migrated", Detail: "moving", ToHost: "a.b_c-1"}, 0, "", `{"state":"migrated","detail":"moving","to_host":"a.b_c-1"}`},
+		{"migrated needs to-host", StatusRequest{From: worker, State: "migrated"}, 1, "crew: status: migrated requires --to-host <host>\n", ""},
+		{"to-host only with migrated", StatusRequest{From: worker, State: "working", ToHost: "mini"}, 1, "crew: status: --to-host is only valid with migrated\n", ""},
+		{"to-host refused with done", StatusRequest{From: worker, State: "done", ToHost: "mini"}, 1, "crew: status: --to-host is only valid with migrated\n", ""},
+		{"host leading dash", StatusRequest{From: worker, State: "migrated", ToHost: "-x"}, 1, "crew: status: invalid --to-host '-x'\n", ""},
+		{"host with space", StatusRequest{From: worker, State: "migrated", ToHost: "a b"}, 1, "crew: status: invalid --to-host 'a b'\n", ""},
 		{"state checked before restamp", StatusRequest{From: worker, State: "nope", Restamp: true}, 1, strings.Replace(badState, "%s", "nope", 1), ""},
 	}
 	for _, tc := range cases {
@@ -375,6 +382,18 @@ func TestRefusedRestampWritesNothing(t *testing.T) {
 	if got := f.rawLog(); got != before {
 		t.Errorf("the refused --restamp changed the log:\n got %s\nwant %s", got, before)
 	}
+}
+
+func TestMigratedRepeatIsSilentNoOp(t *testing.T) {
+	f := newFixture(t)
+	req := StatusRequest{From: worker, State: "migrated", ToHost: "mini"}
+	if code, stderr := f.statusReq(req); code != 0 || stderr != "" {
+		t.Fatalf("first: %d %q", code, stderr)
+	}
+	if code, stderr := f.statusReq(req); code != 0 || stderr != "" {
+		t.Fatalf("repeat: %d %q", code, stderr)
+	}
+	f.wantRow(statusRow(worker, `{"state":"migrated","to_host":"mini"}`))
 }
 
 func TestReapedRefusedFromWorkerAndRole(t *testing.T) {
@@ -1046,6 +1065,7 @@ func TestClearRelaunch(t *testing.T) {
 		{"failed clears", worker, "failed", "%5", "", "feat/x\x1flead", true, true},
 		{"session suffix parsed", "worker:feat/x#s123", "done", "%5", "", "feat/x\x1flead", true, true},
 		{"hash in branch", "worker:feat/7-a#b#s123", "done", "%5", "", "feat/7-a#b\x1flead", true, true},
+		{"migrated clears", worker, "migrated", "%5", "", "feat/x\x1flead", true, true},
 		{"pr_open keeps", worker, "pr_open", "%5", "", "feat/x\x1flead", false, false},
 		{"working keeps", worker, "working", "%5", "", "feat/x\x1flead", false, false},
 		{"blocked keeps", worker, "blocked", "%5", "", "feat/x\x1flead", false, false},
@@ -1072,7 +1092,11 @@ func TestClearRelaunch(t *testing.T) {
 			if tc.roleID != "" {
 				f.env["CREW_ROLE_ID"] = tc.roleID
 			}
-			f.status(tc.from, tc.state)
+			req := StatusRequest{From: tc.from, State: tc.state}
+			if tc.state == "migrated" {
+				req.ToHost = "mini"
+			}
+			f.statusReq(req)
 			calls := f.tm.Calls()
 			if got := slices.Contains(calls, query); got != tc.query {
 				t.Errorf("branch/role query issued = %v, want %v; calls %q", got, tc.query, calls)

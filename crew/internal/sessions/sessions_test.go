@@ -174,6 +174,9 @@ null
 	{name: "state \"reaped\"", events: `
 {"ts":1699999000000,"crew_id":"c1","from":"worker:feat/x#s1-1","to":"dispatcher:c1","kind":"status","body":{"state":"reaped"}}
 `, branch: "feat/x", crew: "", want: `[{"session":"s1-1","worker_id":"worker:feat/x#s1-1","state":"reaped","ts":1699999000000,"terminal":true,"age_s":1000}]`},
+	{name: "state \"migrated\"", events: `
+{"ts":1699999000000,"crew_id":"c1","from":"worker:feat/x#s1-1","to":"dispatcher:c1","kind":"status","body":{"state":"migrated","to_host":"mini"}}
+`, branch: "feat/x", crew: "", want: `[{"session":"s1-1","worker_id":"worker:feat/x#s1-1","state":"migrated","ts":1699999000000,"terminal":true,"age_s":1000}]`},
 	{name: "state \"working\"", events: `
 {"ts":1699999000000,"crew_id":"c1","from":"worker:feat/x#s1-1","to":"dispatcher:c1","kind":"status","body":{"state":"working"}}
 `, branch: "feat/x", crew: "", want: `[{"session":"s1-1","worker_id":"worker:feat/x#s1-1","state":"working","ts":1699999000000,"terminal":false,"age_s":1000}]`},

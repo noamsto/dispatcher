@@ -61,7 +61,7 @@ var (
 	tiers            = []string{"trivial", "standard", "deep"}
 	replyKinds       = []string{"ack", "decline", "answer"}
 	workerStates     = slices.Concat(roster.LiveStates, []string{
-		string(bus.StateDone), string(bus.StateFailed), string(bus.StateExited), string(bus.StateReaped)})
+		string(bus.StateDone), string(bus.StateFailed), string(bus.StateExited), string(bus.StateReaped), string(bus.StateMigrated)})
 	rowSources     = []string{"watchdog", "reap"}
 	blockedSources = []string{"worker", "watchdog"}
 	details        = []string{abandonedDetail}

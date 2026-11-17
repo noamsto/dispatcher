@@ -296,6 +296,7 @@ func TestWantsReap(t *testing.T) {
 		{"done", `{"cursor":1,"events":[{"kind":"status","from":"w","body":{"state":"done"}}]}`, true},
 		{"failed", `{"cursor":1,"events":[{"kind":"status","from":"w","body":{"state":"failed"}}]}`, true},
 		{"exited", `{"cursor":1,"events":[{"kind":"status","from":"w","body":{"state":"exited"}}]}`, true},
+		{"migrated", `{"cursor":1,"events":[{"kind":"status","from":"w","body":{"state":"migrated"}}]}`, true},
 		{"blocked", `{"cursor":1,"events":[{"kind":"status","from":"w","body":{"state":"blocked"}}]}`, false},
 		{"reaped", `{"cursor":1,"events":[{"kind":"status","from":"w","body":{"state":"reaped"}}]}`, false},
 		{"pr merged", `{"cursor":1,"events":[{"kind":"msg","from":"pr-watch:1","body":"{\"changed\":[\"state\"],\"state\":{\"state\":\"MERGED\"}}"}]}`, true},

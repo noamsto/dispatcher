@@ -1657,3 +1657,29 @@ func TestHoldsEpisodeStoppedPrefixes(t *testing.T) {
 		}
 	}
 }
+
+func TestDeadEscalationStopsOnMigratedBus(t *testing.T) {
+	r := newFDRig(t, "", "", Request{Idle: ptr("60"), Dead: ptr("120")})
+	w := r.w
+	w.fd.d2At = w.start
+	w.now = w.start + 200
+	r.write(100, `{"state":"migrated","to_host":"mini"}`)
+	code, ok := codeOf(w.escalate())
+	if !ok || code != 0 || r.posted() != nil {
+		t.Errorf("escalate on a migrated worker: exit=(%d,%v) posted=%q", code, ok, r.posted())
+	}
+}
+
+func TestD9DoesNotTypeIntoMigratedWorker(t *testing.T) {
+	r := newD9Rig(t, d9ID, "pi", Request{})
+	r.write(1, `{"state":"migrated","to_host":"mini"}`)
+	var at int64
+	for range 4 {
+		if rows := r.tick(&at, d9Kinds[0].stopped); rows != nil {
+			t.Fatalf("rows %q, want none", rows)
+		}
+	}
+	if r.continues != 0 {
+		t.Errorf("%d continues typed into a migrated worker", r.continues)
+	}
+}

@@ -17,9 +17,9 @@ import (
 var LiveStates = []string{"working", "blocked", "answered", "pr_open"}
 
 // waitingStates are the finished states a live view keeps while the branch's
-// worktree still stands and the row is still fresh: the worker said done, failed
-// or exited, and only `crew reap` has anything left to take away.
-var waitingStates = []string{"done", "failed", "exited"}
+// worktree still stands and the row is still fresh: the worker said done, failed,
+// exited or migrated, and only `crew reap` has anything left to take away.
+var waitingStates = []string{"done", "failed", "exited", "migrated"}
 
 // staleAfter is how old a row may be and still count as live when only its
 // worktree vouches for it: a non-terminal row loses that backing past it, and

@@ -167,7 +167,7 @@ fi
 
 silent=1
 case "$mode:$last" in
-*:done | *:failed | *:pr_open | *:reaped) silent=0 ;; # reached a meaningful end → don't override
+*:done | *:failed | *:pr_open | *:reaped | *:migrated) silent=0 ;; # reached a meaningful end → don't override
 turn-end:blocked) silent=0 ;;                         # still alive, waiting on the dispatcher
 esac
 

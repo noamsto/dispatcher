@@ -9,7 +9,7 @@
 # rather than at the next cadence tick.
 any(.[]; .events[]? as $e |
   if $e.kind == "status" then
-    (["done","failed","exited"] | index($e.body.state)) != null
+    (["done","failed","exited","migrated"] | index($e.body.state)) != null
   elif $e.kind == "msg" and (($e.from // "") | startswith("pr-watch:")) then
     ($e.body | fromjson? // {}) as $b |
     ((($b.changed // []) | index("state")) != null)

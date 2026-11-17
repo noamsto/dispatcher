@@ -983,7 +983,7 @@ fi
 _handoff_prompt() {
   local note="$handoff_dir/$CREW_ID.md" now mtime age_s age
   local roster="" counts="" rows="" inbox="" blocked="" listing no_question lane older
-  local name branch shown_name shown_branch question n_pr n_done n_failed n_exited
+  local name branch shown_name shown_branch question n_pr n_done n_failed n_exited n_migrated
   now=$(date +%s)
   mtime=$(stat -c %Y -- "$note" 2>/dev/null || stat -f %m -- "$note" 2>/dev/null) || mtime=""
   [[ $mtime =~ ^[0-9]+$ ]] || mtime=$now
@@ -1003,7 +1003,7 @@ _handoff_prompt() {
     echo "dispatcher: relaunch for crew $CREW_ID — no handoff note" >&2
   fi
   if roster=$(crew roster "$CREW_ID" --live 2>/dev/null) &&
-    counts=$(jq -r '[("pr_open", "done", "failed", "exited") as $s | map(select(.state == $s)) | length] | @tsv' <<<"$roster" 2>/dev/null) &&
+    counts=$(jq -r '[("pr_open", "done", "failed", "exited", "migrated") as $s | map(select(.state == $s)) | length] | @tsv' <<<"$roster" 2>/dev/null) &&
     [ -n "$counts" ] &&
     rows=$(jq -r '.[] | select(.state == "blocked") | [(.name // "" | tostring), (.branch // "" | tostring)] | @tsv' <<<"$roster" 2>/dev/null); then
     # A torn tail exits non-zero after printing good rows; keep them.
@@ -1021,8 +1021,8 @@ _handoff_prompt() {
         | last | .body // empty | gsub("[[:cntrl:]]"; "") | .[0:300]' <<<"$inbox" 2>/dev/null) || question=""
       echo "dispatcher: blocked: $shown_name ($shown_branch) asks: ${question:-$no_question}" >&2
     done <<<"$rows"
-    read -r n_pr n_done n_failed n_exited <<<"$counts"
-    listing="blocked at launch: ${blocked:-none}; also at launch: $n_pr pr_open, $n_done done, $n_failed failed, $n_exited exited"
+    read -r n_pr n_done n_failed n_exited n_migrated <<<"$counts"
+    listing="blocked at launch: ${blocked:-none}; also at launch: $n_pr pr_open, $n_done done, $n_failed failed, $n_exited exited, $n_migrated migrated"
   else
     listing="crew roster failed at launch — run it first"
   fi

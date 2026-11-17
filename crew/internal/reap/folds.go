@@ -33,7 +33,7 @@ const claimMaskTTL = 3600
 // terminalStates is `reap_terminal_states`, the states a worker session ends
 // in, shared by the idle-release and candidate folds so they cannot drift
 // apart again (#68).
-var terminalStates = []any{"done", "failed", "exited"}
+var terminalStates = []any{"done", "failed", "exited", "migrated"}
 
 // latestRow is one `_reap_latest` row. own, earlier and reaprow are the three
 // PR sources ("-" when absent): the latest session's pr_url, the newest of the

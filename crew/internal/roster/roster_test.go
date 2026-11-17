@@ -106,6 +106,13 @@ var cases = []rosterCase{
 		want:   `[{"from":"worker:feat/x#s1-1","branch":"feat/x","session":"s1-1","state":"working","detail":null,"source":null,"blocked_since":null,"answered_at":null,"ts":1700000001000,"pr_url":null,"age_s":99,"title":null,"engine":null,"model":null,"tier":null,"engine_session":null,"sessions":[{"session":"s1-1","state":"working","age_s":99}],"name":"lagoon","color":"darkcyan","tmux":"colour31"}]`,
 	},
 	{
+		name: "migrated forwards to_host",
+		events: []string{
+			status(t0+1000, "worker:feat/x#s1-1", `{"state":"migrated","to_host":"mini"}`),
+		},
+		want: `[{"from":"worker:feat/x#s1-1","branch":"feat/x","session":"s1-1","state":"migrated","detail":null,"source":null,"blocked_since":null,"answered_at":null,"ts":1700000001000,"pr_url":null,"age_s":99,"title":null,"engine":null,"model":null,"tier":null,"engine_session":null,"sessions":[{"session":"s1-1","state":"migrated","age_s":99}],"to_host":"mini","name":"lagoon","color":"darkcyan","tmux":"colour31"}]`,
+	},
+	{
 		name: "one session's exited is not resolved from another's history",
 		events: []string{
 			status(t0+1000, "worker:feat/x#s1-1", state("working")),

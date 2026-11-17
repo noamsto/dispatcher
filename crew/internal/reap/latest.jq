@@ -1,5 +1,10 @@
-# `_reap_latest` from crew.sh's `reap)` arm, verbatim but for two patches:
+# `_reap_latest` from crew.sh's `reap)` arm, verbatim but for three patches:
 #
+#   a session's latest row  →  its crew migrate mark, for the candidate fold
+#     when the newest row that is neither an `exited` backstop nor a watchdog
+#     status is a `migrated` row with source "migrate" (the C2 rule): killing
+#     the window fires SessionEnd, and an orphaned stall-watch can still post.
+#     --discard keeps the arm's view.
 #   the main expression  →  [ … ]
 #     jqrun yields exactly one value, so the row stream is collected into an
 #     array; Go reads each row by position, which also fixes the arm's
@@ -38,7 +43,11 @@ def _tsvcells: map(
           or (.kind == "claim" and ((((now*1000) - .ts) / 1000) as $age | $age >= 0 and $age < $claim_ttl))
         )))
     | group_by(.from) | map(
-        (max_by(.ts)) as $latest
+        (max_by(.ts)) as $newest
+        | (map(select(.kind != "status" or (.body.state != "exited" and (.body.source // "") != "watchdog")))
+            | max_by(.ts)) as $word
+        | (if $only == "" and $word.body.state == "migrated" and $word.body.source == "migrate"
+           then $word else $newest end) as $latest
         | {branch: ($latest.from | wid_branch),
            session: $latest.from,
            crew: $latest.crew_id,

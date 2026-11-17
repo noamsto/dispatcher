@@ -182,7 +182,7 @@ func (w *watch) run() error {
 			haveText = false
 			w.lastChange = w.o.Clock.Seconds()
 			continue
-		case "exited", "reaped":
+		case "exited", "reaped", "migrated":
 			return exitCode(0)
 		}
 

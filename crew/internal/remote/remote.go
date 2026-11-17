@@ -11,11 +11,14 @@ package remote
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"maps"
 	"os"
 	"os/exec"
@@ -93,14 +96,112 @@ type Target struct {
 // Request is the JSON object remote-run writes to ssh's stdin and remote-exec
 // reads. Field order is the wire order.
 type Request struct {
-	V     int               `json:"v"`
-	Scope string            `json:"scope,omitempty"` // "" for repo scope, or scopeHost
-	Repo  string            `json:"repo"`
-	Slug  string            `json:"slug"`
-	Argv  []string          `json:"argv"`
-	Env   map[string]string `json:"env"`
-	Spec  *string           `json:"spec,omitempty"`
-	Stdin *string           `json:"stdin,omitempty"`
+	V       int               `json:"v"`
+	Scope   string            `json:"scope,omitempty"` // "" for repo scope, or scopeHost
+	Repo    string            `json:"repo"`
+	Slug    string            `json:"slug"`
+	Argv    []string          `json:"argv"`
+	Env     map[string]string `json:"env"`
+	Spec    *string           `json:"spec,omitempty"`
+	Stdin   *string           `json:"stdin,omitempty"`
+	Migrate *Migrate          `json:"migrate,omitempty"`
+
+	unpacked *migrateFiles // Migrate decoded and checked by admit
+}
+
+// Migrate is the bundle `dispatch migrate` moves a worker with. Each blob is
+// a file gzipped then base64-encoded, "" when the file is absent.
+type Migrate struct {
+	Meta         json.RawMessage `json:"meta"`
+	PatchGz      string          `json:"patch_gz,omitempty"`
+	TranscriptGz string          `json:"transcript_gz,omitempty"`
+}
+
+// MigrateMeta is a migrate bundle's meta.json.
+type MigrateMeta struct {
+	V        int    `json:"v"`
+	Branch   string `json:"branch"`
+	Tip      string `json:"tip"`
+	FromHost string `json:"from_host"`
+	Mode     string `json:"mode"`
+	Session  string `json:"session,omitempty"`
+	Handoff  string `json:"handoff"`
+}
+
+const maxHandoff = 64 << 10
+
+var (
+	migrateKeys = []string{"meta", "patch_gz", "transcript_gz"}
+	metaKeys    = []string{"v", "branch", "tip", "from_host", "mode", "session", "handoff"}
+	tipRe       = regexp.MustCompile(`\A[0-9a-f]{40}([0-9a-f]{24})?\z`)
+	uuidRe      = regexp.MustCompile(`\A[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\z`)
+)
+
+// checkKeys refuses a key of the JSON object raw outside keys. encoding/json
+// matches field names case-insensitively, so DisallowUnknownFields alone would
+// let `"Repo"` through.
+func checkKeys(raw []byte, keys []string, what string) error {
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &obj); err != nil {
+		return fmt.Errorf("invalid %s: %v", what, err)
+	}
+	for k := range obj {
+		if !slices.Contains(keys, k) {
+			return fmt.Errorf("unknown %s key %q", what, k)
+		}
+	}
+	return nil
+}
+
+// DecodeMigrateMeta strictly decodes and checks a migrate bundle's meta.json;
+// a session is allowed only with a transcript to resume it from.
+func DecodeMigrateMeta(raw []byte, transcript bool) (MigrateMeta, error) {
+	if err := checkKeys(raw, metaKeys, "migrate meta"); err != nil {
+		return MigrateMeta{}, err
+	}
+	var m MigrateMeta
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&m); err != nil {
+		return MigrateMeta{}, fmt.Errorf("invalid migrate meta: %v", err)
+	}
+	switch {
+	case m.V != 1:
+		return MigrateMeta{}, fmt.Errorf("unsupported migrate meta version %d", m.V)
+	case !refSafe(m.Branch):
+		return MigrateMeta{}, fmt.Errorf("migrate meta branch %q is not a safe branch name", m.Branch)
+	case !tipRe.MatchString(m.Tip):
+		return MigrateMeta{}, fmt.Errorf("migrate meta tip %q is not a commit id", m.Tip)
+	case !HostNameRe.MatchString(m.FromHost):
+		return MigrateMeta{}, fmt.Errorf("migrate meta from_host %q is not a host name", m.FromHost)
+	case m.Mode != "coop" && m.Mode != "now":
+		return MigrateMeta{}, fmt.Errorf("migrate meta mode %q is not coop or now", m.Mode)
+	case m.Session != "" && !uuidRe.MatchString(m.Session):
+		return MigrateMeta{}, fmt.Errorf("migrate meta session %q is not a UUID", m.Session)
+	case m.Session != "" && !transcript:
+		return MigrateMeta{}, errors.New("migrate meta session needs a transcript")
+	case len(m.Handoff) > maxHandoff:
+		return MigrateMeta{}, errors.New("migrate meta handoff over 64 KiB")
+	case strings.ContainsRune(m.Handoff, 0):
+		return MigrateMeta{}, errors.New("migrate meta handoff contains NUL")
+	}
+	return m, nil
+}
+
+// refSafe reports whether b is a branch name git takes as is and no git
+// command reads as an option or a revision expression.
+func refSafe(b string) bool {
+	if b == "" || strings.HasPrefix(b, "-") || strings.HasSuffix(b, "/") || strings.HasSuffix(b, ".lock") {
+		return false
+	}
+	for _, bad := range []string{"..", "//", "@{"} {
+		if strings.Contains(b, bad) {
+			return false
+		}
+	}
+	return !strings.ContainsFunc(b, func(r rune) bool {
+		return r <= ' ' || r == 0x7f || strings.ContainsRune(`~^:?*[\`, r)
+	})
 }
 
 // ConfigBin is the dispatch-config command: $DISPATCH_CONFIG_BIN, else
@@ -212,9 +313,9 @@ func CheckEnv(key, value string) error {
 	return nil
 }
 
-// BuildRequest encodes a request. env holds KEY=VALUE pairs; spec is nil when
-// there is none.
-func BuildRequest(repo, slug string, argv, env []string, spec *string) ([]byte, error) {
+// BuildRequest encodes a request. env holds KEY=VALUE pairs; spec and migrate
+// are nil when there is none.
+func BuildRequest(repo, slug string, argv, env []string, spec *string, migrate *Migrate) ([]byte, error) {
 	if len(argv) == 0 {
 		return nil, errors.New("crew: remote-run: no command given after --")
 	}
@@ -229,7 +330,7 @@ func BuildRequest(repo, slug string, argv, env []string, spec *string) ([]byte, 
 		}
 		vars[key] = value
 	}
-	return json.Marshal(Request{V: 1, Repo: repo, Slug: slug, Argv: argv, Env: vars, Spec: spec})
+	return json.Marshal(Request{V: 1, Repo: repo, Slug: slug, Argv: argv, Env: vars, Spec: spec, Migrate: migrate})
 }
 
 // BuildHostRequest encodes a host-scope request for argv, which must match
@@ -316,14 +417,15 @@ func RemoteHosts(rows []bus.Event, crew string) []string {
 	return hosts
 }
 
-// Call is one remote-run invocation. SpecFile is "" for none; a relative path
-// is read from Cwd.
+// Call is one remote-run invocation. SpecFile and MigrateDir are "" for none;
+// a relative path is read from Cwd.
 type Call struct {
-	Host     string
-	Cwd      string
-	Env      []string
-	SpecFile string
-	Argv     []string
+	Host       string
+	Cwd        string
+	Env        []string
+	SpecFile   string
+	MigrateDir string
+	Argv       []string
 }
 
 // Run is `crew remote-run`: it sends c to its host over ssh and returns ssh's
@@ -436,19 +538,75 @@ func prepare(ctx context.Context, c Call, stderr io.Writer) (Target, []byte, err
 	}
 	var spec *string
 	if c.SpecFile != "" {
-		path := c.SpecFile
-		if !filepath.IsAbs(path) {
-			path = filepath.Join(c.Cwd, path)
-		}
-		data, err := os.ReadFile(path)
+		data, err := os.ReadFile(fromCwd(c.Cwd, c.SpecFile))
 		if err != nil {
 			return Target{}, nil, fmt.Errorf("crew: remote-run: --spec-file: %v", err)
 		}
 		text := string(data)
 		spec = &text
 	}
-	req, err := BuildRequest(target.Repo, slug, c.Argv, c.Env, spec)
+	var migrate *Migrate
+	if c.MigrateDir != "" {
+		if migrate, err = readMigrateDir(fromCwd(c.Cwd, c.MigrateDir)); err != nil {
+			return Target{}, nil, fmt.Errorf("crew: remote-run: --migrate-dir: %v", err)
+		}
+	}
+	req, err := BuildRequest(target.Repo, slug, c.Argv, c.Env, spec, migrate)
 	return target, req, err
+}
+
+func fromCwd(cwd, path string) string {
+	if filepath.IsAbs(path) {
+		return path
+	}
+	return filepath.Join(cwd, path)
+}
+
+// readMigrateDir packs a migrate bundle dir: meta.json, checked as the remote
+// will check it, and the optional patch and transcript.jsonl.
+func readMigrateDir(dir string) (*Migrate, error) {
+	raw, err := os.ReadFile(filepath.Join(dir, "meta.json"))
+	if err != nil {
+		return nil, err
+	}
+	patch, err := gzipFile(filepath.Join(dir, "patch"))
+	if err != nil {
+		return nil, err
+	}
+	transcript, err := gzipFile(filepath.Join(dir, "transcript.jsonl"))
+	if err != nil {
+		return nil, err
+	}
+	meta, err := DecodeMigrateMeta(raw, transcript != "")
+	if err != nil {
+		return nil, err
+	}
+	m := &Migrate{PatchGz: patch, TranscriptGz: transcript}
+	if m.Meta, err = json.Marshal(meta); err != nil {
+		return nil, err
+	}
+	return m, nil
+}
+
+// gzipFile is path's content gzipped then base64-encoded, "" when it does
+// not exist.
+func gzipFile(path string) (string, error) {
+	data, err := os.ReadFile(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	var buf bytes.Buffer
+	zw := gzip.NewWriter(&buf)
+	if _, err := zw.Write(data); err != nil {
+		return "", err
+	}
+	if err := zw.Close(); err != nil {
+		return "", err
+	}
+	return base64.StdEncoding.EncodeToString(buf.Bytes()), nil
 }
 
 // CloneSlug is the owner/repo of the checkout whose common dir is common,

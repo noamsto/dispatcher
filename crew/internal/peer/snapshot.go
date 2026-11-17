@@ -36,7 +36,7 @@ type Snapshot struct {
 }
 
 // snapshotStates are the worker states a snapshot row may carry.
-var snapshotStates = []string{"working", "blocked", "pr_open", "done", "failed", "exited"}
+var snapshotStates = []string{"working", "blocked", "pr_open", "done", "failed", "exited", "migrated"}
 
 // Per-field caps of a snapshot row, in bytes.
 const (

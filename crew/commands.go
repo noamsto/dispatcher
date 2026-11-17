@@ -232,6 +232,7 @@ type rosterRenderCmd struct {
 
 type statusCmd struct {
 	Restamp bool   `name:"restamp"`
+	ToHost  string `name:"to-host"`
 	From    string `arg:"" optional:"" name:"from"`
 	State   string `arg:"" optional:"" name:"state"`
 	Detail  string `arg:"" optional:"" name:"detail"`
@@ -353,10 +354,11 @@ type relayCmd struct {
 // CREW_IDENTITY_AVOID's list). Argv is everything after the flags, `--` included
 // or not, as the remote command.
 type remoteRunCmd struct {
-	Host     *string  `name:"host"`
-	Env      []string `name:"env" sep:"none"`
-	SpecFile *string  `name:"spec-file"`
-	Argv     []string `arg:"" optional:"" passthrough:"all" name:"argv"`
+	Host       *string  `name:"host"`
+	Env        []string `name:"env" sep:"none"`
+	SpecFile   *string  `name:"spec-file"`
+	MigrateDir *string  `name:"migrate-dir"`
+	Argv       []string `arg:"" optional:"" passthrough:"all" name:"argv"`
 }
 
 // remoteExecCmd takes no argv: its request is the JSON on stdin.
@@ -417,6 +419,33 @@ type overseerMsgCmd struct {
 	Repo string  `arg:"" optional:"" name:"repo"`
 	Crew string  `arg:"" optional:"" name:"crew"`
 	Body string  `arg:"" optional:"" name:"body"`
+}
+
+type migrateCmd struct {
+	Stop     migrateStopCmd     `cmd:"" name:"stop" help:"Kill a worker's windows and wait for its engine to exit."`
+	Snapshot migrateSnapshotCmd `cmd:"" name:"snapshot" help:"Save a worker's uncommitted state as a patch."`
+	Mark     migrateMarkCmd     `cmd:"" name:"mark" help:"Release a worker's branch to another host."`
+}
+
+type migrateStopCmd struct {
+	Crew    *string `name:"crew"`
+	Timeout int     `name:"timeout" default:"30"`
+	Branch  string  `arg:"" name:"branch"`
+}
+
+type migrateSnapshotCmd struct {
+	Crew   *string `name:"crew"`
+	Branch string  `arg:"" name:"branch"`
+}
+
+type migrateMarkCmd struct {
+	Crew   *string `name:"crew"`
+	ToHost string  `name:"to-host"`
+	Mode   string  `name:"mode"`
+	Tip    string  `name:"tip"`
+	Tree   string  `name:"tree"`
+	Patch  string  `name:"patch"`
+	Branch string  `arg:"" name:"branch"`
 }
 
 type decisionsCmd struct {
@@ -569,12 +598,13 @@ const (
 	identitySignature = "usage: crew identity <branch> [crew]"
 	rateRootUsage     = "crew: rate --root needs a directory"
 	gitBaselineUsage  = "usage: crew git-baseline [--accept]"
-	remoteRunUsage    = "usage: crew remote-run --host H [--env K=V]... [--spec-file F] -- <argv>..."
+	remoteRunUsage    = "usage: crew remote-run --host H [--env K=V]... [--spec-file F] [--migrate-dir D] -- <argv>..."
 	dispatchRowUsage  = "usage: crew dispatch-row --session S [--crew ID]"
 	peerClaimsUsage   = "usage: crew peer-claims <issue>"
 	decideUsage       = `usage: crew decide "<text>"`
 	decisionsUsage    = "usage: crew decisions [--json] [--since <ms|duration> | --all]"
 	classUsage        = "usage: crew class revert <engine> <class> | crew class promote <engine> <class> <id>"
+	migrateUsage      = "usage: crew migrate stop [--crew C] <branch> [--timeout S] | crew migrate snapshot [--crew C] <branch> | crew migrate mark [--crew C] <branch> --to-host H --mode coop|now --tip T --tree S [--patch P]"
 	specLintUsage     = "usage: crew spec-lint <file> [--issue N]... [--no-host-checks]"
 )
 
@@ -684,6 +714,10 @@ var wordings = map[string]wording{
 	"overseer msg":     {all: overseer.MsgUsage, code: exitFailure},
 	"overseer status":  {all: overseer.StatusUsage, code: exitFailure},
 	"overseer deliver": {all: overseer.DeliverUsage, code: exitFailure},
+	"migrate":          {all: migrateUsage, code: exitFailure},
+	"migrate stop":     {all: migrateUsage, code: exitFailure},
+	"migrate snapshot": {all: migrateUsage, code: exitFailure},
+	"migrate mark":     {all: migrateUsage, code: exitFailure},
 	"await": {
 		unknownFlag: func(f string) string { return fmt.Sprintf("crew: await: unknown arg '%s'", f) },
 		extra:       func(w string) string { return fmt.Sprintf("crew: await: unknown arg '%s'", w) },
@@ -1187,6 +1221,18 @@ func validate(sub string, r *root) *refusal {
 	case "overseer deliver":
 		if c := r.Overseer.Deliver; c.Origin == "" || c.Repo == "" || c.Crew == "" || c.Body == "" {
 			return fail(overseer.DeliverUsage)
+		}
+	case "migrate stop":
+		if c := r.Migrate.Stop; given(c.Crew) || c.Timeout < 0 {
+			return fail(migrateUsage)
+		}
+	case "migrate snapshot":
+		if given(r.Migrate.Snapshot.Crew) {
+			return fail(migrateUsage)
+		}
+	case "migrate mark":
+		if c := r.Migrate.Mark; given(c.Crew) || c.ToHost == "" || c.Mode == "" || c.Tip == "" || c.Tree == "" {
+			return fail(migrateUsage)
 		}
 	case "followups":
 		c := r.Followups

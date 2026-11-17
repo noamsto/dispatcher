@@ -3,6 +3,7 @@ package reap
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -16,6 +17,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/filekind"
 	"github.com/noamsto/dispatcher/crew/internal/gitguard"
 	"github.com/noamsto/dispatcher/crew/internal/proc"
+	"github.com/noamsto/dispatcher/crew/internal/tmux"
 	"github.com/noamsto/dispatcher/crew/internal/wtgit"
 )
 
@@ -29,7 +31,7 @@ func (r *run) remove(ctx context.Context, c *candidate) (removed bool, code int)
 	// Leftover processes reparented out of the pane but still rooted in this
 	// worktree (the #187 class). Before the --dry-run return so dry runs
 	// report them too.
-	r.killLeftovers(ctx, c.wtpath)
+	killLeftovers(ctx, r.p.Proc, c.wtpath, r.dry, r.say)
 
 	// The resume record is keyed by the worktree's own realpath, so it must be
 	// computed while the directory still exists (#556).
@@ -43,11 +45,12 @@ func (r *run) remove(ctx context.Context, c *candidate) (removed bool, code int)
 
 	// The re-check below treats any status line as dirt, so the scaffold must
 	// also move out physically. --discard's patch already holds it, and its
-	// re-check compares against the status saved with it, so it stays put.
-	if r.discard == "" {
+	// re-check compares against the status saved with it, so it stays put; so
+	// does a migrated tree's, which its re-check compares to the mark's tree.
+	if r.discard == "" && !c.markTree {
 		r.trashScaffold(ctx, c)
 	}
-	r.killWindows(ctx, c.wtpath)
+	killWindows(ctx, r.p.Tmux, c.wtpath)
 	// Remove anchored (#677): --git-dir=<common> discovers nothing through the
 	// tree's worker-writable .git, and --force skips git's clean-check child.
 	// The re-checks just before it are the keep gates.
@@ -76,12 +79,18 @@ func (r *run) remove(ctx context.Context, c *candidate) (removed bool, code int)
 		r.keepSay(c, "git status failed")
 		return false, 0
 	}
-	if r.discard != "" {
+	switch {
+	case r.discard != "":
 		if why := r.discardRecheck(ctx, c, st); why != "" {
 			r.keepSay(c, why)
 			return false, 0
 		}
-	} else if st != "" {
+	case c.markTree:
+		if !r.holdsMarkTree(ctx, c) {
+			r.keepSay(c, "changed since its migrate snapshot")
+			return false, 0
+		}
+	case st != "":
 		r.keepSay(c, "uncommitted changes")
 		return false, 0
 	}
@@ -140,21 +149,29 @@ func rmF(path string) {
 	_ = syscall.Unlink(path)
 }
 
+// KillWorkerWindows stops the worker at wt: its windows, matched by pane path
+// or the @worktree stamp (never a name), then the processes still rooted in
+// wt. say reports each signalled process.
+func KillWorkerWindows(ctx context.Context, tm tmux.Client, pt proc.Table, wt string, say func(string)) {
+	killWindows(ctx, tm, wt)
+	killLeftovers(ctx, pt, wt, false, say)
+}
+
 // killLeftovers signals every process whose cwd is in wt, this process and its
 // ancestors excepted. A dangling cwd still matches by string.
-func (r *run) killLeftovers(ctx context.Context, wt string) {
-	anc := proc.Ancestors(r.p.Proc)
-	for _, c := range r.p.Proc.Cwds(ctx) {
+func killLeftovers(ctx context.Context, pt proc.Table, wt string, dry bool, say func(string)) {
+	anc := proc.Ancestors(pt)
+	for _, c := range pt.Cwds(ctx) {
 		if !strings.HasPrefix(c.Dir+"/", wt+"/") || c.PID == os.Getpid() || anc[c.PID] {
 			continue
 		}
 		pid := strconv.Itoa(c.PID)
-		if r.dry {
-			r.say("would kill pid " + pid + " (cwd " + c.Dir + ")")
+		if dry {
+			say("would kill pid " + pid + " (cwd " + c.Dir + ")")
 			continue
 		}
-		r.p.Proc.Kill(c.PID)
-		r.say("killed pid " + pid + " (cwd " + c.Dir + ")")
+		pt.Kill(c.PID)
+		say("killed pid " + pid + " (cwd " + c.Dir + ")")
 	}
 }
 
@@ -171,12 +188,12 @@ func (r *run) trashScaffold(ctx context.Context, c *candidate) {
 }
 
 // killWindows kills every window whose pane path or @worktree is wt.
-func (r *run) killWindows(ctx context.Context, wt string) {
-	rows := r.p.tmuxOut(ctx, "list-windows", "-a", "-F", "#{window_id} #{pane_current_path} #{@worktree}")
+func killWindows(ctx context.Context, tm tmux.Client, wt string) {
+	rows, _ := tm.Run(ctx, "list-windows", "-a", "-F", "#{window_id} #{pane_current_path} #{@worktree}")
 	for line := range strings.SplitSeq(rows, "\n") {
 		f := strings.Fields(line)
 		if (len(f) > 1 && f[1] == wt) || (len(f) > 2 && f[2] == wt) {
-			_, _ = r.p.Tmux.Run(ctx, "kill-window", "-t", f[0])
+			_, _ = tm.Run(ctx, "kill-window", "-t", f[0])
 		}
 	}
 }
@@ -189,16 +206,7 @@ func (r *run) discardRecheck(ctx context.Context, c *candidate, st string) strin
 	if st != r.discardSt {
 		return "changed while saving"
 	}
-	tree := ""
-	if tmp, err := os.MkdirTemp(r.paths.Dir, "discard."); err == nil {
-		r.clean.setTmp(tmp)
-		idx := tmp + "/index"
-		if r.scratchTree(ctx, c, idx) {
-			tree, _ = r.wtIndexOutput(ctx, c, idx, io.Discard, "write-tree")
-		}
-		_ = os.RemoveAll(tmp)
-		r.clean.setTmp("")
-	}
+	tree := r.scratchTree(ctx, c, "discard.", "refs/heads/"+c.branch, false)
 	if tree == "" {
 		return "could not re-check its uncommitted state"
 	}
@@ -208,23 +216,59 @@ func (r *run) discardRecheck(ctx context.Context, c *candidate, st string) strin
 	return ""
 }
 
-// scratchTree is `_discard_tree`: a throwaway index seeded from the branch
-// tip, then `add -A`, which stages tracked, staged and untracked non-ignored
-// files without touching the worker's own index.
-func (r *run) scratchTree(ctx context.Context, c *candidate, idx string) bool {
-	for _, args := range [][]string{{"read-tree", "refs/heads/" + c.branch}, {"add", "-A"}} {
-		cmd, err := wtgit.Command(ctx, c.admin, c.wtpath, wtgit.Opts{Stderr: io.Discard, IndexFile: idx}, args...)
-		if err != nil || cmd.Run() != nil {
-			return false
+// ignoredScaffoldRe is the root scaffold a scratch tree carries even when the
+// repo gitignores it: scaffoldRe's root names minus WORKER_TASK.md, which a
+// migrated worker's destination writes itself.
+var ignoredScaffoldRe = regexp.MustCompile(`^(SPEC|PLAN|DECOMPOSITION|REVIEW_NOTES|PLAN_ROUND[0-9]+)\.md$`)
+
+// ScratchTree is `_discard_tree`: a throwaway index at idx seeded from base,
+// then `add -A`, which stages tracked, staged and untracked non-ignored files
+// without touching the worker's own index. ignoredScaffold also force-adds the
+// ignoredScaffoldRe files at the worktree root, so a mid-run worker's
+// gitignored plan files are in the tree. It returns the index's tree; stderr
+// gets write-tree's own errors.
+func ScratchTree(ctx context.Context, admin, wt, base, idx string, ignoredScaffold bool, stderr io.Writer) (string, error) {
+	steps := [][]string{{"read-tree", base}, {"add", "-A"}}
+	if ignoredScaffold {
+		if names := rootScaffold(wt); len(names) > 0 {
+			steps = append(steps, append([]string{"add", "-f", "--"}, names...))
 		}
 	}
-	return true
+	for _, args := range steps {
+		cmd, err := wtgit.Command(ctx, admin, wt, wtgit.Opts{Stderr: io.Discard, IndexFile: idx}, args...)
+		if err != nil {
+			return "", err
+		}
+		if err := cmd.Run(); err != nil {
+			return "", err
+		}
+	}
+	tree, ok := indexOutput(ctx, admin, wt, idx, stderr, "write-tree")
+	if !ok {
+		return "", errors.New("git write-tree failed")
+	}
+	return tree, nil
 }
 
-// wtIndexOutput is `$(GIT_INDEX_FILE=idx _wt_git admin wt args…)` with git's
-// stderr to stderr.
-func (r *run) wtIndexOutput(ctx context.Context, c *candidate, idx string, stderr io.Writer, args ...string) (string, bool) {
-	cmd, err := wtgit.Command(ctx, c.admin, c.wtpath, wtgit.Opts{Stderr: stderr, IndexFile: idx}, args...)
+// rootScaffold is the ignoredScaffoldRe regular files at wt's root. Found by
+// a directory read, not a pathspec: add fails on a pathspec for a missing
+// file, and a directory would pull in all its ignored contents. A name add -A
+// already staged is re-added unchanged.
+func rootScaffold(wt string) []string {
+	entries, _ := os.ReadDir(wt)
+	var names []string
+	for _, e := range entries {
+		if e.Type().IsRegular() && ignoredScaffoldRe.MatchString(e.Name()) {
+			names = append(names, e.Name())
+		}
+	}
+	return names
+}
+
+// indexOutput is `$(GIT_INDEX_FILE=idx _wt_git admin wt args…)` with git's
+// stderr to stderr; an empty idx leaves the worktree's own index.
+func indexOutput(ctx context.Context, admin, wt, idx string, stderr io.Writer, args ...string) (string, bool) {
+	cmd, err := wtgit.Command(ctx, admin, wt, wtgit.Opts{Stderr: stderr, IndexFile: idx}, args...)
 	if err != nil {
 		return "", false
 	}
@@ -304,21 +348,27 @@ type reapedBody struct {
 // never an ancestor of main, so git still reads it as unmerged. Only when the
 // local tip is exactly the merged PR head — commits past the merge would be
 // orphaned. A CLOSED PR's branch may hold work worth reviving, and --discard
-// keeps it: its patch applies to that branch's tip.
+// keeps it: its patch applies to that branch's tip. A migrated branch goes
+// while its tip is still the mark's, which its gate found on origin.
 func (r *run) deleteBranch(ctx context.Context, c *candidate) {
 	ref := "refs/heads/" + c.branch
-	if r.discard != "" || c.mode != "pr" || c.prState != "MERGED" {
+	migrated := c.mode == "migrated"
+	if r.discard != "" || !migrated && (c.mode != "pr" || c.prState != "MERGED") {
 		return
 	}
 	if _, err := r.p.Git.Run(ctx, "", "show-ref", "--verify", "--quiet", ref); err != nil {
 		return
 	}
-	head, _ := r.p.Gh.Run(ctx, "pr", "view", c.pr, "--json", "headRefOid", "--jq", ".headRefOid")
+	want, what := c.rel.Tip, "the migrate mark's tip"
+	if !migrated {
+		what = "the merged PR head"
+		want, _ = r.p.Gh.Run(ctx, "pr", "view", c.pr, "--json", "headRefOid", "--jq", ".headRefOid")
+	}
 	switch {
-	case head == "":
+	case want == "":
 		r.note("kept local branch " + c.branch + " — could not verify the merged PR head")
-	case r.revParse(ctx, ref) != head:
-		r.note("kept local branch " + c.branch + " — tip diverges from the merged PR head")
+	case r.revParse(ctx, ref) != want:
+		r.note("kept local branch " + c.branch + " — tip diverges from " + what)
 	case !r.guardOK(gitguard.Check(r.paths.Common, r.paths.Common, r.stderr)):
 		r.note("kept local branch " + c.branch + " — git config drift")
 	default:
@@ -420,6 +470,10 @@ func (r *run) revParse(ctx context.Context, ref string) string {
 // block the sweep — but a failed lookup is noted, so it cannot pass for "no
 // closing issues" and leave the label stuck without a trace.
 func (r *run) releaseLabels(ctx context.Context, c *candidate) {
+	// A migrated worker's issue is still being worked, on the other host.
+	if c.mode == "migrated" {
+		return
+	}
 	closing := strings.Join(c.issues, " ")
 	if c.mode != "issue" {
 		out, err := r.p.Gh.Combined(ctx, "pr", "view", c.pr, "--json", "closingIssuesReferences", "--jq", ".closingIssuesReferences[].number")

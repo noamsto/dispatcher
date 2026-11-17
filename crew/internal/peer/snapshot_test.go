@@ -29,12 +29,14 @@ func TestSnapshotFold(t *testing.T) {
 		busNamedDispatch("c1", "feat/b1", "old", "trivial", "pi", 20*time.Minute),
 		busNamedDispatch("c1", "feat/b1", "iris", "standard", "claude", 10*time.Minute),
 		busNamedDispatch("c1", "feat/b2", "juno", "deep", "codex", 10*time.Minute),
+		busNamedDispatch("c1", "feat/b5", "luna", "deep", "codex", 10*time.Minute),
 		busNamedDispatch("c2", "feat/b1", "other", "deep", "codex", 10*time.Minute),
 		busStatus("c1", "worker:feat/b1#s1-2", "working", 9*time.Minute),
 		busStatus("c1", "worker:feat/b1#s1-2", "blocked", 2*time.Minute),
 		busStatus("c1", "worker:feat/b2", "working", 9*time.Minute),
 		busStatus("c1", "worker:feat/b2", "reaped", time.Minute),
 		busStatus("c1", "worker:feat/b3", "working", 25*time.Hour),
+		busStatus("c1", "worker:feat/b5", "migrated", time.Minute),
 		busStatus("c1", "role:feat/b4:critic", "working", time.Minute),
 	)
 	snap, err := TakeSnapshot(p.Log, testNow)
@@ -43,6 +45,7 @@ func TestSnapshotFold(t *testing.T) {
 	}
 	want := Snapshot{TS: testNow.UnixMilli(), Rows: []SnapshotRow{
 		{CrewID: "c1", Branch: "feat/b1", Name: "iris", State: "blocked", Tier: "standard", Engine: "claude", TS: ms(2 * time.Minute)},
+		{CrewID: "c1", Branch: "feat/b5", Name: "luna", State: "migrated", Tier: "deep", Engine: "codex", TS: ms(time.Minute)},
 	}}
 	if !reflect.DeepEqual(snap, want) {
 		t.Errorf("TakeSnapshot =\n%+v\nwant\n%+v", snap, want)

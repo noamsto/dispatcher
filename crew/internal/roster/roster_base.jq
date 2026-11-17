@@ -57,7 +57,8 @@
              # last state that was NOT the exited backstop, so a spurious exited
              # can be resolved back to what the worker itself last reported.
              prev_state: (map(select(.body.state != "exited")) | max_by(.ts) | .body.state),
-             age_s: ((now - ($latest.ts/1000))|floor)})
+             age_s: ((now - ($latest.ts/1000))|floor)}
+            + (if $latest.body.to_host == null then {} else {to_host: $latest.body.to_host} end))
       | group_by(.branch)
       | map((sort_by(.ts) | last)
             + {title:  (.[0].branch as $b | $dispatch[$b].title  // null),

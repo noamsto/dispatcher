@@ -100,6 +100,10 @@ func draft(crew string, all bool, events []bus.Event, o Options, stdout, stderr 
 		}
 		w.issue = queue.BranchIssue(w.branch)
 		w.outcome = outcomeOf(events, w.branch)
+		// The run continues on another host and is written up there.
+		if strings.HasPrefix(w.outcome, string(bus.StateMigrated)) {
+			continue
+		}
 		w.tags = workerTags(events, crew, w, boundary)
 		workers = append(workers, w)
 	}
