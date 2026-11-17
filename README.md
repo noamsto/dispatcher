@@ -882,17 +882,20 @@ it and set `@remux_relaunch_pinned=1`, which makes remux's generic Claude/Codex
 hook a no-op for that pane. The pin is not replayed, so the restored command
 re-stamps itself. Without tmux-remux the options are inert.
 
-| Pane                                        | Stamped                                                                                                                                                                                | Restore runs                                                                       |
-| ------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
-| `dispatcher` launcher                       | `cd '<dir>' && exec env CREW_ID='<crew>' 'dispatcher' '--fresh' '--no-note' --agent/--model/--effort/--autocompact …` (codex/cursor: no `--fresh`, a crash-recovery task text instead) | the dispatcher, relaunched like a crash                                            |
-| worker lead (`dispatch`, `dispatch resume`) | `cd '<worktree>' && exec env CREW_ID='<crew>' 'dispatch' 'resume' '--exec'`                                                                                                            | `dispatch resume --exec` in the lead pane                                          |
-| role panes, remote (`--host`) leads         | pinned, nothing stamped                                                                                                                                                                | a shell; the restored lead's role re-arm marks role panes exited for it to respawn |
+| Pane                                        | Stamped                                                                                                                                                                                                               | Restore runs                                                                       |
+| ------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| `dispatcher` launcher                       | `cd '<dir>' && exec env CREW_ID='<crew>' 'env' '-u' 'CREW_OVERSEER' 'dispatcher' '--fresh' '--no-note' --agent/--model/--effort/--autocompact …` (codex/cursor: no `--fresh`, a crash-recovery task text instead)     | the dispatcher, relaunched like a crash                                            |
+| worker lead (`dispatch`, `dispatch resume`) | `cd '<worktree>' && exec env CREW_ID='<crew>' 'dispatch' 'resume' '--exec'` plus any `--agent`/`--model` (with `--ignore-map`)/`--effort`/`--mcp` override that run was given (never `--chrome` or `--ignore-budget`) | `dispatch resume --exec` in the lead pane                                          |
+| role panes, remote (`--host`) leads         | pinned, nothing stamped                                                                                                                                                                                               | a shell; the restored lead's role re-arm marks role panes exited for it to respawn |
 
 Every interpolated word is single-quoted; one containing `'`, `\` or a control
 character is refused and the pane is pin-cleared instead (as are an unregistered
-crew and an unsafe directory). A normal exit clears both options; a signal crash
-and a tmux or host shutdown keep them. `crew status done|failed` from the lead's
-own pane clears the stamp (`pr_open` keeps it). A promoted in-session dispatcher
+crew and an unsafe directory). Only the dispatcher launcher clears its options
+on exit: every exit, refusals included, except a signal kill or hang-up/TERM,
+which keep them (as does a tmux or host shutdown). A worker lead keeps its stamp
+until it posts `crew status done|failed` from its own lead pane (a deduped
+repeat clears too; `pr_open` keeps it); a lead that exits without done/failed
+keeps it, so a restore resumes it. A promoted in-session dispatcher
 never stamps. `dispatch resume --exec` refuses outside the worker's lead pane or
 when another lead pane at the worktree runs an engine.
 
