@@ -287,6 +287,9 @@ func (r *run) reapRow(c *candidate) string {
 		PRState:  c.prState,
 		Worktree: c.wtpath,
 	}
+	if c.mode == "migrated" {
+		row.MigratedTo = c.rel.ToHost
+	}
 	if c.mode == "issue" {
 		row.Issues = append([]string{}, c.issues...)
 	}
@@ -298,14 +301,15 @@ func (r *run) reapRow(c *candidate) string {
 }
 
 type reapRowJSON struct {
-	TS        int64    `json:"ts"`
-	Kind      string   `json:"kind"`
-	Branch    string   `json:"branch"`
-	PR        string   `json:"pr"`
-	PRState   string   `json:"pr_state"`
-	Worktree  string   `json:"worktree"`
-	Issues    []string `json:"issues,omitzero"`
-	Discarded *string  `json:"discarded,omitempty"`
+	TS         int64    `json:"ts"`
+	Kind       string   `json:"kind"`
+	Branch     string   `json:"branch"`
+	PR         string   `json:"pr"`
+	PRState    string   `json:"pr_state"`
+	Worktree   string   `json:"worktree"`
+	MigratedTo string   `json:"migrated_to,omitempty"`
+	Issues     []string `json:"issues,omitzero"`
+	Discarded  *string  `json:"discarded,omitempty"`
 }
 
 // postReaped is `_reap_post_reaped`: the terminal `reaped` status row for the

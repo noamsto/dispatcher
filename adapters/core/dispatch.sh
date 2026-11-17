@@ -398,6 +398,29 @@ _branch_finished() {
   [ "$rc" -eq 1 ]
 }
 
+# _branch_release_host <branch> [--git-dir <dir>] — prints the host <branch> is
+# released to: the newest local worker (`_branch_finished`'s, skipping
+# remote:true dispatch rows, whose status lives on their own host) has as its
+# newest status row, `exited` and `source "watchdog"` rows aside, crew migrate's
+# `migrated` mark. Those two are skipped because killing the window fires the
+# SessionEnd backstop and an orphaned stall-watch can still post; neither is the
+# worker's word. Reads <dir>/crew's bus, else $crew_dir's.
+# Fail-closed: an unreadable bus or a jq failure is "not released" (return 1).
+_branch_release_host() {
+  local branch="$1" events="$crew_dir/events.jsonl" host
+  [ "${2:-}" != --git-dir ] || events="$3/crew/events.jsonl"
+  [ -r "$events" ] || return 1
+  host="$(jq -nrR --arg b "$branch" '[inputs | fromjson? | objects] as $all
+    | [$all[] | select((.kind=="dispatch" or .kind=="resume") and (.branch // "") == $b)] as $rows
+    | ([$rows[] | select(.kind=="dispatch" and .remote != true)] | last | .worker_id // empty) as $first
+    | reduce ($rows[] | select(.kind=="resume" and (.worker_id | type) == "string" and .worker_id != "")) as $r ($first; if ($r.prev_worker_id // "") == . then $r.worker_id else . end)
+    | . as $w
+    | [$all[] | select(.kind=="status" and .from == $w and .body.state != "exited" and .body.source != "watchdog")] | last
+    | select(.body.state == "migrated" and .body.source == "migrate") | .body.to_host | strings' "$events")" || return 1
+  [ -n "$host" ] || return 1
+  printf '%s\n' "$host"
+}
+
 # Wait for background <pid> up to <bound> seconds by wall clock; kill it past
 # that. Returns its exit status, or 1 when killed.
 _wait_bounded() {
@@ -2570,20 +2593,25 @@ _remote_recover() {
   _remote_finish "$row"
 }
 
-# _remote_dup_holder <issue> — the worker that already holds <issue> against a
-# dispatch to $remote_host, or nothing. A local worker holds it until reaped; a
-# worker on another host for a day, the claims-index aging rule, since its
-# `reaped` row never reaches this bus. Same-host rows pass: the remote dispatch
-# decides resume or refusal with its own claim logic.
+# _remote_dup_holder <issue> <target-host> — the worker that already holds
+# <issue> against a dispatch to <target-host>, or nothing. A local worker holds
+# it until reaped or released to <target-host> by a migrate mark; a worker on
+# another host for a day, the claims-index aging rule, since its `reaped` row
+# never reaches this bus. Same-host rows pass: the remote dispatch decides
+# resume or refusal with its own claim logic.
 _remote_dup_holder() {
-  local fresh_ms branch host remote ts clone index
+  local target="$2" fresh_ms branch host remote ts clone index rel
   fresh_ms=$(($(date +%s) * 1000 - _CLAIM_STALE_MS))
   if [ -f "$crew_dir/events.jsonl" ]; then
     while IFS=$'\t' read -r branch host remote ts; do
       if [ "$remote" = true ]; then
-        [ "$host" != "$remote_host" ] && [ "$ts" -ge "$fresh_ms" ] || continue
+        [ "$host" != "$target" ] && [ "$ts" -ge "$fresh_ms" ] || continue
       else
         ! _branch_finished "$crew_dir/events.jsonl" "$branch" || continue
+        if rel="$(_branch_release_host "$branch")"; then
+          [ "$rel" != "$target" ] || continue
+          host="$host (migrating to $rel)"
+        fi
       fi
       echo "$branch on host $host"
       return 0
@@ -2599,12 +2627,16 @@ _remote_dup_holder() {
   while IFS=$'\t' read -r branch host remote ts clone; do
     [ "$ts" -ge "$fresh_ms" ] || continue
     if [ "$remote" = true ]; then
-      [ "$host" != "$remote_host" ] || continue
+      [ "$host" != "$target" ] || continue
     else
       # This clone's own workers were read from its bus above.
       [ "$clone" != "$(_claim_index_clone)" ] || continue
       [ -d "$clone" ] && _branch_finished "$clone/.git/crew/events.jsonl" "$branch" "$clone/.git" && continue
       host="this machine (clone $clone)"
+      if [ -d "$clone" ] && rel="$(_branch_release_host "$branch" --git-dir "$clone/.git")"; then
+        [ "$rel" != "$target" ] || continue
+        host="$host (migrating to $rel)"
+      fi
     fi
     echo "$branch on host $host"
     return 0
@@ -2769,7 +2801,7 @@ _dispatch_remote() {
 
   for n in "${gh_issue:-}" ${also_closes[@]+"${also_closes[@]}"}; do
     case "$n" in '' | *[!0-9]*) continue ;; esac
-    holder="$(_remote_dup_holder "$n")"
+    holder="$(_remote_dup_holder "$n" "$remote_host")"
     [ -z "$holder" ] || {
       echo "dispatch: --host $remote_host: issue #$n is already held by $holder — the remote cannot see this machine's bus, so it would re-claim it" >&2
       exit 1
@@ -4078,6 +4110,18 @@ fi
 # loses on the label read, not after building a worktree. gh has no
 # compare-and-swap, so this narrows that race rather than closing it.
 if [ -n "$gh_issue" ]; then
+  # A branch dispatch migrate moved to host H must not take the resume exemption
+  # below and fork a second worker here: it resumes on H, or here only through
+  # dispatch resume, whose `working` row ends an unfinished migration's release.
+  if git show-ref --verify --quiet "refs/heads/$branch" && [ -r "$crew_dir/events.jsonl" ]; then
+    migrated_to="$(jq -nrR --arg b "$branch" '[inputs | fromjson? | objects | select(.kind=="dispatch" and (.branch // "") == $b)] | last
+      | select(.remote == true) | .host | strings' "$crew_dir/events.jsonl")"
+    [ -n "$migrated_to" ] || migrated_to="$(_branch_release_host "$branch")" || true
+    if [ -n "$migrated_to" ]; then
+      echo "dispatch: $branch was migrated to host $migrated_to — dispatch --host $migrated_to … to resume it there, or dispatch resume $branch here to abandon an unfinished migration" >&2
+      exit 1
+    fi
+  fi
   _ensure_dispatched_label
   issue_labels="$(gh issue view "$gh_issue" --json labels --jq '.labels[].name')" || {
     echo "dispatch: could not read labels for issue #$gh_issue" >&2

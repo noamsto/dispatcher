@@ -437,6 +437,11 @@ func TestAdmit(t *testing.T) {
 			row:  `{"ts":5,"crew_id":"c1","kind":"dispatch","branch":"feat/42-x","host":"mini","remote":true,"also_closes":["646"]}`,
 			want: `{"ts":5,"crew_id":"c1","kind":"dispatch","branch":"feat/42-x","host":"mini","remote":true,"also_closes":["646"]}`,
 		},
+		{
+			name: "reap of a migrated worker keeps migrated_to",
+			row:  `{"ts":5,"kind":"reap","branch":"feat/42-x","pr":"","worktree":"/w","migrated_to":"mini"}`,
+			want: `{"ts":5,"kind":"reap","branch":"feat/42-x","migrated_to":"mini"}`,
+		},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			row, reason := Admit(Entry{Seq: 10, Row: json.RawMessage(current.Replace(c.row))}, "halo", testNow)

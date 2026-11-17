@@ -88,7 +88,7 @@ func TestMigratedReaped(t *testing.T) {
 	f := newMigratedFx(t)
 	f.moved(f.tip, f.tipTree(), remoteDispatch("mini"))
 	f.wantReaped()
-	wantJSON(t, f.rows("reap")[0], fmt.Sprintf(`{"ts":%d,"kind":"reap","branch":"feat/r","pr":"","pr_state":"","worktree":%q}`, nowUnix*1000, f.wt))
+	wantJSON(t, f.rows("reap")[0], fmt.Sprintf(`{"ts":%d,"kind":"reap","branch":"feat/r","pr":"","pr_state":"","worktree":%q,"migrated_to":"mini"}`, nowUnix*1000, f.wt))
 }
 
 // The remote worker pushed past the mark and a local fetch moved origin/<b>.
