@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -20,7 +21,7 @@ import (
 func fleetModel(t *testing.T, calls *atomic.Int32) Model {
 	t.Helper()
 	deps := Deps{Now: viewtest.NowMS / 1000, Load: Loaders{
-		Fleet: func(context.Context) vm.FleetInputs {
+		Fleet: func(context.Context, func(vm.FleetInputs)) vm.FleetInputs {
 			calls.Add(1)
 			return viewtest.FleetInputs()
 		},
@@ -60,6 +61,79 @@ func flattenFleet(cmd tea.Cmd) []tea.Msg {
 		return append(out, msg)
 	case <-time.After(50 * time.Millisecond):
 		return nil
+	}
+}
+
+func TestFleetTabRendersSkeletonBeforeStreamFinishes(t *testing.T) {
+	final := viewtest.FleetInputs()
+	skeleton := vm.FleetInputs{
+		Loaded:  final.Loaded,
+		NowMS:   final.NowMS,
+		Pending: vm.FleetPending{Status: true, Queue: true, Reach: true, Hosts: true},
+	}
+	release := make(chan struct{})
+	deps := Deps{Now: viewtest.NowMS / 1000, Load: Loaders{
+		Fleet: func(ctx context.Context, emit func(vm.FleetInputs)) vm.FleetInputs {
+			emit(skeleton)
+			select {
+			case <-release:
+			case <-ctx.Done():
+			}
+			return final
+		},
+	}}
+	m := sized(NewModel(deps, fixedNow(loadSnapshot(t)), liveDeps{}), 120, 40)
+	m.active = liveTab
+
+	start := time.Now()
+	nm, cmd := m.Update(keyRune('8'))
+	m = nm.(Model)
+	var partial fleetPartialMsg
+	for _, msg := range flattenFleet(cmd) {
+		if p, ok := msg.(fleetPartialMsg); ok {
+			partial = p
+		}
+	}
+	if partial.next == nil {
+		t.Fatal("no fleet partial delivered while the stream is unfinished")
+	}
+	nm, _ = m.Update(partial)
+	m = nm.(Model)
+	out := m.View()
+	if elapsed := time.Since(start); elapsed > 200*time.Millisecond {
+		t.Errorf("skeleton took %v to render", elapsed)
+	}
+	for _, want := range []string{"CREWS", "HOLDS", "HOSTS", "loading…"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("skeleton frame lacks %q:\n%s", want, out)
+		}
+	}
+	if !m.load[srcFleet].inFlight {
+		t.Error("fleet load not in flight while streaming")
+	}
+
+	close(release)
+	next := partial.next
+	for {
+		msg := next()
+		pm, ok := msg.(fleetPartialMsg)
+		if !ok {
+			nm, _ = m.Update(msg)
+			m = nm.(Model)
+			break
+		}
+		nm, _ = m.Update(pm)
+		m = nm.(Model)
+		next = pm.next
+	}
+	if m.load[srcFleet].inFlight {
+		t.Error("fleet still in flight after the final")
+	}
+	if !reflect.DeepEqual(m.fleetIn, final) {
+		t.Error("last applied fleet inputs differ from the final")
+	}
+	if strings.Contains(m.View(), "loading…") {
+		t.Errorf("final frame still loading:\n%s", m.View())
 	}
 }
 
@@ -761,7 +835,7 @@ func TestFleetPollRequestsOnlyWhenActive(t *testing.T) {
 	var calls atomic.Int32
 	w := chanWatcher{ch: make(chan struct{}, 1)}
 	deps := Deps{Now: viewtest.NowMS / 1000, Load: Loaders{
-		Fleet: func(context.Context) vm.FleetInputs {
+		Fleet: func(context.Context, func(vm.FleetInputs)) vm.FleetInputs {
 			calls.Add(1)
 			return viewtest.FleetInputs()
 		},
@@ -823,7 +897,10 @@ func TestFleetDrilledKeysEscHint(t *testing.T) {
 func TestFleetChangeCooldown(t *testing.T) {
 	var calls atomic.Int32
 	deps := Deps{Now: viewtest.NowMS / 1000, Load: Loaders{
-		Fleet: func(context.Context) vm.FleetInputs { calls.Add(1); return viewtest.FleetInputs() },
+		Fleet: func(context.Context, func(vm.FleetInputs)) vm.FleetInputs {
+			calls.Add(1)
+			return viewtest.FleetInputs()
+		},
 	}}
 	m := sized(NewModel(deps, fixedNow(loadSnapshot(t)), liveDeps{}), 120, 40)
 	m.active = liveTab

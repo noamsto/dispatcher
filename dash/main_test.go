@@ -9,7 +9,9 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/noamsto/dispatcher/dash/internal/data"
 	"github.com/noamsto/dispatcher/dash/internal/view"
@@ -531,6 +533,147 @@ func TestFleetCollectorKeepsCommonsAcrossFailedStatus(t *testing.T) {
 	fc.collect(context.Background(), cfg.Now)
 	if got := fc.knownCommons(); !slices.Equal(got, recovered) {
 		t.Errorf("commons after a failed collect = %v, want the last known %v", got, recovered)
+	}
+}
+
+// serialFleetInputs is the pre-streaming composition: settings, then the
+// fleet sources alongside budget, then the bus scans.
+func serialFleetInputs(ctx context.Context, fc *fleetCollector, nowSec int64) view.FleetInputs {
+	cfg := fc.cfg
+	cfg.Now = nowSec
+	settings := data.CollectSettings(ctx, fc.runner, cfg)
+	budget := data.CollectBudget(ctx, fc.runner, cfg)
+	sec := data.CollectFleet(ctx, fc.runner, cfg, data.TailscaleEnabled(settings.Rows), settings, fc.prober)
+	digests, digestErrs := fc.scanners.Scan(view.ActiveCommons(sec), nowSec*1000)
+	return view.FleetInputs{
+		Fleet:      sec,
+		Digests:    digests,
+		DigestErrs: digestErrs,
+		Snap:       data.Snapshot{Now: nowSec, Settings: settings, Budget: budget},
+		Loaded:     view.Loaded{Settings: true, Budget: true, Retro: true, Ratings: true, Roster: true, Bus: true},
+		NowMS:      nowSec * 1000,
+		Crew:       cfg.Crew,
+	}
+}
+
+func fleetJSON(t *testing.T, in view.FleetInputs) string {
+	t.Helper()
+	b, err := json.Marshal(view.BuildFleet(in))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
+}
+
+func fleetFixtures(t *testing.T) map[string]data.FakeResponse {
+	t.Helper()
+	read := func(name string) data.FakeResponse {
+		b, err := os.ReadFile(testdata + name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return data.FakeResponse{Stdout: b}
+	}
+	return map[string]data.FakeResponse{
+		"dispatch-config --show-origin":  read("settings_show_origin.json"),
+		"dispatch-config --layers":       read("settings_layers.json"),
+		"refresh-budget --report --json": read("budget_report.json"),
+		"crew fleet status --json":       read("fleet_status.json"),
+		"crew fleet queue --json":        read("fleet_queue.json"),
+	}
+}
+
+func TestFleetStreamFinalMatchesSerialComposition(t *testing.T) {
+	r := &data.FakeRunner{Responses: fleetFixtures(t)}
+	cfg := data.Config{Crew: []string{"crew"}, DispatchConfigBin: "dispatch-config", RefreshBudget: "refresh-budget", Now: 1794800010}
+	fc := newFleetCollector(r, cfg)
+	ref := newFleetCollector(r, cfg)
+
+	for i, failStatus := range []bool{false, true} {
+		if failStatus {
+			r.Responses["crew fleet status --json"] = data.FakeResponse{Err: data.FakeExitError{Code: 1}}
+		}
+		got := fleetJSON(t, fc.collect(context.Background(), cfg.Now))
+		want := fleetJSON(t, serialFleetInputs(context.Background(), ref, cfg.Now))
+		if got != want {
+			t.Errorf("run %d (status failing=%v): stream final differs from the serial composition\ngot  %s\nwant %s", i, failStatus, got, want)
+		}
+	}
+	if got, want := fc.knownCommons(), ref.knownCommons(); len(got) == 0 {
+		t.Errorf("commons lost after a failed status: %v (reference %v)", got, want)
+	}
+}
+
+func TestFleetStreamEmitsBeforeSourcesFinish(t *testing.T) {
+	const settingsDoc = `{"hosts":{"halo":{"ssh":{"value":"halo.lan","origin":"user"},"peer":{"value":false,"origin":"user"}}}}`
+	resp := fleetFixtures(t)
+	release := make(chan struct{})
+	resp["dispatch-config --show-origin"] = data.FakeResponse{Stdout: []byte(settingsDoc), Wait: release}
+	resp["crew fleet queue --json"] = data.FakeResponse{Stdout: resp["crew fleet queue --json"].Stdout, Wait: release}
+	resp["ssh -o BatchMode=yes -o ConnectTimeout=3 -o ServerAliveInterval=2 -o ServerAliveCountMax=1 -- halo.lan true"] = data.FakeResponse{}
+	r := &data.FakeRunner{Responses: resp}
+	cfg := data.Config{Crew: []string{"crew"}, DispatchConfigBin: "dispatch-config", RefreshBudget: "refresh-budget", Now: 1794800010}
+	fc := newFleetCollector(r, cfg)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	var mu sync.Mutex
+	var partials []view.FleetInputs
+	statusSeen := make(chan struct{})
+	var once sync.Once
+	var firstCalls int
+	final := make(chan view.FleetInputs, 1)
+	go func() {
+		final <- fc.stream(ctx, cfg.Now, func(in view.FleetInputs) {
+			mu.Lock()
+			defer mu.Unlock()
+			if len(partials) == 0 {
+				firstCalls = len(r.CallsSnapshot())
+			}
+			partials = append(partials, in)
+			if in.Fleet.Status != nil {
+				once.Do(func() { close(statusSeen) })
+			}
+		})
+	}()
+
+	select {
+	case <-statusSeen:
+	case <-ctx.Done():
+		t.Fatal("no partial with Status arrived while settings and queue were blocked")
+	}
+	mu.Lock()
+	first := partials[0]
+	last := partials[len(partials)-1]
+	mu.Unlock()
+	if firstCalls != 0 {
+		t.Errorf("first emit came after %d subprocess calls", firstCalls)
+	}
+	if want := (view.FleetPending{Status: true, Queue: true, Reach: true, Hosts: true}); first.Pending != want {
+		t.Errorf("first emit Pending = %+v, want all true", first.Pending)
+	}
+	if !last.Pending.Hosts || !last.Pending.Reach || !last.Pending.Queue || last.Pending.Status {
+		t.Errorf("status partial Pending = %+v, want only Status cleared", last.Pending)
+	}
+
+	close(release)
+	got := <-final
+	if got.Pending != (view.FleetPending{}) {
+		t.Errorf("final Pending = %+v, want none", got.Pending)
+	}
+	if len(got.Fleet.Hosts) != 1 || len(got.Fleet.Reach) != 1 {
+		t.Errorf("final hosts/reach = %+v / %+v, want one each", got.Fleet.Hosts, got.Fleet.Reach)
+	}
+
+	var secondFirst view.FleetInputs
+	var gotFirst bool
+	fc.stream(ctx, cfg.Now, func(in view.FleetInputs) {
+		if !gotFirst {
+			secondFirst, gotFirst = in, true
+		}
+	})
+	if secondFirst.Pending != (view.FleetPending{}) || secondFirst.Fleet.Status == nil {
+		t.Errorf("second stream's first emit = pending %+v status %v, want the previous final", secondFirst.Pending, secondFirst.Fleet.Status != nil)
 	}
 }
 

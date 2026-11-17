@@ -92,7 +92,9 @@ func run() int {
 				Bus: func(context.Context) data.BusDigest {
 					return busDigest(scanner, eventsErr, time.Now().UnixMilli())
 				},
-				Fleet: func(ctx context.Context) view.FleetInputs { return fleet.collect(ctx, time.Now().Unix()) },
+				Fleet: func(ctx context.Context, emit func(view.FleetInputs)) view.FleetInputs {
+					return fleet.stream(ctx, time.Now().Unix(), emit)
+				},
 			},
 			Runner:          runner,
 			Crew:            cfg.Crew,
@@ -268,6 +270,7 @@ type fleetCollector struct {
 
 	mu      sync.Mutex
 	commons []string
+	last    *view.FleetInputs
 }
 
 func newFleetCollector(r data.Runner, cfg data.Config) *fleetCollector {
@@ -285,50 +288,110 @@ func (fc *fleetCollector) knownCommons() []string {
 	return slices.Clone(fc.commons)
 }
 
-// collect gathers settings (the tailscale flag and host list feed the fleet
-// sources), then the fleet sources alongside budget, and scans only the
-// active repos' buses. There is no per-crew roster loop.
+// collect is stream without the partials: the JSON and watch paths want
+// only the final inputs.
 func (fc *fleetCollector) collect(ctx context.Context, nowSec int64) view.FleetInputs {
+	return fc.stream(ctx, nowSec, func(view.FleetInputs) {})
+}
+
+// stream gathers the fleet inputs and emits the accumulated value as each
+// source lands, so a consumer can paint before the slowest one returns. The
+// first emit precedes any subprocess: the previous final result when there is
+// one, else an empty skeleton with every source pending. Settings, budget,
+// fleet status and fleet queue start together; reach waits only for settings
+// (the tailscale flag and host list), and the bus scans only for status. emit
+// runs under the accumulator lock, so it must not block. The returned final
+// equals what the sources produce when gathered serially.
+func (fc *fleetCollector) stream(ctx context.Context, nowSec int64, emit func(view.FleetInputs)) view.FleetInputs {
 	cfg := fc.cfg
 	cfg.Now = nowSec
 	nowMS := nowSec * 1000
 
-	settings := data.CollectSettings(ctx, fc.runner, cfg)
-	var budget data.BudgetSection
+	fc.mu.Lock()
+	prev := fc.last
+	fc.mu.Unlock()
+	acc := view.FleetInputs{
+		Fleet:   data.FleetSection{Queue: []data.FleetQueueHold{}, Hosts: []data.HostConfig{}, Reach: []data.HostReach{}, Suggested: []data.SuggestedHost{}},
+		Snap:    data.Snapshot{Now: nowSec},
+		Loaded:  view.Loaded{Settings: true, Budget: true, Retro: true, Ratings: true, Roster: true, Bus: true},
+		NowMS:   nowMS,
+		Crew:    cfg.Crew,
+		Pending: view.FleetPending{Status: true, Queue: true, Reach: true, Hosts: true},
+	}
+	if prev != nil {
+		emit(*prev)
+	} else {
+		emit(acc)
+	}
+
+	var mu sync.Mutex
+	update := func(apply func(*view.FleetInputs), done func(*view.FleetPending)) {
+		mu.Lock()
+		defer mu.Unlock()
+		apply(&acc)
+		done(&acc.Pending)
+		emit(acc)
+	}
+
 	var wg sync.WaitGroup
-	wg.Add(1)
+	wg.Add(4)
 	go func() {
 		defer wg.Done()
-		budget = data.CollectBudget(ctx, fc.runner, cfg)
+		settings := data.CollectSettings(ctx, fc.runner, cfg)
+		hosts := data.HostsFromSettings(settings.Rows)
+		update(func(in *view.FleetInputs) {
+			in.Snap.Settings = settings
+			in.Fleet.Hosts = hosts
+		}, func(p *view.FleetPending) { p.Hosts = false })
+		reach, suggested, tsErr := data.CollectReach(ctx, fc.runner, data.TailscaleEnabled(settings.Rows), hosts, fc.prober)
+		update(func(in *view.FleetInputs) {
+			in.Fleet.Reach, in.Fleet.Suggested, in.Fleet.TailscaleError = reach, suggested, tsErr
+		}, func(p *view.FleetPending) { p.Reach = false })
 	}()
-	sec := data.CollectFleet(ctx, fc.runner, cfg, data.TailscaleEnabled(settings.Rows), settings, fc.prober)
+	go func() {
+		defer wg.Done()
+		budget := data.CollectBudget(ctx, fc.runner, cfg)
+		update(func(in *view.FleetInputs) { in.Snap.Budget = budget }, func(*view.FleetPending) {})
+	}()
+	go func() {
+		defer wg.Done()
+		st, stErr := data.CollectFleetStatus(ctx, fc.runner, cfg)
+		sec := data.FleetSection{Status: st}
+		digests, digestErrs := fc.scanners.Scan(view.ActiveCommons(sec), nowMS)
+
+		// A failed fleet status keeps the last known commons so the watcher
+		// still polls the repos it knew.
+		if st != nil {
+			var all []string
+			for _, repo := range st.Repos {
+				if !slices.Contains(all, repo.Common) {
+					all = append(all, repo.Common)
+				}
+			}
+			fc.mu.Lock()
+			fc.commons = all
+			fc.mu.Unlock()
+		}
+		update(func(in *view.FleetInputs) {
+			in.Fleet.Status, in.Fleet.StatusError = st, stErr
+			in.Digests, in.DigestErrs = digests, digestErrs
+		}, func(p *view.FleetPending) { p.Status = false })
+	}()
+	go func() {
+		defer wg.Done()
+		queue, queueErr := data.CollectFleetQueue(ctx, fc.runner, cfg)
+		update(func(in *view.FleetInputs) {
+			in.Fleet.Queue, in.Fleet.QueueError = queue, queueErr
+		}, func(p *view.FleetPending) { p.Queue = false })
+	}()
 	wg.Wait()
 
-	digests, digestErrs := fc.scanners.Scan(view.ActiveCommons(sec), nowMS)
-
-	// A failed fleet status keeps the last known commons so the watcher
-	// still polls the repos it knew.
-	if sec.Status != nil {
-		var all []string
-		for _, repo := range sec.Status.Repos {
-			if !slices.Contains(all, repo.Common) {
-				all = append(all, repo.Common)
-			}
-		}
+	if ctx.Err() == nil {
 		fc.mu.Lock()
-		fc.commons = all
+		fc.last = &acc
 		fc.mu.Unlock()
 	}
-
-	return view.FleetInputs{
-		Fleet:      sec,
-		Digests:    digests,
-		DigestErrs: digestErrs,
-		Snap:       data.Snapshot{Now: nowSec, Settings: settings, Budget: budget},
-		Loaded:     view.Loaded{Settings: true, Budget: true, Retro: true, Ratings: true, Roster: true, Bus: true},
-		NowMS:      nowMS,
-		Crew:       cfg.Crew,
-	}
+	return acc
 }
 
 // busDigest scans the bus, or returns an empty digest carrying the error so

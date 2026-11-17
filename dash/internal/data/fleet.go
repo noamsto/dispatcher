@@ -169,21 +169,21 @@ func CollectFleet(ctx context.Context, r Runner, cfg Config, tailscale bool, set
 	wg.Add(3)
 	go func() {
 		defer wg.Done()
-		sec.Status, sec.StatusError = collectFleetStatus(ctx, r, cfg)
+		sec.Status, sec.StatusError = CollectFleetStatus(ctx, r, cfg)
 	}()
 	go func() {
 		defer wg.Done()
-		sec.Queue, sec.QueueError = collectFleetQueue(ctx, r, cfg)
+		sec.Queue, sec.QueueError = CollectFleetQueue(ctx, r, cfg)
 	}()
 	go func() {
 		defer wg.Done()
-		sec.Reach, sec.Suggested, sec.TailscaleError = collectReach(ctx, r, tailscale, sec.Hosts, prober)
+		sec.Reach, sec.Suggested, sec.TailscaleError = CollectReach(ctx, r, tailscale, sec.Hosts, prober)
 	}()
 	wg.Wait()
 	return sec
 }
 
-func collectFleetStatus(ctx context.Context, r Runner, cfg Config) (*FleetStatus, *string) {
+func CollectFleetStatus(ctx context.Context, r Runner, cfg Config) (*FleetStatus, *string) {
 	out, errb, err := r.Run(ctx, cfg.Crew[0], crewArgs(cfg, "fleet", "status", "--json")...)
 	if rc := exitCode(err); rc != 0 {
 		msg := firstLineOrExit(errb, rc)
@@ -198,9 +198,9 @@ func collectFleetStatus(ctx context.Context, r Runner, cfg Config) (*FleetStatus
 	return &st, nil
 }
 
-// collectFleetQueue treats any non-zero exit as failure: the queue exits 0
+// CollectFleetQueue treats any non-zero exit as failure: the queue exits 0
 // for every document and 1 only on usage, settings or write failures.
-func collectFleetQueue(ctx context.Context, r Runner, cfg Config) ([]FleetQueueHold, *string) {
+func CollectFleetQueue(ctx context.Context, r Runner, cfg Config) ([]FleetQueueHold, *string) {
 	out, errb, err := r.Run(ctx, cfg.Crew[0], crewArgs(cfg, "fleet", "queue", "--json")...)
 	rc := exitCode(err)
 	var doc struct {
@@ -220,8 +220,8 @@ func collectFleetQueue(ctx context.Context, r Runner, cfg Config) ([]FleetQueueH
 	return doc.Holds, nil
 }
 
-// collectReach prefers tailscale when enabled and usable, else ssh probes.
-func collectReach(ctx context.Context, r Runner, tailscale bool, hosts []HostConfig, prober *HostProber) ([]HostReach, []SuggestedHost, *string) {
+// CollectReach prefers tailscale when enabled and usable, else ssh probes.
+func CollectReach(ctx context.Context, r Runner, tailscale bool, hosts []HostConfig, prober *HostProber) ([]HostReach, []SuggestedHost, *string) {
 	var tsErr *string
 	if tailscale {
 		tctx, cancel := context.WithTimeout(ctx, probeTimeout)

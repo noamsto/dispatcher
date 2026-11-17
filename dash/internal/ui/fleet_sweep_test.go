@@ -21,7 +21,7 @@ func fleetRootModel(t *testing.T, in vm.FleetInputs) Model {
 		Now:    viewtest.NowMS / 1000,
 		Runner: &data.FakeRunner{Responses: map[string]data.FakeResponse{}},
 		Crew:   []string{"crew"}, InTmux: true,
-		Load: Loaders{Fleet: func(context.Context) vm.FleetInputs { return in }},
+		Load: Loaders{Fleet: func(context.Context, func(vm.FleetInputs)) vm.FleetInputs { return in }},
 	}
 	m := NewModel(deps, fixedNow(loadSnapshot(t)), liveDeps{})
 	m.active = liveTab

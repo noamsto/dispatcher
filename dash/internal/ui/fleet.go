@@ -46,7 +46,7 @@ func newFleetView(msg snapshotMsg, now func() time.Time) fleetView {
 // crew's fresh inputs, keeping its own state, or closed when the crew is gone.
 func (v *fleetView) apply(msg snapshotMsg) tea.Cmd {
 	v.fv, v.in, v.loaded = cleanView(msg.fleet), msg.fleetIn, msg.loaded[srcFleet]
-	if !v.drilled {
+	if !v.drilled || !v.loaded || msg.fleet.Pending.Status {
 		return nil
 	}
 	in, ok := vm.CrewInputs(v.in, v.drillCrew)

@@ -435,6 +435,11 @@ func (m Model) update(msg tea.Msg) (Model, tea.Cmd) {
 		}
 		return m, tea.Batch(cmds...)
 
+	case fleetPartialMsg:
+		m.fleetIn = msg.in
+		m.load[srcFleet].loaded = true
+		return m, tea.Batch(append(m.broadcast(), msg.next)...)
+
 	case fleetTickMsg:
 		if m.active != fleetTab || msg.gen != m.fleetGen {
 			return m, nil

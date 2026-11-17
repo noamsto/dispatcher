@@ -392,6 +392,11 @@ func renderFleet(w, h int, fv vm.FleetView, st fleetState, mode pillMode) string
 	if pl := r.panels[fpCrews]; pl.shown {
 		fr.cols = crewCols(fv, ix, pl.inner.w)
 	}
+	pd := fv.Pending
+	pending := [numFleetPanels]bool{
+		fpAttention: pd.Status, fpCrews: pd.Status, fpCapacity: pd.Status,
+		fpHolds: pd.Queue, fpHosts: pd.Hosts || pd.Reach,
+	}
 	body := func(p fleetPanel) []string {
 		pl := r.panels[p]
 		sp := specs[p]
@@ -401,7 +406,11 @@ func renderFleet(w, h int, fv vm.FleetView, st fleetState, mode pillMode) string
 			content = append(content, fr.line(it, pl.inner.w))
 		}
 		if len(pl.items) == 0 && p != fpAttention {
-			content = append(content, newSpans(pl.inner.w, nil).add(" none", fg(colDim)).String())
+			empty := " none"
+			if pending[p] {
+				empty = " loading…"
+			}
+			content = append(content, newSpans(pl.inner.w, nil).add(empty, fg(colDim)).String())
 		}
 		return renderPanel(pl.rect.w, pl.rect.h, sp, mode, content)
 	}
@@ -520,7 +529,7 @@ func (fr fleetRow) line(it placed, iw int) string {
 	case eHold:
 		return fleetHoldLine(fv.Holds[it.idx], s, iw)
 	case eHost:
-		return fleetHostLine(fv.Hosts, it.idx, s)
+		return fleetHostLine(fv.Hosts, it.idx, s, fv.Pending.Reach)
 	}
 	sh := fv.SuggestedHosts[it.idx]
 	return s.col(sh.Name, suggestedNameW(fv.SuggestedHosts), fg(colDim), false).add(" ", lipgloss.NewStyle()).
@@ -799,11 +808,14 @@ func reachMark(re vm.FleetHostReach) (string, string, lipgloss.Color) {
 	return "○", tag, colDim
 }
 
-func fleetHostLine(hosts []vm.FleetHostRow, i int, s *spans) string {
+func fleetHostLine(hosts []vm.FleetHostRow, i int, s *spans, probing bool) string {
 	const tagW, relayW = 3, 4
 	h := hosts[i]
 	sync, sc := syncText(h.Sync)
 	glyph, tag, rc := reachMark(h.Reach)
+	if probing {
+		glyph, tag, rc = "…", "", colDim
+	}
 	return s.col(h.Name, hostNameW(hosts), fg(colText).Bold(true), false).
 		add(" ", lipgloss.NewStyle()).
 		add(glyph, fg(rc)).
