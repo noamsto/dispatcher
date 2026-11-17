@@ -13,7 +13,7 @@ setup() {
   export HOME="$TEST_REPO"
   # A pi session exports PI_CODING_AGENT_DIR; dispatch seeds its worker pi dir
   # from it and records it, so a pi worker's own dir leaks into both (#816).
-  unset CREW_WORKER_ID DISPATCH_PROFILE CREW_ID DISPATCH_SKIP_MODEL_CHECK DISPATCH_IGNORE_RUNG DISPATCH_SPEC DISPATCH_SHAPE TMUX_PANE DISPATCH_DRAFT_PR DISPATCH_REPO_TRACKERS DISPATCH_ORG_TRACKERS PI_CODING_AGENT_DIR CLAUDE_CONFIG_DIR
+  unset CREW_WORKER_ID DISPATCH_PROFILE CREW_ID DISPATCH_SKIP_MODEL_CHECK DISPATCH_IGNORE_RUNG DISPATCH_SPEC DISPATCH_SHAPE TMUX_PANE DISPATCH_DRAFT_PR DISPATCH_REPO_TRACKERS DISPATCH_ORG_TRACKERS PI_CODING_AGENT_DIR
   # The pane a tmux stub's display-message answers `#{pane_pid}` with, for
   # dispatch's ancestry gate (_pane_is_ancestor): the bats test process is a
   # genuine ancestor of any dispatch run under `run`.
@@ -8798,20 +8798,6 @@ commit_envrc() {
   [ "$status" -eq 0 ]
 }
 
-@test "trust: CLAUDE_CONFIG_DIR relocates the stamp, and ~/.claude.json is never created" {
-  stub_launch_bins
-  _ro_dirs_fixture
-  export CLAUDE_CONFIG_DIR="$BATS_TEST_TMPDIR/cfg"
-  mkdir -p "$CLAUDE_CONFIG_DIR"
-  run run_dispatch standard sonnet --effort medium --no-grid --crew-id c1 42 "title"
-  [ "$status" -eq 0 ]
-  wt="$(wt_path_for feat/42-title)"
-  run jq -e --arg w "$wt" --arg r "$(realpath -e "$DISPATCHER_CRITICS_DIR")" \
-    '.projects[$w].hasTrustDialogAccepted == true and .projects[$r].hasTrustDialogAccepted == true' "$CLAUDE_CONFIG_DIR/.claude.json"
-  [ "$status" -eq 0 ]
-  [ ! -e "$HOME/.claude.json" ]
-}
-
 @test "trust: a codex dispatch never touches ~/.claude.json" {
   stub_launch_bins
   DISPATCH_PROFILE=work run run_dispatch standard gpt-5.6-terra --agent codex --effort high --crew-id c1 42 "title"
@@ -8997,6 +8983,22 @@ _ro_dirs_fixture() {
     launch_dir_args claude feat/42-title >/dev/null
   )
   [ "$(stat -c %i "$HOME/.claude.json")" = "$before" ]
+}
+
+@test "trust: _claude_pretrust leaves claude_json_lock empty after releasing the lock" {
+  (
+    # shellcheck source=/dev/null
+    source "$BATS_TEST_DIRNAME/../adapters/core/launcher-common.sh"
+    _claude_pretrust "$BATS_TEST_TMPDIR/fresh"
+    [ -z "${claude_json_lock:-}" ]
+  )
+  echo '{not json' >"$HOME/.claude.json"
+  (
+    # shellcheck source=/dev/null
+    source "$BATS_TEST_DIRNAME/../adapters/core/launcher-common.sh"
+    ! _claude_pretrust "$BATS_TEST_TMPDIR/other" 2>/dev/null
+    [ -z "${claude_json_lock:-}" ]
+  )
 }
 
 @test "trust: a held ~/.claude.json lock still yields every --add-dir flag and Edit deny rule, with a warning" {

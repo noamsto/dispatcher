@@ -987,7 +987,7 @@ claude_subagent_effort_env() {
 }
 
 # _claude_pretrust <path>... — stamp .projects[<path>].hasTrustDialogAccepted in
-# ${CLAUDE_CONFIG_DIR:-$HOME}/.claude.json for every path in one locked write; a no-op (no lock, no write)
+# ~/.claude.json for every path in one locked write; a no-op (no lock, no write)
 # when every path is already stamped. Claude Code skips its "trust this
 # directory?" dialog, which tmux keys cannot answer, only for stamped paths.
 # Same ln -s lock idiom as dispatch.sh's dispatch_lock. claude_json_lock is a
@@ -996,7 +996,7 @@ claude_subagent_effort_env() {
 # include a command substitution (launch_dir_args), so this returns 1 with a
 # stderr message and never exits.
 _claude_pretrust() {
-  local claude_json="${CLAUDE_CONFIG_DIR:-$HOME}/.claude.json" lock_path tmp existing p
+  local claude_json="$HOME/.claude.json" lock_path tmp existing p
   lock_path="$claude_json.dispatch.lock"
   if [ -f "$claude_json" ] && jq -e --args \
     '. as $c | all($ARGS.positional[]; $c.projects[.].hasTrustDialogAccepted == true)' \
