@@ -437,23 +437,28 @@ awk_chars='
 # included) with a space, so quoted data can never look like a command.
 # Positional, not a strip. Backslash-aware like bash: outside quotes `\"` is not
 # a quote-open; inside "..." a `\"` does not close the span; '...' has no
-# escapes. With S set, "..." contents show as themselves (only '...' blanks).
+# escapes. With S set, "..." contents show as themselves (only '...' blanks),
+# and $'...' (state "A") lets a backslash escape the next character.
 awk_mask='
 BEGIN { SQ = sprintf("%c", 39); DQ = "\""; BS = "\\" }
-function mask(c) {
+function mask(c,    pv) {
+  pv = mprev
+  mprev = c
   if (mesc) {
     mesc = 0
+    mprev = ""
     return (mq == "" || (S && mq == DQ) ? c : " ")
   }
   if (mq == "") {
     if (c == BS) mesc = 1
     else if (c == SQ || c == DQ) {
-      mq = c
+      mq = (S && c == SQ && pv == "$" ? "A" : c)
       return " "
     }
     return c
   }
-  if (c == mq) {
+  if (mq == "A" && c == BS) mesc = 1
+  if (c == (mq == "A" ? SQ : mq)) {
     mq = ""
     return " "
   }
@@ -471,10 +476,12 @@ function feed(c) { printf "%s", mask(c) }' <<<"$1"
     return
   fi
   awk -v W=0 -v Q=1 -v T="$2" -v S="${3:-}" "$awk_mask${awk_mask_cmd/function feed(c,/function step(c,}$awk_chars"'
-function feed(c,    tb) {
+function feed(c,    tb, raw) {
   tb = body && T && !hraw
+  raw = S && body && !hd_q[hd_i]
   step(c)
-  if (tb) printf "%s", (c == "\n" ? c : " ")
+  if (raw) printf "%s", c
+  else if (tb) printf "%s", (c == "\n" ? c : " ")
   else printf "%s", mask(c)
 }' <<<"$1"
 }
@@ -1391,9 +1398,13 @@ check_fish_spaces() {
 }
 
 # A text-sink heredoc body is blanked as data, but ${x@P}, ${!x} and $[..] run a
-# $(..) stored in a variable, which the heredoc may have just written.
+# $(..) stored in a variable, which the heredoc may have just written. Covered:
+# ${..@P}, ${!name} (not the key/name listings ${!a[@]}, ${!p@}), $[..], and
+# arithmetic subscripts/offsets ${a[i]}, ${s:off}. The view shows an unquoted
+# heredoc body, which bash expands, and blanks only '..' and quoted-delimiter bodies.
 check_code_transforms() {
   local i view
+  local code_transform_re='@P\}|\$\{![^}]|\$\[|\$\{[A-Za-z_][A-Za-z0-9_]*\[[^]0-9@*]|\$\{[A-Za-z_][A-Za-z0-9_]*:[^-=?+}]*[A-Za-z_]'
   local -a texts=() ts=()
   local any=0
   while (($#)); do
@@ -1406,8 +1417,9 @@ check_code_transforms() {
   for i in "${!texts[@]}"; do
     [[ ${texts[i]} == *"\${"* || ${texts[i]} == *"\$["* ]] || continue
     view=$(mask_quotes "${texts[i]}" "${ts[i]}" 1)
-    if [[ $view =~ \$\{[^}]*@P\}|\$\{![^}]|\$\[ ]]; then
-      deny "This command writes a quoted heredoc or here-string as data and also uses a \${…@P}, \${!…} or \$[…] expansion, which can run a \$(…) stored in a variable — including a file the heredoc just wrote — where the guard cannot see it. Split it into separate commands, or name the variable directly."
+    view=$(sed -E 's/\$\{![A-Za-z_][A-Za-z0-9_]*(\[[@*]\]|[@*])\}//g' <<<"$view")
+    if [[ $view =~ $code_transform_re ]]; then
+      deny "This command writes a quoted heredoc or here-string as data and also uses a \${…@P}, \${!…}, \$[…], \${name[index]} or \${name:offset} expansion, which can run a \$(…) stored in a variable — including a file the heredoc just wrote — where the guard cannot see it. Split it into separate commands, or name the variable directly."
     fi
   done
 }

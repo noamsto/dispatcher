@@ -2476,6 +2476,19 @@ assert_allow_within_each_awk() {
   deny_both "$h"$'read -r n <<<v; echo ${!n}'
   deny_both "$h"$'read -r v <<<\'a[$(bash /tmp/x)]\'; echo $[v]'
   deny_both "$h"$'read -r v <<<\'a[$(bash /tmp/x)]\'; echo "$[v]"'
+  # Unquoted heredoc bodies expand, so a later body is code too.
+  deny_both "$h"$'read -r v <<<\'$(bash /tmp/x)\'; cat <<EOF2\n${v@P}\nEOF2\n'
+  deny_both "$h"$'read -r v <<<\'$(bash /tmp/x)\'; cat > /tmp/z <<EOF2\n${v@P}\nEOF2\n'
+  deny_both "$h"$'read -r n <<<v; cat <<EOF2\n${!n}\nEOF2\n'
+  deny_both "$h"$'cat <<EOF2\n$[v]\nEOF2\n'
+  deny_both "$h"$'read -r v <<<\'$(bash /tmp/x)\'; cat <<EOF2\n\'${v@P}\'\nEOF2\n'
+  # Nested braces, ANSI-C quotes and other arithmetic contexts.
+  deny_both "$h"$'read -r v <<<\'$(bash /tmp/x)\'; echo ${v[${n}]@P}'
+  deny_both "$h"$'read -r v <<<\'$(bash /tmp/x)\'; echo ${v[${#v}-1]@P}'
+  deny_both "$h"$'read -r v <<<\'$(bash /tmp/x)\'; echo $\'\\\'\'${v@P}'
+  deny_both "$h"$'read -r v <<<\'a[$(bash /tmp/x)]\'; echo ${a[v]}'
+  deny_both "$h"$'read -r v <<<\'a[$(bash /tmp/x)]\'; echo ${s:v}'
+  deny_both "$h"$'read -r n <<<\'a[$(bash /tmp/x)]\'; echo ${s:0:n}'
   # A here-string alone is a text sink too.
   deny_both $'read -r v <<<\'$(env)\'; echo "${v@P}"'
   # Inside a `-c` body, where the parent's single quotes are code again.
@@ -2487,6 +2500,10 @@ assert_allow_within_each_awk() {
   allow_both "$h"
   allow_both "$h"'echo "${HOME}" ${PWD:-x} "${v:-x}" $v ${#v} ${v[0]} $!'
   allow_both "$h"'echo ${!}'
+  allow_both "$h"'printf "%s\n" "${!a[@]}"'
+  allow_both "$h"'echo ${!a[*]} ${!pre@} ${!pre*}'
+  allow_both "$h"'echo ${a[0]} ${a[@]} ${#a[@]} ${v:0:3}'
+  allow_both "$h"$'cat <<\'EOF2\'\n${v@P} ${a[v]}\nEOF2\n'
   # Single-quoted text never expands.
   allow_both "$h"$'echo \'${v@P} ${!n} $[v]\''
   allow_both $'gh pr create --title \'guard: deny ${V@P}\' --body-file - <<\'EOF\'\nCovers ${V@P}, ${!N} and $[N].\nEOF'
