@@ -5,13 +5,19 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"regexp"
 	"strings"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/git"
+	"github.com/noamsto/dispatcher/crew/internal/invisible"
+	"github.com/noamsto/dispatcher/crew/internal/jsonval"
 	"github.com/noamsto/dispatcher/crew/internal/ledger"
+	"github.com/noamsto/dispatcher/crew/internal/marks"
+	"github.com/noamsto/dispatcher/crew/internal/spill"
+	"github.com/noamsto/dispatcher/crew/internal/unread"
 )
 
 // jq's statuses for a fold that cannot run: 2 unreadable input, 5 a runtime error.
@@ -210,4 +216,55 @@ func readTaskDoc(path string) taskDoc {
 	d.plan, d.resume = field("plan"), field("resume")
 	d.protocolDir = field("protocol_dir")
 	return d
+}
+
+// undeliveredGate refuses a worker session's pr_open/done while a dispatcher
+// msg to that exact session is past its delivered mark: the worker finished
+// without being handed the directive. The refusal prints the msgs and marks
+// them delivered, so the retry passes once the worker has acted on them. It
+// fails closed on an unreadable log or a lock that cannot be taken. True means
+// refused.
+func undeliveredGate(paths bus.Paths, crew, from, state string, stderr io.Writer) bool {
+	if state != "pr_open" && state != "done" || !strings.HasPrefix(from, "worker:") {
+		return false
+	}
+	unlock, err := marks.Lock(paths.Dir, crew, from)
+	if err != nil {
+		say(stderr, "crew: refusing %s for %s — cannot lock delivered marks: %v\n", state, from, err)
+		return true
+	}
+	defer unlock()
+
+	log := readLog(paths.Log)
+	switch {
+	case log.err != nil:
+		say(stderr, "crew: refusing %s for %s — could not read the crew log for the unread check: %v\n", state, from, log.err)
+		return true
+	case log.lines == nil:
+		return false
+	}
+	events := bus.EventsFromLines(log.lines)
+	rows, err := unread.Directives(events, crew, from, marks.Read(paths.Dir, crew, from))
+	if err != nil {
+		say(stderr, "crew: refusing %s for %s — unread check failed: %v\n", state, from, err)
+		return true
+	}
+	if len(rows) == 0 {
+		return false
+	}
+	say(stderr, "crew: refusing %s for %s — %d dispatcher msg(s) to this session were never handed over; they print below and are now delivered: handle each per receiving-code-review (a work-changing directive re-opens the pipeline; a review worker blocks instead, per REVIEW_TASK P2), advance your seen-cursor over the JSON lines below (not this line), then retry\n", state, from, len(rows))
+	recorded := make([]any, len(rows))
+	wrote := true
+	for i, v := range rows {
+		spill.Expand(v, paths, crew)
+		if jsonval.Encode(stderr, invisible.Value(v), false) != nil {
+			wrote = false
+		}
+		recorded[i] = v
+	}
+	// A row that did not reach the wire stays undelivered for the retry.
+	if wrote {
+		marks.RecordHeld(paths.Dir, crew, from, recorded)
+	}
+	return true
 }

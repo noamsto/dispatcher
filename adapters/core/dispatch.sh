@@ -5164,7 +5164,7 @@ fi
 # an apostrophe.
 resume_note=""
 if [ "$switch_mode" = resume ]; then
-  resume_note=" You are resuming an interrupted run on this branch, not starting it: do not re-run the spec or plan phases. Read SPEC.md and PLAN.md (repo root or docs/superpowers/) and git status before anything else, then continue from the first unfinished step. Check whether this branch already has an open PR before you push, and push to that PR instead of opening a second one."
+  resume_note=" You are resuming an interrupted run on this branch, not starting it: do not re-run the spec or plan phases. Read SPEC.md and PLAN.md (repo root or docs/superpowers/) and git status right after First action, then continue from the first unfinished step. Check whether this branch already has an open PR before you push, and push to that PR instead of opening a second one."
 fi
 
 # The launch prompt is a user-turn instruction, so it outranks the protocol: a
@@ -5172,6 +5172,9 @@ fi
 # someone else's PR head. Swap the mandate instead of relying on the contract to
 # talk the worker out of it.
 push_mandate=" Push when pre-push passes; open a PR."
+# A terse prompt ("run it end-to-end", "do not re-plan") gets read as license to
+# skip First action, so name it for every launch.
+first_action_note=" Step 1, before anything else: do the protocol's First action — announce with crew status \"\$CREW_WORKER_ID\" working, then drain the bus once. A provided plan or a --pr launch does not waive it."
 if [ "$kind" != review ] && [ "$tier" != trivial ]; then
   push_mandate=" Run your code review gate and record its review seam before you push.$push_mandate"
 fi
@@ -5274,7 +5277,7 @@ if [ "$agent" = codex ]; then
   # latency nobody is watching.
   # agents.*: enable native delegation, cap concurrency at 3 (parity with rule 1),
   # and pin subagent effort one rung down. Never pass ultra as subagent effort.
-  prompt="Read $PROTOCOL_DIR/WORKER_PROTOCOL.md and WORKER_TASK.md, then run the task end-to-end.${push_mandate}${plan_note}${resume_note}${process_authority}${grid_note}${protocol_note}${owner_note}"
+  prompt="Read $PROTOCOL_DIR/WORKER_PROTOCOL.md and WORKER_TASK.md, then run the task end-to-end.${first_action_note}${push_mandate}${plan_note}${resume_note}${process_authority}${grid_note}${protocol_note}${owner_note}"
   shell_quote quoted_prompt "$prompt"
   # codex and cursor cannot pre-assign a session id, so there is none to verify:
   # the record names the engine with `-`, replacing any earlier lead's record.
@@ -5294,7 +5297,7 @@ elif [ "$agent" = cursor ]; then
   # `cursor-retrieval` line these were meant to suppress comes from the in-process
   # file_service module, not the indexed-grep path.
   # No CLI concurrency cap — rule 1's "capped at 3 concurrent" is protocol-only.
-  prompt="Read $PROTOCOL_DIR/WORKER_PROTOCOL.md and WORKER_TASK.md, then run the task end-to-end.${push_mandate}${plan_note}${resume_note}${process_authority}${grid_note}${protocol_note}${owner_note}"
+  prompt="Read $PROTOCOL_DIR/WORKER_PROTOCOL.md and WORKER_TASK.md, then run the task end-to-end.${first_action_note}${push_mandate}${plan_note}${resume_note}${process_authority}${grid_note}${protocol_note}${owner_note}"
   shell_quote quoted_prompt "$prompt"
   _record_lead_session "$agent" -
   launch_cmd="${git_env}$(worker_browser_env "$branch" "$wt_path" "$agent_browser_worker_config")${tmux_env}CURSOR_CLI_INDEXED_GREP=0 cursor-agent --force --trust --approve-mcps --disable-indexing --disable-codebase-ref --model '$model' $quoted_prompt"
@@ -5303,7 +5306,7 @@ elif [ "$agent" = pi ]; then
   # real appended system prompt; --no-approve ignores project-local resources,
   # so the worktree's own skills go over via --skill (pi_skill_args).
   printf -v quoted_dir '%q' "$pi_agent_dir"
-  prompt="Read WORKER_TASK.md and run it end-to-end.${push_mandate}${plan_note}${resume_note}${process_authority}${grid_note}${protocol_note}${owner_note}"
+  prompt="Read WORKER_TASK.md and run it end-to-end.${first_action_note}${push_mandate}${plan_note}${resume_note}${process_authority}${grid_note}${protocol_note}${owner_note}"
   shell_quote quoted_prompt "$prompt"
   _record_lead_session pi "$lead_sid"
   printf -v q_pi_ext '%q' "$pi_subagent_ext"
@@ -5315,7 +5318,7 @@ elif [ "$agent" = pi ]; then
   fi
   launch_cmd="${git_env}$(worker_browser_env "$branch" "$wt_path" "$agent_browser_worker_config")${tmux_env}PI_CODING_AGENT_DIR=$quoted_dir ${fresh_prefix}pi --name $q_agent_name --model $model --thinking $(_local_thinking "$settings" "$model" "$effort")$lead_sid_args --append-system-prompt $PROTOCOL_DIR/WORKER_PROTOCOL.pi.md --no-approve -e $q_pi_ext$(pi_skill_args "$wt_path")$mcp_args$lead_prompt_arg"
 else
-  prompt="Read WORKER_TASK.md and run it end-to-end.${push_mandate}${plan_note}${resume_note}${grid_note}${protocol_note}${owner_note}"
+  prompt="Read WORKER_TASK.md and run it end-to-end.${first_action_note}${push_mandate}${plan_note}${resume_note}${grid_note}${protocol_note}${owner_note}"
   shell_quote quoted_prompt "$prompt"
   _record_lead_session claude "$lead_sid"
   if [ "$fresh_seams" = true ]; then

@@ -94,7 +94,7 @@ func TestReplyDeliversOnlyToTheSessionItResolved(t *testing.T) {
 
 	must("status", "worker:feat/x#s1-1", "working")
 	must("reply", "worker:feat/x", "STOP - do not push")
-	must("status", "worker:feat/x#s1-1", "done")
+	must("status", "worker:feat/x#s1-1", "exited")
 	must("status", "worker:feat/x#s2-2", "working")
 
 	if out := must("inbox", "worker:feat/x#s2-2", "c1"); out != "" {

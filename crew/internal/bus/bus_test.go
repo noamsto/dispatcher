@@ -744,3 +744,19 @@ func TestCrewIDEnvFirst(t *testing.T) {
 		})
 	}
 }
+
+func TestEventsFromLinesSkipsOnlyBadLines(t *testing.T) {
+	evs := EventsFromLines([]string{
+		`{"crew_id":"c1","kind":"msg","ts":1}`,
+		`{torn`,
+		``,
+		`{"kind":"msg"} {"kind":"x"}`,
+		`{"crew_id":"c2","kind":"status","ts":2}`,
+	})
+	if len(evs) != 2 || evs[0].CrewID != "c1" || evs[1].CrewID != "c2" || evs[1].Kind != "status" {
+		t.Errorf("got %+v, want the two intact rows", evs)
+	}
+	if got := docJSON(t, evs[0].Doc); got != `{"crew_id":"c1","kind":"msg","ts":1}` {
+		t.Errorf("doc = %s", got)
+	}
+}

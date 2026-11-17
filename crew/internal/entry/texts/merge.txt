@@ -7,12 +7,15 @@ with exit 1 and one line naming it:
   2. every check on the head commit finished green (none: needs --allow-no-ci)
   3. the base branch's tip has no failing check run
   4. the worker's newest pr_open ledger for this PR still validates
+  5. no dispatcher:<crew> message to the PR's worker session is undelivered
+     (that session is the newest on the pr_open row's branch; no pr_open
+     row: skipped). It names each; merge never marks any delivered
 
   <N>            Pull request number
   --dry-run      Run the checks and print each result; do not merge
   --allow-no-ci  Accept a head with no checks at all
   --no-ledger    Skip the ledger check (a PR no worker opened)
-  --crew         Look for the ledger in this crew's rows only
+  --crew         Use this crew's rows only (ledger and check 5's pr_open row)
 
 The merge is pinned to the head that was checked (--match-head-commit), so a
 late push is refused rather than merged unreviewed. Nothing is posted.

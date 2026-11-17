@@ -13,6 +13,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/clock"
 	"github.com/noamsto/dispatcher/crew/internal/gh/ghtest"
 	"github.com/noamsto/dispatcher/crew/internal/git/gittest"
+	"github.com/noamsto/dispatcher/crew/internal/marks"
 	"github.com/noamsto/dispatcher/crew/internal/merge"
 	"github.com/noamsto/dispatcher/crew/internal/reply"
 	"github.com/noamsto/dispatcher/crew/internal/sender"
@@ -86,6 +87,7 @@ func TestRun(t *testing.T) {
 		{name: "row of another crew", view: view("OPEN", "false", "MERGEABLE", okRoll), runs: okRuns, log: okRow, req: merge.Request{Crew: "c2"}, code: 1, stderr: "no pr_open ledger"},
 		{name: "invalid ledger", view: view("OPEN", "false", "MERGEABLE", okRoll), runs: okRuns, log: strings.Replace(okRow, "AC1 pass(bats)", "AC1 pending", 1), code: 1, stderr: "no longer validates"},
 		{name: "newest row wins", view: view("OPEN", "false", "MERGEABLE", okRoll), runs: okRuns, log: strings.Replace(okRow, "AC1 pass(bats)", "AC1 pending", 1) + "\n" + okRow, merged: true, stdout: "merged"},
+		{name: "corrupt line before the pr_open row", view: view("OPEN", "false", "MERGEABLE", okRoll), runs: okRuns, log: "{not json\n" + okRow, req: merge.Request{DryRun: true}, stdout: "ledger: worker:feat/x#s1-1 validates\n  unread: none for worker:feat/x#s1-1\n", noMerge: true},
 		{name: "dry run", view: view("OPEN", "false", "MERGEABLE", okRoll), runs: okRuns, log: okRow, req: merge.Request{DryRun: true}, stdout: "ok: all checks passed\n  pr: open, ready, mergeable\n  head check check: success\n  base main: not red\n  ledger: worker:feat/x#s1-1 validates\n", noMerge: true},
 		{name: "worker moved on to done", view: view("OPEN", "false", "MERGEABLE", okRoll), runs: okRuns, log: okRow + "\n" + laterDone, merged: true, stdout: "merged"},
 		{name: "bad pr", req: merge.Request{PR: "x"}, code: 1, stderr: "usage: crew merge"},
@@ -265,5 +267,77 @@ func TestReleaseFailureStillExitsZero(t *testing.T) {
 	code := merge.Run(context.Background(), merge.Request{PR: "7"}, paths, &stdout, &stderr, merge.Options{GH: g, Git: gt, Dir: dir, Reply: reply.Options{Clock: clock.FromEnv()}})
 	if code != 0 || !strings.Contains(stderr.String(), "PR merged, but could not release worker:feat/x#s1-1") {
 		t.Errorf("code %d stderr %q, want exit 0 with the release warning", code, stderr.String())
+	}
+}
+
+func TestUnreadDirectives(t *testing.T) {
+	const (
+		sess     = "worker:feat/x#s1-1"
+		succ     = "worker:feat/x#s9-9"
+		msgToOld = `{"ts":3,"crew_id":"c1","from":"dispatcher:c1","to":"` + sess + `","kind":"msg","body":"fix the flaky\ntest too"}`
+		msgToNew = `{"ts":6,"crew_id":"c1","from":"dispatcher:c1","to":"` + succ + `","kind":"msg","body":"rebase please"}`
+		working  = `{"ts":5,"crew_id":"c1","from":"` + succ + `","to":"dispatcher:c1","kind":"status","body":{"state":"working"}}`
+	)
+	tests := []struct {
+		name   string
+		log    []string
+		req    merge.Request
+		marked string // a session whose msg ts 3 is already delivered
+		code   int
+		stderr []string
+		stdout string
+		merged bool
+	}{
+		{name: "undelivered refuses", log: []string{okRow, msgToOld}, code: 1, stderr: []string{sess, "ts 3", `"fix the flaky test too"`, "crew nudge feat/x"}},
+		{name: "delivered merges", log: []string{okRow, msgToOld}, marked: sess, merged: true},
+		{name: "dry run lists the check", log: []string{okRow}, req: merge.Request{DryRun: true}, stdout: "  unread: none for " + sess + "\n"},
+		{name: "successor undelivered refuses", log: []string{okRow, working, msgToNew}, code: 1, stderr: []string{succ, "ts 6", "rebase please"}},
+		{name: "predecessor msg ignored once a successor has none", log: []string{okRow, msgToOld, working}, merged: true},
+		{name: "no-ledger still checks", log: []string{okRow, msgToOld}, req: merge.Request{NoLedger: true}, code: 1, stderr: []string{sess}},
+		{name: "no-ledger without a pr_open row skips", log: []string{msgToOld}, req: merge.Request{NoLedger: true, DryRun: true}, stdout: "unread: skipped (no worker pr_open for this PR)"},
+		{name: "no-ledger without a pr_open row merges", log: []string{msgToOld}, req: merge.Request{NoLedger: true}, merged: true},
+		{name: "torn line before the directive refuses", log: []string{okRow, `{torn`, msgToOld}, code: 1, stderr: []string{sess, "ts 3"}},
+		{name: "torn line before the directive refuses on dry run", log: []string{okRow, `{torn`, msgToOld}, req: merge.Request{DryRun: true}, code: 1, stderr: []string{sess, "ts 3"}},
+		{name: "torn line before the pr_open row, directive after", log: []string{`{torn`, okRow, msgToOld}, code: 1, stderr: []string{sess, "ts 3"}},
+		{name: "forged ts is escaped", log: []string{okRow, `{"ts":"\u001b[31mred","crew_id":"c1","from":"dispatcher:c1","to":"` + sess + `","kind":"msg","body":"x"}`}, code: 1, stderr: []string{`ts "\u001b[31mred"`}},
+		{name: "empty crew uses the row's crew", log: []string{okRow, msgToOld}, req: merge.Request{Crew: ""}, code: 1, stderr: []string{"dispatcher msg(s) to " + sess}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			paths := bus.Paths{Common: dir, Dir: dir, Log: filepath.Join(dir, "events.jsonl")}
+			if err := os.WriteFile(paths.Log, []byte(strings.Join(tt.log, "\n")+"\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if tt.marked != "" {
+				if !marks.RecordHeld(dir, "c1", tt.marked, []any{map[string]any{"from": "dispatcher:c1", "ts": 3}}) {
+					t.Fatal("could not record the delivered mark")
+				}
+			}
+			g := &ghtest.Fake{Out: map[string]string{viewIn: view("OPEN", "false", "MERGEABLE", okRoll), runsIn: okRuns, mergeG: "merged"}}
+			gt := &gittest.Fake{Func: func(string, []string) (string, error) { return "", nil }}
+			req := tt.req
+			req.PR = "7"
+			var stdout, stderr bytes.Buffer
+			code := merge.Run(context.Background(), req, paths, &stdout, &stderr, merge.Options{GH: g, Git: gt, Dir: dir, Reply: reply.Options{Clock: clock.FromEnv()}})
+			if code != tt.code {
+				t.Errorf("code = %d, want %d (stderr %q)", code, tt.code, stderr.String())
+			}
+			for _, w := range tt.stderr {
+				if !strings.Contains(stderr.String(), w) {
+					t.Errorf("stderr = %q, want it to contain %q", stderr.String(), w)
+				}
+			}
+			if !strings.Contains(stdout.String(), tt.stdout) {
+				t.Errorf("stdout = %q, want %q", stdout.String(), tt.stdout)
+			}
+			var merged bool
+			for _, c := range g.Calls() {
+				merged = merged || strings.HasPrefix(c, "pr merge")
+			}
+			if merged != tt.merged {
+				t.Errorf("merged = %v, want %v (calls %v)", merged, tt.merged, g.Calls())
+			}
+		})
 	}
 }

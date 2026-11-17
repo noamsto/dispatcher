@@ -13,6 +13,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/identity"
 	"github.com/noamsto/dispatcher/crew/internal/invisible"
+	"github.com/noamsto/dispatcher/crew/internal/queue"
 )
 
 // The draft keeps the shape the dispatcher's own session_summary notes have, so
@@ -42,7 +43,7 @@ type note struct {
 type worker struct {
 	branch   string
 	codename string // what `crew roster` prints, collision suffix and all
-	name     string // the codename on its own, which is what a note names
+	name     string // identity codename, the fallback when roster printed none
 	issue    string // the branch's issue number, the other way a note names it
 	tier     string
 	engine   string
@@ -97,9 +98,9 @@ func draft(crew string, all bool, events []bus.Event, o Options, stdout, stderr 
 		if w.codename == "" {
 			w.codename = id.Name
 		}
-		w.issue = issueOf(w.branch)
+		w.issue = queue.BranchIssue(w.branch)
 		w.outcome = outcomeOf(events, w.branch)
-		w.tags = workerTags(events, crew, w)
+		w.tags = workerTags(events, crew, w, boundary)
 		workers = append(workers, w)
 	}
 	if len(workers) == 0 {
@@ -255,11 +256,12 @@ func sessionOf(from string) string {
 }
 
 // workerTags are the distinct tags the branch's own retro notes carried, plus the
-// tag of a dispatcher note in the crew that names the branch — by codename or by
-// issue number — which is how a note the dispatcher wrote about a worker reaches
-// that worker's line. session_summary is the summary itself and other is the
+// tag of a dispatcher note in the crew that names the branch — by branch or by
+// issue number, never by codename, which a later branch can reuse — which is how a
+// note the dispatcher wrote about a worker reaches that worker's line. Only notes
+// newer than boundary count. session_summary is the summary itself and other is the
 // catch-all, so neither names a pattern.
-func workerTags(events []bus.Event, crew string, w worker) []string {
+func workerTags(events []bus.Event, crew string, w worker, boundary float64) []string {
 	var tags []string
 	seen := map[string]bool{}
 	for _, ev := range events {
@@ -275,8 +277,10 @@ func workerTags(events []bus.Event, crew string, w worker) []string {
 		}
 		detail, _ := body["detail"].(string)
 		mine := workerBranch(ev.From) == w.branch
-		named := strings.HasPrefix(ev.From, "dispatcher:") &&
-			(mentions(detail, w.name) || mentions(detail, w.issue))
+		// A dispatcher note older than the boundary is already written up, and an
+		// issue dispatched again on a new branch must not inherit it.
+		named := strings.HasPrefix(ev.From, "dispatcher:") && tsOf(ev) > boundary &&
+			(mentions(detail, w.branch) || mentions(detail, w.issue))
 		if mine || named {
 			seen[tag] = true
 			tags = append(tags, tag)
@@ -325,17 +329,6 @@ func prOf(body map[string]any) string {
 }
 
 var pullRe = regexp.MustCompile(`/pull/([0-9]+)`)
-
-// issueOf is the issue number a branch is named for — the same capture roster
-// takes for a colliding codename's suffix.
-func issueOf(branch string) string {
-	if m := issueRe.FindStringSubmatch(branch); m != nil {
-		return m[1]
-	}
-	return ""
-}
-
-var issueRe = regexp.MustCompile(`^(?:[a-z]+/)?([0-9]+)`)
 
 // workerBranch is the branch a worker-posted row came from, `worker:<branch>#<session>`.
 // A role's rows, and every other sender, read as no branch at all.

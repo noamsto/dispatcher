@@ -920,3 +920,86 @@ func TestNudgeLineClearsRoleVerdictFromScan(t *testing.T) {
 		t.Errorf("scan after the nudge = %q, want empty: the delivered verdict is no repeat reason", got)
 	}
 }
+
+func TestSincePeekDeliversDirectivePastTheCursor(t *testing.T) {
+	p := fixture(t)
+	const lead = "worker:feat/x#s1-1"
+	writeLog(t, p, `{"ts":1500000,"crew_id":"c1","from":"dispatcher:c1","to":"`+lead+`","kind":"msg","body":"fix it"}`+"\n")
+	scan := func() string {
+		return unread.Scan(unread.Request{Dir: p.Dir, Log: p.Log, Crew: "c1", Branch: "feat/x", Me: "worker:feat/x", FromID: lead, T0: 0}, unread.Any)
+	}
+	if got := scan(); got != "1500000 1500000 dispatcher" {
+		t.Fatalf("precondition: scan = %q", got)
+	}
+	var out bytes.Buffer
+	rc := Run(Request{Me: lead, Crew: "c1", Since: "1600000"}, p, &out, io.Discard, Options{
+		CrewID: func() string { return "c1" },
+		Flush:  func() error { return nil },
+	})
+	if rc != 0 {
+		t.Fatalf("rc = %d", rc)
+	}
+	if !strings.Contains(out.String(), `"body":"fix it"`) {
+		t.Errorf("stdout = %q, want the undelivered directive despite --since past its ts", out.String())
+	}
+	if got := scan(); got != "" {
+		t.Errorf("scan after the peek = %q, want empty", got)
+	}
+}
+
+// sinceRows is a log of one directive to the session below a cursor of 2000,
+// then one above it, each from the dispatcher.
+func sinceRows(oldTo string) string {
+	return `{"ts":1000,"crew_id":"c1","from":"dispatcher:c1","to":"` + oldTo + `","kind":"msg","body":"old"}` + "\n" +
+		`{"ts":3000,"crew_id":"c1","from":"dispatcher:c1","to":"` + me + `","kind":"msg","body":"new"}` + "\n"
+}
+
+func bodies(t *testing.T, stdout string) string {
+	t.Helper()
+	var got []string
+	for _, l := range strings.Split(strings.TrimSpace(stdout), "\n") {
+		if l != "" {
+			var row struct{ Body string }
+			if err := json.Unmarshal([]byte(l), &row); err != nil {
+				t.Fatal(err)
+			}
+			got = append(got, row.Body)
+		}
+	}
+	return strings.Join(got, " ")
+}
+
+func TestWorkerSinceRescuesOnlyUndeliveredRows(t *testing.T) {
+	for _, tc := range []struct {
+		name, who, oldTo, marks, from, want string
+	}{
+		{"old and new keep log order", me, me, "{}", "", `old new`},
+		{"delivered old row stays hidden", me, me, `{"dispatcher:c1":1000}`, "", `new`},
+		{"delivered new row still prints", me, me, `{"dispatcher:c1":3000}`, "", `new`},
+		{"from filters the union", me, me, "{}", "role:x", ""},
+		{"old broadcast stays hidden", me, "*", "{}", "", `new`},
+		{"dispatcher reader is plain since", "dispatcher:c1", "dispatcher:c1", "{}", "", "new"},
+		{"role reader is plain since", "role:feat/x:reviewer", "role:feat/x:reviewer", "{}", "", "new"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := fixture(t)
+			rows := sinceRows(tc.oldTo)
+			if tc.who != me {
+				rows = strings.ReplaceAll(rows, me, tc.who)
+			}
+			writeLog(t, p, rows)
+			seedMarks(t, p, "c1", tc.who, tc.marks)
+			args := []string{tc.who, "c1", "--since", "2000"}
+			if tc.from != "" {
+				args = append(args, "--from", tc.from)
+			}
+			stdout, stderr, code := run(t, p, args...)
+			if code != 0 || stderr != "" {
+				t.Fatalf("code %d stderr %q", code, stderr)
+			}
+			if got := bodies(t, stdout); got != tc.want {
+				t.Errorf("printed %q, want %q", got, tc.want)
+			}
+		})
+	}
+}

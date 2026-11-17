@@ -711,6 +711,7 @@ func TestGateCases(t *testing.T) {
 					f.doc(tc.doc)
 				}
 				f.log(tc.rows...)
+				f.markDelivered(worker)
 				before := len(f.lines())
 
 				want := tc.stderr

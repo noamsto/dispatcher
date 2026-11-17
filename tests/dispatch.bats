@@ -1975,9 +1975,21 @@ EOF
   last=$((${#argv[@]} - 1))
   [[ "${argv[last]}" == "Read WORKER_TASK.md and run it end-to-end."* ]]
   [[ "${argv[last]}" == *"Follow $DISPATCHER_PROTOCOL_DIR/WORKER_GRID.pi.md ('Grid mode') — delegate to the bus only the phases that have a pane"* ]]
+  [[ "${argv[last]}" == *'announce with crew status "$CREW_WORKER_ID" working'* ]]
   for ((i = 0; i < last; i++)); do
     [[ "${argv[i]}" != *"Grid mode"* && "${argv[i]}" != "Read "* ]]
   done
+}
+
+@test "a claude --plan provided launch prompt names First action as step 1, provided plan included" {
+  stub_launch_bins
+  DISPATCH_PROFILE=personal run run_dispatch trivial haiku --agent claude --effort low --plan provided --crew-id c1 42 "first action claude"
+  [ "$status" -eq 0 ]
+  _replay_lead_launch claude "claude --name"
+  last=$((${#argv[@]} - 1))
+  [[ "${argv[last]}" == *"Step 1, before anything else: do the protocol's First action"* ]]
+  [[ "${argv[last]}" == *'announce with crew status "$CREW_WORKER_ID" working'* ]]
+  [[ "${argv[last]}" == *"do not re-plan"* ]]
 }
 
 @test "claude lead: protocol_dir is stamped in the task doc and named in the prompt" {
@@ -2425,6 +2437,7 @@ EOF
     last=$((${#argv[@]} - 1))
     [[ "${argv[last]}" == "Read $DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.md and WORKER_TASK.md, then run the task end-to-end."* ]]
     [[ "${argv[last]}" == *"live in $DISPATCHER_PROTOCOL_DIR"* ]]
+    [[ "${argv[last]}" == *'announce with crew status "$CREW_WORKER_ID" working'* ]]
   done < <(protocol_engine_specs codex cursor)
   # A zero-iteration loop would pass vacuously; a mistyped/renamed filter must fail.
   [ "$n" -eq 2 ]
