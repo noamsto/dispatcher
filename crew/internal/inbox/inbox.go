@@ -19,7 +19,6 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/ascii"
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/invisible"
-	"github.com/noamsto/dispatcher/crew/internal/jqrun"
 	"github.com/noamsto/dispatcher/crew/internal/jsonval"
 	"github.com/noamsto/dispatcher/crew/internal/marks"
 	"github.com/noamsto/dispatcher/crew/internal/sender"
@@ -59,6 +58,10 @@ type Request struct {
 // readers of one session split a msg between them at most once. `crew await`
 // reads the marks once before its poll loop by design, so an await already
 // polling can still return a msg an --undelivered reader printed meanwhile.
+//
+// For a worker reader, --since never hides a msg addressed to it that is past
+// its delivered marks: a lead's seen-cursor can sit above a directive no peek
+// ever printed.
 func Run(q Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int {
 	me, crew, since := q.Me, q.Crew, q.Since
 	if crew == "" {
@@ -99,14 +102,34 @@ func Run(q Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int {
 	// line each, and jq's exit status is the *last* input's outcome rather than
 	// a sticky flag (the rule internal/log documents).
 	failed := false
+	rescue := since != "" && !q.Undelivered && strings.HasPrefix(me, "worker:")
+	rowSince := since
+	if rescue {
+		rowSince = ""
+		held = marks.Read(paths.Dir, crew, me)
+	}
 	var selected []map[string]any
 	for _, ev := range events {
 		switch v := ev.Doc.(type) {
 		case map[string]any:
 			failed = false
 			v, _ = sender.ForeignOverseer(v, o.Hosts)
-			if !selects(v, crew, me, since, q.From) {
+			if !selects(v, crew, me, rowSince, q.From) {
 				continue
+			}
+			if rescue && !greaterThanNumber(v["ts"], since) {
+				// Only a msg addressed to this session exactly, never a broadcast.
+				if v["to"] != me {
+					continue
+				}
+				undelivered, err := marks.Past([]map[string]any{v}, held)
+				if err != nil {
+					say(stderr, "crew: inbox: %v\n", err)
+					return 1
+				}
+				if len(undelivered) == 0 {
+					continue
+				}
 			}
 			selected = append(selected, v)
 		case nil:
@@ -119,7 +142,7 @@ func Run(q Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int {
 	printed := selected
 	if q.Undelivered {
 		var err error
-		if printed, err = pastMarks(selected, held); err != nil {
+		if printed, err = marks.Past(selected, held); err != nil {
 			say(stderr, "crew: inbox: %v\n", err)
 			return 1
 		}
@@ -180,41 +203,6 @@ func selects(v map[string]any, crew, me, since, from string) bool {
 		return true
 	}
 	return greaterThanNumber(v["ts"], since)
-}
-
-// pastMarks keeps the msgs newer than this session's mark for their sender:
-// `.ts > ($marks[.from] // 0)`, run by jq so a string mark a hand-edited file
-// left outranks a number ts as `_unread_scan` has it. A msg whose `from` is not
-// a string is dropped first — it has no mark to compare with, and record.jq
-// would fail the whole write over it.
-func pastMarks(rows []map[string]any, held any) ([]map[string]any, error) {
-	var named []map[string]any
-	input := []any{}
-	for _, v := range rows {
-		if _, ok := v["from"].(string); ok {
-			named = append(named, v)
-			input = append(input, v)
-		}
-	}
-	if len(named) == 0 {
-		return nil, nil
-	}
-	p, err := jqrun.CompileAny("map(.ts > ($marks[.from] // 0))", 0, map[string]any{"marks": held})
-	if err != nil {
-		return nil, err
-	}
-	keep, err := p.RunAny(input)
-	if err != nil {
-		return nil, err
-	}
-	flags, _ := keep.([]any)
-	var out []map[string]any
-	for i, k := range flags {
-		if k == true {
-			out = append(out, named[i])
-		}
-	}
-	return out, nil
 }
 
 // member is jq's `.key == s`: an absent key indexes to null, and only a string

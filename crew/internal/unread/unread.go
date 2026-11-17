@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"strconv"
 
+	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/jqrun"
 	"github.com/noamsto/dispatcher/crew/internal/marks"
 	"github.com/noamsto/dispatcher/crew/internal/stall/probe"
@@ -88,4 +89,29 @@ func Scan(r Request, mode Mode) string {
 	}
 	s, _ := out.(string)
 	return s
+}
+
+// Directives is the dispatcher half of the scan's notion of undelivered: the
+// msgs the dispatcher sent this crew to this session, minus the ones already
+// marked delivered. The match is exact on `to`, so a "*" broadcast is not a
+// directive to any one session.
+func Directives(events []bus.Event, crew, session string, held any) ([]map[string]any, error) {
+	from := "dispatcher:" + crew
+	var rows []map[string]any
+	for _, ev := range events {
+		v, ok := ev.Doc.(map[string]any)
+		if !ok {
+			continue
+		}
+		if field(v, "crew_id", crew) && field(v, "kind", "msg") && field(v, "from", from) && field(v, "to", session) {
+			rows = append(rows, v)
+		}
+	}
+	return marks.Past(rows, held)
+}
+
+// field is jq's `.key == s`: a missing or non-string key matches nothing.
+func field(v map[string]any, key, s string) bool {
+	t, ok := v[key].(string)
+	return ok && t == s
 }

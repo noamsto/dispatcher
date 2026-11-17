@@ -4,7 +4,9 @@ Print the messages addressed to <agent> — messages only, never status rows.
 
   <agent>        worker:<branch>#s… (the session suffix is required), role:<branch>:<role>
   [crew]         Crew id; defaults to this repo's crew
-  --since        One non-blocking pass over messages strictly newer than TS
+  --since        One non-blocking pass over messages strictly newer than TS; a worker:<…>
+                 reader also gets any message addressed exactly to it (never `*`) that
+                 session was never handed, however old
   --from         Only messages from this sender (exact id)
   --undelivered  Only messages past this session's delivered marks; marks what it prints
 

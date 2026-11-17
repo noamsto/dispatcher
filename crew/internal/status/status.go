@@ -10,6 +10,9 @@
 // jqrun. Refusing less often than the arm is a regression: every gate fails
 // closed.
 //
+// A pr_open or done is also refused while a dispatcher msg to the session is
+// still undelivered (undeliveredGate); the refusal prints and marks it.
+//
 // `msg` gates one body: a review seam from a branch that has no plan seam is
 // refused, so the miss surfaces at the review gate instead of at pr_open. It
 // runs `status`'s own check — same task-doc condition, same plan.jq fold.
@@ -209,6 +212,9 @@ func RunStatus(ctx context.Context, req StatusRequest, paths bus.Paths, stderr i
 		}
 	}
 
+	if undeliveredGate(paths, crew, from, state, stderr) {
+		return exitFailure
+	}
 	g := gate{crew: crew, from: from, state: state, detail: detail, paths: paths, o: o}
 	if line := g.check(ctx); line != "" {
 		say(stderr, "%s\n", line)
