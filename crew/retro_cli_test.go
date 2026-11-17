@@ -927,6 +927,20 @@ func TestRetroDraftCodenameCarriesRostersCollisionSuffix(t *testing.T) {
 	})
 }
 
+func TestRetroDraftNoteAboutAnOlderBranchSharingACodenameIsNotTheNewerOnes(t *testing.T) {
+	h, s := newRetroSeed(t)
+	draftDispatch(s, "feat/1457-old", 1000, "ember", "standard", "claude", "sonnet")
+	s.status(wid("feat/1457-old", "s1"), 1100, "done")
+	s.msg("dispatcher:c1", "retro:c1", 1200, note("misrouted", "ember·1457 {standard,claude,sonnet} done"))
+	s.msg("dispatcher:c1", "retro:c1", 1500, summaryNote("ember·1457 done"))
+	draftDispatch(s, "feat/1558-new", 2000, "ember", "standard", "claude", "sonnet")
+	s.status(wid("feat/1558-new", "s1"), 2100, "done")
+
+	wantDetail(t, draftParts(t, h, "--crew", "c1"), []string{
+		"ember·1558 {standard,claude,sonnet} done",
+	})
+}
+
 func TestRetroDraftKeepsThePRWhenDoneFollowsPrOpen(t *testing.T) {
 	h, s := newRetroSeed(t)
 	draftDispatch(s, "feat/1186-scope-guard", 1000, "onyx", "standard", "claude", "sonnet")

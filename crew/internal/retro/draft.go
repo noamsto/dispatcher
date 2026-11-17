@@ -255,9 +255,9 @@ func sessionOf(from string) string {
 }
 
 // workerTags are the distinct tags the branch's own retro notes carried, plus the
-// tag of a dispatcher note in the crew that names the branch — by codename or by
-// issue number — which is how a note the dispatcher wrote about a worker reaches
-// that worker's line. session_summary is the summary itself and other is the
+// tag of a dispatcher note in the crew that names the branch — by branch or by
+// issue number, never by codename, which a later branch can reuse — which is how a
+// note the dispatcher wrote about a worker reaches that worker's line. session_summary is the summary itself and other is the
 // catch-all, so neither names a pattern.
 func workerTags(events []bus.Event, crew string, w worker) []string {
 	var tags []string
@@ -276,7 +276,7 @@ func workerTags(events []bus.Event, crew string, w worker) []string {
 		detail, _ := body["detail"].(string)
 		mine := workerBranch(ev.From) == w.branch
 		named := strings.HasPrefix(ev.From, "dispatcher:") &&
-			(mentions(detail, w.name) || mentions(detail, w.issue))
+			(mentions(detail, w.branch) || mentions(detail, w.issue))
 		if mine || named {
 			seen[tag] = true
 			tags = append(tags, tag)
