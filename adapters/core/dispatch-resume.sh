@@ -332,9 +332,12 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-# --exec is the tmux-remux restore command: resume is the restored pane's root
-# process, so the pane dies with it. remain-on-exit keeps a refusal's message
-# readable there; the exec turns it back off.
+# --exec is the tmux-remux restore command, exec-only from the restore shell, so
+# there resume is the pane's root process and the pane dies with it.
+# remain-on-exit keeps a refusal's message readable there; the exec turns it
+# back off. A human typing --exec in a live shell gets neither: the pane's pid
+# is then the shell's, and the option would outlive the refusal.
+exec_root=""
 if [ -n "$exec_inplace" ]; then
   if [ -n "$do_print$rearm_roles" ]; then
     usage
@@ -344,7 +347,10 @@ if [ -n "$exec_inplace" ]; then
     echo "dispatch resume: --exec relaunches in its own tmux pane, but TMUX_PANE is '${TMUX_PANE:-}', not a pane id" >&2
     exit 1
   fi
-  tmux set-option -p -t "$TMUX_PANE" remain-on-exit on 2>/dev/null || true
+  if [ "$(tmux display-message -p -t "$TMUX_PANE" '#{pane_pid}' 2>/dev/null)" = "$$" ]; then
+    exec_root=1
+    tmux set-option -p -t "$TMUX_PANE" remain-on-exit on 2>/dev/null || true
+  fi
 fi
 
 # Remote mode: a dispatcher on another host asked for this worker's window in
@@ -805,7 +811,7 @@ PANES
 if [ -n "$exec_inplace" ]; then
   if [ -z "$exec_win" ]; then
     # Not resume's pane to keep open.
-    tmux set-option -p -t "$TMUX_PANE" remain-on-exit off 2>/dev/null || true
+    [ -z "$exec_root" ] || tmux set-option -p -t "$TMUX_PANE" remain-on-exit off 2>/dev/null || true
     echo "dispatch resume: --exec runs in the worker's own lead pane at $wt_path" >&2
     exit 1
   fi
@@ -1317,9 +1323,20 @@ tmux set-option -p -t "$pane" @crew_model "$model" 2>/dev/null || true
 # tmux-remux restores the lead by running the pinned `dispatch resume --exec`.
 # Not earlier: the create path has no $pane before new-window, and tmux reads an
 # empty target as the caller's pane. A remote lead is its controller's to resume.
+# The header never records this run's engine, model, effort or mcp overrides
+# (an escalation's model aside), so the stamp carries them, resolved; --chrome
+# and --ignore-budget are per-run decisions a restore must not replay.
+remux_argv=(dispatch resume --exec)
+[ -z "$agent_flag" ] || remux_argv+=(--agent "$agent")
+if [ -n "$model_flag" ] && [ -z "${escalated_from:-}" ]; then
+  remux_argv+=(--model "$model")
+  [ -z "$ignore_map" ] || remux_argv+=(--ignore-map)
+fi
+[ -z "$effort_flag" ] || remux_argv+=(--effort "$effort")
+[ -z "$mcp_flag_val" ] || remux_argv+=(--mcp "$mcp_flag_val")
 if [ "$wire_side" = remote ]; then
   remux_pin_clear "$pane"
-elif remux_command remux_cmd "$wt_path" "$crew_id" dispatch resume --exec; then
+elif remux_command remux_cmd "$wt_path" "$crew_id" "${remux_argv[@]}"; then
   # shellcheck disable=SC2154 # set by remux_command's nameref
   remux_stamp "$pane" "$remux_cmd"
 else
@@ -1364,7 +1381,7 @@ fi
 
 if [ -n "$exec_inplace" ]; then
   _post_launch
-  tmux set-option -p -t "$pane" remain-on-exit off 2>/dev/null || true
+  [ -z "$exec_root" ] || tmux set-option -p -t "$pane" remain-on-exit off 2>/dev/null || true
   # The pane shell's PATH, as a typed launch would run under: exec-only from the
   # restore shell down, so the engine leads the pane and #{pane_current_command}
   # names it for the engine-already-running guards.
