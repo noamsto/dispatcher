@@ -402,6 +402,7 @@ func TestMapClickOnTabBarOrOtherButtonsIsIgnored(t *testing.T) {
 	x, y := cellOf(g.Planets[5].CX, g.Planets[5].CY)
 	for name, msg := range map[string]tea.MouseMsg{
 		"header row":   click(x, 0),
+		"crew row":     click(x, 1),
 		"right button": {X: x, Y: y, Action: tea.MouseActionPress, Button: tea.MouseButtonRight},
 		"left release": {X: x, Y: y, Action: tea.MouseActionRelease, Button: tea.MouseButtonLeft},
 		"left motion":  {X: x, Y: y, Action: tea.MouseActionMotion, Button: tea.MouseButtonLeft},
@@ -1039,7 +1040,7 @@ func TestMapStatusLineDoesNotResizeTheImage(t *testing.T) {
 func goldenMap(t *testing.T, prefix string, capable bool) {
 	t.Helper()
 	asciiProfile(t)
-	for _, sz := range [][2]int{{80, 24}, {160, 40}} {
+	for _, sz := range [][2]int{{80, 25}, {160, 41}} {
 		r := newMapRig(t, false, capable)
 		m := r.press(r.model(sz[0], sz[1]), keyRune('7'))
 		checkGolden(t, fmt.Sprintf("%s_%dx%d.golden", prefix, sz[0], sz[1]), m.View(), sz[0], sz[1])

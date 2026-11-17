@@ -39,6 +39,18 @@ func TestCrewHeaderDeadLaneAndNoCrew(t *testing.T) {
 	}
 }
 
+func TestCrewHeaderNamesEveryCrew(t *testing.T) {
+	asciiProfile(t)
+	m := sized(newTestModel(t), 100, 30)
+	m.active = overviewTab
+	m.snap.Roster.Crews = []data.RosterCrew{
+		{ID: "c1", Lane: &data.LaneStatus{State: "alive"}}, {ID: "c2"},
+	}
+	if out := stripped(m.View()); !strings.Contains(out, "crew › c1, c2\n") {
+		t.Errorf("multi-crew header missing or carries a state:\n%s", out)
+	}
+}
+
 func TestRepoOfEvents(t *testing.T) {
 	for in, want := range map[string]string{
 		"/h/dispatcher/.git/crew/events.jsonl": "dispatcher",

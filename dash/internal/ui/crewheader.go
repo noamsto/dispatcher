@@ -26,18 +26,28 @@ func (m Model) crewHeader() string {
 	if len(m.snap.Roster.Crews) == 0 {
 		return ""
 	}
-	c := m.snap.Roster.Crews[0]
-	id := cleanText(c.ID)
-	if id == "" {
+	ids := make([]string, 0, len(m.snap.Roster.Crews))
+	for _, c := range m.snap.Roster.Crews {
+		if id := cleanText(c.ID); id != "" {
+			ids = append(ids, id)
+		}
+	}
+	if len(ids) == 0 {
 		return ""
 	}
-	repo, state := m.repo, ""
-	switch {
-	case c.Lane != nil && c.Lane.State == "alive":
-		state = "live"
-	case c.Lane != nil && c.Lane.State != "" && c.Lane.State != "unknown":
-		state = c.Lane.State
+	id := strings.Join(ids, ", ")
+	// One crew has one dispatcher to report; several name no single state.
+	state := ""
+	if c := m.snap.Roster.Crews[0]; len(m.snap.Roster.Crews) == 1 && c.Lane != nil {
+		switch c.Lane.State {
+		case "alive":
+			state = "live"
+		case "unknown":
+		default:
+			state = c.Lane.State
+		}
 	}
+	repo := m.repo
 	parts := []string{}
 	if repo != "" {
 		parts = append(parts, cleanText(repo))
