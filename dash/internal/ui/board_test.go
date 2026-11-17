@@ -327,3 +327,25 @@ func TestBoardPromptReplacesInfoLine(t *testing.T) {
 		t.Errorf("reply prompt not shown:\n%s", out)
 	}
 }
+
+// TestBoardIssueFollowsBranchRule mirrors crew/internal/queue TestBranchIssue
+// and the roster fold's suffix cases: keep the three in step.
+func TestBoardIssueFollowsBranchRule(t *testing.T) {
+	cases := []struct{ branch, name, head string }{
+		{"feat/12x", "lime", "lime"},
+		{"feat/12-x", "lime", "lime · #12"},
+		{"feat/grok-4-7-x", "lime", "lime"},
+		{"feat/grok-4-7-x", "lime·feat/grok-4-7-x", "lime"},
+		{"eng-42-x", "lime·eng-42", "lime · eng-42"},
+		{"fix/7-y", "lime", "lime · #7"},
+		{"fix/7", "lime", "lime · #7"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.branch+"/"+tc.name, func(t *testing.T) {
+			got := fieldsOf(workerRow("c", map[string]any{"branch": tc.branch, "name": tc.name, "state": "working"})).head
+			if got != tc.head {
+				t.Errorf("head = %q, want %q", got, tc.head)
+			}
+		})
+	}
+}

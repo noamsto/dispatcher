@@ -831,3 +831,39 @@ func TestFoldReapSupersedesOtherCrewsFinishedRow(t *testing.T) {
 		})
 	}
 }
+
+// A colliding codename's suffix is the id the queue's branch rule reads off the
+// branch: an issue number, a Linear id, else the whole branch.
+func TestFoldSuffixFollowsBranchIssueRule(t *testing.T) {
+	branches := []struct{ branch, suffix string }{
+		{"feat/12x", "feat/12x"},
+		{"feat/12-x", "12"},
+		{"feat/grok-4-7-x", "feat/grok-4-7-x"},
+		{"eng-42-x", "eng-42"},
+		{"fix/7-y", "7"},
+	}
+	var events []string
+	for i, b := range branches {
+		events = append(events,
+			dispatch(int64(i+1), fmt.Sprintf(`"branch":%q,"name":"sage","color":"green","tmux":"colour28"`, b.branch)),
+			status(t0+1000, "worker:"+b.branch+"#s1-1", state("working")))
+	}
+	rows, err := Fold(t.Context(), decodeEvents(t, events), "c1", now, Probes{Tmux: &tmuxtest.Fake{}, Worktrees: func() (string, error) { return "", nil }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, b := range branches {
+		found := false
+		for _, r := range rows {
+			if r["branch"] == b.branch {
+				found = true
+				if want := "sage·" + b.suffix; r["name"] != want {
+					t.Errorf("branch %s: name = %v, want %s", b.branch, r["name"], want)
+				}
+			}
+		}
+		if !found {
+			t.Errorf("no row for %s", b.branch)
+		}
+	}
+}

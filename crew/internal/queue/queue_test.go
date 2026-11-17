@@ -195,6 +195,8 @@ func TestBranchIssue(t *testing.T) {
 		{"digit run not leading", "feat/x-12", ""},
 		{"default branch", "main", ""},
 		{"linear branch is not an issue", "eng-12-x", ""},
+		{"digits run into letters", "feat/12x", ""},
+		{"other prefix", "fix/7-y", "7"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
