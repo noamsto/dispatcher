@@ -4613,7 +4613,7 @@ wt_admin="$(_wt_admin_dir "${crew_dir%/crew}" "$wt_path")" || {
 # this fixes.
 if [ "$agent" = claude ]; then
   if ! _claude_pretrust "$wt_path"; then
-    claude_json_lock_path="$HOME/.claude.json.dispatch.lock"
+    claude_json_lock_path="${CLAUDE_CONFIG_DIR:-$HOME}/.claude.json.dispatch.lock"
     held=$(readlink "$claude_json_lock_path" 2>/dev/null || true)
     if [ -n "$held" ] && kill -0 "$held" 2>/dev/null; then
       echo "dispatch: could not pre-trust worktree $wt_path — $claude_json_lock_path is held by pid $held (another dispatch mid-scaffold) — the worker would wedge on the workspace-trust dialog" >&2

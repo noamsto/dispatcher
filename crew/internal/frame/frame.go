@@ -145,14 +145,15 @@ func IsPermissionPrompt(engine, text string) bool {
 // IsAddDirPrompt is claude's `Adding a new directory:` trust dialog: unnumbered
 // options and an `Esc to exit` footer, and tmux keys do not answer it.
 func IsAddDirPrompt(engine, text string) bool {
-	if engine == "codex" || engine == "cursor" {
+	if engine != "claude" {
 		return false
 	}
 	// A named session paints its `── <name> ─` rule below the dialog.
-	t := Tail(text, 8)
+	t := Tail(text, 11)
 	if n := len(t); n > 0 && reNameRule.MatchString(t[n-1]) {
 		t = t[:n-1]
 	}
+	t = t[max(len(t)-10, 0):]
 	if len(t) == 0 {
 		return false
 	}

@@ -11,7 +11,7 @@ description: Use when the human asks you to type into an engine pane, to give th
   or the watchdog, into a live claude/pi lead) and
   `continue from where you stopped; if a command's result is missing, re-run it`
   (the watchdog only, into an idle pi lead after a `truncated:`/`provider-error:` frame).
-  Verified trust prompts (your job, pane captured before and after) and tool-permission
+  Verified trust prompts (other than Claude's add-dir dialog; your job, pane captured before and after) and tool-permission
   dialogs (`permission-check --answer` only, never by hand) follow the `prompt:` handling in
   skill `dispatcher:watchdog`, not this rule. A stopped worker is reached only by re-dispatch with the context baked in; any other reach (a coded reply a human must hand-deliver) is a human running `tmux send-keys`: give them the
   `crew where <branch>` line; capture the pane before typing and after submitting,

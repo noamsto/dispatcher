@@ -182,7 +182,9 @@ func rows() []row {
 	add("prompt: add-dir trust dialog footer not last", claude, "prompt", addDir+"\n"+modeRow, "", "0")
 	add("prompt: add-dir trust dialog without the Yes option", claude, "prompt", strings.Replace(addDir, "  Yes, add it\n", "", 1), "", "0")
 	add("prompt: add-dir trust dialog is not for codex", "codex", "prompt", addDir, "", "0")
-	add("prompt: add-dir trust dialog uses the claude shape on pi", "pi", "prompt", addDir, "", "1")
+	add("prompt: add-dir trust dialog is claude only", "pi", "prompt", addDir, "", "0")
+	wrapped := "Adding a new directory:\n/nix/store/abc-source/adapters/core/\nprotocols\nThis session hasn't worked here before. Is this a directory you\ncreated or one you trust?\n\n❯ No, exit\n  Yes, add it\n\nEsc to exit · To add it, press ↓ to Yes, then Enter\n" + rule + " cm-ask ─"
+	add("prompt: add-dir trust dialog with wrapped path and paragraph", claude, "prompt", wrapped, "", "1")
 
 	add("permission: claude dialog", claude, "permission_prompt", permAsk, "", "1")
 	add("permission: other engines never match", "pi", "permission_prompt", permAsk, "", "0")

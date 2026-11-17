@@ -987,15 +987,16 @@ claude_subagent_effort_env() {
 }
 
 # _claude_pretrust <path>... — stamp .projects[<path>].hasTrustDialogAccepted in
-# ~/.claude.json for every path in one locked write; a no-op (no lock, no write)
+# ${CLAUDE_CONFIG_DIR:-$HOME}/.claude.json for every path in one locked write; a no-op (no lock, no write)
 # when every path is already stamped. Claude Code skips its "trust this
 # directory?" dialog, which tmux keys cannot answer, only for stamped paths.
-# Same ln -s lock idiom as dispatch.sh's dispatch_lock; claude_json_lock is a
-# global set only once ln -s wins, because dispatch.sh's EXIT trap deletes it.
-# Callers sit inside a command substitution, where a signal mid-stamp leaves a
-# stale lock, so this returns 1 with a stderr message and never exits.
+# Same ln -s lock idiom as dispatch.sh's dispatch_lock. claude_json_lock is a
+# global set only while the lock is held and cleared on every release, so
+# dispatch.sh's EXIT trap removes only a lock this process still holds. Callers
+# include a command substitution (launch_dir_args), so this returns 1 with a
+# stderr message and never exits.
 _claude_pretrust() {
-  local claude_json="$HOME/.claude.json" lock_path tmp existing p
+  local claude_json="${CLAUDE_CONFIG_DIR:-$HOME}/.claude.json" lock_path tmp existing p
   lock_path="$claude_json.dispatch.lock"
   if [ -f "$claude_json" ] && jq -e --args \
     '. as $c | all($ARGS.positional[]; $c.projects[.].hasTrustDialogAccepted == true)' \
@@ -1005,7 +1006,7 @@ _claude_pretrust() {
   for _ in 1 2 3 4 5; do
     if ln -s "$$" "$lock_path" 2>/dev/null; then
       claude_json_lock="$lock_path"
-      tmp="$(mktemp "$claude_json.tmp.XXXXXX")" || { rm -f "$claude_json_lock"; return 1; }
+      tmp="$(mktemp "$claude_json.tmp.XXXXXX")" || { rm -f "$claude_json_lock"; claude_json_lock=""; return 1; }
       if [ -f "$claude_json" ]; then
         existing="$(cat "$claude_json")"
       else
@@ -1015,9 +1016,11 @@ _claude_pretrust() {
         'reduce $ARGS.positional[] as $p (.; .projects[$p].hasTrustDialogAccepted = true)' \
         "$@" >"$tmp" && mv "$tmp" "$claude_json"; then
         rm -f "$claude_json_lock"
+        claude_json_lock=""
         return 0
       fi
       rm -f "$tmp" "$claude_json_lock"
+      claude_json_lock=""
       echo "dispatch: could not update $claude_json" >&2
       return 1
     fi

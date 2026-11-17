@@ -7,7 +7,7 @@ description: Use when a watchdog detail prefix, a prompt dialog or a role-pane w
 
 - `prompt:` — parked on an interactive prompt (commonly a fresh worktree's
   workspace-trust question). Answer it **in the pane**; the worker resumes and the watchdog clears. Never escalates.
-  Claude's add-dir trust dialog (`prompt: add-dir trust dialog …`) is the exception: injected keys and `permission-check` cannot answer it, so relay it to the human, who answers it by hand or re-dispatches after the grant is stamped.
+  Exception to answering in the pane: Claude's add-dir trust dialog (`prompt: add-dir trust dialog …`). Injected keys and `permission-check` cannot answer it: relay it to the human with the dir shown in the pane. The human answers it by hand, or records trust for that dir in `~/.claude.json` before you re-dispatch (`dispatch` stamps only the four read-only protocol dirs). Still never escalates.
   - **Tool-permission dialogs are answered only by `permission-check`.** For Claude's
     dialog (#435) the watchdog posts `prompt: permission — <tool>: <request> — pane <%id>`
     (one line, ≤160 chars: a relay hint, never the request).
