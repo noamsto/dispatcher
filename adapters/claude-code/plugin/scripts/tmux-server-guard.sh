@@ -100,10 +100,14 @@ command=$(jq -r '.[1]' <<<"$parsed")
 # The uid substitutions become their digits before the split, so the quoted and
 # the unquoted `/run/user/$(id -u)` reach the delete check as one plain word.
 # They hold no tmux word, so the tmux check sees an equivalent command.
-command=${command//"\$(id -u)"/$UID}
-command=${command//"\$(id -ru)"/$UID}
-command=${command//"\`id -u\`"/$UID}
-command=${command//"\`id -ru\`"/$UID}
+# shellcheck disable=SC2016
+command=${command//'$(id -u)'/$UID}
+# shellcheck disable=SC2016
+command=${command//'$(id -ru)'/$UID}
+# shellcheck disable=SC2016
+command=${command//'`id -u`'/$UID}
+# shellcheck disable=SC2016
+command=${command//'`id -ru`'/$UID}
 
 # Quote-aware split of the command line: one word per line, an empty line
 # wherever a shell control operator (`; && || | ( )`) ends a command, and
