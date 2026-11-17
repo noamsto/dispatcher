@@ -89,7 +89,7 @@ worker_browser_env() {
 
 # worker_tmux_env <worktree> — print a TMUX_TMPDIR assignment, with a trailing
 # space, for a private tmux socket dir per worktree. An inherited TMUX_TMPDIR is
-# the owner's runtime dir on a systemd host, and clearing it would wipe the D-Bus,
+# the owner's runtime dir on a systemd host, and deleting it wipes the D-Bus,
 # systemd and tmux sockets. $TMUX still routes the pane's own tmux calls to the
 # live server. Keyed on the worktree like the browser session, so role panes and
 # resume share it. It sits under the cache dir, not /tmp, so no shared predictable
