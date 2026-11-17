@@ -5102,6 +5102,7 @@ tmux set-window-option -t "$win" @crew_name "$agent_name"
 tmux set-window-option -t "$win" @crew_dir "$crew_dir"
 tmux set-window-option -t "$win" @crew_branch "$branch"
 tmux set-window-option -t "$win" @crew_id "$crew_id"
+tmux set-window-option -t "$win" @crew_repo "$(_repo_name "${crew_dir%/crew}")"
 if [ -n "$task_dispatcher_host" ]; then
   tmux set-window-option -t "$win" @crew_dispatcher_host "$task_dispatcher_host"
 else
