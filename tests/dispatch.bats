@@ -1980,6 +1980,23 @@ EOF
   done
 }
 
+# #1617: a --pr or provided-plan launch must not read as license to skip First action.
+@test "claude and cursor launch prompts name First action as step 1, provided plan included" {
+  stub_launch_bins
+  DISPATCH_PROFILE=personal run run_dispatch trivial haiku --agent claude --effort low --plan provided --crew-id c1 42 "first action claude"
+  [ "$status" -eq 0 ]
+  _replay_lead_launch claude "claude --name"
+  last=$((${#argv[@]} - 1))
+  [[ "${argv[last]}" == *"Step 1, before anything else: do the protocol's First action"* ]]
+  [[ "${argv[last]}" == *"do not re-plan"* ]]
+
+  DISPATCH_PROFILE=work run run_dispatch deep kimi-k3-high --agent cursor --effort high --crew-id c2 43 "first action cursor"
+  [ "$status" -eq 0 ]
+  _replay_lead_launch cursor-agent "--model 'kimi-k3-high' 'Read"
+  last=$((${#argv[@]} - 1))
+  [[ "${argv[last]}" == *"Step 1, before anything else: do the protocol's First action"* ]]
+}
+
 @test "claude lead: protocol_dir is stamped in the task doc and named in the prompt" {
   stub_launch_bins
   DISPATCH_PROFILE=personal run run_dispatch standard sonnet --agent claude --effort medium --crew-id c1 42 "claude protocol dir"
