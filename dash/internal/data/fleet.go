@@ -362,8 +362,14 @@ func CollectReapKeeps(ctx context.Context, r Runner, cfg Config) map[WorkerKey]s
 	for _, k := range doc.Keeps {
 		keeps[WorkerKey{Crew: k.Crew, Branch: k.Branch}] = k.Reason
 	}
+	// Only a branch kept in one place gets the crew-less entry: the same slug
+	// in two repos would otherwise lend one repo's reason to the other.
+	count := map[string]int{}
 	for _, k := range doc.Keeps {
-		if _, ok := keeps[WorkerKey{Branch: k.Branch}]; !ok {
+		count[k.Branch]++
+	}
+	for _, k := range doc.Keeps {
+		if _, ok := keeps[WorkerKey{Branch: k.Branch}]; !ok && count[k.Branch] == 1 {
 			keeps[WorkerKey{Branch: k.Branch}] = k.Reason
 		}
 	}

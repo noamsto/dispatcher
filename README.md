@@ -913,6 +913,7 @@ crew dash --json   # the collected model, as JSON (unchanged)
 crew dash --json --view <name>           # one view model as JSON
 crew dash --json --view <name> --watch   # one JSON line per bus change
 crew dash --json --view fleet --watch    # the machine-wide fleet view
+crew dash --json --view fleet --keeps    # also probe `crew reap --dry-run --json` for keep reasons (~30s)
 ```
 
 `crew dash` execs `crew-dash`, a Go binary under `dash/`. Eight tabs. The first

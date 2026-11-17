@@ -252,17 +252,6 @@ func TestCollectReapKeeps(t *testing.T) {
 	}
 }
 
-func TestCollectReapKeepsBranchFallbackFirstWins(t *testing.T) {
-	cfg := Config{Crew: []string{"crew"}}
-	r := &FakeRunner{Responses: map[string]FakeResponse{reapKeepsKey: {
-		Stdout: []byte(`{"keeps":[{"crew":"new","branch":"feat/a","reason":"first"},{"crew":"old","branch":"feat/a","reason":"second"}]}`),
-	}}}
-	got := CollectReapKeeps(context.Background(), r, cfg)
-	if got[WorkerKey{Branch: "feat/a"}] != "first" || got[WorkerKey{Crew: "old", Branch: "feat/a"}] != "second" {
-		t.Errorf("keeps = %v", got)
-	}
-}
-
 func TestCollectReapKeepsDecodesPartialFailure(t *testing.T) {
 	cfg := Config{Crew: []string{"crew"}}
 	r := &FakeRunner{Responses: map[string]FakeResponse{reapKeepsKey: {
@@ -288,5 +277,18 @@ func TestCollectReapKeepsToleratesFailure(t *testing.T) {
 	}
 	if got := CollectReapKeeps(context.Background(), &FakeRunner{}, cfg); got != nil {
 		t.Errorf("no response: keeps = %v, want nil", got)
+	}
+}
+
+func TestCollectReapKeepsAmbiguousBranchHasNoFallback(t *testing.T) {
+	r := &FakeRunner{Responses: map[string]FakeResponse{
+		"crew reap --fleet --dry-run --json": {Stdout: []byte(`{"keeps":[{"repo":"a","crew":"c1","branch":"chore/x","reason":"ra"},{"repo":"b","crew":"c2","branch":"chore/x","reason":"rb"},{"repo":"a","crew":"c1","branch":"feat/u","reason":"ru"}]}`)},
+	}}
+	got := CollectReapKeeps(t.Context(), r, Config{Crew: []string{"crew"}})
+	if _, ok := got[WorkerKey{Branch: "chore/x"}]; ok {
+		t.Errorf("ambiguous branch got a crew-less entry: %v", got)
+	}
+	if got[WorkerKey{Branch: "feat/u"}] != "ru" {
+		t.Errorf("unique branch lost its fallback: %v", got)
 	}
 }

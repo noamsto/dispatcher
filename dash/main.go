@@ -81,6 +81,7 @@ func run() int {
 		mapDeps, closeMap := resolveMap(runner)
 		defer closeMap()
 		fleet := newFleetCollector(runner, cfg)
+		fleet.background = true
 		deps := ui.Deps{
 			Ctx: ctx,
 			Load: ui.Loaders{
@@ -169,6 +170,7 @@ func runView(ctx context.Context, cfg data.Config, o opts) int {
 	var commons func() []string
 	if o.view == "fleet" {
 		fc := newFleetCollector(runner, cfg)
+		fc.background = o.watch
 		commons = fc.knownCommons
 		collect = func(ctx context.Context) (any, error) {
 			if o.keeps {
@@ -287,6 +289,9 @@ type fleetCollector struct {
 	last    *view.FleetInputs
 
 	keeps keepCache
+	// background lets stream start keep refreshes; a one-shot process would
+	// orphan the probe when it exits.
+	background bool
 }
 
 const (
@@ -350,7 +355,7 @@ func (k *keepCache) cached(now func() time.Time, fetch func() map[data.WorkerKey
 }
 
 // fetchNow blocks for one fetch unless the value is fresh, joining a refresh
-// already in flight; it gives up with the current value when ctx ends.
+// already in flight; it returns nil when ctx ends.
 func (k *keepCache) fetchNow(ctx context.Context, now func() time.Time, fetch func() map[data.WorkerKey]string) map[data.WorkerKey]string {
 	val, done, wait := k.begin(now(), true)
 	if wait != nil {
@@ -449,7 +454,9 @@ func (fc *fleetCollector) stream(ctx context.Context, nowSec int64, emit func(vi
 	emit(acc)
 	// Started after the first emit so no subprocess precedes it; a stale value
 	// is replaced for the next stream.
-	fc.reapKeeps(ctx)
+	if fc.background {
+		fc.reapKeeps(ctx)
+	}
 
 	var mu sync.Mutex
 	update := func(apply func(*view.FleetInputs), done func(*view.FleetPending)) {
@@ -592,6 +599,8 @@ func parseArgs(args []string) (opts, error) {
 		return opts{}, errors.New("--view needs --json")
 	case o.watch && o.view == "":
 		return opts{}, errors.New("--watch needs --view")
+	case o.keeps && o.watch:
+		return opts{}, errors.New("--keeps does not combine with --watch")
 	case o.keeps && (!jsonFlag || (o.view != "fleet" && o.view != "overview")):
 		return opts{}, errors.New("--keeps needs --json --view fleet or overview")
 	case onceFlag:

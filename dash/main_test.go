@@ -828,6 +828,7 @@ func TestFleetCollectorCachesReapKeeps(t *testing.T) {
 		"crew reap --fleet --dry-run --json": {Stdout: []byte(`{"keeps":[{"crew":"c1","branch":"feat/a","reason":"r"}]}`)},
 	}}
 	fc := newFleetCollector(r, data.Config{Crew: []string{"crew"}})
+	fc.background = true
 	if in := fc.collect(context.Background(), 1794800010); in.ReapKeeps != nil {
 		t.Fatalf("first collect must not wait for the probe, got %v", in.ReapKeeps)
 	}
@@ -865,6 +866,20 @@ func TestParseArgsKeeps(t *testing.T) {
 	} {
 		if _, err := parseArgs(bad); err == nil {
 			t.Errorf("%v: want error", bad)
+		}
+	}
+}
+
+func TestOneShotCollectorStartsNoKeepsProbe(t *testing.T) {
+	r := &data.FakeRunner{Responses: map[string]data.FakeResponse{
+		"crew reap --fleet --dry-run --json": {Stdout: []byte(`{"keeps":[]}`)},
+	}}
+	fc := newFleetCollector(r, data.Config{Crew: []string{"crew"}})
+	fc.collect(context.Background(), 1794800010)
+	time.Sleep(50 * time.Millisecond)
+	for _, c := range r.CallsSnapshot() {
+		if slices.Contains(c.Args, "reap") {
+			t.Fatalf("one-shot collect probed reap: %v", c.Args)
 		}
 	}
 }
