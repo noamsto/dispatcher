@@ -187,7 +187,15 @@ runtime_env() {
     'rm -rf /run' 'rm -rf /run/user/$(whoami)' 'rm -rf "/run/user/$(whoami)"' 'rm -rf /run/user/*' \
     'rm -rf "$XDG_RUNTIME_DIR"/*' 'rm -rf /run/user/1000/../1000/' 'sudo rm -rf /run/user/1000' \
     'command rm -r -- /run/user/1000' 'X=/run/user/1000; rm -rf "$X"' \
-    'cd /tmp && rm -rf "$XDG_RUNTIME_DIR"'; do
+    'cd /tmp && rm -rf "$XDG_RUNTIME_DIR"' \
+    'XDG_RUNTIME_DIR=$(mktemp -d) dbus-run-session -- true; rm -rf "$XDG_RUNTIME_DIR"' \
+    'XDG_RUNTIME_DIR=/tmp/xdg-test Hyprland; rm -rf "$XDG_RUNTIME_DIR"' \
+    'env XDG_RUNTIME_DIR=/tmp/x foo; rm -rf "$XDG_RUNTIME_DIR"' \
+    'TMUX_TMPDIR=/tmp/t tmux -L t new -d; rm -rf "$TMUX_TMPDIR"' \
+    'rm -rf "${XDG_RUNTIME_DIR:?}/tmux-1000"' 'rm -rf "${XDG_RUNTIME_DIR:?}"' \
+    'rm -rf "${XDG_RUNTIME_DIR?}"' 'rm -rf "${XDG_RUNTIME_DIR=x}"' \
+    'd=$XDG_RUNTIME_DIR; rm -rf "$d"' 'd=${XDG_RUNTIME_DIR}/tmux-1000; rm -rf "$d"' \
+    'export D=$XDG_RUNTIME_DIR; rm -rf "$D"'; do
     run run_guard <<<"$(claude_bash "$cmd")"
     echo "claude: $cmd"
     assert_block 'runtime dir'
@@ -195,6 +203,20 @@ runtime_env() {
     echo "pi: $cmd"
     assert_block 'runtime dir'
   done
+}
+
+@test "tmux-server-guard: refuses a delete of a prefix-stripped \$TMUX" {
+  runtime_env
+  export TMUX=/run/user/1000/tmux-1000/default,1,0
+  run run_guard <<<"$(claude_bash 'rm -rf "${TMUX%%,*}"')"
+  assert_block 'runtime dir'
+}
+
+@test "tmux-server-guard: refuses a runtime-dir delete under POSIXLY_CORRECT" {
+  runtime_env
+  export POSIXLY_CORRECT=1
+  run run_guard <<<"$(claude_bash 'rm -rf "$XDG_RUNTIME_DIR"')"
+  assert_block 'runtime dir'
 }
 
 @test "tmux-server-guard: refuses a runtime-dir delete in the codex and cursor shapes" {
@@ -221,7 +243,9 @@ runtime_env() {
     'rm -rf "$unsetvar/"' 'for d in a b; do rm -rf "$d/"; done' 'read -r TMUX_TMPDIR <f; rm -rf "$TMUX_TMPDIR"' \
     'rm -rf "$1"' 'rm -rf "$shape/x"' 'rm -rf "$command"' 'rm -rf /tmp/x /home/u/scratch' 'rm -rf build' \
     "find . -name '*.o' -delete" 'find "$XDG_RUNTIME_DIR" -name x' 'gtrash restore "$XDG_RUNTIME_DIR"' \
-    'echo rm -rf "$XDG_RUNTIME_DIR"' 'ls /run/user/1000'; do
+    'echo rm -rf "$XDG_RUNTIME_DIR"' 'ls /run/user/1000' \
+    'export TMUX_TMPDIR=$(mktemp -d); rm -rf "$TMUX_TMPDIR"' \
+    'd=`mktemp -d`; rm -rf "$d/"' 'd=$(mktemp -d); rm -rf "$d"/*'; do
     run run_guard <<<"$(claude_bash "$cmd")"
     echo "claude: $cmd"
     assert_allow

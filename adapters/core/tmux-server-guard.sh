@@ -20,8 +20,9 @@
 # -delete) of a path at, below or above the per-user runtime dir
 # ($XDG_RUNTIME_DIR, /run/user/<x>), which holds the D-Bus, systemd and tmux
 # sockets. Paths resolve lexically, never evaluated: exported variables from
-# the guard's environment, NAME=literal bindings earlier in the line, and the
-# uid. A part it cannot know (an unset, loop or read variable, `$1`, a glob, a
+# the guard's environment, NAME=value bindings earlier in the line (a bare
+# assignment or export; a `NAME=value cmd` prefix applies to cmd only), and
+# the uid. A part it cannot know (an unset, loop or read variable, `$1`, a glob, a
 # command substitution) matches any one segment, but a relative path or one
 # whose first part is unknown is allowed, since that is how a private scratch
 # dir from `mktemp -d` looks.
@@ -307,15 +308,24 @@ del_target=''
 # A path segment the guard cannot know; it matches any segment.
 unk=$'\002'
 re_name='^[A-Za-z_][A-Za-z0-9_]*$'
-re_brace='^([A-Za-z_][A-Za-z0-9_]*)((:-|-|:=).*)?$'
+# A `%`/`%%` strip leaves a prefix of the value, so judging the whole value
+# only leans toward deny.
+re_brace='^([A-Za-z_][A-Za-z0-9_]*)((:?[-=?]|%%?).*)?$'
+# Command-position NAME=value words not yet known to be bare assignments.
+pend=()
+pend_open=0
+pend_hold=0
 
-# Only a plain NAME=literal binding is known; any other binding of a name the
-# line uses later (export, read, for, unset, NAME=$(…)) makes it unknown.
+# A NAME=value binding holds its expanded value: a command substitution, a
+# parameter the guard cannot know, or an empty result is unknown. Any other
+# binding of a name the line uses later (read, for, unset) makes it unknown.
 bind_word() { # <word>
   local v
   if [[ $1 =~ ^[A-Za-z_][A-Za-z0-9_]*= ]]; then
     v=${1#*=}
-    case $v in *'$'* | *'`'*) v=$unk ;; esac
+    expand_word "$v"
+    v=$ex
+    [[ -n $v ]] || v=$unk
     bound_names+="${1%%=*} "
     bound_n+=("${1%%=*}")
     bound_v+=("$v")
@@ -355,9 +365,10 @@ lookup_var() { # <name>
   esac
   [[ $1 =~ $re_name ]] || return 0
   # export -p, not compgen -e: nixpkgs' non-interactive bash has no compgen.
+  # Posix mode (POSIXLY_CORRECT) prints `export NAME=` lines.
   if [[ -z $exported ]]; then exported=$'\n'$(export -p)$'\n'; fi
   case $exported in
-  *$'\n'"declare -x $1="*) [[ -z ${!1:-} ]] || lv=${!1} ;;
+  *$'\n'"declare -x $1="* | *$'\n'"export $1="*) [[ -z ${!1:-} ]] || lv=${!1} ;;
   esac
 }
 
@@ -557,6 +568,19 @@ while IFS= read -r w; do
     flush_tmux
     flush_del
     [[ -z $deny_what && -z $del_target ]] || break
+    # A prefix assignment applies to its command only; a simple command that
+    # ends with no command word is a bare assignment, which persists. An
+    # unquoted `X=$(…)` or `` X=`…` `` is split at the substitution, so the
+    # pending words wait out its two boundaries before the command word decides.
+    if ((pend_open)); then
+      pend_open=0
+      pend_hold=1
+    elif ((pend_hold)); then
+      pend_hold=0
+    else
+      for p in ${pend[@]+"${pend[@]}"}; do bind_word "$p"; done
+      pend=()
+    fi
     at_cmd=1
     wrapper=''
     wrapper_val=0
@@ -591,9 +615,20 @@ while IFS= read -r w; do
     continue
   fi
   if [[ $w =~ ^[A-Za-z_][A-Za-z0-9_]*= ]]; then
-    bind_word "$w"
+    # After a command wrapper (`env X=… cmd`) it never persists; after a
+    # keyword it may be a bare assignment.
+    case $wrapper in
+    '' | do | then | if | elif | else | while | until | '!' | '{')
+      if ((!pend_hold)); then
+        pend+=("$w")
+        case ${w#*=} in '' | *'$') pend_open=1 ;; *) pend_open=0 ;; esac
+      fi
+      ;;
+    esac
     continue
   fi
+  pend_open=0
+  ((pend_hold)) || pend=()
   if [[ -n $wrapper && $w == -* ]]; then
     if [[ $w != --* ]]; then
       rest=${w#-}
