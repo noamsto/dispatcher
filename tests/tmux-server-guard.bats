@@ -195,7 +195,19 @@ runtime_env() {
     'rm -rf "${XDG_RUNTIME_DIR:?}/tmux-1000"' 'rm -rf "${XDG_RUNTIME_DIR:?}"' \
     'rm -rf "${XDG_RUNTIME_DIR?}"' 'rm -rf "${XDG_RUNTIME_DIR=x}"' \
     'd=$XDG_RUNTIME_DIR; rm -rf "$d"' 'd=${XDG_RUNTIME_DIR}/tmux-1000; rm -rf "$d"' \
-    'export D=$XDG_RUNTIME_DIR; rm -rf "$D"'; do
+    'export D=$XDG_RUNTIME_DIR; rm -rf "$D"' \
+    'XDG_RUNTIME_DIR=$(cd /tmp && mktemp -d) X; rm -rf "$XDG_RUNTIME_DIR"' \
+    'XDG_RUNTIME_DIR=$(mktemp -d || exit 1) Hyprland; rm -rf "$XDG_RUNTIME_DIR"' \
+    'XDG_RUNTIME_DIR=/tmp/xdg-`whoami` cmd; rm -rf "$XDG_RUNTIME_DIR"' \
+    '(export XDG_RUNTIME_DIR=$(mktemp -d); Hyprland); rm -rf "$XDG_RUNTIME_DIR"' \
+    'XDG_RUNTIME_DIR=/tmp/x | true; rm -rf "$XDG_RUNTIME_DIR"' \
+    'XDG_RUNTIME_DIR=/tmp/x & rm -rf "$XDG_RUNTIME_DIR"' \
+    'echo $(XDG_RUNTIME_DIR=/tmp/x); rm -rf "$XDG_RUNTIME_DIR"' \
+    '[ -d "$XDG_RUNTIME_DIR" ] || XDG_RUNTIME_DIR=$(mktemp -d); rm -rf "$XDG_RUNTIME_DIR"' \
+    'rm -rf "${unset:-$XDG_RUNTIME_DIR}"' 'rm -rf "${a:-${XDG_RUNTIME_DIR}}"' \
+    'X=/run/$(echo user)/1000; rm -rf "$X"' 'd=$d/x; d=$XDG_RUNTIME_DIR; rm -rf "$d"' \
+    'export XDG_RUNTIME_DIR=$(mktemp -d); rm -rf "$XDG_RUNTIME_DIR"' \
+    'export TMUX_TMPDIR=$(mktemp -d); rm -rf "$TMUX_TMPDIR"'; do
     run run_guard <<<"$(claude_bash "$cmd")"
     echo "claude: $cmd"
     assert_block 'runtime dir'
@@ -233,19 +245,41 @@ runtime_env() {
   assert_block "'\$TMUX_TMPDIR'"
   assert_block 'mktemp -d'
   assert_block 'D-Bus'
+  assert_block 'name you created'
+  assert_block 'd=$(mktemp -d); rm -rf "$d"'
 }
 
 @test "tmux-server-guard: allows deletes it cannot tie to the runtime dir" {
   runtime_env
   local cmd
   for cmd in 'd=$(mktemp -d); touch "$d/x"; rm -rf "$d"' \
-    'unset TMUX; export TMUX_TMPDIR=$(mktemp -d); tmux -L x new-session -d; tmux -L x kill-server; rm -rf "$TMUX_TMPDIR"' \
-    'rm -rf "$unsetvar/"' 'for d in a b; do rm -rf "$d/"; done' 'read -r TMUX_TMPDIR <f; rm -rf "$TMUX_TMPDIR"' \
+    'rm -rf "$unsetvar/"' 'for d in a b; do rm -rf "$d/"; done' \
     'rm -rf "$1"' 'rm -rf "$shape/x"' 'rm -rf "$command"' 'rm -rf /tmp/x /home/u/scratch' 'rm -rf build' \
     "find . -name '*.o' -delete" 'find "$XDG_RUNTIME_DIR" -name x' 'gtrash restore "$XDG_RUNTIME_DIR"' \
     'echo rm -rf "$XDG_RUNTIME_DIR"' 'ls /run/user/1000' \
-    'export TMUX_TMPDIR=$(mktemp -d); rm -rf "$TMUX_TMPDIR"' \
     'd=`mktemp -d`; rm -rf "$d/"' 'd=$(mktemp -d); rm -rf "$d"/*'; do
+    run run_guard <<<"$(claude_bash "$cmd")"
+    echo "claude: $cmd"
+    assert_allow
+    run run_guard <<<"$(pi_bash "$cmd")"
+    echo "pi: $cmd"
+    assert_allow
+  done
+}
+
+# The env a dispatched worker launches with: a private TMUX_TMPDIR.
+worker_env() {
+  export XDG_RUNTIME_DIR=/run/user/1000 TMUX_TMPDIR="$BATS_TEST_TMPDIR/priv"
+}
+
+@test "tmux-server-guard: allows deleting private scratch dirs in the launched env" {
+  worker_env
+  local cmd
+  for cmd in 'unset TMUX; export TMUX_TMPDIR=$(mktemp -d); tmux -L x new-session -d; tmux -L x kill-server; rm -rf "$TMUX_TMPDIR"' \
+    'read -r TMUX_TMPDIR <f; rm -rf "$TMUX_TMPDIR"' 'd=$(mktemp -d); touch "$d/x"; rm -rf "$d"' \
+    'd=$(mktemp -d | tee log); rm -rf "$d"' 'TMUX_TMPDIR=$(mktemp -d | tail -1); rm -rf "$TMUX_TMPDIR"' \
+    'd=$(mktemp -d; true); rm -rf "$d"' 'rt=$(mktemp -d); XDG_RUNTIME_DIR=$rt Hyprland; rm -rf "$rt"' \
+    '[ -d "$X" ] || X=$(mktemp -d); rm -rf "$X"' 'd=`mktemp -d`; rm -rf "$d/"'; do
     run run_guard <<<"$(claude_bash "$cmd")"
     echo "claude: $cmd"
     assert_allow

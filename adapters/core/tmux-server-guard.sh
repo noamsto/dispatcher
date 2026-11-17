@@ -19,13 +19,17 @@
 # Also denied: a delete (rm, rmdir, unlink, trash-put, gtrash put, find
 # -delete) of a path at, below or above the per-user runtime dir
 # ($XDG_RUNTIME_DIR, /run/user/<x>), which holds the D-Bus, systemd and tmux
-# sockets. Paths resolve lexically, never evaluated: exported variables from
-# the guard's environment, NAME=value bindings earlier in the line (a bare
-# assignment or export; a `NAME=value cmd` prefix applies to cmd only), and
-# the uid. A part it cannot know (an unset, loop or read variable, `$1`, a glob, a
-# command substitution) matches any one segment, but a relative path or one
-# whose first part is unknown is allowed, since that is how a private scratch
-# dir from `mktemp -d` looks.
+# sockets. Paths resolve lexically, never evaluated. A `$NAME` stands for every
+# value it may hold: its exported value in the guard's environment plus every
+# `NAME=value` or `${NAME:=value}` anywhere on the line, whatever its order or
+# scope (prefix, subshell, pipe element, branch, substitution). The delete is
+# refused when any of them reaches the runtime dir, so rebinding an inherited
+# name to a private dir does not make deleting through it safe; deleting
+# through a fresh name (`d=$(mktemp -d); rm -rf "$d"`) is. A part it cannot know
+# (an unset, loop or read variable, `$1`, a glob, a command substitution)
+# matches any one segment, but a relative path or one whose first part is
+# unknown is allowed, since that is how a private scratch dir from `mktemp -d`
+# looks. An operand with more than 16 candidate values is refused.
 #
 #   engine        event                  command at             verdict shape
 #   claude        PreToolUse Bash        tool_input.command     hookSpecificOutput deny
@@ -297,146 +301,282 @@ flush_tmux() {
 
 in_del=''
 dargs=()
-bind_mode=''
-bound_names=' '
-bound_n=()
-bound_v=()
 exported=''
 xdg_root=()
 xdg_done=0
 del_target=''
 # A path segment the guard cannot know; it matches any segment.
 unk=$'\002'
-re_name='^[A-Za-z_][A-Za-z0-9_]*$'
-# A `%`/`%%` strip leaves a prefix of the value, so judging the whole value
-# only leans toward deny.
-re_brace='^([A-Za-z_][A-Za-z0-9_]*)((:?[-=?]|%%?).*)?$'
-# Command-position NAME=value words not yet known to be bare assignments.
-pend=()
-pend_open=0
-pend_hold=0
+# Most candidates one operand may expand to; past it the delete is refused.
+max_cands=16
+# Every NAME=value and ${NAME:=value} on the line: names in $bn, raw values
+# (quotes stripped, substitutions made $unk) in $bv.
+bn=()
+bv=()
+re_bind_word='(^|[[:space:];&|()`])([A-Za-z_][A-Za-z0-9_]*)=$'
+re_bind_brace='[$][{]([A-Za-z_][A-Za-z0-9_]*):?=$'
+collected=0
+visiting=' '
+over=0
 
-# A NAME=value binding holds its expanded value: a command substitution, a
-# parameter the guard cannot know, or an empty result is unknown. Any other
-# binding of a name the line uses later (read, for, unset) makes it unknown.
-bind_word() { # <word>
-  local v
-  if [[ $1 =~ ^[A-Za-z_][A-Za-z0-9_]*= ]]; then
-    v=${1#*=}
-    expand_word "$v"
-    v=$ex
-    [[ -n $v ]] || v=$unk
-    bound_names+="${1%%=*} "
-    bound_n+=("${1%%=*}")
-    bound_v+=("$v")
-  elif [[ $1 =~ $re_name ]]; then
-    bound_names+="$1 "
-    bound_n+=("$1")
-    bound_v+=("$unk")
-  fi
+# Index just past the `)` matching the `(` before $2 in $1, quotes skipped.
+skip_parens() { # <string> <index>
+  local s=$1 n=${#1} d=1 c
+  sp=$2
+  while ((sp < n && d > 0)); do
+    c=${s:sp:1}
+    sp=$((sp + 1))
+    case $c in
+    '(') d=$((d + 1)) ;;
+    ')') d=$((d - 1)) ;;
+    "'" | '"')
+      while ((sp < n)) && [[ ${s:sp:1} != "$c" ]]; do sp=$((sp + 1)); done
+      sp=$((sp + 1))
+      ;;
+    \\) sp=$((sp + 1)) ;;
+    esac
+  done
 }
 
-# Sets $lv to NAME's value, or $unk. Only exported names are read from the
-# guard's environment: a guard-internal or shell-only variable says nothing
-# about the worker's shell. An unset or empty one is unknown, never empty, so
-# `rm -rf "$dir/"` is not `rm -rf /`.
-lookup_var() { # <name>
-  local i
-  lv=$unk
-  case $bound_names in
-  *" $1 "*)
-    for ((i = ${#bound_n[@]} - 1; i >= 0; i--)); do
-      if [[ ${bound_n[i]} == "$1" ]]; then
-        lv=${bound_v[i]}
-        return 0
-      fi
+# Index of the `}` matching the `${` whose body starts at $2 in $1, nested
+# braces counted; -1 when unmatched.
+match_brace() { # <string> <index>
+  local s=$1 n=${#1} d=1
+  mb=$2
+  while ((mb < n)); do
+    case ${s:mb:1} in
+    '{') d=$((d + 1)) ;;
+    '}')
+      d=$((d - 1))
+      ((d > 0)) || return 0
+      ;;
+    esac
+    mb=$((mb + 1))
+  done
+  mb=-1
+}
+
+# Fill $bn/$bv from the raw command. A binding counts wherever it appears —
+# prefix, subshell, pipe element, branch, inside a substitution — so a name's
+# candidates are a superset of what the shell could hold. `$( … )` and
+# backticks are opaque, so a value runs to the first blank or operator outside
+# them and quotes.
+collect_bindings() {
+  local rest=$command pre='' name v c i n q dq
+  collected=1
+  # The text before each `=` decides whether it binds; only the `=` itself is
+  # kept as context for the next one.
+  while [[ $rest == *=* ]]; do
+    pre+=${rest%%=*}=
+    rest=${rest#*=}
+    if [[ $pre =~ $re_bind_brace ]]; then
+      match_brace "$rest" 0
+      ((mb >= 0)) || mb=${#rest}
+      bn+=("${BASH_REMATCH[1]}")
+      bv+=("${rest:0:mb}")
+      pre='='
+      continue
+    fi
+    if [[ ! $pre =~ $re_bind_word ]]; then
+      pre='='
+      continue
+    fi
+    name=${BASH_REMATCH[2]}
+    pre='='
+    v=''
+    i=0
+    n=${#rest}
+    dq=0
+    while ((i < n)); do
+      c=${rest:i:1}
+      case $c in
+      ' ' | $'\t' | $'\n' | ';' | '|' | '&' | '(' | ')' | '<' | '>')
+        ((dq)) || break
+        v+=$c
+        ;;
+      '"') dq=$((1 - dq)) ;;
+      "'")
+        if ((dq)); then
+          v+=$c
+        else
+          q=${rest:i+1}
+          q=${q%%"'"*}
+          v+=$q
+          i=$((i + ${#q} + 1))
+        fi
+        ;;
+      \\)
+        i=$((i + 1))
+        v+=${rest:i:1}
+        ;;
+      '`')
+        v+=$unk
+        i=$((i + 1))
+        while ((i < n)) && [[ ${rest:i:1} != '`' ]]; do i=$((i + 1)); done
+        ;;
+      '$')
+        if [[ ${rest:i+1:1} == '(' ]]; then
+          v+=$unk
+          skip_parens "$rest" $((i + 2))
+          i=$sp
+          continue
+        fi
+        if [[ ${rest:i+1:1} == '{' ]]; then
+          match_brace "$rest" $((i + 2))
+          ((mb >= 0)) || mb=$((n - 1))
+          v+=${rest:i:mb-i+1}
+          i=$((mb + 1))
+          continue
+        fi
+        v+=$c
+        ;;
+      *) v+=$c ;;
+      esac
+      i=$((i + 1))
     done
-    ;;
-  esac
+    bn+=("$name")
+    bv+=("$v")
+  done
+}
+
+# Sets $lv to NAME's candidate values: its exported value from the guard's
+# environment, plus the expansion of every binding of NAME on the line. Only
+# exported names are read from the environment: a guard-internal or shell-only
+# variable says nothing about the worker's shell. An unset or empty value, or
+# a name with no candidates, is unknown, never empty, so `rm -rf "$dir/"` is
+# not `rm -rf /`. A binding that refers back to its own name (`d=$d/x`) reads
+# that name as unknown.
+lookup_var() { # <name>
+  local i e
+  local -a out=()
   case $1 in
   UID)
-    lv=$UID
+    lv=("$UID")
     return 0
     ;;
   EUID)
-    lv=$EUID
+    lv=("$EUID")
     return 0
     ;;
   esac
-  [[ $1 =~ $re_name ]] || return 0
   # export -p, not compgen -e: nixpkgs' non-interactive bash has no compgen.
   # Posix mode (POSIXLY_CORRECT) prints `export NAME=` lines.
   if [[ -z $exported ]]; then exported=$'\n'$(export -p)$'\n'; fi
   case $exported in
-  *$'\n'"declare -x $1="* | *$'\n'"export $1="*) [[ -z ${!1:-} ]] || lv=${!1} ;;
+  *$'\n'"declare -x $1="* | *$'\n'"export $1="*) [[ -z ${!1:-} ]] || out=("${!1}") ;;
   esac
+  ((collected)) || collect_bindings
+  case $visiting in
+  *" $1 "*) out+=("$unk") ;;
+  *)
+    visiting+="$1 "
+    for ((i = 0; i < ${#bn[@]}; i++)); do
+      [[ ${bn[i]} == "$1" ]] || continue
+      expand_word "${bv[i]}"
+      for e in "${exs[@]}"; do out+=("${e:-$unk}"); done
+    done
+    visiting=${visiting%"$1 "}
+    ;;
+  esac
+  if ((${#out[@]} > max_cands)); then over=1; fi
+  ((${#out[@]})) || out=("$unk")
+  lv=("${out[@]}")
 }
 
-# Expand the parameters in one operand into $ex, left to right; whatever the
-# guard cannot know (positional and special parameters, other ${…} forms,
-# command substitutions) becomes $unk.
+# Expand the parameters in one word into $exs, the list of values it may take
+# (the cross product of its parameters' candidates); whatever the guard cannot
+# know (positional and special parameters, other ${…} forms, command
+# substitutions) becomes $unk. More than $max_cands sets $over.
+#   ${X:-w} ${X-w} ${X:=w} ${X=w}   candidates of X and of w
+#   ${X:+w} ${X+w}                  candidates of w, or unknown
+#   ${X:?w} ${X?w} ${X%w} ${X%%w}   candidates of X (a `%` strip leaves a
+#                                   prefix, so the whole value leans to deny)
 expand_word() { # <word>
-  local s=$1 i=0 n=${#1} c inner depth
-  ex=''
-  while ((i < n)); do
+  local s=$1 i=0 n=${#1} c inner name op lit='' a l
+  local -a acc=('') vals next
+  while ((i <= n)); do
     c=${s:i:1}
     i=$((i + 1))
-    if [[ $c == '`' ]]; then
-      ex+=$unk
+    if ((i <= n)) && [[ $c != '$' && $c != '`' ]]; then
+      lit+=$c
+      continue
+    fi
+    if ((i > n)); then
+      vals=('')
+    elif [[ $c == '`' ]]; then
+      vals=("$unk")
       while ((i < n)) && [[ ${s:i:1} != '`' ]]; do i=$((i + 1)); done
       i=$((i + 1))
-      continue
-    fi
-    if [[ $c != '$' ]]; then
-      ex+=$c
-      continue
-    fi
-    c=${s:i:1}
-    case $c in
-    '{')
-      inner=${s:i+1}
-      if [[ $inner != *'}'* ]]; then
-        ex+=$unk
-        return 0
-      fi
-      inner=${inner%%'}'*}
-      i=$((i + ${#inner} + 2))
-      if [[ $inner =~ $re_brace ]]; then
-        lookup_var "${BASH_REMATCH[1]}"
-        ex+=$lv
-      else
-        ex+=$unk
-      fi
-      ;;
-    '(')
-      ex+=$unk
-      depth=1
-      i=$((i + 1))
-      while ((i < n && depth > 0)); do
-        case ${s:i:1} in
-        '(') depth=$((depth + 1)) ;;
-        ')') depth=$((depth - 1)) ;;
-        esac
+    else
+      c=${s:i:1}
+      case $c in
+      '{')
+        match_brace "$s" $((i + 1))
+        if ((mb < 0)); then
+          vals=("$unk")
+          i=$n
+        else
+          inner=${s:i+1:mb-i-1}
+          i=$((mb + 1))
+          vals=("$unk")
+          if [[ $inner =~ ^([A-Za-z_][A-Za-z0-9_]*)(.*)$ ]]; then
+            name=${BASH_REMATCH[1]}
+            op=${BASH_REMATCH[2]}
+            case $op in
+            '' | :\?* | \?* | %*)
+              lookup_var "$name"
+              vals=("${lv[@]}")
+              ;;
+            :-* | :=* | -* | =*)
+              lookup_var "$name"
+              vals=("${lv[@]}")
+              op=${op#:}
+              expand_word "${op:1}"
+              vals+=("${exs[@]}")
+              ;;
+            :+* | +*)
+              op=${op#:}
+              expand_word "${op:1}"
+              vals=("${exs[@]}" "$unk")
+              ;;
+            esac
+          fi
+        fi
+        ;;
+      '(')
+        vals=("$unk")
+        skip_parens "$s" $((i + 1))
+        i=$sp
+        ;;
+      [A-Za-z_])
+        inner=${s:i}
+        inner=${inner%%[!A-Za-z0-9_]*}
+        i=$((i + ${#inner}))
+        lookup_var "$inner"
+        vals=("${lv[@]}")
+        ;;
+      [0-9@*#\$!?-])
+        vals=("$unk")
         i=$((i + 1))
-      done
-      ;;
-    [A-Za-z_])
-      inner=${s:i}
-      inner=${inner%%[!A-Za-z0-9_]*}
-      i=$((i + ${#inner}))
-      lookup_var "$inner"
-      ex+=$lv
-      ;;
-    [0-9@*#\$!?-])
-      ex+=$unk
-      i=$((i + 1))
-      ;;
-    *)
-      # A bare `$`: the remnant an unquoted `$(…)` leaves after the split.
-      ex+=$unk
-      ;;
-    esac
+        ;;
+      *)
+        # A bare `$`: the remnant an unquoted `$(…)` leaves after the split.
+        vals=("$unk")
+        ;;
+      esac
+    fi
+    next=()
+    for a in "${acc[@]}"; do
+      for l in "${vals[@]}"; do next+=("$a$lit$l"); done
+    done
+    lit=''
+    if ((${#next[@]} > max_cands)); then
+      over=1
+      next=("${next[@]:0:max_cands}")
+    fi
+    acc=("${next[@]}")
   done
+  exs=("${acc[@]}")
 }
 
 # Lexical normalisation into $segs[0..nseg): empty and `.` dropped, `..`
@@ -481,13 +621,21 @@ reaches_root() { # <root segment>...
 # A relative target, or one whose first segment is unknown, is allowed: it is
 # most likely a private scratch dir the guard cannot see.
 judge_target() { # <operand>
+  local c
   [[ -z $del_target ]] || return 0
   expand_word "$1"
-  [[ $ex == /* ]] || return 0
-  norm_path "$ex"
-  if reaches_root run user "$unk" || { ((${#xdg_root[@]})) && reaches_root "${xdg_root[@]}"; }; then
+  if ((over)); then
     del_target=$1
+    return 0
   fi
+  for c in "${exs[@]}"; do
+    [[ $c == /* ]] || continue
+    norm_path "$c"
+    if reaches_root run user "$unk" || { ((${#xdg_root[@]})) && reaches_root "${xdg_root[@]}"; }; then
+      del_target=$1
+      return 0
+    fi
+  done
 }
 
 # Judge the operands of the delete being collected, if any.
@@ -568,24 +716,10 @@ while IFS= read -r w; do
     flush_tmux
     flush_del
     [[ -z $deny_what && -z $del_target ]] || break
-    # A prefix assignment applies to its command only; a simple command that
-    # ends with no command word is a bare assignment, which persists. An
-    # unquoted `X=$(…)` or `` X=`…` `` is split at the substitution, so the
-    # pending words wait out its two boundaries before the command word decides.
-    if ((pend_open)); then
-      pend_open=0
-      pend_hold=1
-    elif ((pend_hold)); then
-      pend_hold=0
-    else
-      for p in ${pend[@]+"${pend[@]}"}; do bind_word "$p"; done
-      pend=()
-    fi
     at_cmd=1
     wrapper=''
     wrapper_val=0
     expect_duration=0
-    bind_mode=''
     continue
   fi
 
@@ -597,38 +731,14 @@ while IFS= read -r w; do
     dargs+=("$w")
     continue
   fi
-  case $bind_mode in
-  for)
-    bind_word "$w"
-    bind_mode=''
-    continue
-    ;;
-  binder)
-    [[ $w == -* ]] || bind_word "$w"
-    continue
-    ;;
-  esac
   ((at_cmd)) || continue
 
   if ((wrapper_val)); then
     wrapper_val=0
     continue
   fi
-  if [[ $w =~ ^[A-Za-z_][A-Za-z0-9_]*= ]]; then
-    # After a command wrapper (`env X=… cmd`) it never persists; after a
-    # keyword it may be a bare assignment.
-    case $wrapper in
-    '' | do | then | if | elif | else | while | until | '!' | '{')
-      if ((!pend_hold)); then
-        pend+=("$w")
-        case ${w#*=} in '' | *'$') pend_open=1 ;; *) pend_open=0 ;; esac
-      fi
-      ;;
-    esac
-    continue
-  fi
-  pend_open=0
-  ((pend_hold)) || pend=()
+  # A NAME=value prefix is not the command word; collect_bindings reads it.
+  if [[ $w =~ ^[A-Za-z_][A-Za-z0-9_]*= ]]; then continue; fi
   if [[ -n $wrapper && $w == -* ]]; then
     if [[ $w != --* ]]; then
       rest=${w#-}
@@ -666,8 +776,6 @@ while IFS= read -r w; do
   rm | rmdir | unlink | trash-put) in_del='rm' ;;
   gtrash) in_del='gtrash' ;;
   find) in_del='find' ;;
-  export | local | declare | typeset | readonly | unset | read) bind_mode=binder ;;
-  for) bind_mode=for ;;
   esac
   at_cmd=0
 done < <(split_words "$command")
@@ -677,7 +785,7 @@ if [[ -n $deny_what ]]; then
 Fix: run 'unset TMUX', point a private 'export TMUX_TMPDIR=\$(mktemp -d)', and pass '-L <name>' on every tmux call, including kill-server."
 elif [[ -n $del_target ]]; then
   reason="This deletes '$del_target', which resolves to the per-user runtime dir (\$XDG_RUNTIME_DIR, /run/user/<uid>) or one of its parents or children: it holds the D-Bus, systemd and tmux sockets, and deleting it breaks the owner's session until reboot.
-Fix: make scratch dirs with 'mktemp -d' and delete only paths you created; never delete a path taken from an inherited variable such as TMUX_TMPDIR."
+Fix: make scratch dirs with 'mktemp -d' and delete them through a name you created, e.g. 'd=\$(mktemp -d); rm -rf \"\$d\"' (for a nested session: 'rt=\$(mktemp -d); XDG_RUNTIME_DIR=\$rt Hyprland; rm -rf \"\$rt\"'). Never delete through an inherited variable such as TMUX_TMPDIR or XDG_RUNTIME_DIR, even after rebinding it: the guard counts every value the name may hold."
 else
   exit 0
 fi
