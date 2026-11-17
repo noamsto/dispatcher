@@ -225,8 +225,8 @@ type keys struct {
 
 // BranchIssue is the leading digit run of the segment after a branch's first
 // `/`, when `-` or the end follows it: `feat/12-x` is 12, `feat/grok-4-7-x` none.
-// internal/retro, the roster fold's roster_final.jq and dash's board read a
-// branch's issue number their own way.
+// internal/retro, rosterrender and the roster fold's roster_final.jq follow it;
+// dash mirrors it (dash/internal/ui/board.go) under a parity test.
 func BranchIssue(branch string) string {
 	if _, rest, ok := strings.Cut(branch, "/"); ok {
 		branch = rest

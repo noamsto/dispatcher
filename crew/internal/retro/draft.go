@@ -13,6 +13,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/identity"
 	"github.com/noamsto/dispatcher/crew/internal/invisible"
+	"github.com/noamsto/dispatcher/crew/internal/queue"
 )
 
 // The draft keeps the shape the dispatcher's own session_summary notes have, so
@@ -97,7 +98,7 @@ func draft(crew string, all bool, events []bus.Event, o Options, stdout, stderr 
 		if w.codename == "" {
 			w.codename = id.Name
 		}
-		w.issue = issueOf(w.branch)
+		w.issue = queue.BranchIssue(w.branch)
 		w.outcome = outcomeOf(events, w.branch)
 		w.tags = workerTags(events, crew, w)
 		workers = append(workers, w)
@@ -325,17 +326,6 @@ func prOf(body map[string]any) string {
 }
 
 var pullRe = regexp.MustCompile(`/pull/([0-9]+)`)
-
-// issueOf is the issue number a branch is named for — the same capture roster
-// takes for a colliding codename's suffix.
-func issueOf(branch string) string {
-	if m := issueRe.FindStringSubmatch(branch); m != nil {
-		return m[1]
-	}
-	return ""
-}
-
-var issueRe = regexp.MustCompile(`^(?:[a-z]+/)?([0-9]+)`)
 
 // workerBranch is the branch a worker-posted row came from, `worker:<branch>#<session>`.
 // A role's rows, and every other sender, read as no branch at all.
