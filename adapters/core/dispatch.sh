@@ -18,6 +18,7 @@ _dispatch_help() {
 usage: dispatch <trivial|standard|deep> <model> [flags] [--] <title...>
        dispatch [<tier> [<model>]] --profile NAME [flags] [--] <title...>
        dispatch resume [<target>] [flags]
+       dispatch migrate <target> --host <name> [--now] [--wait S]
        dispatch --engines [--in-budget]
        dispatch --models [--json]
        dispatch --profiles [--json]
@@ -89,6 +90,7 @@ Overrides
 
 Other entry points
   dispatch resume ...     Relaunch the worker of the worktree you are standing in
+  dispatch migrate ...    Move a running worker of this host to settings host NAME
   dispatch --engines      Engines enabled and installed here (--in-budget: affordable)
   dispatch --models       The tier map per engine: class, default, trial and accepted models (--json: machine-readable)
   dispatch --profiles     Task profiles and what each resolves to here (--json: machine-readable)
@@ -2963,6 +2965,17 @@ if [ "${1:-}" = resume ]; then
     exit 1
   }
   exec env PATH="$(engine_path)" "$resume_bin" "$@"
+fi
+
+# `dispatch migrate` is its own binary too, intercepted here for the same
+# reasons and under the same first-argument rule as `resume`.
+if [ "${1:-}" = migrate ]; then
+  shift
+  migrate_bin="$(command -v dispatch-migrate)" || {
+    echo "dispatch: dispatch-migrate not found on PATH" >&2
+    exit 1
+  }
+  exec env PATH="$(engine_path)" "$migrate_bin" "$@"
 fi
 
 # Tier and model may be left to --profile; without it the check after the

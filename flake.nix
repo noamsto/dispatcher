@@ -239,7 +239,7 @@
             # issue body through.
             # lead-launcher: resolved by `command -v` into the lead's launch line as
             # a store path; the HM module doesn't install it, so it stays here (#700).
-            rt = (with pkgs; [git jq gnused coreutils findutils diffutils tmux direnv curl gnugrep betterleaks procps]) ++ [crew dispatch-resume lead-launcher];
+            rt = (with pkgs; [git jq gnused coreutils findutils diffutils tmux direnv curl gnugrep betterleaks procps]) ++ [crew dispatch-resume dispatch-migrate lead-launcher];
           in
             pkgs.writeShellApplication {
               name = "dispatch";
@@ -267,6 +267,15 @@
             name = "dispatcher-setup";
             runtimeInputs = with pkgs; [jq coreutils diffutils openssh gnugrep gawk];
             text = withConfig (sub (builtins.readFile ./adapters/core/dispatcher-setup.sh));
+          };
+
+          # Reached only as `dispatch migrate`, so it ships inside dispatch's
+          # runtimeInputs and nowhere else. It resolves `dispatch` (the remote
+          # resume) from the ambient PATH, as dispatch-resume does.
+          dispatch-migrate = pkgs.writeShellApplication {
+            name = "dispatch-migrate";
+            runtimeInputs = (with pkgs; [git jq gnused gnugrep coreutils gzip tmux]) ++ [crew];
+            text = sub (builtins.readFile ./adapters/core/dispatch-migrate.sh);
           };
 
           dispatcher = let

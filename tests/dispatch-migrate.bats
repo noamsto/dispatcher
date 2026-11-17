@@ -5,7 +5,12 @@ bats_require_minimum_version 1.5.0 # `run --separate-stderr`
 load remote-host-helpers
 
 setup() { remote_host_setup; }
-teardown() { remote_host_teardown; }
+teardown() {
+  [ -z "${COOP_PID:-}" ] || kill "$COOP_PID" 2>/dev/null || true
+  # The local worker's tmux server: the private TMUX_TMPDIR tests/helpers.bash set.
+  "$REAL_TMUX" kill-server 2>/dev/null || true
+  remote_host_teardown
+}
 
 BRANCH=feat/7-x
 
@@ -319,4 +324,315 @@ migrate_dispatch() { # dispatch_remote --host mini 7 x carrying $BUNDLE
   run --separate-stderr on_remote "$REMOTE_CLONE" dispatch --migrate-check "$BRANCH"
   [ "$status" -eq 2 ]
   [[ $stderr == *"not an ancestor"* ]]
+}
+
+# --- dispatch migrate: a real local worker moved to mini ---
+
+# start_local_worker — dispatch feat/7-x here (issue 7, title x). The lead is a
+# stub whose argv[0] is claude, so its pane counts as a live engine; it never
+# exits on its own. Sets LWT (its worktree) and WID (its worker id).
+start_local_worker() {
+  printf '#!/usr/bin/env bash\nexec -a claude bash -c "while :; do sleep 1; done"\n' >"$STUB_DIR/claude"
+  run --separate-stderr dispatch standard opus --effort medium --crew-id c1 7 -- x
+  [ "$status" -eq 0 ] || {
+    echo "$stderr" >&2
+    false
+  }
+  WID="$(sed -n 's/^worker_id: //p' <<<"$output")"
+  LWT="$(git -C "$TEST_REPO" worktree list --porcelain | awk -v b="branch refs/heads/$BRANCH" '/^worktree /{p = $2} $0 == b {print p}')"
+  [ -n "$WID" ] && [ -d "$LWT" ]
+  poll_for 100 local_engine_live
+}
+
+local_engine_live() {
+  "$REAL_TMUX" list-panes -a -F '#{@crew_branch} #{pane_current_command}' 2>/dev/null | grep -qxF "$BRANCH claude"
+}
+
+directive_posted() {
+  jq -e --arg w "$WID" 'select(.kind == "msg" and .to == $w and (.body | fromjson? | .directive) == "migrate" and (.body | fromjson | .to_host) == "mini")' \
+    "$LBUS" >/dev/null 2>&1
+}
+
+worker_says() { # <crew status args...> — posted as the local worker
+  (cd "$TEST_REPO" && CREW_ID=c1 CREW_WORKER_ID="$WID" crew status "$WID" "$@")
+}
+
+# coop_worker <clean|uncommitted|blocked> — the worker's half of a cooperative
+# migration, in the background: on the directive it commits and pushes the
+# fixed checkpoint, writes its handoff note and posts migrated. `uncommitted`
+# also leaves a tracked edit behind; `blocked` only reports a failed push.
+coop_worker() {
+  (
+    poll_for 600 directive_posted || exit 1
+    if [ "$1" = blocked ]; then
+      worker_says blocked "migrate: push failed: hook said no"
+      exit 0
+    fi
+    printf 'work\n' >"$LWT/work.txt"
+    git -C "$LWT" add work.txt
+    git -C "$LWT" commit -q -m 'wip: checkpoint before host migration'
+    git -C "$LWT" push -q origin "$BRANCH"
+    [ "$1" != uncommitted ] || printf 'more\n' >>"$LWT/work.txt"
+    mkdir -p "${LBUS%/*}/artifacts/$BRANCH"
+    printf 'handoff from the worker\n' >"${LBUS%/*}/artifacts/$BRANCH/handoff.md"
+    worker_says migrated --to-host mini "checkpoint pushed"
+  ) >"$BATS_TEST_TMPDIR/coop.log" 2>&1 3>&- &
+  COOP_PID=$!
+}
+
+migrate() { run --separate-stderr dispatch migrate "$@"; }
+
+migrated_ok() {
+  [ "$status" -eq 0 ] || {
+    echo "$stderr" >&2
+    cat "$BATS_TEST_TMPDIR/coop.log" >&2 2>/dev/null || true
+    false
+  }
+}
+
+mark_rows() { jq -c 'select(.kind == "status" and .body.source == "migrate")' "$LBUS"; }
+
+remote_rows() { jq -c 'select(.kind == "dispatch" and .remote == true)' "$LBUS"; }
+
+# commit_unpushed_and_dirty — one commit origin has not seen, then a modified
+# tracked file, a staged new file and an untracked file on top of it.
+commit_unpushed_and_dirty() {
+  printf 'one\n' >"$LWT/tracked.txt"
+  git -C "$LWT" add tracked.txt
+  git -C "$LWT" commit -q -m tracked
+  printf 'two\n' >>"$LWT/tracked.txt"
+  printf 'staged\n' >"$LWT/staged.txt"
+  git -C "$LWT" add staged.txt
+  printf 'untracked\n' >"$LWT/untracked.txt"
+}
+
+@test "dispatch migrate moves a cooperative worker to mini: claim released, resumed there at the tip with its handoff and transcript" {
+  start_local_worker
+  SID="$(cut -d' ' -f2 "${LBUS%/*}/leads/$BRANCH")"
+  local_transcript="$LHOME/.claude/projects/${LWT//[^A-Za-z0-9]/-}/$SID.jsonl"
+  mkdir -p "${local_transcript%/*}"
+  printf '{"type":"local-transcript"}\n' >"$local_transcript"
+  # A verdict the worker never pulled travels in the handoff.
+  (cd "$TEST_REPO" && crew reply --crew c1 "$WID" "unread verdict") >/dev/null
+  coop_worker clean
+  # The dispatcher's own pane, unstamped: the remote window is mirrored into it.
+  dispatcher_pane="$(tmux new-session -d -s main -P -F '#{pane_id}')"
+
+  TMUX_PANE="$dispatcher_pane" migrate 7 --host mini --wait 60
+  migrated_ok
+  tip="$(git -C "$TEST_REPO" rev-parse "refs/heads/$BRANCH")"
+  [ "$(mark_rows | jq -r '[.from, .body.to_host, .body.mode, .body.tip, .body.patch] | @tsv')" = "$WID	mini	coop	$tip	" ]
+  [ "$(remote_rows | wc -l)" -eq 1 ]
+  jq -e --arg b "$BRANCH" --arg h "$(uname -n | cut -d. -f1)" \
+    '.host == "mini" and .branch == $b and .migrated_from == $h and .engine_context == "resumed"' <<<"$(remote_rows)"
+  wt="$(remote_wt "$BRANCH")"
+  [ "$(git -C "$wt" rev-parse HEAD)" = "$tip" ]
+  [ "$(cat "$wt/work.txt")" = work ]
+  handoff="$(remote_crew_dir)/artifacts/$BRANCH/migrated.md"
+  grep -qx -- '- mode: coop' "$handoff"
+  grep -qx -- '- last status: migrated — checkpoint pushed' "$handoff"
+  grep -qF 'dispatcher:c1 at ' "$handoff"
+  grep -qF ': unread verdict' "$handoff"
+  grep -qx 'handoff from the worker' "$handoff"
+  [ "$(cat "$(remote_transcript "$wt")")" = '{"type":"local-transcript"}' ]
+  grep -qF -- '--window @crew_id=c1' "$OG_LOG"
+  [ "${lines[-1]}" = "dispatch migrate: $BRANCH → host mini (engine context: resumed; patch: none)" ]
+  run ! local_engine_live
+
+  # A re-run finds the move done.
+  migrate 7 --host mini
+  migrated_ok
+  [ "$output" = "dispatch migrate: $BRANCH already migrated to host mini" ]
+  [ "$(mark_rows | wc -l)" -eq 1 ]
+}
+
+@test "dispatch migrate carries the work a cooperative worker left uncommitted as the patch" {
+  start_local_worker
+  coop_worker uncommitted
+
+  migrate 7 --host mini --wait 60
+  migrated_ok
+  mark="$(mark_rows)"
+  patch="$(jq -r .body.patch <<<"$mark")"
+  [[ $patch == "${LBUS%/*}/artifacts/$BRANCH/migrate-"*/patch ]]
+  wt="$(remote_wt "$BRANCH")"
+  [ "$(scratch_tree "$wt" "$(jq -r .body.tip <<<"$mark")")" = "$(jq -r .body.tree <<<"$mark")" ]
+  [ "$(cat "$wt/work.txt")" = "$(printf 'work\nmore')" ]
+  [ "${lines[-1]}" = "dispatch migrate: $BRANCH → host mini (engine context: fresh: no transcript travelled; patch: $patch)" ]
+}
+
+@test "dispatch migrate --now pushes the branch and lands tracked, staged and untracked changes intact on mini" {
+  start_local_worker
+  commit_unpushed_and_dirty
+  tip="$(git -C "$LWT" rev-parse HEAD)"
+  [ "$(git -C "$TEST_REPO" ls-remote origin "refs/heads/$BRANCH" | cut -f1)" != "$tip" ]
+
+  migrate 7 --host mini --now
+  migrated_ok
+  [ "$(git -C "$TEST_REPO" ls-remote origin "refs/heads/$BRANCH" | cut -f1)" = "$tip" ]
+  mark="$(mark_rows)"
+  jq -e --arg t "$tip" '.body.mode == "now" and .body.tip == $t' <<<"$mark"
+  wt="$(remote_wt "$BRANCH")"
+  [ "$(scratch_tree "$wt" "$tip")" = "$(jq -r .body.tree <<<"$mark")" ]
+  [ "$(cat "$wt/tracked.txt")" = "$(printf 'one\ntwo')" ]
+  [ "$(cat "$wt/staged.txt")" = staged ]
+  [ "$(cat "$wt/untracked.txt")" = untracked ]
+}
+
+@test "after a migration to mini, a dispatch of the issue to a third host is refused" {
+  start_local_worker
+  migrate 7 --host mini --now
+  migrated_ok
+
+  run --separate-stderr dispatch standard opus --effort medium --crew-id c1 --host chromebox 7 -- x
+  [ "$status" -eq 1 ]
+  [[ $stderr == *"issue #7 is already held by $BRANCH on host mini — "* ]]
+}
+
+@test "a failed remote step leaves the worker marked and kept; the re-run retries only that step, then reap removes the worktree" {
+  start_local_worker
+  SSH_FAIL_MIGRATE=1 DISPATCH_HOST_RECOVER_TRIES=1 DISPATCH_HOST_RECOVER_SLEEP=0 migrate 7 --host mini --now
+  [ "$status" -ne 0 ]
+  [[ $stderr == *"dispatch migrate: migration to mini failed (exit $status); the worker is stopped and marked migrating to mini — retry: dispatch migrate $BRANCH --host mini; abandon: dispatch resume $BRANCH"* ]]
+  [ "$(mark_rows | wc -l)" -eq 1 ]
+  [ -z "$(remote_rows)" ]
+
+  run --separate-stderr crew reap --no-wait
+  [ -d "$LWT" ]
+  [[ "$output$stderr" == *"no remote dispatch row on mini yet"* ]]
+
+  migrate 7 --host mini
+  migrated_ok
+  [ "$(mark_rows | wc -l)" -eq 1 ]
+  [ "$(remote_rows | wc -l)" -eq 1 ]
+
+  run --separate-stderr crew reap --no-wait
+  [ ! -d "$LWT" ]
+  [ -n "$(git -C "$TEST_REPO" ls-remote origin "refs/heads/$BRANCH")" ]
+}
+
+@test "a pre-push hook refusing the --now push surfaces verbatim; nothing is marked and the worktree is intact" {
+  start_local_worker
+  commit_unpushed_and_dirty
+  printf '#!/bin/sh\necho "HOOK SAYS NO" >&2\nexit 1\n' >"$TEST_REPO/.git/hooks/pre-push"
+  chmod +x "$TEST_REPO/.git/hooks/pre-push"
+
+  migrate 7 --host mini --now
+  [ "$status" -eq 1 ]
+  [[ $stderr == *"HOOK SAYS NO"* ]]
+  [[ $stderr == *"the worker is stopped; nothing was marked — resume it here with: dispatch resume $BRANCH"* ]]
+  [ -z "$(jq -c 'select(.kind == "status" and .body.state == "migrated")' "$LBUS")" ]
+  [ -z "$(remote_rows)" ]
+  [ "$(cat "$LWT/tracked.txt")" = "$(printf 'one\ntwo')" ]
+  [ "$(cat "$LWT/staged.txt")" = staged ]
+  [ "$(cat "$LWT/untracked.txt")" = untracked ]
+}
+
+@test "a cooperative worker whose push failed blocks with migrate:, surfaced verbatim; the worker stays live and blocked" {
+  start_local_worker
+  coop_worker blocked
+
+  migrate 7 --host mini --wait 60
+  [ "$status" -eq 1 ]
+  [[ $stderr == *"migrate: push failed: hook said no"* ]]
+  [ "$(jq -r --arg w "$WID" 'select(.kind == "status" and .from == $w) | .body.state' "$LBUS" | tail -1)" = blocked ]
+  local_engine_live
+  [ -z "$(mark_rows)" ]
+  [ -z "$(remote_rows)" ]
+}
+
+@test "dispatch migrate is refused from a worker's environment before anything is read or called" {
+  seed_local_worker
+  CREW_WORKER_ID="worker:feat/9-y#s1-1" migrate 7 --host mini
+  [ "$status" -eq 2 ]
+  [[ $stderr == *"dispatcher-only"* ]]
+  [ ! -s "$SSH_CMDS" ]
+}
+
+@test "dispatch migrate refuses a worker with --add-dir grants, naming them" {
+  start_local_worker
+  sed -i "/^crew_id: /a add_dir: $BATS_TEST_TMPDIR/granted" "$LWT/WORKER_TASK.md"
+
+  migrate 7 --host mini --now
+  [ "$status" -eq 2 ]
+  [[ $stderr == *"--add-dir grants do not exist on host mini: $BATS_TEST_TMPDIR/granted"* ]]
+  [ ! -s "$SSH_CMDS" ]
+  local_engine_live
+}
+
+@test "dispatch migrate refuses a worker that already runs on another host" {
+  seed_local_worker
+  jq -nc --arg b "$BRANCH" '{ts: (now * 1000 | floor), crew_id: "c1", kind: "dispatch", branch: $b, worker_id: "worker:feat/7-x#s1-1", host: "chromebox", remote: true}' >>"$LBUS"
+
+  migrate 7 --host mini
+  [ "$status" -eq 2 ]
+  [[ $stderr == *"$BRANCH is already on host chromebox"* ]]
+  [ ! -s "$SSH_CMDS" ]
+}
+
+@test "dispatch migrate refuses a host whose dispatch has no --migrate-check, before the worker is touched" {
+  cat >"$RBINS/dispatch" <<EOF
+#!/usr/bin/env bash
+if [ "\${1:-}" = --migrate-check ]; then
+  echo "usage: dispatch <trivial|standard|deep> <model> --effort E [flags] [--] <title...> — see: dispatch --help" >&2
+  exit 2
+fi
+exec "$STUB_DIR/dispatch" "\$@"
+EOF
+  chmod +x "$RBINS/dispatch"
+  start_local_worker
+
+  migrate 7 --host mini --now
+  [ "$status" -eq 2 ]
+  [[ $stderr == *"host mini runs a dispatch without migrate support — update it first"* ]]
+  local_engine_live
+  [ -z "$(mark_rows)" ]
+}
+
+@test "dispatch migrate refuses while another migration of the branch holds its lock, live or dead" {
+  seed_local_worker
+  lock="${LBUS%/*}/migrate-$(printf '%s' "$BRANCH" | cksum | cut -d' ' -f1).lock"
+  ln -s "$$" "$lock"
+
+  migrate 7 --host mini
+  [ "$status" -eq 2 ]
+  [[ $stderr == *"(pid $$)"* ]]
+  [ "$(readlink "$lock")" = "$$" ]
+
+  rm -f "$lock"
+  true &
+  dead=$!
+  wait "$dead"
+  ln -s "$dead" "$lock"
+  migrate 7 --host mini
+  [ "$status" -eq 2 ]
+  [[ $stderr == *"remove $lock"* ]]
+  [ ! -s "$SSH_CMDS" ]
+}
+
+@test "a cooperative worker that does not quiesce in time exits 3 with the human escalation, untouched" {
+  start_local_worker
+
+  migrate 7 --host mini --wait 2
+  [ "$status" -eq 3 ]
+  [[ $stderr == *"worker did not quiesce within 2s — ask the human; dispatch migrate --now only if they are leaving now"* ]]
+  local_engine_live
+  [ -z "$(mark_rows)" ]
+  [ -z "$(find "${LBUS%/*}" -maxdepth 1 -name 'migrate-*.lock')" ]
+}
+
+# dispatch-migrate --help names every flag its parse loop has an arm for.
+@test "dispatch migrate --help lists every flag it parses, and dispatch --help lists dispatch migrate" {
+  migrate --help
+  [ "$status" -eq 0 ]
+  [[ ${lines[0]} == "usage: dispatch migrate "* ]]
+  for f in $(grep -oE '^  --[a-z-]+\)' "$REPO_ROOT/adapters/core/dispatch-migrate.sh" | tr -d ' )'); do
+    grep -qE -- "^  $f( |$)" <<<"$output" || {
+      echo "no help line for $f"
+      false
+    }
+  done
+  run dispatch --help
+  grep -qE '^       dispatch migrate <target> --host' <<<"$output"
+  grep -qE '^  dispatch migrate \.\.\. ' <<<"$output"
 }

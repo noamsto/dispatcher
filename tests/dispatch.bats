@@ -1774,7 +1774,7 @@ EOF
   [ "$status" -eq 0 ]
   run grep -F -- 'grid_note' "$DISPATCH"
   [ "$status" -eq 0 ]
-  [ "$(grep -c '\${grid_note}' "$DISPATCH")" -eq 4 ]
+  [ "$(grep -c '\${grid_note}' "$DISPATCH")" -eq 5 ]
 }
 
 @test "grid_note never tells the lead the review gate is substitutive" {
