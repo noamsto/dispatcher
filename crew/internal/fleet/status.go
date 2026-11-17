@@ -43,6 +43,9 @@ const (
 	// inboxWindow is how far back overseer_inbox reaches with no cursor, and
 	// misrouted always.
 	inboxWindow = 24 * time.Hour
+
+	// buildConcurrency bounds the repos built at once.
+	buildConcurrency = 8
 	// unprobed is the reason an overseer's remote capture fails with: it asks no
 	// host, and the placeholder row it leaves is marked remote_unprobed.
 	unprobed = "remote_unprobed"
@@ -275,7 +278,7 @@ func ServedRepos(registry string, getenv func(string) string, root string, stder
 
 // collectStatus is CollectStatus plus the repos its discovery found.
 func collectStatus(ctx context.Context, req StatusRequest, stderr io.Writer, o StatusOptions) (StatusDoc, []repos.Repo) {
-	once := onceTmux{o.Tmux, map[string]string{}}
+	once := newOnceTmux(o.Tmux)
 	o.Tmux = once
 	if o.Proc == nil {
 		o.Proc = proc.OS{}
@@ -345,30 +348,66 @@ func collectStatus(ctx context.Context, req StatusRequest, stderr io.Writer, o S
 	}
 	stamps, _ := once.Run(ctx, "list-windows", "-a", "-F", "#{@crew_id}\x1f#{@crew_dispatcher_host}")
 	homes := guestHomes(stamps, host)
-	var candidates []prCandidate
-	for _, r := range found {
+	// The bus reads, skips and stderr notes stay serial, in discovery order;
+	// the per-repo builds, which dominate the pass, run concurrently into
+	// index-addressed slots so the document order is the serial order.
+	type slot struct {
+		build *repoBuild
+		skip  *Skipped
+		repo  RepoStatus
+	}
+	slots := make([]slot, len(found))
+	for i, r := range found {
 		if r.Status != repos.StatusOK {
-			doc.Skipped = append(doc.Skipped, Skipped{Path: r.Common, Status: string(r.Status)})
+			slots[i].skip = &Skipped{Path: r.Common, Status: string(r.Status)}
 			continue
 		}
 		events, torn, skip := buses.read(r.Common)
 		if skip != "" {
-			doc.Skipped = append(doc.Skipped, Skipped{Path: r.Common, Status: skip})
+			slots[i].skip = &Skipped{Path: r.Common, Status: skip}
 			continue
 		}
 		if torn != "" {
 			say(stderr, "crew: fleet status: %s: %s (rows from the readable prefix)\n", r.Common, torn)
 		}
-		b := repoBuild{ctx: ctx, o: o, once: once, common: r.Common, events: events, docs: eventDocs(events),
+		slots[i].build = &repoBuild{ctx: ctx, o: o, once: once, common: r.Common, events: events, docs: eventDocs(events),
 			idx: indexBus(events, busHost), now: now, nowMS: nowMS, nowSec: nowSec, overseer: overseer, host: host, stateDir: stateDir, due: due,
 			probe: probe, homes: homes}
-		repo, err := b.build()
-		if err != nil {
-			doc.Skipped = append(doc.Skipped, Skipped{Path: r.Common, Status: oneLine(err)})
+	}
+	buildSlot := func(s *slot) {
+		var err error
+		if s.repo, err = s.build.build(); err != nil {
+			s.skip = &Skipped{Path: s.build.common, Status: oneLine(err)}
+		}
+	}
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, buildConcurrency)
+	for i := range slots {
+		if slots[i].build == nil {
 			continue
 		}
-		candidates = append(candidates, b.candidates...)
-		doc.Repos = append(doc.Repos, repo)
+		if probe != nil {
+			// A host that failed in one repo fails the later repos' probes at
+			// once, so which probes run depends on the order of the repos.
+			buildSlot(&slots[i])
+			continue
+		}
+		wg.Go(func() {
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			buildSlot(&slots[i])
+		})
+	}
+	wg.Wait()
+	var candidates []prCandidate
+	for _, s := range slots {
+		switch {
+		case s.skip != nil:
+			doc.Skipped = append(doc.Skipped, *s.skip)
+		case s.build != nil:
+			candidates = append(candidates, s.build.candidates...)
+			doc.Repos = append(doc.Repos, s.repo)
+		}
 	}
 	if req.GH {
 		timeout := o.GhTimeout

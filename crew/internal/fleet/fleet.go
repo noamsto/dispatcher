@@ -48,18 +48,34 @@ type Options struct {
 }
 
 // onceTmux reads each argv once and shares it, a failed read as no output, so
-// every crew's fold sees one pane list.
+// every crew's fold sees one pane list. It is safe for concurrent use: racing
+// callers of one argv wait on a single read.
 type onceTmux struct {
 	tmux.Client
-	out map[string]string
+	mu  *sync.Mutex
+	out map[string]*onceRead
+}
+
+type onceRead struct {
+	once sync.Once
+	out  string
+}
+
+func newOnceTmux(c tmux.Client) onceTmux {
+	return onceTmux{Client: c, mu: &sync.Mutex{}, out: map[string]*onceRead{}}
 }
 
 func (m onceTmux) Run(ctx context.Context, args ...string) (string, error) {
 	key := strings.Join(args, " ")
-	if _, ok := m.out[key]; !ok {
-		m.out[key] = tmux.Output(ctx, m.Client, args...)
+	m.mu.Lock()
+	r, ok := m.out[key]
+	if !ok {
+		r = &onceRead{}
+		m.out[key] = r
 	}
-	return m.out[key], nil
+	m.mu.Unlock()
+	r.once.Do(func() { r.out = tmux.Output(ctx, m.Client, args...) })
+	return r.out, nil
 }
 
 // Request is `crew fleet`'s flags: Crew limits the rows to one crew id.
@@ -74,7 +90,7 @@ type Request struct {
 func Run(ctx context.Context, req Request, stdout, stderr io.Writer, o Options) int {
 	all, asJSON, onlyCrew := req.All, req.JSON, req.Crew
 
-	once := onceTmux{o.Tmux, map[string]string{}}
+	once := newOnceTmux(o.Tmux)
 	windowBranches := func() map[string]bool { return roster.Windows(ctx, once) }
 	now := o.Clock.Now()
 	hidden := 0

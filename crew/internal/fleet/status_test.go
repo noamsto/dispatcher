@@ -12,6 +12,7 @@ import (
 	"reflect"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -1059,5 +1060,57 @@ func TestStatusRelaysOmittedWhenServed(t *testing.T) {
 	}
 	if strings.Contains(string(data), `"relays`) {
 		t.Errorf("served doc carries relays: %s", data)
+	}
+}
+
+func TestStatusConcurrentBuildsKeepRepoOrder(t *testing.T) {
+	f := newStatusFix(t)
+	var commons []string
+	for i := range 12 {
+		name := fmt.Sprintf("r%02d", i)
+		commons = append(commons, mkRepo(t, f.root, name, "", worker(nowS-60, "c"+name, "feat/"+name, "working")))
+	}
+	if err := os.WriteFile(f.opts.Registry, []byte(strings.Join(commons, "\n")+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for range 5 {
+		doc := f.collect(StatusRequest{})
+		var got []string
+		for _, r := range doc.Repos {
+			got = append(got, r.Common)
+		}
+		if !slices.Equal(got, commons) {
+			t.Fatalf("repos = %q, want registry order %q", got, commons)
+		}
+	}
+}
+
+type countTmux struct {
+	mu    sync.Mutex
+	calls int
+}
+
+func (c *countTmux) Run(context.Context, ...string) (string, error) {
+	c.mu.Lock()
+	c.calls++
+	c.mu.Unlock()
+	time.Sleep(10 * time.Millisecond)
+	return "out", nil
+}
+
+func TestOnceTmuxReadsEachArgvOnceConcurrently(t *testing.T) {
+	c := &countTmux{}
+	once := newOnceTmux(c)
+	var wg sync.WaitGroup
+	for range 16 {
+		wg.Go(func() {
+			if out, _ := once.Run(t.Context(), "list-windows", "-a"); out != "out" {
+				t.Errorf("out = %q", out)
+			}
+		})
+	}
+	wg.Wait()
+	if c.calls != 1 {
+		t.Errorf("tmux ran %d times, want 1", c.calls)
 	}
 }
