@@ -862,6 +862,7 @@ dispatch resume                     # continue this worktree's worker
 dispatch resume --print             # show what a resume would launch
 dispatch resume --fresh             # relaunch without the prior conversation
 dispatch resume --rearm-roles       # re-arm a restored grid's role panes only
+dispatch resume --exec              # relaunch in this lead pane by exec (what a restore runs)
 dispatch resume the review comments are the priority
 ```
 
@@ -872,6 +873,33 @@ Codex and cursor get only `/dispatcher` and `/autopilot`: `/finish-prs` and
 agent teams (`TaskCreate`, `SendMessage`, `teammateMode`). Codex and cursor
 users get the same fan-out from the engine-neutral `dispatcher` launcher —
 `dispatch` once per ticket or PR.
+
+### tmux-remux restore
+
+With tmux-remux installed, panes carry a `@remux_relaunch` pane option (a shell
+command remux runs on restore through your default shell). The launchers stamp
+it and set `@remux_relaunch_pinned=1`, which makes remux's generic Claude/Codex
+hook a no-op for that pane. The pin is not replayed, so the restored command
+re-stamps itself. Without tmux-remux the options are inert.
+
+| Pane | Stamped | Restore runs |
+| --- | --- | --- |
+| `dispatcher` launcher | `cd '<dir>' && exec env CREW_ID='<crew>' 'dispatcher' '--fresh' '--no-note' --agent/--model/--effort/--autocompact …` (codex/cursor: no `--fresh`, a crash-recovery task text instead) | the dispatcher, relaunched like a crash |
+| worker lead (`dispatch`, `dispatch resume`) | `cd '<worktree>' && exec env CREW_ID='<crew>' 'dispatch' 'resume' '--exec'` | `dispatch resume --exec` in the lead pane |
+| role panes, remote (`--host`) leads | pinned, nothing stamped | a shell; the restored lead's role re-arm marks role panes exited for it to respawn |
+
+Every interpolated word is single-quoted; one containing `'`, `\` or a control
+character is refused and the pane is pin-cleared instead (as are an unregistered
+crew and an unsafe directory). A normal exit clears both options; a signal crash
+and a tmux or host shutdown keep them. `crew status done|failed` from the lead's
+own pane clears the stamp (`pr_open` keeps it). A promoted in-session dispatcher
+never stamps. `dispatch resume --exec` refuses outside the worker's lead pane or
+when another lead pane at the worktree runs an engine.
+
+Caveats: bare `dispatch` and `dispatcher` must be on the restore shell's `PATH`
+(the tmux server environment); panes started before this carry only remux's
+generic stamp until relaunched or resumed; a dispatcher launcher refusal during
+restore closes the pane, so its message goes unseen.
 
 ## Dashboard
 
