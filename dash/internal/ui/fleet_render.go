@@ -89,7 +89,8 @@ type fleetIndex struct {
 	byKey    map[string]int
 	vis      []bool
 	showDead bool
-	deadN    int // dead crew heads passing the filter, shown or not
+	deadN    int // dead groups with a row passing the filter, shown or not
+	groupsN  int // groups (crew heads) with a row passing the filter
 }
 
 // index is the one visibility rule for crew rows: the filter, the dead
@@ -103,16 +104,39 @@ func (st fleetState) index(fv vm.FleetView) fleetIndex {
 		pins = append(pins, strOf(fv.Attention[attnCursor(fv.Attention, st.cursor, st.cursorAt)].CrewKey))
 	}
 	ix := fleetIndex{byKey: make(map[string]int, len(fv.Crews)), vis: make([]bool, len(fv.Crews)), showDead: st.showDead}
-	for i, c := range fv.Crews {
-		ix.byKey[c.Key] = i
-		hay := strings.ToLower(strOf(c.Repo) + " " + c.Crew + " " + c.Host)
-		if needle != "" && !strings.Contains(hay, needle) {
+	for start := 0; start < len(fv.Crews); {
+		end := start + 1
+		for end < len(fv.Crews) && fv.Crews[end].Sub {
+			end++
+		}
+		matched := make([]bool, end-start)
+		headHit, anyHit, pinned := false, false, false
+		for i := start; i < end; i++ {
+			c := fv.Crews[i]
+			ix.byKey[c.Key] = i
+			hay := strings.ToLower(strOf(c.Repo) + " " + c.Crew + " " + c.Host)
+			matched[i-start] = needle == "" || strings.Contains(hay, needle)
+			anyHit = anyHit || matched[i-start]
+			pinned = pinned || slices.Contains(pins, c.Key)
+		}
+		headHit = matched[0]
+		start0 := start
+		start = end
+		if !anyHit {
 			continue
 		}
-		if c.Section == "dead" && !c.Sub {
+		ix.groupsN++
+		dead := fv.Crews[start0].Section == "dead"
+		if dead {
 			ix.deadN++
 		}
-		ix.vis[i] = c.Section != "dead" || st.showDead || slices.Contains(pins, c.Key)
+		for i := start0; i < end; i++ {
+			show := i == start0 || matched[i-start0] || headHit
+			if dead && !st.showDead {
+				show = show && (i == start0 && pinned || slices.Contains(pins, fv.Crews[i].Key))
+			}
+			ix.vis[i] = show
+		}
 	}
 	return ix
 }
@@ -184,8 +208,8 @@ func resolveFleet(fv vm.FleetView, st fleetState, shown []fleetPanel) fleetSel {
 }
 
 // crewEntries is one row per visible crew, a PEERS subheading before the
-// first peer row and the dead subheading last (collapsed) or before the first
-// dead row (expanded). An entry's worker is its crew index, what place keeps
+// first peer row and the dead subheading before the first visible dead row, or
+// last when none is visible. An entry's worker is its crew index, what place keeps
 // in view.
 func crewEntries(fv vm.FleetView, ix fleetIndex) []entry {
 	var es []entry
@@ -196,7 +220,7 @@ func crewEntries(fv vm.FleetView, ix fleetIndex) []entry {
 		case fv.Crews[i].Origin == vm.OriginPeer && !peers:
 			peers = true
 			es = append(es, entry{kind: eSection, idx: secPeers, worker: -1, lines: 1})
-		case fv.Crews[i].Section == "dead" && ix.showDead && !dead:
+		case fv.Crews[i].Section == "dead" && !dead:
 			dead = true
 			es = append(es, deadHead)
 		}
@@ -427,7 +451,7 @@ func renderFleet(w, h int, fv vm.FleetView, st fleetState, mode pillMode) string
 
 	crewsCount := fmt.Sprintf("%d crews · %d workers", fv.Summary.Crews, fv.Summary.Workers)
 	if st.filter != "" {
-		crewsCount = fmt.Sprintf("%d of %d crews", len(ix.visible()), len(fv.Crews))
+		crewsCount = fmt.Sprintf("%d of %d crews", ix.groupsN, fv.Summary.Crews)
 	}
 	capCount := ""
 	if fv.Capacity.Free != nil {

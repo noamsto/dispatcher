@@ -736,9 +736,11 @@ func TestFleetSymlinkedReposDedupe(t *testing.T) {
 	}
 	linked := filepath.Join(link, ".git")
 	w := wk("feat/x", "working")
+	quota := crewIn("c1", "live", w)
+	quota.Holds = []data.FleetCrewHold{{ID: "q1", Kind: "quota"}}
 	in := fleetIn(
-		data.FleetRepo{Host: "lap", Repo: "r", Common: linked, Crews: []data.FleetCrew{crewIn("c1", "live", w)}},
-		data.FleetRepo{Host: "lap", Repo: "r", Common: real, Crews: []data.FleetCrew{crewIn("c1", "live", w)}},
+		data.FleetRepo{Host: "lap", Repo: "r", Common: linked, Crews: []data.FleetCrew{quota}, PeersError: strp("boom")},
+		data.FleetRepo{Host: "lap", Repo: "r", Common: real, Crews: []data.FleetCrew{quota}, PeersError: strp("boom")},
 	)
 	v := view.BuildFleet(in)
 	if len(v.Crews) != 1 {
@@ -752,6 +754,12 @@ func TestFleetSymlinkedReposDedupe(t *testing.T) {
 	}
 	if got := view.ActiveCommons(in.Fleet); len(got) != 1 {
 		t.Errorf("ActiveCommons = %v, want one", got)
+	}
+	if n := len(v.Holds); n != 1 {
+		t.Errorf("holds = %d, want 1", n)
+	}
+	if n := slices.ContainsFunc(v.Errors, func(e string) bool { return strings.Contains(e, "peers") }); !n || strings.Count(strings.Join(v.Errors, "\n"), "peers") != 1 {
+		t.Errorf("errors = %v, want one peers error", v.Errors)
 	}
 }
 

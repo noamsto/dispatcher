@@ -688,7 +688,11 @@ func fleetHolds(f FleetInputs) []FleetHoldRow {
 		})
 	}
 	if st := f.Fleet.Status; st != nil {
-		for _, repo := range st.Repos {
+		keep := keptRepos(st.Repos)
+		for ri, repo := range st.Repos {
+			if !keep[ri] {
+				continue
+			}
 			for _, c := range repo.Crews {
 				for _, h := range c.Holds {
 					if h.Kind != "quota" {
@@ -875,7 +879,11 @@ func fleetErrors(f FleetInputs) []string {
 	if f.Fleet.Status == nil {
 		return errs
 	}
-	for _, repo := range f.Fleet.Status.Repos {
+	keep := keptRepos(f.Fleet.Status.Repos)
+	for ri, repo := range f.Fleet.Status.Repos {
+		if !keep[ri] {
+			continue
+		}
 		add("repo "+repo.Repo+": peers", repo.PeersError)
 		if e, ok := f.DigestErrs[repo.Common]; ok {
 			add("repo "+repo.Repo+": bus", &e)

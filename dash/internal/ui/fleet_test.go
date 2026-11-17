@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"fmt"
 	"slices"
 	"strconv"
 	"strings"
@@ -613,7 +614,7 @@ func TestFleetFilter(t *testing.T) {
 	if v.Capturing() || v.st.filter != "p2" {
 		t.Fatalf("enter: capturing %v filter %q", v.Capturing(), v.st.filter)
 	}
-	if !strings.Contains(stripped(v.View(120, 40)), "2 of 8 crews") {
+	if want := fmt.Sprintf("2 of %d crews", v.fv.Summary.Crews); !strings.Contains(stripped(v.View(120, 40)), want) {
 		t.Error("filtered count not shown")
 	}
 	for _, needle := range []string{"box", "b", "c5"} {
@@ -952,5 +953,48 @@ func TestFleetLegend(t *testing.T) {
 	}
 	if !strings.Contains(stripped(strings.Join(v.helpLines(), "\n")), "dead") {
 		t.Error("help does not name the dead toggle")
+	}
+}
+
+func TestFleetDeadPinnedHeaderPrecedesRow(t *testing.T) {
+	v := deadFixture(t)
+	dead := v.fv.Crews[8].Key
+	v.fv.Attention[0].CrewKey = &dead
+	v.st.focus = fpAttention
+	v.setCursor(0)
+	items := v.layout().panels[fpCrews].items
+	hdr, row := -1, -1
+	for n, e := range items {
+		if e.kind == eSection && e.idx == secDead {
+			hdr = n
+		}
+		if e.kind == eCrew && e.idx == 8 {
+			row = n
+		}
+	}
+	if hdr < 0 || row < 0 || hdr > row {
+		t.Errorf("dead header at %d, pinned dead row at %d", hdr, row)
+	}
+}
+
+func TestFleetFilterKeepsGroupsWhole(t *testing.T) {
+	v := deadFixture(t)
+	n := len(v.fv.Crews)
+	// only the dead sub row's repo matches
+	ix := fleetState{filter: "subrepo"}.index(v.fv)
+	if ix.vis[n-1] || ix.vis[n-2] {
+		t.Errorf("collapsed dead group shown: sub %v head %v", ix.vis[n-1], ix.vis[n-2])
+	}
+	if ix.deadN != 1 {
+		t.Errorf("deadN = %d, want 1", ix.deadN)
+	}
+	ix = fleetState{filter: "subrepo", showDead: true}.index(v.fv)
+	if !ix.vis[n-1] || !ix.vis[n-2] {
+		t.Errorf("expanded: sub %v head %v, want both", ix.vis[n-1], ix.vis[n-2])
+	}
+	// pinned sub pulls its head in while collapsed
+	ix = fleetState{crew: v.fv.Crews[n-1].Key}.index(v.fv)
+	if !ix.vis[n-1] || !ix.vis[n-2] {
+		t.Errorf("pinned sub: sub %v head %v, want both", ix.vis[n-1], ix.vis[n-2])
 	}
 }
