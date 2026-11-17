@@ -788,3 +788,35 @@ func TestFoldBlockedEpisode(t *testing.T) {
 		})
 	}
 }
+
+// A branch-level reap row has no crew_id and `reaped` lands only on the newest
+// session's crew, so another crew's older finished row must still fold to reaped.
+func TestFoldReapSupersedesOtherCrewsFinishedRow(t *testing.T) {
+	const b = "feat/1-x"
+	reap := fmt.Sprintf(`{"ts":%d,"kind":"reap","branch":%q,"pr":"https://github.com/o/r/pull/2","pr_state":"CLOSED"}`, t0+5000, b)
+	failed := status(t0+1000, "worker:"+b+"#s1-1", `{"state":"failed","detail":"migrating to halo"}`)
+	cases := []struct {
+		name   string
+		events []string
+		want   string
+	}{
+		{"older failed row, later reap row", []string{failed, reap}, "reaped"},
+		{"reap row older than the row", []string{reap, status(t0+9000, "worker:"+b+"#s1-1", `{"state":"failed"}`)}, "failed"},
+		{"a live row is never reaped", []string{status(t0+1000, "worker:"+b+"#s1-1", `{"state":"working"}`), reap}, "working"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			p := Probes{Tmux: &tmuxtest.Fake{Out: map[string]string{}}, Worktrees: func() (string, error) { return "", nil }}
+			got, err := Fold(t.Context(), decodeEvents(t, c.events), "c1", now, p)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(got) != 1 {
+				t.Fatalf("rows = %d, want 1: %s", len(got), compact(t, got))
+			}
+			if st, _ := got[0]["state"].(string); st != c.want {
+				t.Errorf("state = %q, want %q", st, c.want)
+			}
+		})
+	}
+}
