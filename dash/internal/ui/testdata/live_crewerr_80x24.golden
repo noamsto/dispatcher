@@ -1,4 +1,5 @@
   Overview │ ▸ Live │   Board │   Budget │   Runs │   Settings │   Map │   Fleet
+ crew › c1
 claude 5h 10%  codex ?  cursor ?  pi ?
 1 blocked · 1 hold · 1 reaped hidden
 crew c2: workers unavailable: boom
@@ -9,7 +10,6 @@ crew c3: holds unavailable: nope
   c3    onyx    idle     33m     trivial/pi/pi-mini            —
   c1    amber   done     2h 46m  standard/claude/sonnet        #55
   hold h1: claude 7d until 2026-09-25T02:13:20Z — Resume after 7d window resets
-
 
 
 

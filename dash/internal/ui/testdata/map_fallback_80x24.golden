@@ -1,9 +1,9 @@
   Overview │   Live │   Board │   Budget │   Runs │   Settings │ ▸ Map │   Fleet
+ crew › c1
 Map unavailable: needs kitty or ghostty
 The Map tab needs kitty or ghostty.
 Under tmux, also run: tmux set -g allow-passthrough on
 Press 2 for the Live table.
-
 
 
 

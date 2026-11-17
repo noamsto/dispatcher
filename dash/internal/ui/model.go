@@ -139,6 +139,7 @@ type Model struct {
 	snap   data.Snapshot
 	digest data.BusDigest
 	crew   []string
+	repo   string // checkout the bus log belongs to, for the crew header
 	load   [numSources]loadState
 
 	fleetIn      vm.FleetInputs
@@ -180,6 +181,7 @@ func NewModel(deps Deps, now func() time.Time, live liveDeps) Model {
 			Roster: data.RosterSection{Crews: []data.RosterCrew{}},
 		},
 		crew:       deps.Crew,
+		repo:       repoOfEvents(deps.EventsPath),
 		fleetWatch: live.fleetWatcher,
 		keys:       DefaultKeyMap(),
 		help:       help.New(),
@@ -602,8 +604,17 @@ func (m Model) View() string {
 	return strings.Join(all, "\n")
 }
 
-// headerLines is the tab bar, which sits above every view's body.
-func (m Model) headerLines() []string { return strings.Split(m.renderTabs(), "\n") }
+// headerLines is the tab bar, plus the crew line on every single-crew tab; the
+// Fleet tab spans crews and its drill-down draws its own breadcrumb.
+func (m Model) headerLines() []string {
+	lines := strings.Split(m.renderTabs(), "\n")
+	if m.active != fleetTab {
+		if h := m.crewHeader(); h != "" {
+			lines = append(lines, h)
+		}
+	}
+	return lines
+}
 
 // statusLines is the one-line action status, or nothing when unset.
 func (m Model) statusLines() []string {
