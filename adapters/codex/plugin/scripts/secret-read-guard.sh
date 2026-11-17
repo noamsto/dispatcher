@@ -438,8 +438,8 @@ awk_chars='
 # Positional, not a strip. Backslash-aware like bash: outside quotes `\"` is not
 # a quote-open; inside "..." a `\"` does not close the span; '...' has no
 # escapes. With S set, "..." contents show as themselves (only '...' blanks),
-# and $'...' (state "A") lets a backslash escape the next character. A `$` that completes `$$`
-# (the PID) arms nothing, so `$$'` is a plain quote.
+# and $'...' (state "A") lets a backslash escape the next character. A `$`
+# that completes `$$` (the PID) arms nothing, so `$$'` is a plain quote.
 awk_mask='
 BEGIN { SQ = sprintf("%c", 39); DQ = "\""; BS = "\\" }
 function mask(c,    pd) {
