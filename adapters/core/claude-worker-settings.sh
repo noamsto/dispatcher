@@ -87,6 +87,27 @@ worker_browser_env() {
   printf 'AGENT_BROWSER_SESSION=dispatch-%s-%08x AGENT_BROWSER_CONFIG=%q ' "$slug" "$sum" "$3"
 }
 
+# worker_tmux_env <worktree> — print a TMUX_TMPDIR assignment, with a trailing
+# space, for a private tmux socket dir per worktree. An inherited TMUX_TMPDIR is
+# the owner's runtime dir on a systemd host, and deleting it wipes the D-Bus,
+# systemd and tmux sockets. $TMUX still routes the pane's own tmux calls to the
+# live server. Keyed on the worktree like the browser session, so role panes and
+# resume share it. It sits under the cache dir, not /tmp, so no shared predictable
+# path exists, and the short hash keeps the socket path within the length limit.
+worker_tmux_env() {
+  local dir sum
+  sum="$(printf '%s' "$1" | cksum | cut -d' ' -f1)"
+  dir="${XDG_CACHE_HOME:-${HOME:?}/.cache}/dispatcher/tmux/$(printf '%08x' "$sum")"
+  # mkdir -p succeeds on a symlink to a dir, and the socket would land in its target.
+  if [ -L "$dir" ] || { [ -e "$dir" ] && [ ! -d "$dir" ]; }; then
+    echo "dispatch: $dir is a symlink or not a directory — refusing to use it as a worker TMUX_TMPDIR" >&2
+    return 1
+  fi
+  (umask 077 && mkdir -p "$dir") || return 1
+  chmod 700 "$dir" || return 1
+  printf 'TMUX_TMPDIR=%q ' "$dir"
+}
+
 # The mcpServers catalog (#1304): named remote MCP servers a dispatcher launch
 # (dispatcherMcp) or a worker (`dispatch --mcp`) opts into, rendered into each
 # engine's own per-launch mechanism. dispatch-config has validated every entry

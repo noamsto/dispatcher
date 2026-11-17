@@ -16,6 +16,21 @@
 # else passes: read-only calls and window- or pane-scoped ones (rename-window,
 # kill-window -t @N, set -w, set -p, select-pane).
 #
+# Also denied: a delete (rm, rmdir, unlink, trash-put, gtrash put, find
+# -delete) of a path at, below or above the per-user runtime dir
+# ($XDG_RUNTIME_DIR, /run/user/<x>), which holds the D-Bus, systemd and tmux
+# sockets. Paths resolve lexically, never evaluated. A `$NAME` stands for every
+# value it may hold: its exported value in the guard's environment plus every
+# `NAME=value` or `${NAME:=value}` anywhere on the line, whatever its order or
+# scope (prefix, subshell, pipe element, branch, substitution). The delete is
+# refused when any of them reaches the runtime dir, so rebinding an inherited
+# name to a private dir does not make deleting through it safe; deleting
+# through a fresh name (`d=$(mktemp -d); rm -rf "$d"`) is. A part it cannot know
+# (an unset, loop or read variable, `$1`, a glob, a command substitution)
+# matches any one segment, but a relative path or one whose first part is
+# unknown is allowed, since that is how a private scratch dir from `mktemp -d`
+# looks. An operand with more than 16 candidate values is refused.
+#
 #   engine        event                  command at             verdict shape
 #   claude        PreToolUse Bash        tool_input.command     hookSpecificOutput deny
 #   pi(hookyard)  canonical_event        tool_input.command     hookSpecificOutput deny
@@ -33,8 +48,14 @@
 # value (`env --unset TMUX tmux kill-server`). Here-doc bodies are read as
 # commands, so a body line starting with `tmux kill-server` is denied, and an
 # escaped quote inside a double-quoted string ends the quote early (also a deny).
+# For deletes: symlinks into the runtime dir; `cd` then a relative path (`cd
+# "$XDG_RUNTIME_DIR" && rm -rf tmux-1000`); `mv`, `shred`, `rsync --delete`;
+# `xargs rm` and `find -exec rm`; operands after an unquoted command
+# substitution (`rm -rf $(f) /run/user/1000`), since the split ends the command
+# there.
 #
-# Portable to macOS's bash 3.2 and BSD userland: no mapfile, no ${var,,}.
+# Portable to macOS's bash 3.2 and BSD userland: no mapfile, no ${var,,}, no
+# associative arrays.
 
 set -euo pipefail
 
@@ -75,6 +96,18 @@ parsed=$(jq -c "$normalise" <<<"$input" 2>/dev/null) || {
 [[ -n $parsed ]] || exit 0
 shape=$(jq -r '.[0]' <<<"$parsed")
 command=$(jq -r '.[1]' <<<"$parsed")
+
+# The uid substitutions become their digits before the split, so the quoted and
+# the unquoted `/run/user/$(id -u)` reach the delete check as one plain word.
+# They hold no tmux word, so the tmux check sees an equivalent command.
+# shellcheck disable=SC2016
+command=${command//'$(id -u)'/$UID}
+# shellcheck disable=SC2016
+command=${command//'$(id -ru)'/$UID}
+# shellcheck disable=SC2016
+command=${command//'`id -u`'/$UID}
+# shellcheck disable=SC2016
+command=${command//'`id -ru`'/$UID}
 
 # Quote-aware split of the command line: one word per line, an empty line
 # wherever a shell control operator (`; && || | ( )`) ends a command, and
@@ -270,10 +303,423 @@ flush_tmux() {
   fi
 }
 
+in_del=''
+dargs=()
+exported=''
+xdg_root=()
+xdg_done=0
+del_target=''
+# A path segment the guard cannot know; it matches any segment.
+unk=$'\002'
+# Most candidates one operand may expand to; past it the delete is refused.
+max_cands=16
+# Every NAME=value and ${NAME:=value} on the line: names in $bn, raw values
+# (quotes stripped, substitutions made $unk) in $bv.
+bn=()
+bv=()
+re_bind_word='(^|[[:space:];&|()`])([A-Za-z_][A-Za-z0-9_]*)=$'
+re_bind_brace='[$][{]([A-Za-z_][A-Za-z0-9_]*):?=$'
+collected=0
+visiting=' '
+over=0
+
+# Index just past the `)` matching the `(` before $2 in $1, quotes skipped.
+skip_parens() { # <string> <index>
+  local s=$1 n=${#1} d=1 c
+  sp=$2
+  while ((sp < n && d > 0)); do
+    c=${s:sp:1}
+    sp=$((sp + 1))
+    case $c in
+    '(') d=$((d + 1)) ;;
+    ')') d=$((d - 1)) ;;
+    "'" | '"')
+      while ((sp < n)) && [[ ${s:sp:1} != "$c" ]]; do sp=$((sp + 1)); done
+      sp=$((sp + 1))
+      ;;
+    \\) sp=$((sp + 1)) ;;
+    esac
+  done
+}
+
+# Index of the `}` matching the `${` whose body starts at $2 in $1, nested
+# braces counted; -1 when unmatched.
+match_brace() { # <string> <index>
+  local s=$1 n=${#1} d=1
+  mb=$2
+  while ((mb < n)); do
+    case ${s:mb:1} in
+    '{') d=$((d + 1)) ;;
+    '}')
+      d=$((d - 1))
+      ((d > 0)) || return 0
+      ;;
+    esac
+    mb=$((mb + 1))
+  done
+  mb=-1
+}
+
+# Fill $bn/$bv from the raw command. A binding counts wherever it appears —
+# prefix, subshell, pipe element, branch, inside a substitution — so a name's
+# candidates are a superset of what the shell could hold. `$( … )` and
+# backticks are opaque, so a value runs to the first blank or operator outside
+# them and quotes.
+collect_bindings() {
+  local rest=$command pre='' name v c i n q dq
+  collected=1
+  # The text before each `=` decides whether it binds; only the `=` itself is
+  # kept as context for the next one.
+  while [[ $rest == *=* ]]; do
+    pre+=${rest%%=*}=
+    rest=${rest#*=}
+    if [[ $pre =~ $re_bind_brace ]]; then
+      match_brace "$rest" 0
+      ((mb >= 0)) || mb=${#rest}
+      bn+=("${BASH_REMATCH[1]}")
+      bv+=("${rest:0:mb}")
+      pre='='
+      continue
+    fi
+    if [[ ! $pre =~ $re_bind_word ]]; then
+      pre='='
+      continue
+    fi
+    name=${BASH_REMATCH[2]}
+    pre='='
+    v=''
+    i=0
+    n=${#rest}
+    dq=0
+    while ((i < n)); do
+      c=${rest:i:1}
+      case $c in
+      ' ' | $'\t' | $'\n' | ';' | '|' | '&' | '(' | ')' | '<' | '>')
+        ((dq)) || break
+        v+=$c
+        ;;
+      '"') dq=$((1 - dq)) ;;
+      "'")
+        if ((dq)); then
+          v+=$c
+        else
+          q=${rest:i+1}
+          q=${q%%"'"*}
+          v+=$q
+          i=$((i + ${#q} + 1))
+        fi
+        ;;
+      \\)
+        i=$((i + 1))
+        v+=${rest:i:1}
+        ;;
+      '`')
+        v+=$unk
+        i=$((i + 1))
+        while ((i < n)) && [[ ${rest:i:1} != '`' ]]; do i=$((i + 1)); done
+        ;;
+      '$')
+        if [[ ${rest:i+1:1} == '(' ]]; then
+          v+=$unk
+          skip_parens "$rest" $((i + 2))
+          i=$sp
+          continue
+        fi
+        if [[ ${rest:i+1:1} == '{' ]]; then
+          match_brace "$rest" $((i + 2))
+          ((mb >= 0)) || mb=$((n - 1))
+          v+=${rest:i:mb-i+1}
+          i=$((mb + 1))
+          continue
+        fi
+        v+=$c
+        ;;
+      *) v+=$c ;;
+      esac
+      i=$((i + 1))
+    done
+    bn+=("$name")
+    bv+=("$v")
+  done
+}
+
+# Sets $lv to NAME's candidate values: its exported value from the guard's
+# environment, plus the expansion of every binding of NAME on the line. Only
+# exported names are read from the environment: a guard-internal or shell-only
+# variable says nothing about the worker's shell. An unset or empty value, or
+# a name with no candidates, is unknown, never empty, so `rm -rf "$dir/"` is
+# not `rm -rf /`. A binding that refers back to its own name (`d=$d/x`) reads
+# that name as unknown.
+lookup_var() { # <name>
+  local i e
+  local -a out=()
+  case $1 in
+  UID)
+    lv=("$UID")
+    return 0
+    ;;
+  EUID)
+    lv=("$EUID")
+    return 0
+    ;;
+  esac
+  # export -p, not compgen -e: nixpkgs' non-interactive bash has no compgen.
+  # Posix mode (POSIXLY_CORRECT) prints `export NAME=` lines.
+  if [[ -z $exported ]]; then exported=$'\n'$(export -p)$'\n'; fi
+  case $exported in
+  *$'\n'"declare -x $1="* | *$'\n'"export $1="*) [[ -z ${!1:-} ]] || out=("${!1}") ;;
+  esac
+  ((collected)) || collect_bindings
+  case $visiting in
+  *" $1 "*) out+=("$unk") ;;
+  *)
+    visiting+="$1 "
+    for ((i = 0; i < ${#bn[@]}; i++)); do
+      [[ ${bn[i]} == "$1" ]] || continue
+      expand_word "${bv[i]}"
+      for e in "${exs[@]}"; do out+=("${e:-$unk}"); done
+    done
+    visiting=${visiting%"$1 "}
+    ;;
+  esac
+  if ((${#out[@]} > max_cands)); then over=1; fi
+  ((${#out[@]})) || out=("$unk")
+  lv=("${out[@]}")
+}
+
+# Expand the parameters in one word into $exs, the list of values it may take
+# (the cross product of its parameters' candidates); whatever the guard cannot
+# know (positional and special parameters, other ${…} forms, command
+# substitutions) becomes $unk. More than $max_cands sets $over.
+#   ${X:-w} ${X-w} ${X:=w} ${X=w}   candidates of X and of w
+#   ${X:+w} ${X+w}                  candidates of w, or unknown
+#   ${X:?w} ${X?w} ${X%w} ${X%%w}   candidates of X (a `%` strip leaves a
+#                                   prefix, so the whole value leans to deny)
+expand_word() { # <word>
+  local s=$1 i=0 n=${#1} c inner name op lit='' a l
+  local -a acc=('') vals next
+  while ((i <= n)); do
+    c=${s:i:1}
+    i=$((i + 1))
+    if ((i <= n)) && [[ $c != '$' && $c != '`' ]]; then
+      lit+=$c
+      continue
+    fi
+    if ((i > n)); then
+      vals=('')
+    elif [[ $c == '`' ]]; then
+      vals=("$unk")
+      while ((i < n)) && [[ ${s:i:1} != '`' ]]; do i=$((i + 1)); done
+      i=$((i + 1))
+    else
+      c=${s:i:1}
+      case $c in
+      '{')
+        match_brace "$s" $((i + 1))
+        if ((mb < 0)); then
+          vals=("$unk")
+          i=$n
+        else
+          inner=${s:i+1:mb-i-1}
+          i=$((mb + 1))
+          vals=("$unk")
+          if [[ $inner =~ ^([A-Za-z_][A-Za-z0-9_]*)(.*)$ ]]; then
+            name=${BASH_REMATCH[1]}
+            op=${BASH_REMATCH[2]}
+            case $op in
+            '' | :\?* | \?* | %*)
+              lookup_var "$name"
+              vals=("${lv[@]}")
+              ;;
+            :-* | :=* | -* | =*)
+              lookup_var "$name"
+              vals=("${lv[@]}")
+              op=${op#:}
+              expand_word "${op:1}"
+              vals+=("${exs[@]}")
+              ;;
+            :+* | +*)
+              op=${op#:}
+              expand_word "${op:1}"
+              vals=("${exs[@]}" "$unk")
+              ;;
+            esac
+          fi
+        fi
+        ;;
+      '(')
+        vals=("$unk")
+        skip_parens "$s" $((i + 1))
+        i=$sp
+        ;;
+      [A-Za-z_])
+        inner=${s:i}
+        inner=${inner%%[!A-Za-z0-9_]*}
+        i=$((i + ${#inner}))
+        lookup_var "$inner"
+        vals=("${lv[@]}")
+        ;;
+      [0-9@*#\$!?-])
+        vals=("$unk")
+        i=$((i + 1))
+        ;;
+      *)
+        # A bare `$`: the remnant an unquoted `$(…)` leaves after the split.
+        vals=("$unk")
+        ;;
+      esac
+    fi
+    next=()
+    for a in "${acc[@]}"; do
+      for l in "${vals[@]}"; do next+=("$a$lit$l"); done
+    done
+    lit=''
+    if ((${#next[@]} > max_cands)); then
+      over=1
+      next=("${next[@]:0:max_cands}")
+    fi
+    acc=("${next[@]}")
+  done
+  exs=("${acc[@]}")
+}
+
+# Lexical normalisation into $segs[0..nseg): empty and `.` dropped, `..`
+# folded, a segment holding $unk or a glob character made $unk. `..` after an
+# unknown segment leaves it: the unknown part may have been several segments.
+norm_path() { # <expanded path>
+  local p=$1 seg
+  segs=()
+  nseg=0
+  while [[ -n $p ]]; do
+    seg=${p%%/*}
+    if [[ $p == */* ]]; then p=${p#*/}; else p=''; fi
+    case $seg in
+    '' | .) ;;
+    ..)
+      if ((nseg > 0)) && [[ ${segs[nseg - 1]} != "$unk" ]]; then nseg=$((nseg - 1)); fi
+      ;;
+    *"$unk"* | *[*?[]*)
+      segs[nseg]=$unk
+      nseg=$((nseg + 1))
+      ;;
+    *)
+      segs[nseg]=$seg
+      nseg=$((nseg + 1))
+      ;;
+    esac
+  done
+}
+
+# True when the target ($segs) and the root agree on every segment both have:
+# the target is at, below or above the root. Deleting an ancestor empties the
+# runtime dir too, so above counts.
+reaches_root() { # <root segment>...
+  local i=0 r
+  for r in "$@"; do
+    ((i < nseg)) || return 0
+    [[ $r == "$unk" || ${segs[i]} == "$unk" || ${segs[i]} == "$r" ]] || return 1
+    i=$((i + 1))
+  done
+}
+
+# A relative target, or one whose first segment is unknown, is allowed: it is
+# most likely a private scratch dir the guard cannot see.
+judge_target() { # <operand>
+  local c
+  [[ -z $del_target ]] || return 0
+  expand_word "$1"
+  if ((over)); then
+    del_target=$1
+    return 0
+  fi
+  for c in "${exs[@]}"; do
+    [[ $c == /* ]] || continue
+    norm_path "$c"
+    if reaches_root run user "$unk" || { ((${#xdg_root[@]})) && reaches_root "${xdg_root[@]}"; }; then
+      del_target=$1
+      return 0
+    fi
+  done
+}
+
+# Judge the operands of the delete being collected, if any.
+flush_del() {
+  local w opts=1 put=0 skip=0 paths=0
+  [[ -n $in_del ]] || return 0
+  if ((!xdg_done)); then
+    xdg_done=1
+    if [[ ${XDG_RUNTIME_DIR:-} == /* ]]; then
+      norm_path "$XDG_RUNTIME_DIR"
+      ((nseg == 0)) || xdg_root=("${segs[@]:0:nseg}")
+    fi
+  fi
+  case $in_del in
+  rm)
+    for w in ${dargs[@]+"${dargs[@]}"}; do
+      if ((opts)); then
+        if [[ $w == -- ]]; then
+          opts=0
+          continue
+        fi
+        if [[ $w == -* ]]; then continue; fi
+      fi
+      judge_target "$w"
+    done
+    ;;
+  gtrash)
+    for w in ${dargs[@]+"${dargs[@]}"}; do
+      if [[ $w == -* ]]; then continue; fi
+      if ((put)); then
+        judge_target "$w"
+        continue
+      fi
+      [[ $w == put ]] || break
+      put=1
+    done
+    ;;
+  find)
+    case " ${dargs[*]-} " in
+    *" -delete "*)
+      for w in ${dargs[@]+"${dargs[@]}"}; do
+        if ((skip)); then
+          skip=0
+          continue
+        fi
+        if ((paths)); then
+          judge_target "$w"
+          paths=0
+          continue
+        fi
+        if ((opts)); then
+          case $w in
+          -H | -L | -P | -E | -X | -s | -x | -O*) continue ;;
+          -f)
+            paths=1
+            continue
+            ;;
+          -D)
+            skip=1
+            continue
+            ;;
+          esac
+          opts=0
+        fi
+        case $w in -* | '('* | '!'*) break ;; esac
+        judge_target "$w"
+      done
+      ;;
+    esac
+    ;;
+  esac
+  in_del=''
+  dargs=()
+}
+
 while IFS= read -r w; do
   if [[ -z $w || $w == "$nl_mark" ]]; then
     flush_tmux
-    [[ -z $deny_what ]] || break
+    flush_del
+    [[ -z $deny_what && -z $del_target ]] || break
     at_cmd=1
     wrapper=''
     wrapper_val=0
@@ -285,12 +731,17 @@ while IFS= read -r w; do
     targs+=("$w")
     continue
   fi
+  if [[ -n $in_del ]]; then
+    dargs+=("$w")
+    continue
+  fi
   ((at_cmd)) || continue
 
   if ((wrapper_val)); then
     wrapper_val=0
     continue
   fi
+  # A NAME=value prefix is not the command word; collect_bindings reads it.
   if [[ $w =~ ^[A-Za-z_][A-Za-z0-9_]*= ]]; then continue; fi
   if [[ -n $wrapper && $w == -* ]]; then
     if [[ $w != --* ]]; then
@@ -326,14 +777,22 @@ while IFS= read -r w; do
     in_tmux=1
     continue
     ;;
+  rm | rmdir | unlink | trash-put) in_del='rm' ;;
+  gtrash) in_del='gtrash' ;;
+  find) in_del='find' ;;
   esac
   at_cmd=0
 done < <(split_words "$command")
 
-[[ -n $deny_what ]] || exit 0
-
-reason="This tmux command reaches the live tmux server: '$deny_what' with no -L/-S. A worker's panes inherit \$TMUX, which tmux resolves before TMUX_TMPDIR, so a scratch server built with TMUX_TMPDIR alone does not isolate it.
+if [[ -n $deny_what ]]; then
+  reason="This tmux command reaches the live tmux server: '$deny_what' with no -L/-S. A worker's panes inherit \$TMUX, which tmux resolves before TMUX_TMPDIR, so a scratch server built with TMUX_TMPDIR alone does not isolate it.
 Fix: run 'unset TMUX', point a private 'export TMUX_TMPDIR=\$(mktemp -d)', and pass '-L <name>' on every tmux call, including kill-server."
+elif [[ -n $del_target ]]; then
+  reason="This deletes '$del_target', which resolves to the per-user runtime dir (\$XDG_RUNTIME_DIR, /run/user/<uid>) or one of its parents or children: it holds the D-Bus, systemd and tmux sockets, and deleting it breaks the owner's session until reboot.
+Fix: make scratch dirs with 'mktemp -d' and delete them through a name you created, e.g. 'd=\$(mktemp -d); rm -rf \"\$d\"' (for a nested session: 'rt=\$(mktemp -d); XDG_RUNTIME_DIR=\$rt Hyprland; rm -rf \"\$rt\"'). Never delete through an inherited variable such as TMUX_TMPDIR or XDG_RUNTIME_DIR, even after rebinding it: the guard counts every value the name may hold."
+else
+  exit 0
+fi
 
 case $shape in
 cursor) jq -cn --arg r "$reason" '{permission: "deny", user_message: $r, agent_message: $r}' ;;

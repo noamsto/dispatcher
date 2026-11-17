@@ -1204,7 +1204,7 @@ EOF
   cd "$WT"
   DISPATCH_SESSION_ID=s2-100 run run_resume
   [ "$status" -eq 0 ]
-  grep -qE 'send-keys -t %8 (-u DISPATCHER_[A-Z]+_DIR )*(DISPATCHER_[A-Z]+_DIR=[^ ]+ |DISPATCH_GRANT_ROOTS=[^ ]+ )*GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: env (-u AGENT_BROWSER_[A-Z_]+ )+AGENT_BROWSER_SESSION=[^ ]+ AGENT_BROWSER_CONFIG=[^ ]+ CREW_WORKER_ID=[^ ]+ CREW_ID=[^ ]+ ENABLE_CLAUDEAI_MCP_SERVERS=false CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false CLAUDE_CODE_SUBAGENT_EFFORT=[a-z]+ claude --continue' <(launch_log)
+  grep -qE 'send-keys -t %8 (-u DISPATCHER_[A-Z]+_DIR )*(DISPATCHER_[A-Z]+_DIR=[^ ]+ |DISPATCH_GRANT_ROOTS=[^ ]+ )*GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: env (-u AGENT_BROWSER_[A-Z_]+ )+AGENT_BROWSER_SESSION=[^ ]+ AGENT_BROWSER_CONFIG=[^ ]+ TMUX_TMPDIR=[^ ]+ CREW_WORKER_ID=[^ ]+ CREW_ID=[^ ]+ ENABLE_CLAUDEAI_MCP_SERVERS=false CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false CLAUDE_CODE_SUBAGENT_EFFORT=[a-z]+ claude --continue' <(launch_log)
   grep -q 'CREW_WORKER_ID=worker:feat/7-a-thing#s2-100 CREW_ID=c1 ENABLE_CLAUDEAI_MCP_SERVERS=false CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false CLAUDE_CODE_SUBAGENT_EFFORT=[a-z]* claude --continue' <(launch_log)
   grep -q -- '--model sonnet' <(launch_log)
   grep -q -- '--effort medium' <(launch_log)
@@ -1326,6 +1326,30 @@ _lead_pane() { sed -n 's/^set-option -p -t \([^ ]*\) @crew_model .*/\1/p' "$STUB
   [ "$status" -eq 0 ]
   [[ "$(grep -F 'pi --continue' <(launch_log))" =~ AGENT_BROWSER_SESSION=(dispatch-[a-z0-9-]*-[0-9a-f]{8})\ AGENT_BROWSER_CONFIG=/[^\ ]*/agent-browser-worker.json\  ]]
   [ "${BASH_REMATCH[1]}" = "$claude_session" ]
+}
+
+@test "claude resume and pi resume carry the worktree's private TMUX_TMPDIR" {
+  setup_worker_wt
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  cd "$WT"
+  export TMUX_TMPDIR=/run/user/1000 TMUX=/run/user/1000/tmux-1000/default,1,0
+  . "$BATS_TEST_DIRNAME/../adapters/core/claude-worker-settings.sh"
+  want="$(worker_tmux_env "$(git -C "$WT" rev-parse --show-toplevel)")"
+  [[ "$want" == "TMUX_TMPDIR="*" " ]]
+  DISPATCH_SESSION_ID=s2-100 run run_resume
+  [ "$status" -eq 0 ]
+  line="$(grep -F 'claude --continue' <(launch_log))"
+  [[ "$line" == *"$want"* ]]
+  [[ "$line" != *"/run/user"* ]]
+  [[ "$line" != *" -u TMUX "* && "$line" != *" TMUX="* ]]
+
+  : >"$STUB_LOG"
+  sed -i -e 's/^engine: claude/engine: pi/' -e 's|^model: sonnet|model: openrouter/deepseek/deepseek-v4-flash|' "$WT/WORKER_TASK.md"
+  run run_resume
+  [ "$status" -eq 0 ]
+  line="$(grep -F 'pi --continue' <(launch_log))"
+  [[ "$line" == *"$want"* ]]
+  [[ "$line" != *" -u TMUX "* && "$line" != *" TMUX="* ]]
 }
 
 @test "claude resume drops the claude.ai connectors unless DISPATCH_CLAUDE_CONNECTORS=1" {
@@ -1576,7 +1600,7 @@ _ro_rule() { printf -v r ' %q' "Edit(/$1/**)"; }
   cd "$WT"
   run run_resume --fresh
   [ "$status" -eq 0 ]
-  grep -qE 'send-keys -t %8 (-u DISPATCHER_[A-Z]+_DIR )*(DISPATCHER_[A-Z]+_DIR=[^ ]+ |DISPATCH_GRANT_ROOTS=[^ ]+ )*GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: env (-u AGENT_BROWSER_[A-Z_]+ )+AGENT_BROWSER_SESSION=[^ ]+ AGENT_BROWSER_CONFIG=[^ ]+ CREW_WORKER_ID=[^ ]+ CREW_ID=[^ ]+ ENABLE_CLAUDEAI_MCP_SERVERS=false CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false CLAUDE_CODE_SUBAGENT_EFFORT=[a-z]+ claude ' <(launch_log)
+  grep -qE 'send-keys -t %8 (-u DISPATCHER_[A-Z]+_DIR )*(DISPATCHER_[A-Z]+_DIR=[^ ]+ |DISPATCH_GRANT_ROOTS=[^ ]+ )*GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: env (-u AGENT_BROWSER_[A-Z_]+ )+AGENT_BROWSER_SESSION=[^ ]+ AGENT_BROWSER_CONFIG=[^ ]+ TMUX_TMPDIR=[^ ]+ CREW_WORKER_ID=[^ ]+ CREW_ID=[^ ]+ ENABLE_CLAUDEAI_MCP_SERVERS=false CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false CLAUDE_CODE_SUBAGENT_EFFORT=[a-z]+ claude ' <(launch_log)
   run grep -c -- '--continue' <(launch_log)
   [ "$status" -ne 0 ]
   sid="$(grep -oE -- "--session-id $UUID_RE" <(launch_log) | head -1 | cut -d' ' -f2)"
@@ -1628,7 +1652,7 @@ _ro_rule() { printf -v r ' %q' "Edit(/$1/**)"; }
   cd "$WT"
   DISPATCH_PROFILE=work run run_resume --fresh
   [ "$status" -eq 0 ]
-  grep -qE 'send-keys -t %8 (-u DISPATCHER_[A-Z]+_DIR )*(DISPATCHER_[A-Z]+_DIR=[^ ]+ |DISPATCH_GRANT_ROOTS=[^ ]+ )*GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: env (-u AGENT_BROWSER_[A-Z_]+ )+AGENT_BROWSER_SESSION=[^ ]+ AGENT_BROWSER_CONFIG=[^ ]+ CREW_WORKER_ID=[^ ]+ CREW_ID=[^ ]+ codex ' <(launch_log)
+  grep -qE 'send-keys -t %8 (-u DISPATCHER_[A-Z]+_DIR )*(DISPATCHER_[A-Z]+_DIR=[^ ]+ |DISPATCH_GRANT_ROOTS=[^ ]+ )*GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: env (-u AGENT_BROWSER_[A-Z_]+ )+AGENT_BROWSER_SESSION=[^ ]+ AGENT_BROWSER_CONFIG=[^ ]+ TMUX_TMPDIR=[^ ]+ CREW_WORKER_ID=[^ ]+ CREW_ID=[^ ]+ codex ' <(launch_log)
   run grep -c -- 'resume --last' <(launch_log)
   [ "$status" -ne 0 ]
   [ "$(jq -c 'select(.kind == "resume") | .engine_session' "$(bus_log)" | tail -1)" = null ]
@@ -1654,7 +1678,7 @@ _ro_rule() { printf -v r ' %q' "Edit(/$1/**)"; }
   cd "$WT"
   DISPATCH_PROFILE=work run run_resume --fresh
   [ "$status" -eq 0 ]
-  grep -qE 'send-keys -t %8 (-u DISPATCHER_[A-Z]+_DIR )*(DISPATCHER_[A-Z]+_DIR=[^ ]+ |DISPATCH_GRANT_ROOTS=[^ ]+ )*GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: env (-u AGENT_BROWSER_[A-Z_]+ )+AGENT_BROWSER_SESSION=[^ ]+ AGENT_BROWSER_CONFIG=[^ ]+ CREW_WORKER_ID=[^ ]+ CREW_ID=[^ ]+ CURSOR_CLI_INDEXED_GREP=0 cursor-agent ' <(launch_log)
+  grep -qE 'send-keys -t %8 (-u DISPATCHER_[A-Z]+_DIR )*(DISPATCHER_[A-Z]+_DIR=[^ ]+ |DISPATCH_GRANT_ROOTS=[^ ]+ )*GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: env (-u AGENT_BROWSER_[A-Z_]+ )+AGENT_BROWSER_SESSION=[^ ]+ AGENT_BROWSER_CONFIG=[^ ]+ TMUX_TMPDIR=[^ ]+ CREW_WORKER_ID=[^ ]+ CREW_ID=[^ ]+ CURSOR_CLI_INDEXED_GREP=0 cursor-agent ' <(launch_log)
   run grep -c -- '--continue' <(launch_log)
   [ "$status" -ne 0 ]
 }
@@ -1765,7 +1789,7 @@ _ro_rule() { printf -v r ' %q' "Edit(/$1/**)"; }
   cd "$WT"
   run run_resume --fresh
   [ "$status" -eq 0 ]
-  grep -qE 'send-keys -t %8 (-u DISPATCHER_[A-Z]+_DIR )*(DISPATCHER_[A-Z]+_DIR=[^ ]+ |DISPATCH_GRANT_ROOTS=[^ ]+ )*GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: env (-u AGENT_BROWSER_[A-Z_]+ )+AGENT_BROWSER_SESSION=[^ ]+ AGENT_BROWSER_CONFIG=[^ ]+ CREW_WORKER_ID=[^ ]+ CREW_ID=[^ ]+ PI_CODING_AGENT_DIR=[^ ]+ pi ' <(launch_log)
+  grep -qE 'send-keys -t %8 (-u DISPATCHER_[A-Z]+_DIR )*(DISPATCHER_[A-Z]+_DIR=[^ ]+ |DISPATCH_GRANT_ROOTS=[^ ]+ )*GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: env (-u AGENT_BROWSER_[A-Z_]+ )+AGENT_BROWSER_SESSION=[^ ]+ AGENT_BROWSER_CONFIG=[^ ]+ TMUX_TMPDIR=[^ ]+ CREW_WORKER_ID=[^ ]+ CREW_ID=[^ ]+ PI_CODING_AGENT_DIR=[^ ]+ pi ' <(launch_log)
   run grep -c -- '--continue' <(launch_log)
   [ "$status" -ne 0 ]
 }
