@@ -46,6 +46,8 @@ const (
 
 	// buildConcurrency bounds the repos built at once.
 	buildConcurrency = 8
+	// remoteConcurrency bounds the ssh probes in flight across all repos.
+	remoteConcurrency = 8
 	// unprobed is the reason an overseer's remote capture fails with: it asks no
 	// host, and the placeholder row it leaves is marked remote_unprobed.
 	unprobed = "remote_unprobed"
@@ -285,6 +287,19 @@ func collectStatus(ctx context.Context, req StatusRequest, stderr io.Writer, o S
 	}
 	if o.PeerHosts != nil {
 		o.PeerHosts = sync.OnceValues(o.PeerHosts)
+	}
+	if remote := o.Remote; remote != nil {
+		// Repos build concurrently and each fans out one ssh per remote crew;
+		// bounding the lot keeps a host under sshd's MaxStartups.
+		sem := make(chan struct{}, remoteConcurrency)
+		o.Remote = func(dir, crew string) roster.Capture {
+			capture := remote(dir, crew)
+			return func(ctx context.Context, host string, argv []string, stdout, stderr io.Writer) int {
+				sem <- struct{}{}
+				defer func() { <-sem }()
+				return capture(ctx, host, argv, stdout, stderr)
+			}
+		}
 	}
 	now := o.Clock.Now()
 	nowMS := now.UnixMilli()

@@ -18,6 +18,7 @@ import (
 
 	"github.com/noamsto/dispatcher/crew/internal/clock"
 	"github.com/noamsto/dispatcher/crew/internal/gh/ghtest"
+	"github.com/noamsto/dispatcher/crew/internal/git"
 	"github.com/noamsto/dispatcher/crew/internal/git/gittest"
 	"github.com/noamsto/dispatcher/crew/internal/lane"
 	"github.com/noamsto/dispatcher/crew/internal/proc/proctest"
@@ -1073,7 +1074,16 @@ func TestStatusConcurrentBuildsKeepRepoOrder(t *testing.T) {
 	if err := os.WriteFile(f.opts.Registry, []byte(strings.Join(commons, "\n")+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	for range 5 {
+	// Later repos answer first, so completion order is the reverse of launch.
+	f.opts.Git = &gittest.Fake{Func: func(dir string, args []string) (string, error) {
+		for i, c := range commons {
+			if args[0] == "--git-dir="+c {
+				time.Sleep(time.Duration(len(commons)-i) * 3 * time.Millisecond)
+			}
+		}
+		return "", &git.ExitError{Code: 1}
+	}}
+	for range 3 {
 		doc := f.collect(StatusRequest{})
 		var got []string
 		for _, r := range doc.Repos {
