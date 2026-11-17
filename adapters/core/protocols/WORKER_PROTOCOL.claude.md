@@ -40,7 +40,7 @@ seen=$(jq -n 'now*1000|floor')
 crew inbox "$CREW_WORKER_ID"
 ```
 
-Messages → receiving-code-review discipline, `seen` = their max `.ts`; none → keep `seen`. Later reads: `--since $seen` (Checkpoint-peek).
+Messages → receiving-code-review discipline, `seen` = max of it and their `.ts` (never backwards); none → keep `seen`. Later reads: `--since $seen` (Checkpoint-peek).
 
 `roles:` stamped → read `WORKER_GRID` now.
 
@@ -178,11 +178,13 @@ crew inbox "$CREW_WORKER_ID" --since <seen-cursor>
 
 One pass, not a held wait like `crew await`; empty output ⇒ proceed.
 
-- Seen-cursor: set by the First action drain; never re-initialize it to `now` (re-opens the pre-start blind spot). After handling messages a peek or await returned, advance `seen` to the max `.ts` of those only: `seen=$(printf '%s\n' "$msgs" | jq -s 'map(.ts) | max')`; an empty peek leaves it.
+- Seen-cursor: set by the First action drain; never re-initialize it to `now` (re-opens the pre-start blind spot). After handling messages a peek or await returned, advance `seen` to the max of the cursor and those msgs' `.ts`, never backwards: `seen=$(printf '%s\n' "$msgs" | jq -s --argjson s "$seen" 'map(.ts) + [$s] | max')`; an empty peek leaves it. A peek may also print msgs older than the cursor that were never handed to this session: handle them like any other; an older role verdict surfaced that way follows the "Gating verdicts are awaited" late-verdict rule.
 - A user turn exactly `crew inbox "$CREW_WORKER_ID"` is a dispatcher nudge: a peek seam (`crew inbox "$CREW_WORKER_ID" --since <seen>`, seen-cursor rules) with no instruction or authorization of its own; before the First action drain, the drain covers it.
 - Directive → receiving-code-review, then redirect the pipeline; "stop" → wind down cleanly, stamp `crew status "$CREW_WORKER_ID" <state>` (e.g. `failed "stopped by dispatcher"`).
 - A redirect surfaces only at the next seam (mid-`execute`: when execute ends or at a background-task wake). The peek is NOT a kill switch: hard abort is the dispatcher's `tmux kill-window` (→ SessionEnd `exited`).
 - Completion peeks (all tiers, same cursor rules): pre-push, after `/deslop` and any review→fix round, right before `git push` (besides the post-review seam); pre-PR, after `git push` succeeds, right before `gh pr create` (existing-PR path: before posting `pr_open`); pre-done, after `pr_open` and the metrics snapshot, right before `done`. After `done`, `crew reply` refuses the session.
+  - Run each completion peek in its own tool call, never chained with `crew status … pr_open|done`; handle what it prints before posting.
+  - A `pr_open`/`done` refusal that prints dispatcher msgs has handed them over: handle them per receiving-code-review (a work-changing directive takes the Work-changing directive path), advance the cursor over them, then re-post.
   - Pre-push tracked-scaffolding check (all tiers): `WORKER_SHIP`, before every push.
   - Work-changing directive: don't post the next status; re-stamp `working`; re-enter the affected stage, redo every gate it invalidates (fast gate, review, `/deslop`, push). PR already open (pre-done, any resume) → existing-PR path (`gh pr view --json url,state`, push to it, `pr_open` with that url); never a second `gh pr create`. Re-entry after `pr_open` legitimately moves you from finished back to active in dispatcher accounting.
   - Conflicting or unclear directive: block→await.

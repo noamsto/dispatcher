@@ -13,4 +13,8 @@ pr_open and done are refused on a standard/deep implement run until the branch
 carries a review seam and a deslop seam, plus a plan seam when its task doc says
 plan: required.
 
+pr_open and done by a worker are also refused while a dispatcher:<crew> message
+to that exact session is undelivered: the refusal prints each one as inbox does
+and marks it delivered, so handle them, then post again.
+
   crew status "$CREW_WORKER_ID" working "execute: tests"

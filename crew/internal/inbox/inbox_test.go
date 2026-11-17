@@ -920,3 +920,29 @@ func TestNudgeLineClearsRoleVerdictFromScan(t *testing.T) {
 		t.Errorf("scan after the nudge = %q, want empty: the delivered verdict is no repeat reason", got)
 	}
 }
+
+func TestSincePeekDeliversDirectivePastTheCursor(t *testing.T) {
+	p := fixture(t)
+	const lead = "worker:feat/x#s1-1"
+	writeLog(t, p, `{"ts":1500000,"crew_id":"c1","from":"dispatcher:c1","to":"`+lead+`","kind":"msg","body":"fix it"}`+"\n")
+	scan := func() string {
+		return unread.Scan(unread.Request{Dir: p.Dir, Log: p.Log, Crew: "c1", Branch: "feat/x", Me: "worker:feat/x", FromID: lead, T0: 0}, unread.Any)
+	}
+	if got := scan(); got != "1500000 1500000 dispatcher" {
+		t.Fatalf("precondition: scan = %q", got)
+	}
+	var out bytes.Buffer
+	rc := Run(Request{Me: lead, Crew: "c1", Since: "1600000"}, p, &out, io.Discard, Options{
+		CrewID: func() string { return "c1" },
+		Flush:  func() error { return nil },
+	})
+	if rc != 0 {
+		t.Fatalf("rc = %d", rc)
+	}
+	if !strings.Contains(out.String(), `"body":"fix it"`) {
+		t.Errorf("stdout = %q, want the undelivered directive despite --since past its ts", out.String())
+	}
+	if got := scan(); got != "" {
+		t.Errorf("scan after the peek = %q, want empty", got)
+	}
+}

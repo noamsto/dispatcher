@@ -142,6 +142,42 @@ func RecordHeld(dir, crew, me string, msgs []any) bool {
 	return record(dir, crew, me, msgs)
 }
 
+// Past is the one "not yet delivered this session" predicate: it keeps the rows
+// newer than held's mark for their sender, `.ts > ($marks[.from] // 0)`, run by
+// jq so a string mark a hand-edited file left outranks a number ts as
+// `_unread_scan` has it. A row whose `from` is not a string is dropped first —
+// it has no mark to compare with, and record.jq would fail the whole write over
+// it.
+func Past(rows []map[string]any, held any) ([]map[string]any, error) {
+	var named []map[string]any
+	input := []any{}
+	for _, v := range rows {
+		if _, ok := v["from"].(string); ok {
+			named = append(named, v)
+			input = append(input, v)
+		}
+	}
+	if len(named) == 0 {
+		return nil, nil
+	}
+	p, err := jqrun.CompileAny("map(.ts > ($marks[.from] // 0))", 0, map[string]any{"marks": held})
+	if err != nil {
+		return nil, err
+	}
+	keep, err := p.RunAny(input)
+	if err != nil {
+		return nil, err
+	}
+	flags, _ := keep.([]any)
+	var out []map[string]any
+	for i, k := range flags {
+		if k == true {
+			out = append(out, named[i])
+		}
+	}
+	return out, nil
+}
+
 // record is `_await_record`: raise each sender's mark to the newest of msgs,
 // over the marks already held, and replace the file atomically. Best effort —
 // every failure path leaves the old file in place and only means redelivery.

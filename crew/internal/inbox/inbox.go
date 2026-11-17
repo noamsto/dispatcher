@@ -19,7 +19,6 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/ascii"
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/invisible"
-	"github.com/noamsto/dispatcher/crew/internal/jqrun"
 	"github.com/noamsto/dispatcher/crew/internal/jsonval"
 	"github.com/noamsto/dispatcher/crew/internal/marks"
 	"github.com/noamsto/dispatcher/crew/internal/sender"
@@ -119,7 +118,7 @@ func Run(q Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int {
 	printed := selected
 	if q.Undelivered {
 		var err error
-		if printed, err = pastMarks(selected, held); err != nil {
+		if printed, err = marks.Past(selected, held); err != nil {
 			say(stderr, "crew: inbox: %v\n", err)
 			return 1
 		}
@@ -180,41 +179,6 @@ func selects(v map[string]any, crew, me, since, from string) bool {
 		return true
 	}
 	return greaterThanNumber(v["ts"], since)
-}
-
-// pastMarks keeps the msgs newer than this session's mark for their sender:
-// `.ts > ($marks[.from] // 0)`, run by jq so a string mark a hand-edited file
-// left outranks a number ts as `_unread_scan` has it. A msg whose `from` is not
-// a string is dropped first — it has no mark to compare with, and record.jq
-// would fail the whole write over it.
-func pastMarks(rows []map[string]any, held any) ([]map[string]any, error) {
-	var named []map[string]any
-	input := []any{}
-	for _, v := range rows {
-		if _, ok := v["from"].(string); ok {
-			named = append(named, v)
-			input = append(input, v)
-		}
-	}
-	if len(named) == 0 {
-		return nil, nil
-	}
-	p, err := jqrun.CompileAny("map(.ts > ($marks[.from] // 0))", 0, map[string]any{"marks": held})
-	if err != nil {
-		return nil, err
-	}
-	keep, err := p.RunAny(input)
-	if err != nil {
-		return nil, err
-	}
-	flags, _ := keep.([]any)
-	var out []map[string]any
-	for i, k := range flags {
-		if k == true {
-			out = append(out, named[i])
-		}
-	}
-	return out, nil
 }
 
 // member is jq's `.key == s`: an absent key indexes to null, and only a string

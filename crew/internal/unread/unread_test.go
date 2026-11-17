@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/marks"
 )
 
@@ -242,5 +243,50 @@ func TestScanClearsOnMarksTheGoReadersRaise(t *testing.T) {
 	deliver(t, dir, m)
 	if got := scan(dir, log, Any); got != "" {
 		t.Errorf("after delivery: %q, want empty", got)
+	}
+}
+
+// directiveEv is a bus row as the bus decodes it: ts a json.Number, the way
+// marks and the scan compare it.
+func directiveEv(ts, crewID, from, to, kind string) bus.Event {
+	return bus.Event{Doc: map[string]any{
+		"ts": json.Number(ts), "crew_id": crewID, "from": from, "to": to, "kind": kind, "body": "x",
+	}}
+}
+
+func TestDirectives(t *testing.T) {
+	const d = "dispatcher:c1"
+	events := []bus.Event{
+		directiveEv("1100000", "c1", d, sid, "msg"),
+		directiveEv("1200000", "c1", d, sid, "msg"),
+		directiveEv("1300000", "c2", "dispatcher:c2", sid, "msg"),
+		directiveEv("1310000", "c1", d, "worker:feat/x#s200-1", "msg"),
+		directiveEv("1320000", "c1", d, "*", "msg"),
+		directiveEv("1330000", "c1", "role:feat/x:reviewer", sid, "msg"),
+		directiveEv("1340000", "c1", d, sid, "status"),
+	}
+	cases := []struct {
+		name string
+		held any
+		want string
+	}{
+		{"empty mark keeps all matching in log order", map[string]any{}, "1100000,1200000"},
+		{"ts above the mark kept, at or below dropped", map[string]any{d: json.Number("1150000")}, "1200000"},
+		{"ts equal to the mark dropped", map[string]any{d: json.Number("1200000")}, ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, err := Directives(events, "c1", sid, c.held)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var ts []string
+			for _, row := range got {
+				ts = append(ts, row["ts"].(json.Number).String())
+			}
+			if s := strings.Join(ts, ","); s != c.want {
+				t.Errorf("kept %q, want %q", s, c.want)
+			}
+		})
 	}
 }
