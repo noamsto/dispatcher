@@ -170,8 +170,7 @@ type StatusRequest struct {
 	Restamp                 bool
 }
 
-// RunStatus posts a worker's state: after the terminal-dedupe no-op, the
-// undelivered-directive gate and then the ledger/seam gate run before the append.
+// RunStatus posts a worker's state.
 func RunStatus(ctx context.Context, req StatusRequest, paths bus.Paths, stderr io.Writer, o Options) int {
 	o = o.withDefaults()
 	crew, ok := begin("status", paths, stderr, o)

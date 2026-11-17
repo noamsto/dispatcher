@@ -93,8 +93,7 @@ func Scan(r Request, mode Mode) string {
 
 // Directives is the dispatcher half of the scan's notion of undelivered: the
 // msgs the dispatcher sent this crew to this session, minus the ones already
-// marked delivered. The `crew status` pr_open/done gate and the `crew merge`
-// gate both read it. The match is exact on `to`, so a "*" broadcast is not a
+// marked delivered. The match is exact on `to`, so a "*" broadcast is not a
 // directive to any one session.
 func Directives(events []bus.Event, crew, session string, held any) ([]map[string]any, error) {
 	from := "dispatcher:" + crew

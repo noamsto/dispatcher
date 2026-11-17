@@ -60,8 +60,8 @@ type Request struct {
 // polling can still return a msg an --undelivered reader printed meanwhile.
 //
 // For a worker reader, --since never hides a msg addressed to it that is past
-// its delivered marks: the lead's seen-cursor can sit above a directive no peek
-// ever printed, and the watchdog keeps reporting it until a peek does.
+// its delivered marks: a lead's seen-cursor can sit above a directive no peek
+// ever printed.
 func Run(q Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int {
 	me, crew, since := q.Me, q.Crew, q.Since
 	if crew == "" {
