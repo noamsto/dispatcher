@@ -252,7 +252,7 @@ func undeliveredGate(paths bus.Paths, crew, from, state string, stderr io.Writer
 	if len(rows) == 0 {
 		return false
 	}
-	say(stderr, "crew: refusing %s for %s — %d dispatcher msg(s) to this session were never handed over; they print below and are now delivered: handle each per receiving-code-review (a work-changing directive re-opens the pipeline), advance your seen-cursor over them, then retry\n", state, from, len(rows))
+	say(stderr, "crew: refusing %s for %s — %d dispatcher msg(s) to this session were never handed over; they print below and are now delivered: handle each per receiving-code-review (a work-changing directive re-opens the pipeline; a review worker blocks instead, per REVIEW_TASK P2), advance your seen-cursor over the JSON lines below (not this line), then retry\n", state, from, len(rows))
 	recorded := make([]any, len(rows))
 	wrote := true
 	for i, v := range rows {
