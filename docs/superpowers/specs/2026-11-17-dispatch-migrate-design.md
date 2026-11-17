@@ -129,7 +129,10 @@ worktree record, never a bus path.
 - `crew migrate snapshot --crew C <branch>` — reuses reap `--discard`'s patch
   machinery, refactored into an exported function rather than copied:
   `scratchTree` (private index, `read-tree` + `add -A`: tracked, staged and
-  untracked), `hasGitlink` (embedded-repo refusal), `writeDiff`
+  untracked, plus a forced add of root scaffold the repo gitignores —
+  `SPEC.md`, `PLAN.md`, `DECOMPOSITION.md`, `REVIEW_NOTES.md`,
+  `PLAN_ROUND<n>.md`, never `WORKER_TASK.md` — so a mid-run worker keeps
+  them), `hasGitlink` (embedded-repo refusal), `writeDiff`
   (`--binary --full-index`), symlink-guarded artifacts dir and no-clobber
   link. Same safety refusals as `--discard`: live engine at the worktree, cwd
   inside it, no admin dir, gitlink mismatch, `config.worktree`, submodules,
@@ -307,8 +310,9 @@ removal only when **all** hold:
 - the branch's newest dispatch row is `remote:true` on the mark's `to_host`
   (the remote resume was confirmed);
 - no engine is live at the worktree; cwd not inside it;
-- `refs/heads/<b>` equals `refs/remotes/origin/<b>` and equals the mark's
-  `tip`;
+- `refs/heads/<b>` equals the mark's `tip`, and that tip is an ancestor of
+  `refs/remotes/origin/<b>` (the remote worker may have pushed past it and a
+  local fetch moved the tracking ref);
 - the tree is clean beyond scaffold, or its scratch tree equals the mark's
   `tree` (nothing beyond the travelling patch);
 - the usual tree gates (admin dir, gitlink, `config.worktree`, submodules,
