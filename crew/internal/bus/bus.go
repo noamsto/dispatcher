@@ -144,6 +144,26 @@ func newEvent(doc any) Event {
 	return e
 }
 
+// EventsFromLines decodes each raw log line on its own, as exactly one JSON
+// value in gojq's form. A blank, torn or multi-value line is skipped, so a
+// corrupt line never hides the rows after it.
+func EventsFromLines(lines []string) []Event {
+	evs := make([]Event, 0, len(lines))
+	for _, line := range lines {
+		dec := json.NewDecoder(strings.NewReader(line))
+		dec.UseNumber()
+		var v any
+		if dec.Decode(&v) != nil {
+			continue
+		}
+		if _, err := dec.Token(); err != io.EOF {
+			continue
+		}
+		evs = append(evs, newEvent(v))
+	}
+	return evs
+}
+
 func stringField(obj map[string]any, key string) string {
 	s, _ := obj[key].(string)
 	return s

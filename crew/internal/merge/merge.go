@@ -8,7 +8,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -204,11 +203,7 @@ func Run(ctx context.Context, req Request, paths bus.Paths, stdout, stderr io.Wr
 	if len(data) > 0 {
 		lines = strings.Split(strings.TrimSuffix(string(data), "\n"), "\n")
 	}
-	events, err := bus.ReadEventsTolerant(paths.Log)
-	var decodeErr *bus.DecodeError
-	if err != nil && !errors.Is(err, bus.ErrNoLog) && !errors.As(err, &decodeErr) {
-		return refuse("could not read the bus: %v", err)
-	}
+	events := bus.EventsFromLines(lines)
 
 	if req.NoLedger {
 		pass("ledger: skipped (--no-ledger)")
@@ -368,7 +363,8 @@ func checkUnread(lines []string, events []bus.Event, req Request, url string, pa
 	}
 	list := make([]string, len(undelivered))
 	for i, m := range undelivered {
-		list[i] = fmt.Sprintf("ts %v %q", m["ts"], excerpt(m["body"]))
+		ts, _ := json.Marshal(m["ts"])
+		list[i] = fmt.Sprintf("ts %s %q", ts, excerpt(m["body"]))
 	}
 	return refuse("dispatcher msg(s) to %s not yet delivered: %s; let the worker read it (crew nudge %s), or re-dispatch the branch if its session ended", session, strings.Join(list, "; "), branch)
 }

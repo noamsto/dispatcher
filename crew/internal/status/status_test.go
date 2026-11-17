@@ -1386,6 +1386,35 @@ func TestUndeliveredDirectiveRefusesTerminalOnce(t *testing.T) {
 	}
 }
 
+func TestUndeliveredDirectiveBehindTornLine(t *testing.T) {
+	const body = "do not skip me"
+	for _, state := range []string{"pr_open", "done"} {
+		t.Run(state, func(t *testing.T) {
+			f := newFixture(t)
+			f.log(`{"ts":0,"crew_id":"c1","fro`, msgRow("dispatcher:c1", worker, body))
+			code, stderr := f.status(worker, state)
+			if code != 1 || !strings.Contains(stderr, body) {
+				t.Errorf("got %d %q, want a refusal printing %q", code, stderr, body)
+			}
+		})
+	}
+}
+
+type failWriter struct{}
+
+func (failWriter) Write([]byte) (int, error) { return 0, errors.New("broken pipe") }
+
+func TestUndeliveredDirectiveUnwrittenStaysUnmarked(t *testing.T) {
+	f := newFixture(t)
+	f.log(msgRow("dispatcher:c1", worker, "x"))
+	if !undeliveredGate(f.paths, f.crew, worker, "done", failWriter{}) {
+		t.Fatal("gate passed, want refused")
+	}
+	if got := f.delivered(worker); got != nil {
+		t.Errorf("mark = %v, want none for a msg that never reached the wire", got)
+	}
+}
+
 func TestUndeliveredDirectiveNotRefused(t *testing.T) {
 	cases := []struct {
 		name, row string

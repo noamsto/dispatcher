@@ -87,7 +87,7 @@ func TestRun(t *testing.T) {
 		{name: "row of another crew", view: view("OPEN", "false", "MERGEABLE", okRoll), runs: okRuns, log: okRow, req: merge.Request{Crew: "c2"}, code: 1, stderr: "no pr_open ledger"},
 		{name: "invalid ledger", view: view("OPEN", "false", "MERGEABLE", okRoll), runs: okRuns, log: strings.Replace(okRow, "AC1 pass(bats)", "AC1 pending", 1), code: 1, stderr: "no longer validates"},
 		{name: "newest row wins", view: view("OPEN", "false", "MERGEABLE", okRoll), runs: okRuns, log: strings.Replace(okRow, "AC1 pass(bats)", "AC1 pending", 1) + "\n" + okRow, merged: true, stdout: "merged"},
-		{name: "corrupt line before the pr_open row", view: view("OPEN", "false", "MERGEABLE", okRoll), runs: okRuns, log: "{not json\n" + okRow, req: merge.Request{DryRun: true}, stdout: "ledger: worker:feat/x#s1-1 validates", noMerge: true},
+		{name: "corrupt line before the pr_open row", view: view("OPEN", "false", "MERGEABLE", okRoll), runs: okRuns, log: "{not json\n" + okRow, req: merge.Request{DryRun: true}, stdout: "ledger: worker:feat/x#s1-1 validates\n  unread: none for worker:feat/x#s1-1\n", noMerge: true},
 		{name: "dry run", view: view("OPEN", "false", "MERGEABLE", okRoll), runs: okRuns, log: okRow, req: merge.Request{DryRun: true}, stdout: "ok: all checks passed\n  pr: open, ready, mergeable\n  head check check: success\n  base main: not red\n  ledger: worker:feat/x#s1-1 validates\n", noMerge: true},
 		{name: "worker moved on to done", view: view("OPEN", "false", "MERGEABLE", okRoll), runs: okRuns, log: okRow + "\n" + laterDone, merged: true, stdout: "merged"},
 		{name: "bad pr", req: merge.Request{PR: "x"}, code: 1, stderr: "usage: crew merge"},
@@ -296,6 +296,10 @@ func TestUnreadDirectives(t *testing.T) {
 		{name: "no-ledger still checks", log: []string{okRow, msgToOld}, req: merge.Request{NoLedger: true}, code: 1, stderr: []string{sess}},
 		{name: "no-ledger without a pr_open row skips", log: []string{msgToOld}, req: merge.Request{NoLedger: true, DryRun: true}, stdout: "unread: skipped (no worker pr_open for this PR)"},
 		{name: "no-ledger without a pr_open row merges", log: []string{msgToOld}, req: merge.Request{NoLedger: true}, merged: true},
+		{name: "torn line before the directive refuses", log: []string{okRow, `{torn`, msgToOld}, code: 1, stderr: []string{sess, "ts 3"}},
+		{name: "torn line before the directive refuses on dry run", log: []string{okRow, `{torn`, msgToOld}, req: merge.Request{DryRun: true}, code: 1, stderr: []string{sess, "ts 3"}},
+		{name: "torn line before the pr_open row, directive after", log: []string{`{torn`, okRow, msgToOld}, code: 1, stderr: []string{sess, "ts 3"}},
+		{name: "forged ts is escaped", log: []string{okRow, `{"ts":"\u001b[31mred","crew_id":"c1","from":"dispatcher:c1","to":"` + sess + `","kind":"msg","body":"x"}`}, code: 1, stderr: []string{`ts "\u001b[31mred"`}},
 		{name: "empty crew uses the row's crew", log: []string{okRow, msgToOld}, req: merge.Request{Crew: ""}, code: 1, stderr: []string{"dispatcher msg(s) to " + sess}},
 	}
 	for _, tt := range tests {

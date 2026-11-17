@@ -235,15 +235,15 @@ func undeliveredGate(paths bus.Paths, crew, from, state string, stderr io.Writer
 	}
 	defer unlock()
 
-	events, err := bus.ReadEventsTolerant(paths.Log)
-	var decode *bus.DecodeError
+	log := readLog(paths.Log)
 	switch {
-	case errors.Is(err, bus.ErrNoLog):
-		return false
-	case err != nil && !errors.As(err, &decode):
-		say(stderr, "crew: refusing %s for %s — could not read the crew log for the unread check: %v\n", state, from, err)
+	case log.err != nil:
+		say(stderr, "crew: refusing %s for %s — could not read the crew log for the unread check: %v\n", state, from, log.err)
 		return true
+	case log.lines == nil:
+		return false
 	}
+	events := bus.EventsFromLines(log.lines)
 	rows, err := unread.Directives(events, crew, from, marks.Read(paths.Dir, crew, from))
 	if err != nil {
 		say(stderr, "crew: refusing %s for %s — unread check failed: %v\n", state, from, err)
@@ -254,11 +254,17 @@ func undeliveredGate(paths bus.Paths, crew, from, state string, stderr io.Writer
 	}
 	say(stderr, "crew: refusing %s for %s — %d dispatcher msg(s) to this session were never handed over; they print below and are now delivered: handle each per receiving-code-review (a work-changing directive re-opens the pipeline), advance your seen-cursor over them, then retry\n", state, from, len(rows))
 	recorded := make([]any, len(rows))
+	wrote := true
 	for i, v := range rows {
 		spill.Expand(v, paths, crew)
-		_ = jsonval.Encode(stderr, invisible.Value(v), false)
+		if jsonval.Encode(stderr, invisible.Value(v), false) != nil {
+			wrote = false
+		}
 		recorded[i] = v
 	}
-	marks.RecordHeld(paths.Dir, crew, from, recorded)
+	// A row that did not reach the wire stays undelivered for the retry.
+	if wrote {
+		marks.RecordHeld(paths.Dir, crew, from, recorded)
+	}
 	return true
 }
