@@ -1006,7 +1006,11 @@ _claude_pretrust() {
   for _ in 1 2 3 4 5; do
     if ln -s "$$" "$lock_path" 2>/dev/null; then
       claude_json_lock="$lock_path"
-      tmp="$(mktemp "$claude_json.tmp.XXXXXX")" || { rm -f "$claude_json_lock"; claude_json_lock=""; return 1; }
+      tmp="$(mktemp "$claude_json.tmp.XXXXXX")" || {
+        rm -f "$claude_json_lock"
+        claude_json_lock=""
+        return 1
+      }
       if [ -f "$claude_json" ]; then
         existing="$(cat "$claude_json")"
       else
