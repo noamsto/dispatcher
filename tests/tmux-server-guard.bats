@@ -158,3 +158,109 @@ tmux kill-server 2>/dev/null || true'
   run run_guard <<<"$(cursor_shell_exec 'tmux -L x kill-server')"
   assert_allow
 }
+
+# --- deletes that reach the per-user runtime dir ---------------------------
+# Every command below is a string fed to the guard; nothing is executed.
+
+codex_bash() { # <command>
+  jq -nc --arg cmd "$1" \
+    '{hook_event_name:"PreToolUse",session_id:"s",turn_id:"t",tool_name:"Bash",tool_input:{command:$cmd},cwd:"/tmp"}'
+}
+
+assert_cursor_block() { # <substring of the reason>
+  [ "$status" -eq 0 ]
+  jq -e --arg w "$1" '.permission == "deny" and (.agent_message | contains($w))' <<<"$output" >/dev/null
+}
+
+runtime_env() {
+  export XDG_RUNTIME_DIR=/run/user/1000 TMUX_TMPDIR=/run/user/1000
+}
+
+@test "tmux-server-guard: refuses deletes that reach the runtime dir (claude and pi)" {
+  runtime_env
+  local cmd
+  for cmd in 'rm -rf "$TMUX_TMPDIR"' 'rm -rf /run/user/$(id -u)' 'rm -rf "/run/user/$(id -u)"' \
+    'rm -rf "$XDG_RUNTIME_DIR"' 'rm -rf ${XDG_RUNTIME_DIR}' 'rmdir "$XDG_RUNTIME_DIR"' \
+    'unlink "$XDG_RUNTIME_DIR/bus"' 'trash-put "$XDG_RUNTIME_DIR"' 'gtrash put "$TMUX_TMPDIR"' \
+    'find "$XDG_RUNTIME_DIR" -name x -delete' 'find -L /run/user/1000 -delete' \
+    'rm -rf "$XDG_RUNTIME_DIR/bus"' 'rm -rf "$TMUX_TMPDIR/tmux-$(id -u)"' 'rm -rf /run/user' \
+    'rm -rf /run' 'rm -rf /run/user/$(whoami)' 'rm -rf "/run/user/$(whoami)"' 'rm -rf /run/user/*' \
+    'rm -rf "$XDG_RUNTIME_DIR"/*' 'rm -rf /run/user/1000/../1000/' 'sudo rm -rf /run/user/1000' \
+    'command rm -r -- /run/user/1000' 'X=/run/user/1000; rm -rf "$X"' \
+    'cd /tmp && rm -rf "$XDG_RUNTIME_DIR"'; do
+    run run_guard <<<"$(claude_bash "$cmd")"
+    echo "claude: $cmd"
+    assert_block 'runtime dir'
+    run run_guard <<<"$(pi_bash "$cmd")"
+    echo "pi: $cmd"
+    assert_block 'runtime dir'
+  done
+}
+
+@test "tmux-server-guard: refuses a runtime-dir delete in the codex and cursor shapes" {
+  runtime_env
+  run run_guard <<<"$(codex_bash 'rm -rf "$XDG_RUNTIME_DIR"')"
+  assert_block 'runtime dir'
+  run run_guard <<<"$(cursor_shell_exec 'rm -rf "$XDG_RUNTIME_DIR"')"
+  assert_cursor_block 'runtime dir'
+}
+
+@test "tmux-server-guard: the delete deny reason carries the fix" {
+  runtime_env
+  run run_guard <<<"$(claude_bash 'rm -rf "$TMUX_TMPDIR"')"
+  assert_block "'\$TMUX_TMPDIR'"
+  assert_block 'mktemp -d'
+  assert_block 'D-Bus'
+}
+
+@test "tmux-server-guard: allows deletes it cannot tie to the runtime dir" {
+  runtime_env
+  local cmd
+  for cmd in 'd=$(mktemp -d); touch "$d/x"; rm -rf "$d"' \
+    'unset TMUX; export TMUX_TMPDIR=$(mktemp -d); tmux -L x new-session -d; tmux -L x kill-server; rm -rf "$TMUX_TMPDIR"' \
+    'rm -rf "$unsetvar/"' 'for d in a b; do rm -rf "$d/"; done' 'read -r TMUX_TMPDIR <f; rm -rf "$TMUX_TMPDIR"' \
+    'rm -rf "$1"' 'rm -rf "$shape/x"' 'rm -rf "$command"' 'rm -rf /tmp/x /home/u/scratch' 'rm -rf build' \
+    "find . -name '*.o' -delete" 'find "$XDG_RUNTIME_DIR" -name x' 'gtrash restore "$XDG_RUNTIME_DIR"' \
+    'echo rm -rf "$XDG_RUNTIME_DIR"' 'ls /run/user/1000'; do
+    run run_guard <<<"$(claude_bash "$cmd")"
+    echo "claude: $cmd"
+    assert_allow
+    run run_guard <<<"$(pi_bash "$cmd")"
+    echo "pi: $cmd"
+    assert_allow
+  done
+}
+
+@test "tmux-server-guard: allows deleting a private TMUX_TMPDIR from the hook env" {
+  export XDG_RUNTIME_DIR=/run/user/1000 TMUX_TMPDIR="$BATS_TEST_TMPDIR/priv"
+  run run_guard <<<"$(claude_bash 'rm -rf "$TMUX_TMPDIR"')"
+  assert_allow
+}
+
+@test "tmux-server-guard: a runtime-dir delete without CREW_WORKER_ID is allowed" {
+  runtime_env
+  unset CREW_WORKER_ID
+  run run_guard <<<"$(claude_bash 'rm -rf "$XDG_RUNTIME_DIR"')"
+  assert_allow
+}
+
+@test "tmux-server-guard: the uid pre-pass keeps the tmux check intact" {
+  runtime_env
+  run run_guard <<<"$(claude_bash 'echo $(tmux kill-server)')"
+  assert_block 'kill-server'
+  run run_guard <<<"$(claude_bash 'echo $(id -u) tmux kill-server')"
+  assert_allow
+}
+
+# bats test_tags=timing
+@test "tmux-server-guard: a delete after a 20 KB here-doc is judged in under 5 s" {
+  runtime_env
+  local body='' i start elapsed
+  for ((i = 0; i < 400; i++)); do body+="line $i of the here-doc body, plain prose text"$'\n'; done
+  start=$(date +%s%N)
+  run run_guard <<<"$(claude_bash "cat <<'EOF' >/dev/null"$'\n'"${body}EOF"$'\n''rm -rf "$XDG_RUNTIME_DIR"')"
+  elapsed=$((($(date +%s%N) - start) / 1000000))
+  echo "elapsed ${elapsed}ms" >&2
+  assert_block 'runtime dir'
+  [ "$elapsed" -lt 5000 ]
+}

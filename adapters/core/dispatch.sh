@@ -1931,7 +1931,7 @@ role_delivery() { case "$1" in cursor) echo pull ;; *) echo typed ;; esac }
 # crashes at startup is reported, while a reap (which kills the pane and its
 # shell) is silent. `;` is valid in fish (the pane shell), bash and zsh.
 launch_role() {
-  local pane="$1" wt="$2" role="$3" r_agent="$4" r_model="$5" r_effort="$6" prompt first quoted_model quoted_name quoted_dir quoted_prompt quoted_first cmd exit_cmd launch_line exit_line
+  local pane="$1" wt="$2" role="$3" r_agent="$4" r_model="$5" r_effort="$6" prompt first tmux_env quoted_model quoted_name quoted_dir quoted_prompt quoted_first cmd exit_cmd launch_line exit_line
   printf -v quoted_model '%q' "$r_model"
   printf -v quoted_name '%q' "${agent_name}-${role}"
   printf -v exit_cmd "%q --role-exited %q --branch %q --pane '%s' --since %s" "$dispatch_self" "$role" "$branch" "$pane" "$(jq -nc 'now*1000|floor')"
@@ -1940,6 +1940,7 @@ launch_role() {
   [ "$(role_delivery "$r_agent")" != pull ] || first+=' Your assignments are pulled, not typed: follow GRID_PROTOCOL.md "Pull delivery".'
   shell_quote quoted_prompt "$prompt"
   shell_quote quoted_first "$first"
+  tmux_env="$(worker_tmux_env "$wt")" || exit 1
   case "$r_agent" in
   pi)
     [ -n "$pi_agent_dir" ] || {
@@ -1947,11 +1948,11 @@ launch_role() {
       exit 1
     }
     printf -v quoted_dir '%q' "$pi_agent_dir"
-    cmd="${git_env}$(worker_browser_env "$branch" "$wt" "$agent_browser_worker_config")PI_CODING_AGENT_DIR=$quoted_dir pi --name $quoted_name --model $quoted_model --thinking $(_local_thinking "$settings" "$r_model" "$r_effort") --append-system-prompt $PROTOCOL_DIR/GRID_PROTOCOL.md --no-approve$(pi_skill_args "$wt") $quoted_prompt"
+    cmd="${git_env}$(worker_browser_env "$branch" "$wt" "$agent_browser_worker_config")${tmux_env}PI_CODING_AGENT_DIR=$quoted_dir pi --name $quoted_name --model $quoted_model --thinking $(_local_thinking "$settings" "$r_model" "$r_effort") --append-system-prompt $PROTOCOL_DIR/GRID_PROTOCOL.md --no-approve$(pi_skill_args "$wt") $quoted_prompt"
     ;;
-  claude) cmd="${git_env}$(worker_browser_env "$branch" "$wt" "$agent_browser_worker_config")$(claude_lean_env)claude --name $quoted_name --model $quoted_model --effort $r_effort --settings $(claude_worker_plugin_settings "$settings")$(launch_dir_args claude "$branch") --append-system-prompt-file $PROTOCOL_DIR/GRID_PROTOCOL.md --permission-mode auto$(claude_chrome_flag "") $quoted_prompt" ;;
-  codex) cmd="${git_env}$(worker_browser_env "$branch" "$wt" "$agent_browser_worker_config")codex --profile worker -m $quoted_model -c model_reasoning_effort=$r_effort -c service_tier=default --dangerously-bypass-approvals-and-sandbox $quoted_first" ;;
-  cursor) cmd="${git_env}$(worker_browser_env "$branch" "$wt" "$agent_browser_worker_config")CURSOR_CLI_INDEXED_GREP=0 cursor-agent --force --trust --approve-mcps --disable-indexing --disable-codebase-ref --model $quoted_model $quoted_first" ;;
+  claude) cmd="${git_env}$(worker_browser_env "$branch" "$wt" "$agent_browser_worker_config")${tmux_env}$(claude_lean_env)claude --name $quoted_name --model $quoted_model --effort $r_effort --settings $(claude_worker_plugin_settings "$settings")$(launch_dir_args claude "$branch") --append-system-prompt-file $PROTOCOL_DIR/GRID_PROTOCOL.md --permission-mode auto$(claude_chrome_flag "") $quoted_prompt" ;;
+  codex) cmd="${git_env}$(worker_browser_env "$branch" "$wt" "$agent_browser_worker_config")${tmux_env}codex --profile worker -m $quoted_model -c model_reasoning_effort=$r_effort -c service_tier=default --dangerously-bypass-approvals-and-sandbox $quoted_first" ;;
+  cursor) cmd="${git_env}$(worker_browser_env "$branch" "$wt" "$agent_browser_worker_config")${tmux_env}CURSOR_CLI_INDEXED_GREP=0 cursor-agent --force --trust --approve-mcps --disable-indexing --disable-codebase-ref --model $quoted_model $quoted_first" ;;
   esac
   write_launch_script launch_line "$cmd"
   write_launch_script exit_line "$exit_cmd" exit
@@ -5265,6 +5266,8 @@ lead_prompt_arg=""
 # The recorded identity is replayed from the shared bus.
 printf -v q_agent_name '%q' "$agent_name"
 
+tmux_env="$(worker_tmux_env "$wt_path")" || exit 1
+
 if [ "$agent" = codex ]; then
   # service_tier pinned: the interactive /fast toggle persists locally and would
   # otherwise leak into unattended workers, burning ChatGPT credits at 2.5x for
@@ -5276,7 +5279,7 @@ if [ "$agent" = codex ]; then
   # codex and cursor cannot pre-assign a session id, so there is none to verify:
   # the record names the engine with `-`, replacing any earlier lead's record.
   _record_lead_session "$agent" -
-  launch_cmd="${git_env}$(worker_browser_env "$branch" "$wt_path" "$agent_browser_worker_config")codex --profile worker -m $model -c model_reasoning_effort=$effort -c service_tier=default -c agents.enabled=true -c agents.max_concurrent_threads_per_session=3 -c agents.default_subagent_reasoning_effort=$codex_subagent_effort$mcp_args --dangerously-bypass-approvals-and-sandbox $quoted_prompt"
+  launch_cmd="${git_env}$(worker_browser_env "$branch" "$wt_path" "$agent_browser_worker_config")${tmux_env}codex --profile worker -m $model -c model_reasoning_effort=$effort -c service_tier=default -c agents.enabled=true -c agents.max_concurrent_threads_per_session=3 -c agents.default_subagent_reasoning_effort=$codex_subagent_effort$mcp_args --dangerously-bypass-approvals-and-sandbox $quoted_prompt"
 elif [ "$agent" = cursor ]; then
   # cursor-agent has no reasoning-effort flag — effort is encoded in the model
   # id ($model, e.g. claude-opus-5-high); composer-2.5 has no effort variants.
@@ -5294,7 +5297,7 @@ elif [ "$agent" = cursor ]; then
   prompt="Read $PROTOCOL_DIR/WORKER_PROTOCOL.md and WORKER_TASK.md, then run the task end-to-end.${push_mandate}${plan_note}${resume_note}${process_authority}${grid_note}${protocol_note}${owner_note}"
   shell_quote quoted_prompt "$prompt"
   _record_lead_session "$agent" -
-  launch_cmd="${git_env}$(worker_browser_env "$branch" "$wt_path" "$agent_browser_worker_config")CURSOR_CLI_INDEXED_GREP=0 cursor-agent --force --trust --approve-mcps --disable-indexing --disable-codebase-ref --model '$model' $quoted_prompt"
+  launch_cmd="${git_env}$(worker_browser_env "$branch" "$wt_path" "$agent_browser_worker_config")${tmux_env}CURSOR_CLI_INDEXED_GREP=0 cursor-agent --force --trust --approve-mcps --disable-indexing --disable-codebase-ref --model '$model' $quoted_prompt"
 elif [ "$agent" = pi ]; then
   # pi's interactive TUI keeps pane output live. It accepts a file path as a
   # real appended system prompt; --no-approve ignores project-local resources,
@@ -5310,7 +5313,7 @@ elif [ "$agent" = pi ]; then
   else
     lead_prompt_arg=" $quoted_prompt"
   fi
-  launch_cmd="${git_env}$(worker_browser_env "$branch" "$wt_path" "$agent_browser_worker_config")PI_CODING_AGENT_DIR=$quoted_dir ${fresh_prefix}pi --name $q_agent_name --model $model --thinking $(_local_thinking "$settings" "$model" "$effort")$lead_sid_args --append-system-prompt $PROTOCOL_DIR/WORKER_PROTOCOL.pi.md --no-approve -e $q_pi_ext$(pi_skill_args "$wt_path")$mcp_args$lead_prompt_arg"
+  launch_cmd="${git_env}$(worker_browser_env "$branch" "$wt_path" "$agent_browser_worker_config")${tmux_env}PI_CODING_AGENT_DIR=$quoted_dir ${fresh_prefix}pi --name $q_agent_name --model $model --thinking $(_local_thinking "$settings" "$model" "$effort")$lead_sid_args --append-system-prompt $PROTOCOL_DIR/WORKER_PROTOCOL.pi.md --no-approve -e $q_pi_ext$(pi_skill_args "$wt_path")$mcp_args$lead_prompt_arg"
 else
   prompt="Read WORKER_TASK.md and run it end-to-end.${push_mandate}${plan_note}${resume_note}${grid_note}${protocol_note}${owner_note}"
   shell_quote quoted_prompt "$prompt"
@@ -5321,7 +5324,7 @@ else
   else
     lead_prompt_arg=" $quoted_prompt"
   fi
-  launch_cmd="${git_env}$(worker_browser_env "$branch" "$wt_path" "$agent_browser_worker_config")$(claude_lean_env)$(claude_subagent_effort_env "$effort")${fresh_prefix}claude --name $q_agent_name --model $model --effort $effort$lead_sid_args $mcp_flag$mcp_args $xreview_mcp --settings $(claude_worker_plugin_settings "$settings" "$chrome" "$code_mode")$(launch_dir_args claude "$branch") --append-system-prompt-file $PROTOCOL_DIR/WORKER_PROTOCOL.claude.md --permission-mode auto$(claude_chrome_flag "$chrome")$lead_prompt_arg"
+  launch_cmd="${git_env}$(worker_browser_env "$branch" "$wt_path" "$agent_browser_worker_config")${tmux_env}$(claude_lean_env)$(claude_subagent_effort_env "$effort")${fresh_prefix}claude --name $q_agent_name --model $model --effort $effort$lead_sid_args $mcp_flag$mcp_args $xreview_mcp --settings $(claude_worker_plugin_settings "$settings" "$chrome" "$code_mode")$(launch_dir_args claude "$branch") --append-system-prompt-file $PROTOCOL_DIR/WORKER_PROTOCOL.claude.md --permission-mode auto$(claude_chrome_flag "$chrome")$lead_prompt_arg"
 fi
 write_launch_script launch_line "$launch_cmd"
 # Role grid: split the task window into one pane per role. Each role pane parks

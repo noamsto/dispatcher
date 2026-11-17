@@ -299,6 +299,10 @@ pointing at a dispatcher-owned empty config, so neither the repo's
 Launches also strip inherited `AGENT_BROWSER_*` variables that redirect the
 browser (profile, CDP, auto-connect) from the owner's shell or tmux environment;
 a repo `.envrc` loaded by direnv inside a worker shell is not covered.
+Launches also set `TMUX_TMPDIR` to a private 0700 dir under
+`${XDG_CACHE_HOME:-~/.cache}/dispatcher/tmux/` keyed on the worktree, so an
+inherited runtime dir never reaches a worker; `$TMUX` is kept, so the pane's
+own tmux calls still reach the live server.
 
 ### Lean claude workers
 

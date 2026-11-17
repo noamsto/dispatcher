@@ -15411,9 +15411,60 @@ browser_env_prefix='env -u AGENT_BROWSER_AUTO_CONNECT -u AGENT_BROWSER_CDP -u AG
   [[ "$lead" =~ $browser_session_re ]]
   lead_session="${BASH_REMATCH[1]}"
   [ "$(grep -o 'AGENT_BROWSER_SESSION=' <<<"$lead" | wc -l | tr -d ' ')" = 1 ]
-  [[ "$lead" == *"$browser_env_prefix"*"${BASH_REMATCH[0]}PI_CODING_AGENT_DIR="* ]]
+  [[ "$lead" == *"$browser_env_prefix"*"${BASH_REMATCH[0]}TMUX_TMPDIR="*" PI_CODING_AGENT_DIR="* ]]
   [[ "$role" =~ $browser_session_re ]]
   [ "${BASH_REMATCH[1]}" = "$lead_session" ]
+}
+
+assert_private_tmux_tmpdir() {
+  local line="$1" re="TMUX_TMPDIR=($XDG_CACHE_HOME/dispatcher/tmux/[0-9a-f]{8}) "
+  [[ "$line" =~ $re ]]
+  TMUX_TMPDIR_CAPTURE="${BASH_REMATCH[1]}"
+  [ "$(grep -o 'TMUX_TMPDIR=' <<<"$line" | wc -l | tr -d ' ')" = 1 ]
+  [[ "$TMUX_TMPDIR_CAPTURE" != *"/run/user"* ]]
+  [[ "$line" != *" -u TMUX "* ]]
+  [[ "$line" != *" TMUX="* ]]
+  [ -n "$(find "$TMUX_TMPDIR_CAPTURE" -maxdepth 0 -perm 700)" ]
+}
+
+@test "TMUX_TMPDIR: a claude lead and its role pane share one private per-worktree dir" {
+  stub_launch_bins
+  export TMUX_TMPDIR=/run/user/1000 TMUX=/run/user/1000/tmux-1000/default,1,0
+  DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --roles reviewer=claude:sonnet --crew-id c1 42 "tmux"
+  [ "$status" -eq 0 ]
+  lead="$(grep -F 'claude --name iris ' <(launch_log))"
+  role="$(grep -F 'claude --name iris-reviewer ' <(launch_log))"
+  assert_private_tmux_tmpdir "$lead"
+  lead_dir="$TMUX_TMPDIR_CAPTURE"
+  assert_private_tmux_tmpdir "$role"
+  [ "$TMUX_TMPDIR_CAPTURE" = "$lead_dir" ]
+}
+
+@test "TMUX_TMPDIR: a pi lead and its pi role pane share one private per-worktree dir" {
+  stub_launch_bins
+  export TMUX_TMPDIR=/run/user/1000 TMUX=/run/user/1000/tmux-1000/default,1,0
+  mkdir -p "$HOME/.pi/agent"
+  printf '{"opencode":{"type":"api_key","key":"x"}}\n' >"$HOME/.pi/agent/auth.json"
+  DISPATCH_PROFILE=personal run run_dispatch standard openrouter/deepseek/deepseek-v4-flash --agent pi --effort high --roles reviewer=pi:openrouter/deepseek/deepseek-v4-flash --crew-id c1 42 "tmux"
+  [ "$status" -eq 0 ]
+  lead="$(grep -F 'pi --name iris --model' <(launch_log))"
+  role="$(grep -F 'pi --name iris-reviewer' <(launch_log))"
+  assert_private_tmux_tmpdir "$lead"
+  lead_dir="$TMUX_TMPDIR_CAPTURE"
+  assert_private_tmux_tmpdir "$role"
+  [ "$TMUX_TMPDIR_CAPTURE" = "$lead_dir" ]
+}
+
+@test "TMUX_TMPDIR: a codex lead and a cursor lead each carry the private dir" {
+  stub_launch_bins
+  export TMUX_TMPDIR=/run/user/1000 TMUX=/run/user/1000/tmux-1000/default,1,0
+  DISPATCH_PROFILE=work run run_dispatch standard gpt-5.6-terra --agent codex --effort medium --crew-id c1 42 "tmux codex"
+  [ "$status" -eq 0 ]
+  assert_private_tmux_tmpdir "$(grep -F 'codex --profile worker ' <(launch_log))"
+  : >"$STUB_LOG"
+  DISPATCH_PROFILE=work run run_dispatch standard composer-2.5 --agent cursor --effort low --crew-id c1 43 "tmux cursor"
+  [ "$status" -eq 0 ]
+  assert_private_tmux_tmpdir "$(grep -F 'cursor-agent --force ' <(launch_log))"
 }
 
 @test "AGENT_BROWSER_SESSION: different worktrees get different sessions" {
@@ -15445,6 +15496,35 @@ browser_env_prefix='env -u AGENT_BROWSER_AUTO_CONNECT -u AGENT_BROWSER_CDP -u AG
   [ "${#session}" -le 38 ]
   [[ "$session" =~ ^[A-Za-z0-9_-]+$ ]]
   [ "$(cat "$cfg")" = '{}' ]
+}
+
+@test "worker_tmux_env: private 0700 dir per worktree under the cache" {
+  . "$BATS_TEST_DIRNAME/../adapters/core/claude-worker-settings.sh"
+  export TMUX_TMPDIR=/run/user/1000
+  out="$(worker_tmux_env /wt/a)"
+  re="^TMUX_TMPDIR=$XDG_CACHE_HOME/dispatcher/tmux/([0-9a-f]{8}) $"
+  [[ "$out" =~ $re ]]
+  d="$XDG_CACHE_HOME/dispatcher/tmux/${BASH_REMATCH[1]}"
+  [ -n "$(find "$d" -maxdepth 0 -perm 700)" ]
+  [ "$(worker_tmux_env /wt/a)" = "$out" ]
+  [ "$(worker_tmux_env /wt/b)" != "$out" ]
+
+  out_c="$(worker_tmux_env /wt/c)"
+  d_c="${out_c#TMUX_TMPDIR=}"
+  d_c="${d_c% }"
+  chmod 755 "$d_c"
+  worker_tmux_env /wt/c >/dev/null
+  [ -n "$(find "$d_c" -maxdepth 0 -perm 700)" ]
+
+  out_d="$(worker_tmux_env /wt/d)"
+  d_d="${out_d#TMUX_TMPDIR=}"
+  d_d="${d_d% }"
+  rmdir "$d_d"
+  ln -s "$BATS_TEST_TMPDIR" "$d_d"
+  run --separate-stderr worker_tmux_env /wt/d
+  [ "$status" -ne 0 ]
+  [ -z "$output" ]
+  [[ "$stderr" == *"$d_d"* ]]
 }
 
 @test "lean: DISPATCH_CLAUDE_CONNECTORS=1 opts out" {

@@ -16,6 +16,16 @@
 # else passes: read-only calls and window- or pane-scoped ones (rename-window,
 # kill-window -t @N, set -w, set -p, select-pane).
 #
+# Also denied: a delete (rm, rmdir, unlink, trash-put, gtrash put, find
+# -delete) of a path at, below or above the per-user runtime dir
+# ($XDG_RUNTIME_DIR, /run/user/<x>), which holds the D-Bus, systemd and tmux
+# sockets. Paths resolve lexically, never evaluated: exported variables from
+# the guard's environment, NAME=literal bindings earlier in the line, and the
+# uid. A part it cannot know (an unset, loop or read variable, `$1`, a glob, a
+# command substitution) matches any one segment, but a relative path or one
+# whose first part is unknown is allowed, since that is how a private scratch
+# dir from `mktemp -d` looks.
+#
 #   engine        event                  command at             verdict shape
 #   claude        PreToolUse Bash        tool_input.command     hookSpecificOutput deny
 #   pi(hookyard)  canonical_event        tool_input.command     hookSpecificOutput deny
@@ -33,8 +43,14 @@
 # value (`env --unset TMUX tmux kill-server`). Here-doc bodies are read as
 # commands, so a body line starting with `tmux kill-server` is denied, and an
 # escaped quote inside a double-quoted string ends the quote early (also a deny).
+# For deletes: symlinks into the runtime dir; `cd` then a relative path (`cd
+# "$XDG_RUNTIME_DIR" && rm -rf tmux-1000`); `mv`, `shred`, `rsync --delete`;
+# `xargs rm` and `find -exec rm`; operands after an unquoted command
+# substitution (`rm -rf $(f) /run/user/1000`), since the split ends the command
+# there.
 #
-# Portable to macOS's bash 3.2 and BSD userland: no mapfile, no ${var,,}.
+# Portable to macOS's bash 3.2 and BSD userland: no mapfile, no ${var,,}, no
+# associative arrays.
 
 set -euo pipefail
 
@@ -75,6 +91,14 @@ parsed=$(jq -c "$normalise" <<<"$input" 2>/dev/null) || {
 [[ -n $parsed ]] || exit 0
 shape=$(jq -r '.[0]' <<<"$parsed")
 command=$(jq -r '.[1]' <<<"$parsed")
+
+# The uid substitutions become their digits before the split, so the quoted and
+# the unquoted `/run/user/$(id -u)` reach the delete check as one plain word.
+# They hold no tmux word, so the tmux check sees an equivalent command.
+command=${command//"\$(id -u)"/$UID}
+command=${command//"\$(id -ru)"/$UID}
+command=${command//"\`id -u\`"/$UID}
+command=${command//"\`id -ru\`"/$UID}
 
 # Quote-aware split of the command line: one word per line, an empty line
 # wherever a shell control operator (`; && || | ( )`) ends a command, and
@@ -270,14 +294,274 @@ flush_tmux() {
   fi
 }
 
+in_del=''
+dargs=()
+bind_mode=''
+bound_names=' '
+bound_n=()
+bound_v=()
+exported=''
+xdg_root=()
+xdg_done=0
+del_target=''
+# A path segment the guard cannot know; it matches any segment.
+unk=$'\002'
+re_name='^[A-Za-z_][A-Za-z0-9_]*$'
+re_brace='^([A-Za-z_][A-Za-z0-9_]*)((:-|-|:=).*)?$'
+
+# Only a plain NAME=literal binding is known; any other binding of a name the
+# line uses later (export, read, for, unset, NAME=$(…)) makes it unknown.
+bind_word() { # <word>
+  local v
+  if [[ $1 =~ ^[A-Za-z_][A-Za-z0-9_]*= ]]; then
+    v=${1#*=}
+    case $v in *'$'* | *'`'*) v=$unk ;; esac
+    bound_names+="${1%%=*} "
+    bound_n+=("${1%%=*}")
+    bound_v+=("$v")
+  elif [[ $1 =~ $re_name ]]; then
+    bound_names+="$1 "
+    bound_n+=("$1")
+    bound_v+=("$unk")
+  fi
+}
+
+# Sets $lv to NAME's value, or $unk. Only exported names are read from the
+# guard's environment: a guard-internal or shell-only variable says nothing
+# about the worker's shell. An unset or empty one is unknown, never empty, so
+# `rm -rf "$dir/"` is not `rm -rf /`.
+lookup_var() { # <name>
+  local i
+  lv=$unk
+  case $bound_names in
+  *" $1 "*)
+    for ((i = ${#bound_n[@]} - 1; i >= 0; i--)); do
+      if [[ ${bound_n[i]} == "$1" ]]; then
+        lv=${bound_v[i]}
+        return 0
+      fi
+    done
+    ;;
+  esac
+  case $1 in
+  UID)
+    lv=$UID
+    return 0
+    ;;
+  EUID)
+    lv=$EUID
+    return 0
+    ;;
+  esac
+  [[ $1 =~ $re_name ]] || return 0
+  # export -p, not compgen -e: nixpkgs' non-interactive bash has no compgen.
+  if [[ -z $exported ]]; then exported=$'\n'$(export -p)$'\n'; fi
+  case $exported in
+  *$'\n'"declare -x $1="*) [[ -z ${!1:-} ]] || lv=${!1} ;;
+  esac
+}
+
+# Expand the parameters in one operand into $ex, left to right; whatever the
+# guard cannot know (positional and special parameters, other ${…} forms,
+# command substitutions) becomes $unk.
+expand_word() { # <word>
+  local s=$1 i=0 n=${#1} c inner depth
+  ex=''
+  while ((i < n)); do
+    c=${s:i:1}
+    i=$((i + 1))
+    if [[ $c == '`' ]]; then
+      ex+=$unk
+      while ((i < n)) && [[ ${s:i:1} != '`' ]]; do i=$((i + 1)); done
+      i=$((i + 1))
+      continue
+    fi
+    if [[ $c != '$' ]]; then
+      ex+=$c
+      continue
+    fi
+    c=${s:i:1}
+    case $c in
+    '{')
+      inner=${s:i+1}
+      if [[ $inner != *'}'* ]]; then
+        ex+=$unk
+        return 0
+      fi
+      inner=${inner%%'}'*}
+      i=$((i + ${#inner} + 2))
+      if [[ $inner =~ $re_brace ]]; then
+        lookup_var "${BASH_REMATCH[1]}"
+        ex+=$lv
+      else
+        ex+=$unk
+      fi
+      ;;
+    '(')
+      ex+=$unk
+      depth=1
+      i=$((i + 1))
+      while ((i < n && depth > 0)); do
+        case ${s:i:1} in
+        '(') depth=$((depth + 1)) ;;
+        ')') depth=$((depth - 1)) ;;
+        esac
+        i=$((i + 1))
+      done
+      ;;
+    [A-Za-z_])
+      inner=${s:i}
+      inner=${inner%%[!A-Za-z0-9_]*}
+      i=$((i + ${#inner}))
+      lookup_var "$inner"
+      ex+=$lv
+      ;;
+    [0-9@*#\$!?-])
+      ex+=$unk
+      i=$((i + 1))
+      ;;
+    *)
+      # A bare `$`: the remnant an unquoted `$(…)` leaves after the split.
+      ex+=$unk
+      ;;
+    esac
+  done
+}
+
+# Lexical normalisation into $segs[0..nseg): empty and `.` dropped, `..`
+# folded, a segment holding $unk or a glob character made $unk. `..` after an
+# unknown segment leaves it: the unknown part may have been several segments.
+norm_path() { # <expanded path>
+  local p=$1 seg
+  segs=()
+  nseg=0
+  while [[ -n $p ]]; do
+    seg=${p%%/*}
+    if [[ $p == */* ]]; then p=${p#*/}; else p=''; fi
+    case $seg in
+    '' | .) ;;
+    ..)
+      if ((nseg > 0)) && [[ ${segs[nseg - 1]} != "$unk" ]]; then nseg=$((nseg - 1)); fi
+      ;;
+    *"$unk"* | *[*?[]*)
+      segs[nseg]=$unk
+      nseg=$((nseg + 1))
+      ;;
+    *)
+      segs[nseg]=$seg
+      nseg=$((nseg + 1))
+      ;;
+    esac
+  done
+}
+
+# True when the target ($segs) and the root agree on every segment both have:
+# the target is at, below or above the root. Deleting an ancestor empties the
+# runtime dir too, so above counts.
+reaches_root() { # <root segment>...
+  local i=0 r
+  for r in "$@"; do
+    ((i < nseg)) || return 0
+    [[ $r == "$unk" || ${segs[i]} == "$unk" || ${segs[i]} == "$r" ]] || return 1
+    i=$((i + 1))
+  done
+}
+
+# A relative target, or one whose first segment is unknown, is allowed: it is
+# most likely a private scratch dir the guard cannot see.
+judge_target() { # <operand>
+  [[ -z $del_target ]] || return 0
+  expand_word "$1"
+  [[ $ex == /* ]] || return 0
+  norm_path "$ex"
+  if reaches_root run user "$unk" || { ((${#xdg_root[@]})) && reaches_root "${xdg_root[@]}"; }; then
+    del_target=$1
+  fi
+}
+
+# Judge the operands of the delete being collected, if any.
+flush_del() {
+  local w opts=1 put=0 skip=0 paths=0
+  [[ -n $in_del ]] || return 0
+  if ((!xdg_done)); then
+    xdg_done=1
+    if [[ ${XDG_RUNTIME_DIR:-} == /* ]]; then
+      norm_path "$XDG_RUNTIME_DIR"
+      ((nseg == 0)) || xdg_root=("${segs[@]:0:nseg}")
+    fi
+  fi
+  case $in_del in
+  rm)
+    for w in ${dargs[@]+"${dargs[@]}"}; do
+      if ((opts)); then
+        if [[ $w == -- ]]; then
+          opts=0
+          continue
+        fi
+        if [[ $w == -* ]]; then continue; fi
+      fi
+      judge_target "$w"
+    done
+    ;;
+  gtrash)
+    for w in ${dargs[@]+"${dargs[@]}"}; do
+      if [[ $w == -* ]]; then continue; fi
+      if ((put)); then
+        judge_target "$w"
+        continue
+      fi
+      [[ $w == put ]] || break
+      put=1
+    done
+    ;;
+  find)
+    case " ${dargs[*]-} " in
+    *" -delete "*)
+      for w in ${dargs[@]+"${dargs[@]}"}; do
+        if ((skip)); then
+          skip=0
+          continue
+        fi
+        if ((paths)); then
+          judge_target "$w"
+          paths=0
+          continue
+        fi
+        if ((opts)); then
+          case $w in
+          -H | -L | -P | -E | -X | -s | -x | -O*) continue ;;
+          -f)
+            paths=1
+            continue
+            ;;
+          -D)
+            skip=1
+            continue
+            ;;
+          esac
+          opts=0
+        fi
+        case $w in -* | '('* | '!'*) break ;; esac
+        judge_target "$w"
+      done
+      ;;
+    esac
+    ;;
+  esac
+  in_del=''
+  dargs=()
+}
+
 while IFS= read -r w; do
   if [[ -z $w || $w == "$nl_mark" ]]; then
     flush_tmux
-    [[ -z $deny_what ]] || break
+    flush_del
+    [[ -z $deny_what && -z $del_target ]] || break
     at_cmd=1
     wrapper=''
     wrapper_val=0
     expect_duration=0
+    bind_mode=''
     continue
   fi
 
@@ -285,13 +569,31 @@ while IFS= read -r w; do
     targs+=("$w")
     continue
   fi
+  if [[ -n $in_del ]]; then
+    dargs+=("$w")
+    continue
+  fi
+  case $bind_mode in
+  for)
+    bind_word "$w"
+    bind_mode=''
+    continue
+    ;;
+  binder)
+    [[ $w == -* ]] || bind_word "$w"
+    continue
+    ;;
+  esac
   ((at_cmd)) || continue
 
   if ((wrapper_val)); then
     wrapper_val=0
     continue
   fi
-  if [[ $w =~ ^[A-Za-z_][A-Za-z0-9_]*= ]]; then continue; fi
+  if [[ $w =~ ^[A-Za-z_][A-Za-z0-9_]*= ]]; then
+    bind_word "$w"
+    continue
+  fi
   if [[ -n $wrapper && $w == -* ]]; then
     if [[ $w != --* ]]; then
       rest=${w#-}
@@ -326,14 +628,24 @@ while IFS= read -r w; do
     in_tmux=1
     continue
     ;;
+  rm | rmdir | unlink | trash-put) in_del='rm' ;;
+  gtrash) in_del='gtrash' ;;
+  find) in_del='find' ;;
+  export | local | declare | typeset | readonly | unset | read) bind_mode=binder ;;
+  for) bind_mode=for ;;
   esac
   at_cmd=0
 done < <(split_words "$command")
 
-[[ -n $deny_what ]] || exit 0
-
-reason="This tmux command reaches the live tmux server: '$deny_what' with no -L/-S. A worker's panes inherit \$TMUX, which tmux resolves before TMUX_TMPDIR, so a scratch server built with TMUX_TMPDIR alone does not isolate it.
+if [[ -n $deny_what ]]; then
+  reason="This tmux command reaches the live tmux server: '$deny_what' with no -L/-S. A worker's panes inherit \$TMUX, which tmux resolves before TMUX_TMPDIR, so a scratch server built with TMUX_TMPDIR alone does not isolate it.
 Fix: run 'unset TMUX', point a private 'export TMUX_TMPDIR=\$(mktemp -d)', and pass '-L <name>' on every tmux call, including kill-server."
+elif [[ -n $del_target ]]; then
+  reason="This deletes '$del_target', which resolves to the per-user runtime dir (\$XDG_RUNTIME_DIR, /run/user/<uid>) or one of its parents or children: it holds the D-Bus, systemd and tmux sockets, and deleting it breaks the owner's session until reboot.
+Fix: make scratch dirs with 'mktemp -d' and delete only paths you created; never delete a path taken from an inherited variable such as TMUX_TMPDIR."
+else
+  exit 0
+fi
 
 case $shape in
 cursor) jq -cn --arg r "$reason" '{permission: "deny", user_message: $r, agent_message: $r}' ;;
