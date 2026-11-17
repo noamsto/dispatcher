@@ -45,12 +45,13 @@ const (
 )
 
 // fleetSections are the eSection titles, by entry idx.
-var fleetSections = [...]string{"PEERS", "BUDGET", "suggested (not admitted)"}
+var fleetSections = [...]string{"PEERS", "BUDGET", "suggested (not admitted)", "dead"}
 
 const (
 	secPeers = iota
 	secBudget
 	secSuggested
+	secDead // titled by fleetRow.line: it carries the count and the key hint
 )
 
 // fleetState is what the operator asked for; resolveFleet turns it into what
@@ -66,6 +67,7 @@ type fleetState struct {
 	host     string
 	capOff   int // Capacity has no selectable rows, so it scrolls
 	filter   string
+	showDead bool // the dead crews section is expanded
 }
 
 // fleetSel is the resolved selection: indexes into the FleetView's Crews,
@@ -84,17 +86,57 @@ type fleetRects struct {
 
 // fleetIndex resolves crew keys and the filter once per frame.
 type fleetIndex struct {
-	byKey map[string]int
-	vis   []bool
+	byKey    map[string]int
+	vis      []bool
+	showDead bool
+	deadN    int // dead groups with a row passing the filter, shown or not
+	groupsN  int // groups (crew heads) with a row passing the filter
 }
 
-func newFleetIndex(fv vm.FleetView, filter string) fleetIndex {
-	needle := strings.ToLower(filter)
-	ix := fleetIndex{byKey: make(map[string]int, len(fv.Crews)), vis: make([]bool, len(fv.Crews))}
-	for i, c := range fv.Crews {
-		ix.byKey[c.Key] = i
-		hay := strings.ToLower(strOf(c.Repo) + " " + c.Crew + " " + c.Host)
-		ix.vis[i] = needle == "" || strings.Contains(hay, needle)
+// index is the one visibility rule for crew rows: the filter, the dead
+// section's collapse, and the pin. A pinned dead crew (the chosen one, or the
+// attention cursor's, whatever has focus) stays visible while collapsed so
+// the cursor-to-crew link never points at a hidden row.
+func (st fleetState) index(fv vm.FleetView) fleetIndex {
+	needle := strings.ToLower(st.filter)
+	pins := []string{st.crew}
+	if len(fv.Attention) > 0 {
+		pins = append(pins, strOf(fv.Attention[attnCursor(fv.Attention, st.cursor, st.cursorAt)].CrewKey))
+	}
+	ix := fleetIndex{byKey: make(map[string]int, len(fv.Crews)), vis: make([]bool, len(fv.Crews)), showDead: st.showDead}
+	for start := 0; start < len(fv.Crews); {
+		end := start + 1
+		for end < len(fv.Crews) && fv.Crews[end].Sub {
+			end++
+		}
+		matched := make([]bool, end-start)
+		headHit, anyHit, pinned := false, false, false
+		for i := start; i < end; i++ {
+			c := fv.Crews[i]
+			ix.byKey[c.Key] = i
+			hay := strings.ToLower(strOf(c.Repo) + " " + c.Crew + " " + c.Host)
+			matched[i-start] = needle == "" || strings.Contains(hay, needle)
+			anyHit = anyHit || matched[i-start]
+			pinned = pinned || slices.Contains(pins, c.Key)
+		}
+		headHit = matched[0]
+		start0 := start
+		start = end
+		if !anyHit {
+			continue
+		}
+		ix.groupsN++
+		dead := fv.Crews[start0].Section == "dead"
+		if dead {
+			ix.deadN++
+		}
+		for i := start0; i < end; i++ {
+			show := i == start0 || matched[i-start0] || headHit
+			if dead && !st.showDead {
+				show = show && (i == start0 && pinned || slices.Contains(pins, fv.Crews[i].Key))
+			}
+			ix.vis[i] = show
+		}
 	}
 	return ix
 }
@@ -143,7 +185,7 @@ func fleetShown(w int, focus fleetPanel) []fleetPanel {
 // it passes the filter, else the first visible one when the crews are shown.
 // Holds and hosts fall back to their first row the same way.
 func resolveFleet(fv vm.FleetView, st fleetState, shown []fleetPanel) fleetSel {
-	ix := newFleetIndex(fv, st.filter)
+	ix := st.index(fv)
 	sel := fleetSel{crew: -1, hold: -1, host: -1, cursor: attnCursor(fv.Attention, st.cursor, st.cursorAt)}
 	focus := effectiveFleetFocus(fv, st.focus)
 	if focus == fpAttention {
@@ -166,19 +208,49 @@ func resolveFleet(fv vm.FleetView, st fleetState, shown []fleetPanel) fleetSel {
 }
 
 // crewEntries is one row per visible crew, a PEERS subheading before the
-// first peer row. An entry's worker is its crew index, what place keeps in
-// view.
+// first peer row and the dead subheading before the first visible dead row, or
+// last when none is visible. An entry's worker is its crew index, what place keeps
+// in view.
 func crewEntries(fv vm.FleetView, ix fleetIndex) []entry {
 	var es []entry
-	peers := false
+	peers, dead := false, false
+	deadHead := entry{kind: eSection, idx: secDead, worker: -1, lines: 1}
 	for _, i := range ix.visible() {
-		if fv.Crews[i].Origin == vm.OriginPeer && !peers {
+		switch {
+		case fv.Crews[i].Origin == vm.OriginPeer && !peers:
 			peers = true
 			es = append(es, entry{kind: eSection, idx: secPeers, worker: -1, lines: 1})
+		case fv.Crews[i].Section == "dead" && !dead:
+			dead = true
+			es = append(es, deadHead)
 		}
 		es = append(es, entry{kind: eCrew, idx: i, worker: i, lines: 1})
 	}
+	if !dead && ix.deadN > 0 {
+		es = append(es, deadHead)
+	}
 	return es
+}
+
+// hasLegend: the Crews panel pins its counter legend to the last body row
+// when there is room to leave at least three rows for crews.
+func hasLegend(inner rect) bool { return inner.h >= 4 }
+
+// fleetLegends are the counter legend from fullest to shortest; the Crews
+// panel draws the first that fits its width.
+var fleetLegends = []string{
+	"w working · b blocked · f failed · pr pr_open · d done · x exited · ? unknown · N! attention",
+	"w working · b blocked · f failed · pr pr_open · N! attention",
+	"w work · b block · f fail · pr pr · N! attn",
+}
+
+func fleetLegend(iw int) string {
+	for _, l := range fleetLegends {
+		if ansi.StringWidth(l)+1 <= iw {
+			return l
+		}
+	}
+	return fleetLegends[len(fleetLegends)-1]
 }
 
 func capacityEntries(fv vm.FleetView) []entry {
@@ -269,7 +341,7 @@ func splitHeights(total int, want []int, first int) []int {
 // fleetLayout is the one geometry the renderer and mouse hit-testing share,
 // and the only place the selection is resolved and the strip window computed.
 func fleetLayout(w, h int, fv vm.FleetView, st fleetState) fleetRects {
-	ix := newFleetIndex(fv, st.filter)
+	ix := st.index(fv)
 	r := fleetRects{w: w, h: h}
 	if len(fv.Errors) > 0 && h >= 2 {
 		r.errLine = true
@@ -340,7 +412,11 @@ func fleetLayout(w, h int, fv vm.FleetView, st fleetState) fleetRects {
 		case fpCapacity:
 			es = es[clamp(st.capOff, 0, max0(len(es)-inner.h)):]
 		}
-		r.panels[p] = panelLayout{shown: true, rect: outer, inner: inner, items: place(es, inner, selIdx)}
+		placeIn := inner
+		if p == fpCrews && hasLegend(inner) {
+			placeIn.h--
+		}
+		r.panels[p] = panelLayout{shown: true, rect: outer, inner: inner, items: place(es, placeIn, selIdx)}
 	}
 	return r
 }
@@ -357,7 +433,7 @@ func crewCols(fv vm.FleetView, ix fleetIndex, iw int) fleetCols {
 		c.lane = max(c.lane, ansi.StringWidth(crewLane(row)))
 		c.counts = max(c.counts, ansi.StringWidth(workerCounts(row.Workers.ByState)))
 	}
-	c.label = min(c.label, max(8, iw/3))
+	c.label = min(c.label, max(8, iw/2))
 	return c
 }
 
@@ -367,7 +443,7 @@ func renderFleet(w, h int, fv vm.FleetView, st fleetState, mode pillMode) string
 	}
 	r := fleetLayout(w, h, fv, st)
 	focus := effectiveFleetFocus(fv, st.focus)
-	ix := newFleetIndex(fv, st.filter)
+	ix := st.index(fv)
 	lines := make([]string, 0, h)
 	if r.allClear {
 		lines = append(lines, truncateLine(" "+fg(colGreen).Render("✓ all clear"), w))
@@ -375,7 +451,7 @@ func renderFleet(w, h int, fv vm.FleetView, st fleetState, mode pillMode) string
 
 	crewsCount := fmt.Sprintf("%d crews · %d workers", fv.Summary.Crews, fv.Summary.Workers)
 	if st.filter != "" {
-		crewsCount = fmt.Sprintf("%d of %d crews", len(ix.visible()), len(fv.Crews))
+		crewsCount = fmt.Sprintf("%d of %d crews", ix.groupsN, fv.Summary.Crews)
 	}
 	capCount := ""
 	if fv.Capacity.Free != nil {
@@ -388,7 +464,7 @@ func renderFleet(w, h int, fv vm.FleetView, st fleetState, mode pillMode) string
 		fpHolds:     {title: "HOLDS", count: fmt.Sprintf("%d holds", len(fv.Holds)), color: colBlue},
 		fpHosts:     {title: "HOSTS", count: fmt.Sprintf("%d unhealthy of %d", fv.Summary.HostsUnhealthy, fv.Summary.Hosts), color: colGreen},
 	}
-	fr := fleetRow{fv: fv, r: r, focus: focus}
+	fr := fleetRow{fv: fv, r: r, focus: focus, deadN: ix.deadN, showDead: ix.showDead}
 	if pl := r.panels[fpCrews]; pl.shown {
 		fr.cols = crewCols(fv, ix, pl.inner.w)
 	}
@@ -402,6 +478,12 @@ func renderFleet(w, h int, fv vm.FleetView, st fleetState, mode pillMode) string
 		}
 		if len(pl.items) == 0 && p != fpAttention {
 			content = append(content, newSpans(pl.inner.w, nil).add(" none", fg(colDim)).String())
+		}
+		if p == fpCrews && hasLegend(pl.inner) {
+			for len(content) < pl.inner.h-1 {
+				content = append(content, newSpans(pl.inner.w, nil).String())
+			}
+			content = append(content, newSpans(pl.inner.w, nil).add(" "+fleetLegend(pl.inner.w), fg(colDim)).String())
 		}
 		return renderPanel(pl.rect.w, pl.rect.h, sp, mode, content)
 	}
@@ -459,6 +541,9 @@ type fleetRow struct {
 	r     fleetRects
 	focus fleetPanel
 	cols  fleetCols
+
+	deadN    int
+	showDead bool
 }
 
 // selected: the strip highlights its cursor while focused, else the chosen
@@ -484,7 +569,15 @@ func (fr fleetRow) selected(it placed) bool {
 
 func (fr fleetRow) line(it placed, iw int) string {
 	if it.kind == eSection {
-		return sectionLine(fleetSections[it.idx], iw)
+		title := fleetSections[it.idx]
+		if it.idx == secDead {
+			hint := "D expand"
+			if fr.showDead {
+				hint = "D collapse"
+			}
+			title = fmt.Sprintf("dead (%d) · %s", fr.deadN, hint)
+		}
+		return sectionLine(title, iw)
 	}
 	var bg lipgloss.TerminalColor = lipgloss.NoColor{}
 	sel := fr.selected(it)
@@ -541,11 +634,26 @@ func fleetAttnLabel(a vm.AttentionItem) string {
 	return ""
 }
 
-func crewLabel(c vm.FleetCrewRow) string {
-	if c.Origin == vm.OriginPeer {
-		return "@" + c.Host + " " + c.Crew
+// shortCrew is a crew id cut to its first 8 runes: dispatcher crew ids are
+// long and have no codename.
+func shortCrew(id string) string {
+	r := []rune(id)
+	if len(r) <= 8 {
+		return id
 	}
-	return strOf(c.Repo) + " " + c.Crew
+	return string(r[:8])
+}
+
+// crewLabel is the row's name: a peer's "@host crew", a head's "crew @host
+// repo", a sub row's indented repo.
+func crewLabel(c vm.FleetCrewRow) string {
+	switch {
+	case c.Origin == vm.OriginPeer:
+		return "@" + c.Host + " " + c.Crew
+	case c.Sub:
+		return "  └ " + strOf(c.Repo)
+	}
+	return shortCrew(c.Crew) + " @" + c.Host + " " + strOf(c.Repo)
 }
 
 func crewLane(c vm.FleetCrewRow) string {
@@ -631,6 +739,9 @@ func (fr fleetRow) crewLine(c vm.FleetCrewRow, s *spans) string {
 	}
 	if c.Orphaned {
 		s.add(" orphaned", fg(colRed).Bold(true))
+	}
+	if c.IdleRepos > 0 {
+		s.add(fmt.Sprintf(" +%d idle repos", c.IdleRepos), fg(colDim))
 	}
 	return s.String()
 }

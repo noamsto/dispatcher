@@ -125,6 +125,7 @@ var fleetHelp = []helpKey{
 	{"1-9", "act on the attention row with that number"},
 	{"enter", "open the crew's Overview (crews or attention); esc returns"},
 	{"L", "relaunch an orphaned crew's dispatcher (confirms, needs tmux)"},
+	{"D", "show or hide the dead crews section"},
 	{"/", "filter crews by repo, crew or host; enter keeps, esc clears"},
 	{"[ ]", "views, R refresh"},
 	{"?", "this help"},
@@ -159,6 +160,7 @@ func (v fleetView) Keys() []key.Binding {
 		key.NewBinding(key.WithKeys("1"), key.WithHelp("1-9", "attention")),
 		key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "drill")),
 		key.NewBinding(key.WithKeys("L"), key.WithHelp("L", "relaunch")),
+		key.NewBinding(key.WithKeys("D"), key.WithHelp("D", "dead")),
 		key.NewBinding(key.WithKeys("/"), key.WithHelp("/", "filter")),
 	}
 }
@@ -269,6 +271,8 @@ func (v *fleetView) handleKey(msg tea.KeyMsg) tea.Cmd {
 		v.mode = ovHelp
 	case "L":
 		return v.relaunchSelected()
+	case "D":
+		v.st.showDead = !v.st.showDead
 	default:
 		if len(s) == 1 && s[0] >= '1' && s[0] <= '9' {
 			return v.digit(int(s[0] - '0'))
@@ -336,7 +340,7 @@ func (v *fleetView) move(d int) {
 		v.setCursor(c)
 		v.st.stripOff = v.layout().stripOff
 	case fpCrews:
-		if vis := newFleetIndex(v.fv, v.st.filter).visible(); len(vis) > 0 {
+		if vis := v.st.index(v.fv).visible(); len(vis) > 0 {
 			v.st.crew = v.fv.Crews[step(vis, r.sel.crew, d)].Key
 		}
 	case fpHolds:
