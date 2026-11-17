@@ -25,7 +25,7 @@ _resume_help() {
   cat <<'HELP'
 usage: dispatch resume [<target>] [--agent E] [--model M] [--effort E]
                      [--mcp P] [--chrome] [--fresh] [--print] [--rearm-roles]
-                     [--ignore-budget] [--ignore-map] [extra prompt...]
+                     [--exec] [--ignore-budget] [--ignore-map] [extra prompt...]
 
 Relaunch the worker whose worktree you are standing in, continuing its own
 engine session, and re-run only the gates this command names.
@@ -46,6 +46,8 @@ engine session, and re-run only the gates this command names.
   --rearm-roles       Re-arm the role panes of this worker's restored window and
                       launch nothing (no launch flag or extra prompt;
                       --ignore-budget still applies)
+  --exec              Relaunch in this pane: exec the launch instead of typing it
+                      (the tmux-remux restore command)
   --ignore-budget     Spend past the quota stop (a human's spend decision)
   --ignore-map        Skip the tier-map model refusals (a human's model call)
   [extra prompt...]   Words appended to the carried task body for this run
@@ -241,6 +243,7 @@ PANES
 fresh=""
 do_print=""
 rearm_roles=""
+exec_inplace=""
 ignore_budget=""
 ignore_map=""
 agent_flag=""
@@ -305,6 +308,10 @@ while [ $# -gt 0 ]; do
     rearm_roles=1
     shift
     ;;
+  --exec)
+    exec_inplace=1
+    shift
+    ;;
   --ignore-budget)
     ignore_budget=1
     shift
@@ -324,6 +331,27 @@ while [ $# -gt 0 ]; do
     ;;
   esac
 done
+
+# --exec is the tmux-remux restore command, exec-only from the restore shell, so
+# there resume is the pane's root process and the pane dies with it.
+# remain-on-exit keeps a refusal's message readable there; the exec turns it
+# back off. A human typing --exec in a live shell gets neither: the pane's pid
+# is then the shell's, and the option would outlive the refusal.
+exec_root=""
+if [ -n "$exec_inplace" ]; then
+  if [ -n "$do_print$rearm_roles" ]; then
+    usage
+    exit 1
+  fi
+  if ! [[ ${TMUX_PANE:-} =~ ^%[0-9]+$ ]]; then
+    echo "dispatch resume: --exec relaunches in its own tmux pane, but TMUX_PANE is '${TMUX_PANE:-}', not a pane id" >&2
+    exit 1
+  fi
+  if [ "$(tmux display-message -p -t "$TMUX_PANE" '#{pane_pid}' 2>/dev/null)" = "$$" ]; then
+    exec_root=1
+    tmux set-option -p -t "$TMUX_PANE" remain-on-exit on 2>/dev/null || true
+  fi
+fi
 
 # Remote mode: a dispatcher on another host asked for this worker's window in
 # the named session, possibly shared with windows that are not this crew's. The
@@ -742,6 +770,11 @@ pane=""
 pane_cmd=""
 win_own=""
 reused=""
+# --exec: the caller's own pane among the candidates, and an engine in another.
+exec_win=""
+exec_cmd=""
+exec_own=""
+exec_rival=""
 # A restored grid window also has role panes at the worktree: never launch the
 # lead into one, and prefer this worker's own window (stamped for the branch,
 # or restored with its codename) over a human shell at the same path elsewhere.
@@ -755,6 +788,15 @@ while IFS=$'\x1f' read -r cand_win cand_pane cand_path cand_cmd cand_name cand_r
   if [ "$cand_branch" = "$branch" ] || { [ -z "$cand_branch" ] && [ "$cand_name" = "$agent_name" ]; }; then
     cand_own=1
   fi
+  if [ -n "$exec_inplace" ]; then
+    if [ "$cand_pane" = "$TMUX_PANE" ]; then
+      exec_win="$cand_win"
+      exec_cmd="$cand_cmd"
+      exec_own="$cand_own"
+    elif crew engine-cmd "$cand_cmd" 2>/dev/null; then
+      exec_rival="$cand_pane"
+    fi
+  fi
   if [ -z "$reused" ] || { [ -n "$cand_own" ] && [ -z "$win_own" ]; }; then
     win="$cand_win"
     pane="$cand_pane"
@@ -765,6 +807,24 @@ while IFS=$'\x1f' read -r cand_win cand_pane cand_path cand_cmd cand_name cand_r
 done <<PANES
 $(tmux list-panes -a -F '#{window_id}'$'\x1f''#{pane_id}'$'\x1f''#{pane_current_path}'$'\x1f''#{pane_current_command}'$'\x1f''#{@crew_name}'$'\x1f''#{@crew_role}'$'\x1f''#{@crew_branch}' 2>/dev/null || true)
 PANES
+
+if [ -n "$exec_inplace" ]; then
+  if [ -z "$exec_win" ]; then
+    # Not resume's pane to keep open.
+    [ -z "$exec_root" ] || tmux set-option -p -t "$TMUX_PANE" remain-on-exit off 2>/dev/null || true
+    echo "dispatch resume: --exec runs in the worker's own lead pane at $wt_path" >&2
+    exit 1
+  fi
+  if [ -n "$exec_rival" ]; then
+    echo "dispatch resume: $wt_path's pane ($exec_rival) is already running an engine — a worker session is alive there; --exec starts no second lead" >&2
+    exit 1
+  fi
+  win="$exec_win"
+  pane="$TMUX_PANE"
+  pane_cmd="$exec_cmd"
+  win_own="$exec_own"
+  reused=1
+fi
 
 if [ -n "$rearm_roles" ]; then
   if [ -z "$reused" ] || [ -z "$win_own" ]; then
@@ -1260,34 +1320,73 @@ fi
 write_launch_script launch_line "$launch_cmd"
 # dispatch's localModels slot count reads this off the lead pane.
 tmux set-option -p -t "$pane" @crew_model "$model" 2>/dev/null || true
+# tmux-remux restores the lead by running the pinned `dispatch resume --exec`.
+# Not earlier: the create path has no $pane before new-window, and tmux reads an
+# empty target as the caller's pane. A remote lead is its controller's to resume.
+# The header never records this run's engine, model, effort or mcp overrides
+# (an escalation's model aside), so the stamp carries them, resolved; --chrome
+# and --ignore-budget are per-run decisions a restore must not replay.
+remux_argv=(dispatch resume --exec)
+[ -z "$agent_flag" ] || remux_argv+=(--agent "$agent")
+if [ -n "$model_flag" ] && [ -z "${escalated_from:-}" ]; then
+  remux_argv+=(--model "$model")
+  [ -z "$ignore_map" ] || remux_argv+=(--ignore-map)
+fi
+[ -z "$effort_flag" ] || remux_argv+=(--effort "$effort")
+[ -z "$mcp_flag_val" ] || remux_argv+=(--mcp "$mcp_flag_val")
+if [ "$wire_side" = remote ]; then
+  remux_pin_clear "$pane"
+elif remux_command remux_cmd "$wt_path" "$crew_id" "${remux_argv[@]}"; then
+  # shellcheck disable=SC2154 # set by remux_command's nameref
+  remux_stamp "$pane" "$remux_cmd"
+else
+  remux_pin_clear "$pane"
+fi
 # The --chrome holder scan reads this.
 if [ -n "$chrome" ]; then
   tmux set-option -p -t "$pane" @crew_chrome 1 2>/dev/null || true
 else
   tmux set-option -p -u -t "$pane" @crew_chrome 2>/dev/null || true
 fi
-# shellcheck disable=SC2154 # set by write_launch_script's nameref (_launch)
-tmux send-keys -t "$pane" "$launch_line" Enter
 
-# Re-arm the stall watchdog: the original self-exited when it saw the terminal
-# state, and a resumed worker can wedge exactly the same way. --ignore-budget
-# waives its budget detector. The subshell orphans it: resume may run inside
-# another worker's stamped pane.
-stall_flags=()
-[ -n "$ignore_budget" ] && stall_flags+=(--no-budget)
-(CREW_ID="$crew_id" nohup crew stall-watch "$worker_id" --pane "$pane" --engine "$agent" "${stall_flags[@]}" >/dev/null 2>&1 &)
-[ -z "$code_mode" ] || spawn_code_mode_watch "$worker_id" "$crew_id" "$pane" "$launch_line"
-[ -z "$code_mode_dropped" ] || spawn_code_mode_post "$worker_id" "$crew_id" off "$code_mode_dropped"
+# _post_launch — the watchers around a launched lead. --exec runs it before the
+# exec, which never returns.
+_post_launch() {
+  # Re-arm the stall watchdog: the original self-exited when it saw the terminal
+  # state, and a resumed worker can wedge exactly the same way. --ignore-budget
+  # waives its budget detector. The subshell orphans it: resume may run inside
+  # another worker's stamped pane.
+  local -a stall_flags=()
+  [ -n "$ignore_budget" ] && stall_flags+=(--no-budget)
+  (CREW_ID="$crew_id" nohup crew stall-watch "$worker_id" --pane "$pane" --engine "$agent" "${stall_flags[@]}" >/dev/null 2>&1 &)
+  # shellcheck disable=SC2154 # set by write_launch_script's nameref (_launch)
+  [ -z "$code_mode" ] || spawn_code_mode_watch "$worker_id" "$crew_id" "$pane" "$launch_line"
+  [ -z "$code_mode_dropped" ] || spawn_code_mode_post "$worker_id" "$crew_id" off "$code_mode_dropped"
+  # A remote-mode worker's roster diagram belongs to its dispatcher's host.
+  [ "$wire_side" = remote ] || _ensure_roster_render "$crew_id" "$rr_pane"
+
+  # Resume re-stamps @crew_branch on whatever window it lands in, so only a window
+  # that was already this worker's (stamped for the branch, or restored with its
+  # codename) may have its role panes armed.
+  [ -z "$win_own" ] || _rearm_role_panes
+}
+
 # A human resuming from a worker's own pane must not retarget the renderer
-# there; only the registered dispatcher's pane may move it.
+# there; only the registered dispatcher's pane may move it. An --exec pane is
+# always the worker's own, live dispatcher or not.
 rr_pane="${TMUX_PANE:-}"
-if [ -n "$dispatcher_live" ] && [ "$rr_pane" != "$dispatcher_pane_new" ]; then
+if [ -n "$exec_inplace" ] || { [ -n "$dispatcher_live" ] && [ "$rr_pane" != "$dispatcher_pane_new" ]; }; then
   rr_pane=""
 fi
-# A remote-mode worker's roster diagram belongs to its dispatcher's host.
-[ "$wire_side" = remote ] || _ensure_roster_render "$crew_id" "$rr_pane"
 
-# Resume re-stamps @crew_branch on whatever window it lands in, so only a window
-# that was already this worker's (stamped for the branch, or restored with its
-# codename) may have its role panes armed.
-[ -z "$win_own" ] || _rearm_role_panes
+if [ -n "$exec_inplace" ]; then
+  _post_launch
+  [ -z "$exec_root" ] || tmux set-option -p -t "$pane" remain-on-exit off 2>/dev/null || true
+  # The pane shell's PATH, as a typed launch would run under: exec-only from the
+  # restore shell down, so the engine leads the pane and #{pane_current_command}
+  # names it for the engine-already-running guards.
+  eval "exec env PATH=$(printf %q "$(engine_path)") $launch_line"
+fi
+
+tmux send-keys -t "$pane" "$launch_line" Enter
+_post_launch

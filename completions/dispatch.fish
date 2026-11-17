@@ -75,6 +75,7 @@ complete -c dispatch -n '__fish_seen_subcommand_from resume' -l chrome -d 'Relau
 complete -c dispatch -n '__fish_seen_subcommand_from resume' -l fresh -d 'Start a new engine session'
 complete -c dispatch -n '__fish_seen_subcommand_from resume' -l print -d 'Print the launch command instead of running it'
 complete -c dispatch -n '__fish_seen_subcommand_from resume' -l rearm-roles -d 'Re-arm the role panes and launch nothing'
+complete -c dispatch -n '__fish_seen_subcommand_from resume' -l exec -d 'Relaunch in this pane by exec (the tmux-remux restore command)'
 complete -c dispatch -n '__fish_seen_subcommand_from resume' -l ignore-budget -d 'Spend past the quota stop'
 complete -c dispatch -n '__fish_seen_subcommand_from resume' -l ignore-map -d 'Skip the tier-map model refusals'
 complete -c dispatch -n '__fish_seen_subcommand_from resume' -l help -d 'Show help'

@@ -157,6 +157,14 @@ func TestShellName(t *testing.T) {
 	}
 }
 
+func TestIsShell(t *testing.T) {
+	for in, want := range map[string]bool{"fish": true, "-zsh": true, "/bin/bash": true, "claude": false, "": false} {
+		if got := IsShell(in); got != want {
+			t.Errorf("IsShell(%q) = %v, want %v", in, got, want)
+		}
+	}
+}
+
 // OS.Comm execs `ps`, so this needs a ps binary on PATH: the Nix check phase
 // provides one through nativeCheckInputs.
 func TestCommNamesOwnProcess(t *testing.T) {

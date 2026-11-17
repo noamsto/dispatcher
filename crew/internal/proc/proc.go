@@ -234,6 +234,9 @@ func FirstNonShell(t Table, pid int) (int, string, bool) {
 	return 0, "", false
 }
 
+// IsShell reports whether comm names a shell, ignoring a leading path or login '-'.
+func IsShell(comm string) bool { return shells[shellName(comm)] }
+
 // shellName is the arm's `${c##*/}` and `${c#-}`: ps prints the leading path for
 // a process exec'd by absolute path, and a login shell prefixes itself with '-'.
 // A name with a space in it, or one that starts with '-', is beyond `ps -o comm=`.

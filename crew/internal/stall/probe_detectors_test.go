@@ -501,6 +501,7 @@ func TestD5Cases(t *testing.T) {
 		{"unknown command", "make", "", Request{}, 500, ""},
 		{"double dash only strips one", "--bash", "", Request{}, 500, ""},
 		{"engine", "claude", "", Request{}, 500, ""},
+		{"engine under a shell pane", ".claude-wrapped", "", Request{}, 500, ""},
 		{"pr_open", "bash", `{"state":"pr_open"}`, Request{}, 500, ""},
 		{"watchdog blocked", "bash", `{"state":"blocked","source":"watchdog","detail":"stalled: x"}`, Request{}, 500, ""},
 		{"suppressed", "bash", `{"state":"blocked","detail":"awaiting"}`, Request{}, 500, ""},

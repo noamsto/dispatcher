@@ -204,6 +204,7 @@ func RunStatus(ctx context.Context, req StatusRequest, paths bus.Paths, stderr i
 	switch state {
 	case "pr_open", "done", "failed", "exited", "reaped":
 		if lastPosted(paths.Log, crew, from) == state+"\t"+pr {
+			clearRelaunch(ctx, o, from, state)
 			return 0
 		}
 	}
@@ -225,6 +226,7 @@ func RunStatus(ctx context.Context, req StatusRequest, paths bus.Paths, stderr i
 		return code
 	}
 	publishPane(ctx, o, state, detail)
+	clearRelaunch(ctx, o, from, state)
 	pointToPhase(ctx, o, state, detail, stderr)
 	return 0
 }
@@ -245,6 +247,39 @@ func publishPane(ctx context.Context, o Options, state, detail string) {
 	panestate.Publish(func(option, value string) {
 		_, _ = o.Tmux.Run(ctx, "set-option", "-p", "-t", pane, option, value)
 	}, state, detail, "")
+}
+
+// clearRelaunch drops the tmux-remux relaunch stamp from a finished worker's
+// own lead pane so a server restore never resurrects it. The @crew_branch and
+// @crew_role check proves the caller sits in that worker's pane: a dispatcher
+// process post (another TMUX_PANE) and role panes clear nothing. Watchdog
+// terminal rows are written by stall-watch directly and never reach RunStatus,
+// so they never clear. pr_open keeps the stamp, since the worker still goes on
+// to done.
+// Best effort: it must never fail the write that precedes it.
+func clearRelaunch(ctx context.Context, o Options, from, state string) {
+	if state != "done" && state != "failed" {
+		return
+	}
+	pane := o.Sender.Getenv("TMUX_PANE")
+	if o.Sender.Getenv("CREW_ROLE_ID") != "" || pane == "" || o.Tmux == nil {
+		return
+	}
+	branch, ok := strings.CutPrefix(branchSession(from), "worker:")
+	if !ok || branch == "" {
+		return
+	}
+	out, err := o.Tmux.Run(ctx, "display-message", "-p", "-t", pane, "#{@crew_branch}\x1f#{@crew_role}")
+	if err != nil {
+		return
+	}
+	paneBranch, role, _ := strings.Cut(out, "\x1f")
+	if paneBranch != branch || (role != "" && role != "lead") {
+		return
+	}
+	for _, option := range []string{"@remux_relaunch", "@remux_relaunch_pinned"} {
+		_, _ = o.Tmux.Run(ctx, "set-option", "-pu", "-t", pane, option)
+	}
 }
 
 // lastPosted is the terminal dedupe key, "<state>\t<pr_url>", of the last

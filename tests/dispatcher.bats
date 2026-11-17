@@ -2433,3 +2433,230 @@ $b" run run_overseer
   [[ "$output" == *"must be an absolute path string"* ]]
   if grep -q '^cwd=' "$STUB_LOG"; then return 1; fi
 }
+
+# ---- #1588: remux relaunch stamping ----------------------------------------
+
+_remux_refused() { # dir crew argv... — rc 1 and an empty outvar
+  (
+    # shellcheck source=/dev/null
+    source "$BATS_TEST_DIRNAME/../adapters/core/launcher-common.sh"
+    out=stale
+    rc=0
+    remux_command out "$@" || rc=$?
+    [ "$rc" -eq 1 ] && [ -z "$out" ]
+  )
+}
+
+@test "1588: remux_command quotes every word exactly" {
+  run bash -c 'source "$1"; remux_command out /r/x c1 dispatch resume --exec; printf "%s" "$out"' _ \
+    "$BATS_TEST_DIRNAME/../adapters/core/launcher-common.sh"
+  [ "$status" -eq 0 ]
+  [ "$output" = "cd '/r/x' && exec env CREW_ID='c1' 'dispatch' 'resume' '--exec'" ]
+}
+
+@test "1588: remux_command refuses unsafe or empty words" {
+  _remux_refused "/r/it's" c1 dispatch
+  _remux_refused '/r/a\b' c1 dispatch
+  _remux_refused $'/r/a\nb' c1 dispatch
+  _remux_refused $'/r/a\tb' c1 dispatch
+  _remux_refused '' c1 dispatch
+  _remux_refused /r/x "c'1" dispatch
+  _remux_refused /r/x 'c\1' dispatch
+  _remux_refused /r/x $'c\n1' dispatch
+  _remux_refused /r/x '' dispatch
+  _remux_refused /r/x c1 dispatch "a'b"
+  _remux_refused /r/x c1 dispatch 'a\b'
+  _remux_refused /r/x c1 dispatch $'a\tb'
+  _remux_refused /r/x c1 dispatch ''
+}
+
+@test "1588: remux_command round-trips hostile words through bash, sh and fish" {
+  local d="$BATS_TEST_TMPDIR/sp ace "'$HOME`id`;*'
+  mkdir -p "$d"
+  local tool="$BATS_TEST_TMPDIR/bin"
+  mkdir -p "$tool"
+  cat >"$tool/rt-tool" <<'TOOL'
+#!/usr/bin/env bash
+{ printf 'PWD=%s\n' "$PWD"; printf 'CREW_ID=%s\n' "$CREW_ID"; printf 'ARG=%s\n' "$@"; } >"$RT_LOG"
+TOOL
+  chmod +x "$tool/rt-tool"
+  local cmd
+  # shellcheck source=/dev/null
+  source "$BATS_TEST_DIRNAME/../adapters/core/launcher-common.sh"
+  remux_command cmd "$d" c1 rt-tool 'a b' '$(touch pwned)'
+  export RT_LOG="$BATS_TEST_TMPDIR/rt.log"
+  local sh
+  for sh in bash sh fish; do
+    if ! command -v "$sh" >/dev/null; then
+      echo "skipping $sh leg: not installed" >&3
+      continue
+    fi
+    : >"$RT_LOG"
+    PATH="$tool:$PATH" "$sh" -c "$cmd"
+    [ "$(sed -n 1p "$RT_LOG")" = "PWD=$d" ]
+    [ "$(sed -n 2p "$RT_LOG")" = "CREW_ID=c1" ]
+    [ "$(sed -n 3p "$RT_LOG")" = "ARG=a b" ]
+    [ "$(sed -n 4p "$RT_LOG")" = 'ARG=$(touch pwned)' ]
+    [ "$(wc -l <"$RT_LOG")" -eq 4 ]
+    [ -z "$(find "$BATS_TEST_TMPDIR" -name pwned)" ]
+  done
+}
+
+@test "1588: remux_stamp, remux_pin_clear and remux_clear issue the exact tmux calls" {
+  # shellcheck source=/dev/null
+  source "$BATS_TEST_DIRNAME/../adapters/core/launcher-common.sh"
+  : >"$STUB_LOG"
+  remux_stamp %7 "cd '/r' && exec env CREW_ID='c' 'x'"
+  [ "$(cat "$STUB_LOG")" = "set-option -p -t %7 @remux_relaunch cd '/r' && exec env CREW_ID='c' 'x'
+set-option -p -t %7 @remux_relaunch_pinned 1
+set-option -pu -t %7 @remux_relaunch_owner" ]
+  : >"$STUB_LOG"
+  remux_pin_clear %7
+  [ "$(cat "$STUB_LOG")" = "set-option -p -t %7 @remux_relaunch_pinned 1
+set-option -pu -t %7 @remux_relaunch
+set-option -pu -t %7 @remux_relaunch_owner" ]
+  : >"$STUB_LOG"
+  remux_clear %7
+  [ "$(cat "$STUB_LOG")" = "set-option -pu -t %7 @remux_relaunch
+set-option -pu -t %7 @remux_relaunch_pinned" ]
+}
+
+# _remux_engine <bin> [body] — an engine that logs ENGINE <bin>, then runs body.
+_remux_engine() {
+  printf '#!/usr/bin/env bash\necho "ENGINE %s" >>"$STUB_LOG"\n%s\n' "$1" "${2:-}" >"$STUB_DIR/$1"
+  chmod +x "$STUB_DIR/$1"
+}
+
+# _remux_set_lines — the @remux_relaunch set-option calls with a value.
+_remux_set_lines() { grep -E '^set-option -p -t %1 @remux_relaunch ' "$STUB_LOG" || true; }
+
+# _engine_line — the line number of the engine's own log line.
+_engine_line() { grep -n '^ENGINE ' "$STUB_LOG" | head -1 | cut -d: -f1; }
+
+_remux_launch() { # engine [launcher args...]
+  local bin=$1
+  shift
+  _remux_engine "$bin" "${REMUX_BODY:-}"
+  TMUX=/tmp/fake,1,0 TMUX_PANE=%1 CREW_ID=c1 run run_launcher "$@"
+}
+
+@test "1588: launcher stamps the pinned relaunch before the engine starts" {
+  _remux_launch claude
+  [ "$status" -eq 0 ]
+  want="set-option -p -t %1 @remux_relaunch cd '$PWD' && exec env CREW_ID='c1' 'env' '-u' 'CREW_OVERSEER' 'dispatcher' '--fresh' '--no-note' '--agent' 'claude' '--model' 'opus' '--effort' 'high' '--autocompact' '300000'"
+  [ "$(_remux_set_lines)" = "$want" ]
+  stamp=$(grep -nxF "$want" "$STUB_LOG" | cut -d: -f1)
+  pin=$(grep -nx 'set-option -p -t %1 @remux_relaunch_pinned 1' "$STUB_LOG" | head -1 | cut -d: -f1)
+  owner=$(grep -nx 'set-option -pu -t %1 @remux_relaunch_owner' "$STUB_LOG" | head -1 | cut -d: -f1)
+  eng=$(_engine_line)
+  [ "$stamp" -lt "$pin" ] && [ "$pin" -lt "$owner" ] && [ "$owner" -lt "$eng" ]
+}
+
+@test "1588: launcher stamps for every engine, never a pin-clear" {
+  for bin in claude pi codex cursor-agent; do
+    : >"$STUB_LOG"
+    agent=${bin%-agent}
+    _remux_launch "$bin" --agent "$agent"
+    [ "$status" -eq 0 ]
+    [ "$(_remux_set_lines | wc -l)" = 1 ]
+    [[ "$(_remux_set_lines)" == *"'--agent' '$agent'"* ]]
+  done
+}
+
+@test "1588: launcher clears both options on a normal engine exit" {
+  _remux_launch claude
+  [ "$status" -eq 0 ]
+  eng=$(_engine_line)
+  a=$(grep -nx 'set-option -pu -t %1 @remux_relaunch' "$STUB_LOG" | tail -1 | cut -d: -f1)
+  b=$(grep -nx 'set-option -pu -t %1 @remux_relaunch_pinned' "$STUB_LOG" | tail -1 | cut -d: -f1)
+  [ "$a" -gt "$eng" ] && [ "$b" -gt "$eng" ]
+}
+
+@test "1588: launcher leaves the stamp when the engine dies by a signal" {
+  _real_crew_logged
+  REMUX_BODY='exit 137' _remux_launch claude
+  [ "$status" -eq 137 ]
+  eng=$(_engine_line)
+  [ "$(_remux_set_lines | wc -l)" = 1 ]
+  if tail -n +"$((eng + 1))" "$STUB_LOG" | grep -q '@remux_relaunch'; then return 1; fi
+}
+
+@test "1588: launcher clears both options when the launch loop refuses" {
+  export HOME="$BATS_TEST_TMPDIR/home"
+  git remote add origin git@github.com:noamsto/dispatcher.git
+  _dispatcher_settings '{"dispatcherMcp":{"noamsto/dispatcher":["analytics"]}}'
+  _remux_engine claude
+  TMUX=/tmp/fake,1,0 TMUX_PANE=%1 CREW_ID=c1 run run_launcher
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"config is missing"* ]]
+  [ "$(_remux_set_lines | wc -l)" = 1 ]
+  grep -qx 'set-option -p -t %1 @remux_relaunch_pinned 1' "$STUB_LOG"
+  [ "$(grep -cx 'set-option -pu -t %1 @remux_relaunch' "$STUB_LOG")" -ge 1 ]
+  [ "$(grep -cx 'set-option -pu -t %1 @remux_relaunch_pinned' "$STUB_LOG")" -ge 1 ]
+  if grep -q '^ENGINE ' "$STUB_LOG"; then return 1; fi
+}
+
+@test "1588: launcher leaves the stamp when it is hung up" {
+  _real_crew_logged
+  REMUX_BODY='kill -HUP $PPID; sleep 5' _remux_launch claude
+  [ "$status" -eq 129 ]
+  eng=$(_engine_line)
+  [ "$(_remux_set_lines | wc -l)" = 1 ]
+  if tail -n +"$((eng + 1))" "$STUB_LOG" | grep -q '@remux_relaunch'; then return 1; fi
+}
+
+@test "1588: launcher pin-clears when crew register is refused" {
+  # An adopted crew whose recorded pid is alive but has no pane: register
+  # refuses it, and the launcher still starts (the #929 tolerance).
+  sleep 30 &
+  live_pid=$!
+  stub_crew_table "$(crews_tsv "$(printf 'c-live\t5\t5\t1\t%s\tyes' "$live_pid")")"
+  cat >"$STUB_DIR/crew" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$1" in
+crews) cat "$STUB_DIR/crews.tsv" ;;
+register) exit 1 ;;
+esac
+exit 0
+STUB
+  _remux_engine claude
+  TMUX=/tmp/fake,1,0 TMUX_PANE=%1 run run_launcher
+  [ "$status" -eq 0 ]
+  [ -z "$(_remux_set_lines)" ]
+  grep -qx 'set-option -p -t %1 @remux_relaunch_pinned 1' "$STUB_LOG"
+  grep -qx 'set-option -pu -t %1 @remux_relaunch' "$STUB_LOG"
+  grep -q '^ENGINE claude' "$STUB_LOG"
+}
+
+@test "1588: launcher pin-clears from a directory whose path has a quote" {
+  mkdir -p "$BATS_TEST_TMPDIR/it's"
+  cd "$BATS_TEST_TMPDIR/it's"
+  git init -q .
+  _remux_launch claude
+  [ "$status" -eq 0 ]
+  [ -z "$(_remux_set_lines)" ]
+  grep -qx 'set-option -p -t %1 @remux_relaunch_pinned 1' "$STUB_LOG"
+}
+
+@test "1588: launcher touches no remux option outside tmux" {
+  _remux_engine claude
+  CREW_ID=c1 run run_launcher
+  [ "$status" -eq 0 ]
+  if grep -q '@remux_' "$STUB_LOG"; then return 1; fi
+}
+
+@test "1588: the overseer touches no remux option" {
+  _overseer_setup
+  TMUX=/tmp/fake,1,0 TMUX_PANE=%1 run run_launcher --overseer
+  [ "$status" -eq 0 ]
+  if grep -q '@remux_' "$STUB_LOG"; then return 1; fi
+}
+
+@test "1588: a deregistered crew still relaunches through the restore command" {
+  stub_crew_table "$(crews_tsv "$(printf 'c1\t5\t5\t0\t998\tno')")"
+  _engine_stub claude
+  CREW_ID=c1 run run_launcher --fresh --no-note --agent claude --model opus --effort high --autocompact 300000
+  [ "$status" -eq 0 ]
+  [ "$(_launches)" = 1 ]
+}

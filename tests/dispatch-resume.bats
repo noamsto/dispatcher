@@ -953,7 +953,8 @@ _assert_resume_bound() {
 # tmux stub that reports one pane sitting at $WT, so the reuse path fires.
 # $4 (pane_current_command) defaults to empty — a plain shell, i.e. nothing an
 # engine matcher would claim — so existing callers that omit it keep meaning
-# "a human sitting there".
+# "a human sitting there". `#{pane_pid}` answers STUB_PANE_PID (see
+# _run_rooted).
 stub_tmux_with_pane_at_wt() { # $1=window id  $2=pane id  $3=@crew_name value  $4=pane_current_command
   cat >"$STUB_DIR/tmux" <<EOF
 #!/usr/bin/env bash
@@ -961,7 +962,12 @@ printf '%s\n' "\$*" >>"\$STUB_LOG"
 case "\$1" in
 list-panes) [ "\$2" != -a ] || printf '%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\n' '$1' '$2' '$WT' '${4:-}' '$3' '' '' ;;
 new-window) printf '%s %s\n' '%99' '%99' ;;
-display-message) printf '%s\n' '80 24 on' ;;
+display-message)
+  case "\$*" in
+  *'#{pane_pid}'*) printf '%s\n' "\${STUB_PANE_PID:-}" ;;
+  *) printf '%s\n' '80 24 on' ;;
+  esac
+  ;;
 esac
 exit 0
 EOF
@@ -3199,6 +3205,7 @@ EOF
 # Grid window @4 as tmux-remux restores it. STUB_PANES_A feeds `list-panes -a`
 # (window, pane, path, cmd, name, role, branch) and STUB_PANES_W feeds
 # `list-panes -t @4` (pane, role, exited, cmd, path), one \x1f-joined row per line.
+# `#{pane_pid}` answers STUB_PANE_PID (see _run_rooted).
 stub_tmux_grid() {
   local u=$'\x1f'
   export STUB_PANES_A STUB_PANES_W
@@ -3216,7 +3223,12 @@ list-panes)
   if [ "$2" = -a ]; then printf '%s\n' "$STUB_PANES_A"; else printf '%s\n' "$STUB_PANES_W"; fi
   ;;
 new-window) printf '%s %s\n' '%99' '%99' ;;
-display-message) printf '%s\n' '80 24 on' ;;
+display-message)
+  case "$*" in
+  *'#{pane_pid}'*) printf '%s\n' "${STUB_PANE_PID:-}" ;;
+  *) printf '%s\n' '80 24 on' ;;
+  esac
+  ;;
 esac
 exit 0
 EOF
@@ -3898,4 +3910,246 @@ _cm_wait_post() {
   [ "$(grep -c '^code_mode: true$' "$WT/WORKER_TASK.md")" -eq 1 ]
   [ "$(sed -n '/^$/q;/^code_mode:/p' "$WT/WORKER_TASK.md")" = "" ]
   tail -n 1 "$WT/WORKER_TASK.md" | grep -qx 'code_mode: true'
+}
+
+# _line_of <fixed string> — the first $STUB_LOG line number holding it.
+_line_of() { grep -nF -- "$1" "$STUB_LOG" | head -1 | cut -d: -f1; }
+
+# _remux_stamp_line <wt> [word...] — the stamp tmux-remux runs to restore the
+# lead pane, carrying the given override words after --exec.
+_remux_stamp_line() {
+  printf "cd '%s' && exec env CREW_ID='c1' 'dispatch' 'resume' '--exec'" "$1"
+  shift
+  [ $# -eq 0 ] || printf " '%s'" "$@"
+}
+
+@test "1588: resume stamps the reused lead pane with its pinned --exec relaunch before the launch" {
+  setup_worker_wt
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 0 ]
+  local stamp pinned owner keys
+  stamp="$(_line_of "set-option -p -t %8 @remux_relaunch $(_remux_stamp_line "$WT")")"
+  pinned="$(_line_of 'set-option -p -t %8 @remux_relaunch_pinned 1')"
+  owner="$(_line_of 'set-option -pu -t %8 @remux_relaunch_owner')"
+  keys="$(_line_of 'send-keys -t %8 ')"
+  [ -n "$stamp" ] && [ -n "$pinned" ] && [ -n "$owner" ] && [ -n "$keys" ]
+  [ "$stamp" -lt "$keys" ] && [ "$pinned" -lt "$keys" ] && [ "$owner" -lt "$keys" ]
+}
+
+@test "1588: resume on the create path stamps the new window's pane, never the caller's" {
+  setup_worker_wt
+  cd "$WT"
+  TMUX_PANE=%9 run run_resume
+  [ "$status" -eq 0 ]
+  grep -qxF "set-option -p -t %99 @remux_relaunch $(_remux_stamp_line "$WT")" "$STUB_LOG"
+  [ "$(grep -c '@remux_' "$STUB_LOG")" -eq 3 ]
+  run ! grep -v -- '-t %99 @remux_' <(grep '@remux_' "$STUB_LOG")
+}
+
+@test "1588: resume pin-clears a lead whose worktree path holds a quote, and still launches" {
+  WT="$TEST_REPO/it's-wt"
+  git -C "$TEST_REPO" worktree add -q -b feat/7-a-thing "$WT" HEAD
+  _worker_task_doc "$WT" feat/7-a-thing
+  export WT
+  write_anchor "$WT"
+  seed_git_baseline
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 0 ]
+  local cleared keys
+  grep -qxF 'set-option -p -t %99 @remux_relaunch_pinned 1' "$STUB_LOG"
+  cleared="$(grep -nxF 'set-option -pu -t %99 @remux_relaunch' "$STUB_LOG" | head -1 | cut -d: -f1)"
+  keys="$(_line_of 'send-keys -t %99 ')"
+  [ -n "$cleared" ] && [ -n "$keys" ] && [ "$cleared" -lt "$keys" ]
+  run ! grep -q '@remux_relaunch cd ' "$STUB_LOG"
+}
+
+@test "1588: resume in remote mode pin-clears the lead pane and stamps no relaunch" {
+  setup_worker_wt
+  cat >"$STUB_DIR/tmux" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$1" in
+has-session) exit 1 ;;
+new-window | new-session) printf '%s %s\n' '@4' '%99' ;;
+esac
+exit 0
+STUB
+  chmod +x "$STUB_DIR/tmux"
+  cd "$WT"
+  DISPATCH_TMUX_SESSION=crew-c1 run run_resume
+  [ "$status" -eq 0 ]
+  grep -qxF 'set-option -p -t %99 @remux_relaunch_pinned 1' "$STUB_LOG"
+  grep -qxF 'set-option -pu -t %99 @remux_relaunch' "$STUB_LOG"
+  run ! grep -q '@remux_relaunch cd ' "$STUB_LOG"
+}
+
+@test "1588: resume stamps this run's --agent, --model, --effort and --mcp overrides into the relaunch" {
+  setup_worker_wt
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  cd "$WT"
+  run run_resume --agent pi --model openrouter/deepseek/deepseek-v4-flash --effort high --mcp sentry
+  [ "$status" -eq 0 ]
+  grep -qxF "set-option -p -t %8 @remux_relaunch $(_remux_stamp_line "$WT" --agent pi --model openrouter/deepseek/deepseek-v4-flash --effort high --mcp sentry)" "$STUB_LOG"
+}
+
+@test "1588: resume stamps a --model @class resolved, with the --ignore-map that went with it" {
+  setup_worker_wt
+  sed -i 's/^model: sonnet/model: haiku/' "$WT/WORKER_TASK.md"
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  cd "$WT"
+  run run_resume --model @standard --ignore-map
+  [ "$status" -eq 0 ]
+  grep -qxF "set-option -p -t %8 @remux_relaunch $(_remux_stamp_line "$WT" --model sonnet --ignore-map)" "$STUB_LOG"
+}
+
+@test "1588: resume never stamps --chrome or --ignore-budget into the relaunch" {
+  setup_worker_wt
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  cd "$WT"
+  run run_resume --chrome --ignore-budget
+  [ "$status" -eq 0 ]
+  grep -qxF "set-option -p -t %8 @remux_relaunch $(_remux_stamp_line "$WT")" "$STUB_LOG"
+}
+
+@test "1588: resume leaves an escalated --model to the header, out of the relaunch" {
+  setup_worker_wt
+  sed -i -e 's/^engine: claude/engine: codex/' -e 's/^model: sonnet/model: gpt-5.6-terra/' "$WT/WORKER_TASK.md"
+  _resume_esc_seed s1-99 200 codex gpt-5.6-terra standard
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  cd "$WT"
+  DISPATCH_PROFILE=work DISPATCH_ENGINES="claude codex cursor pi" run run_resume --model gpt-5.6-sol
+  [ "$status" -eq 0 ]
+  grep -qx 'model: gpt-5.6-sol' "$WT/WORKER_TASK.md"
+  grep -qxF "set-option -p -t %8 @remux_relaunch $(_remux_stamp_line "$WT")" "$STUB_LOG"
+}
+
+# _run_rooted <script> [args...] — run <script> as a restored pane's root
+# process: a shell that publishes its pid as the stub's `#{pane_pid}`, then execs
+# into resume, as the remux restore shell does.
+_run_rooted() {
+  # shellcheck disable=SC2016 # expanded by the inner shell
+  run bash -c 'export STUB_PANE_PID=$$; exec bash -euo pipefail "$@"' _ "$@"
+}
+
+# _exec_engine_stub — the claude stub logs its argv and PATH, so an exec'd launch
+# is observable in $STUB_LOG.
+_exec_engine_stub() {
+  cat >"$STUB_DIR/claude" <<'STUB'
+#!/usr/bin/env bash
+printf 'engine: %s\n' "$*" >>"$STUB_LOG"
+printf 'engine PATH=%s\n' "$PATH" >>"$STUB_LOG"
+STUB
+  chmod +x "$STUB_DIR/claude"
+}
+
+@test "1588: resume --exec execs the launch in its own lead pane under the pane-shell PATH" {
+  setup_worker_wt
+  stub_tmux_with_pane_at_wt '@4' '%8' iris dispatch-resume
+  _exec_engine_stub
+  local pinned="$TEST_REPO/store/h-pinned/bin"
+  mkdir -p "$pinned"
+  sed "s|@launcherRuntimePath@|$pinned|" "$RESUME" >"$BATS_TEST_TMPDIR/resume-pinned.sh"
+  cd "$WT"
+  TMUX_PANE=%8 PATH="$pinned:$PATH" _run_rooted "$BATS_TEST_TMPDIR/resume-pinned.sh" --exec
+  [ "$status" -eq 0 ]
+  run ! grep -q 'send-keys' "$STUB_LOG"
+  grep -q '^engine: .*--name iris .*Read WORKER_TASK.md and continue it' "$STUB_LOG"
+  grep -q '^engine PATH=' "$STUB_LOG"
+  run ! grep -qF "engine PATH=$pinned" "$STUB_LOG"
+  grep -qF "engine PATH=$STUB_DIR:" "$STUB_LOG"
+  grep -qxF "set-option -p -t %8 @remux_relaunch $(_remux_stamp_line "$WT")" "$STUB_LOG"
+  wait_for_log 'stall-watch worker:feat/7-a-thing#s[0-9]+-[0-9]+ --pane %8 --engine claude'
+  # roster-render runs synchronously after the stall-watch spawn, so its line
+  # before the engine's proves the watchers started before the exec.
+  local on off render engine
+  on="$(_line_of 'set-option -p -t %8 remain-on-exit on')"
+  off="$(_line_of 'set-option -p -t %8 remain-on-exit off')"
+  render="$(_line_of 'roster-render --crew c1')"
+  engine="$(_line_of 'engine: ')"
+  [ -n "$on" ] && [ -n "$off" ] && [ -n "$render" ] && [ -n "$engine" ]
+  [ "$on" -lt "$off" ] && [ "$render" -lt "$off" ] && [ "$off" -lt "$engine" ]
+  run ! grep -E 'roster-render.*--pane' "$STUB_LOG"
+}
+
+@test "1588: resume --exec under a pane it does not root never touches remain-on-exit" {
+  setup_worker_wt
+  stub_tmux_with_pane_at_wt '@4' '%8' iris dispatch-resume
+  _exec_engine_stub
+  cd "$WT"
+  TMUX_PANE=%8 STUB_PANE_PID=1 run run_resume --exec
+  [ "$status" -eq 0 ]
+  grep -q '^engine: .*--name iris ' "$STUB_LOG"
+  run ! grep -q 'remain-on-exit' "$STUB_LOG"
+  : >"$STUB_LOG"
+  TMUX_PANE=%5 STUB_PANE_PID=1 run run_resume --exec
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"--exec runs in the worker's own lead pane at $WT"* ]]
+  run ! grep -q 'remain-on-exit' "$STUB_LOG"
+}
+
+@test "1588: resume --exec refuses without a tmux pane" {
+  setup_worker_wt
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  _exec_engine_stub
+  cd "$WT"
+  run run_resume --exec
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"--exec relaunches in its own tmux pane"* ]]
+  run ! grep -qE 'remain-on-exit|send-keys|^engine: ' "$STUB_LOG"
+}
+
+@test "1588: resume --exec refuses a pane away from the worktree and drops its remain-on-exit" {
+  setup_worker_wt
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  _exec_engine_stub
+  cd "$WT"
+  TMUX_PANE=%5 _run_rooted "$RESUME" --exec
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"--exec runs in the worker's own lead pane at $WT"* ]]
+  local on off
+  on="$(_line_of 'set-option -p -t %5 remain-on-exit on')"
+  off="$(_line_of 'set-option -p -t %5 remain-on-exit off')"
+  [ -n "$on" ] && [ -n "$off" ] && [ "$on" -lt "$off" ]
+  run ! grep -qE 'send-keys|@remux_|^engine: ' "$STUB_LOG"
+}
+
+@test "1588: resume --exec refuses from a role pane of the worker's grid" {
+  setup_grid
+  _exec_engine_stub
+  cd "$WT"
+  TMUX_PANE=%9 _run_rooted "$RESUME" --exec
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"--exec runs in the worker's own lead pane at $WT"* ]]
+  grep -qxF 'set-option -p -t %9 remain-on-exit off' "$STUB_LOG"
+  run ! grep -qE 'send-keys|@remux_|^engine: ' "$STUB_LOG"
+}
+
+@test "1588: resume --exec refuses when another lead pane at the worktree runs an engine" {
+  setup_grid
+  _exec_engine_stub
+  local u=$'\x1f'
+  STUB_PANES_A+=$'\n'"@5${u}%20${u}$WT${u}claude${u}${u}${u}"
+  cd "$WT"
+  TMUX_PANE=%8 _run_rooted "$RESUME" --exec
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"(%20) is already running an engine"* ]]
+  grep -qxF 'set-option -p -t %8 remain-on-exit on' "$STUB_LOG"
+  run ! grep -qE 'send-keys|@remux_|^engine: |remain-on-exit off' "$STUB_LOG"
+}
+
+@test "1588: resume --exec refuses --print and --rearm-roles" {
+  setup_worker_wt
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  _exec_engine_stub
+  cd "$WT"
+  local flag
+  for flag in --print --rearm-roles; do
+    TMUX_PANE=%8 run run_resume --exec "$flag"
+    [ "$status" -eq 1 ] || { echo "$flag: status $status"; return 1; }
+    [[ "$output" == *"usage: dispatch resume"* ]] || { echo "$flag: no usage"; return 1; }
+  done
+  run ! grep -qE 'remain-on-exit|send-keys|^engine: ' "$STUB_LOG"
 }

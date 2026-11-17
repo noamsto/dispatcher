@@ -1011,10 +1011,100 @@ func TestPanePublish(t *testing.T) {
 		f.log(statusRow(worker, `{"state":"done"}`))
 		f.status(worker, "done")
 		f.status(worker, "bogus")
-		if got := f.tm.Calls(); len(got) != 0 {
-			t.Errorf("tmux touched: %q", got)
+		// The deduped done still runs the relaunch-clear query, which publishes nothing.
+		for _, c := range f.tm.Calls() {
+			if strings.HasPrefix(c, "set-option") {
+				t.Errorf("published: %q", c)
+			}
 		}
 	})
+}
+
+func TestClearRelaunch(t *testing.T) {
+	const (
+		query  = "display-message -p -t %5 #{@crew_branch}\x1f#{@crew_role}"
+		unset1 = "set-option -pu -t %5 @remux_relaunch"
+		unset2 = "set-option -pu -t %5 @remux_relaunch_pinned"
+	)
+	tests := []struct {
+		name   string
+		from   string
+		state  string
+		pane   string
+		roleID string
+		answer string // display-message answer to the branch/role query
+		clear  bool
+		query  bool // the branch/role query is issued
+	}{
+		{"done from own lead pane", worker, "done", "%5", "", "feat/x\x1flead", true, true},
+		{"done non-grid worker", worker, "done", "%5", "", "feat/x\x1f", true, true},
+		{"failed clears", worker, "failed", "%5", "", "feat/x\x1flead", true, true},
+		{"session suffix parsed", "worker:feat/x#s123", "done", "%5", "", "feat/x\x1flead", true, true},
+		{"hash in branch", "worker:feat/7-a#b#s123", "done", "%5", "", "feat/7-a#b\x1flead", true, true},
+		{"pr_open keeps", worker, "pr_open", "%5", "", "feat/x\x1flead", false, false},
+		{"working keeps", worker, "working", "%5", "", "feat/x\x1flead", false, false},
+		{"blocked keeps", worker, "blocked", "%5", "", "feat/x\x1flead", false, false},
+		{"CREW_ROLE_ID set", worker, "done", "%5", "role:x", "feat/x\x1flead", false, false},
+		{"branch mismatch", worker, "done", "%5", "", "feat/other\x1flead", false, true},
+		{"role pane", worker, "done", "%5", "", "feat/x\x1freviewer", false, true},
+		{"no TMUX_PANE", worker, "done", "", "", "feat/x\x1flead", false, false},
+		{"dispatcher from", "dispatcher:x", "done", "%5", "", "feat/x\x1flead", false, false},
+		{"empty branch", "worker:#s1", "done", "%5", "", "\x1flead", false, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFixture(t)
+			f.tm = &tmuxtest.Fake{Func: func(args []string) (string, error) {
+				if args[0] == "display-message" && strings.Contains(args[len(args)-1], "@crew_branch") {
+					return tc.answer, nil
+				}
+				return f.role, nil
+			}}
+			f.role = "lead"
+			if tc.pane != "" {
+				f.env["TMUX_PANE"] = tc.pane
+			}
+			if tc.roleID != "" {
+				f.env["CREW_ROLE_ID"] = tc.roleID
+			}
+			f.status(tc.from, tc.state)
+			calls := f.tm.Calls()
+			if got := slices.Contains(calls, query); got != tc.query {
+				t.Errorf("branch/role query issued = %v, want %v; calls %q", got, tc.query, calls)
+			}
+			for _, c := range []string{unset1, unset2} {
+				if got := slices.Contains(calls, c); got != tc.clear {
+					t.Errorf("%q issued = %v, want %v", c, got, tc.clear)
+				}
+			}
+		})
+	}
+}
+
+func TestClearRelaunchOnDedupedRepeat(t *testing.T) {
+	f := newFixture(t)
+	f.tm = &tmuxtest.Fake{Func: func(args []string) (string, error) {
+		if args[0] == "display-message" && strings.Contains(args[len(args)-1], "@crew_branch") {
+			return "feat/x\x1flead", nil
+		}
+		return f.role, nil
+	}}
+	f.role = "lead"
+	f.env["TMUX_PANE"] = "%5"
+	for range 2 {
+		if code, msg := f.status(worker, "failed"); code != 0 {
+			t.Fatalf("status = %d: %s", code, msg)
+		}
+	}
+	n := 0
+	for _, c := range f.tm.Calls() {
+		if c == "set-option -pu -t %5 @remux_relaunch" {
+			n++
+		}
+	}
+	if n != 2 {
+		t.Errorf("relaunch unset issued %d times, want 2 (second post deduped); calls %q", n, f.tm.Calls())
+	}
 }
 
 // TestZeroOptionsGateTheCheckout pins that a zero Options reads the process's
