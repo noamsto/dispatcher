@@ -197,6 +197,7 @@ func TestBranchIssue(t *testing.T) {
 		{"linear branch is not an issue", "eng-12-x", ""},
 		{"digits run into letters", "feat/12x", ""},
 		{"other prefix", "fix/7-y", "7"},
+		{"digits before the first slash", "12-a/x", ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

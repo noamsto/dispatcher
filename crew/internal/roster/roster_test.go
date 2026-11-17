@@ -841,6 +841,9 @@ func TestFoldSuffixFollowsBranchIssueRule(t *testing.T) {
 		{"feat/grok-4-7-x", "feat/grok-4-7-x"},
 		{"eng-42-x", "eng-42"},
 		{"fix/7-y", "7"},
+		{"fix/7", "7"},
+		{"12-a/x", "12-a/x"},
+		{"feat/eng-42-x", "feat/eng-42-x"},
 	}
 	var events []string
 	for i, b := range branches {

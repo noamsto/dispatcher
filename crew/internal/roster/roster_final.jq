@@ -5,6 +5,6 @@
       map(. + ($m[.branch] // {}))
       | (map(select(.name != null) | .name) | group_by(.) | map(select(length > 1) | .[0])) as $dupes
       | map(if (.name as $n | $dupes | index($n))
-            then .name = (.name + "·" + ((.branch | (capture("^(?:[^/]+/)?(?<id>[0-9]+)(?:-|$)") // capture("^(?<id>[A-Za-z]+-[0-9]+)(?:-|$)")) | .id) // .branch))
+            then .name = (.name + "·" + ((.branch | ((sub("^[^/]*/"; "") | capture("^(?<id>[0-9]+)(?:-|$)")) // capture("^(?<id>[A-Za-z]+-[0-9]+)(?:-|$)")) | .id) // .branch))
             else . end)
       | map(if .exit_suspect then . else del(.prev_state) end)

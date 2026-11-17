@@ -339,6 +339,7 @@ func TestBoardIssueFollowsBranchRule(t *testing.T) {
 		{"eng-42-x", "lime·eng-42", "lime · eng-42"},
 		{"fix/7-y", "lime", "lime · #7"},
 		{"fix/7", "lime", "lime · #7"},
+		{"12-a/x", "lime", "lime"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.branch+"/"+tc.name, func(t *testing.T) {
