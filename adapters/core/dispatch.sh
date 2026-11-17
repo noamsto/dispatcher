@@ -2871,7 +2871,13 @@ fi
 # the subcommand — `dispatch resume --agent pi` — as the usage line shows.
 if [ "${1:-}" = resume ]; then
   shift
-  exec dispatch-resume "$@"
+  # Resolved while this launcher's pinned PATH still finds it; it then starts from the
+  # caller's PATH and re-pins only its own dirs, so ours never leak into the engine (#1588).
+  resume_bin="$(command -v dispatch-resume)" || {
+    echo "dispatch: dispatch-resume not found on PATH" >&2
+    exit 1
+  }
+  exec env PATH="$(engine_path)" "$resume_bin" "$@"
 fi
 
 # Tier and model may be left to --profile; without it the check after the
@@ -5376,9 +5382,10 @@ fi
 # Pin the restore relaunch to `dispatch resume --exec` so a restored lead keeps its
 # CREW_* env and protocol; the branch is derived from the worktree, never stamped.
 # A remote worker's own dispatcher drives its recovery.
+remux_cmd=""
 if [ "$wire_side" = remote ]; then
   remux_pin_clear "$pane"
-elif remux_cmd="" && remux_command remux_cmd "$wt_path" "$crew_id" dispatch resume --exec; then
+elif remux_command remux_cmd "$wt_path" "$crew_id" dispatch resume --exec; then
   remux_stamp "$pane" "$remux_cmd"
 else
   remux_pin_clear "$pane"

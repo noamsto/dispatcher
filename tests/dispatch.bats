@@ -487,6 +487,25 @@ _dispatch_help_flags() {
   [[ "$output" != *"usage: dispatch"* ]]
 }
 
+@test "1588: dispatch resume hands dispatch-resume the caller's PATH, not dispatch's pinned dirs" {
+  local pinned pinned_script
+  pinned="$TEST_REPO/store/h-resume/bin"
+  mkdir -p "$pinned"
+  cat >"$pinned/dispatch-resume" <<'EOF'
+#!/usr/bin/env bash
+printf 'PATH=%s\n' "$PATH" >>"$STUB_LOG"
+printf 'ARGV=%s\n' "$*" >>"$STUB_LOG"
+EOF
+  chmod +x "$pinned/dispatch-resume"
+  pinned_script="$BATS_TEST_TMPDIR/dispatch-pinned.sh"
+  sed "s|@launcherRuntimePath@|$pinned|" "$DISPATCH" >"$pinned_script"
+  PATH="$pinned:$PATH" run bash -euo pipefail "$pinned_script" resume --exec foo
+  [ "$status" -eq 0 ]
+  grep -Fxq 'ARGV=--exec foo' "$STUB_LOG"
+  run grep '^PATH=' "$STUB_LOG"
+  [[ "$output" != *"$pinned"* ]]
+}
+
 # #349: the resume subcommand is selected by the FIRST argument only. A title
 # that merely contains the word `resume` must dispatch as a normal title and
 # never reach dispatch-resume at all.
@@ -7175,7 +7194,7 @@ EOF
 
 @test "stall-watch: dispatch and resume spawn the lead watchdog orphaned (#908)" {
   for f in "$DISPATCH" "$(dirname "$DISPATCH")/dispatch-resume.sh"; do
-    [ "$(grep -c '^(CREW_ID="$crew_id" nohup crew stall-watch "$worker_id"' "$f")" -eq 1 ]
+    [ "$(grep -c '^[[:space:]]*(CREW_ID="$crew_id" nohup crew stall-watch "$worker_id"' "$f")" -eq 1 ]
   done
 }
 
