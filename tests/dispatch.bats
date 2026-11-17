@@ -1275,6 +1275,15 @@ _env_of() {
   grep -qxF -- 'set-window-option -t %1 @crew_id c1' "$STUB_LOG"
 }
 
+@test "dispatch stamps @crew_repo with the bare repo name, also from a worktree checkout" {
+  stub_launch_bins
+  git -C "$TEST_REPO" worktree add -q -b feat/9-repo-tag "$TEST_REPO/.repo-tag-wt" HEAD
+  cd "$TEST_REPO/.repo-tag-wt" || return 1
+  DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --lazy --roles reviewer --effort high --crew-id c1 42 "repo tag"
+  [ "$status" -eq 0 ]
+  grep -qxF -- "set-window-option -t %1 @crew_repo $(basename "$TEST_REPO")" "$STUB_LOG"
+}
+
 @test "a grid lead's @crew_name stays the bare codename" {
   stub_launch_bins
   DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --lazy --roles reviewer --effort high --crew-id c1 42 "grid crew name unchanged"

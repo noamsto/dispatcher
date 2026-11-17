@@ -328,6 +328,18 @@ _tracker_slug_from_path() {
   return 0
 }
 
+# _repo_name <git-common-dir> — the bare repo name: a main checkout's `.git` takes its parent's name, a bare-style `<name>.git` loses the suffix.
+_repo_name() {
+  local repo
+  repo=$(basename "$1")
+  if [ "$repo" = .git ]; then
+    repo=$(basename "$(dirname "$1")")
+  else
+    repo=${repo%.git}
+  fi
+  printf '%s\n' "$repo"
+}
+
 # _origin_slug — owner/repo of the configured origin when it is a GitHub URL,
 # else nothing. Configured origin, not `git remote get-url`: that applies
 # insteadOf and would hide a GitHub slug behind a rewritten local path. https

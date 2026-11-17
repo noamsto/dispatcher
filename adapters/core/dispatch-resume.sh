@@ -836,6 +836,7 @@ if [ -n "$rearm_roles" ]; then
   tmux set-window-option -t "$win" @crew_dir "$crew_dir"
   tmux set-window-option -t "$win" @crew_branch "$branch"
   tmux set-window-option -t "$win" @crew_id "$crew_id"
+  tmux set-window-option -t "$win" @crew_repo "$(_repo_name "${crew_dir%/crew}")"
   _stamp_dispatcher_host "$win"
   _rearm_role_panes
   if [ "$rearmed" -gt 0 ]; then
@@ -1071,6 +1072,7 @@ tmux set-window-option -t "$win" @crew_name "$agent_name"
 tmux set-window-option -t "$win" @crew_dir "$crew_dir"
 tmux set-window-option -t "$win" @crew_branch "$branch"
 tmux set-window-option -t "$win" @crew_id "$crew_id"
+tmux set-window-option -t "$win" @crew_repo "$(_repo_name "${crew_dir%/crew}")"
 _stamp_dispatcher_host "$win"
 tmux set-window-option -t "$win" @crew_color "$agent_color"
 tmux set-window-option -t "$win" pane-border-style "bg=#{@thm_bg},fg=$agent_color"

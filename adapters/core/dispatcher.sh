@@ -828,12 +828,7 @@ fi
 # Only claude and pi have a name flag; codex and cursor sessions stay unnamed.
 # repo is computed even with a task: a handoff relaunch names itself by repo.
 if common_dir=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null); then
-  repo=$(basename "$common_dir")
-  if [ "$repo" = .git ]; then
-    repo=$(basename "$(dirname "$common_dir")")
-  else
-    repo=${repo%.git}
-  fi
+  repo=$(_repo_name "$common_dir")
 else
   repo=$(basename "$PWD")
 fi
