@@ -67,6 +67,20 @@ func TestMergeRemoteWithoutRemoteRowsChangesNothing(t *testing.T) {
 	}
 }
 
+func TestMergeRemoteSkipsReapedBranch(t *testing.T) {
+	events := busEvents(t,
+		remoteDispatch("feat/gone", "gus", "h1"),
+		`{"ts":2,"kind":"reap","branch":"feat/gone"}`,
+	)
+	got := MergeRemote(context.Background(), rowsOf(t, localRows), events, "c1", func(context.Context, string, []string, io.Writer, io.Writer) int {
+		t.Fatal("asked a host for a reaped branch")
+		return 0
+	})
+	if compact(t, got) != compact(t, rowsOf(t, localRows)) {
+		t.Errorf("got %s", compact(t, got))
+	}
+}
+
 func TestMergeRemoteTagsAndKeepsOnlyThisHostsBranches(t *testing.T) {
 	events := busEvents(t,
 		remoteDispatch("feat/far", "iris", "mini"),

@@ -25,6 +25,7 @@
       "severity": "critical",
       "kind": "role_failed",
       "message": "reviewer: role reviewer engine exited (pane %9)",
+      "clears": "restart the role pane or `crew nudge` the worker",
       "age_sec": 410,
       "action": {
         "key": "p",
@@ -55,6 +56,7 @@
       "severity": "warning",
       "kind": "hold_matured",
       "message": "hold h-q1 matured",
+      "clears": "release or drop the hold",
       "age_sec": 120,
       "action": {
         "key": "",
@@ -84,6 +86,7 @@
       "severity": "ready",
       "kind": "merge_ready",
       "message": "PR #12 checks green, mergeable",
+      "clears": "merge PR #12",
       "age_sec": 110,
       "action": {
         "key": "m",

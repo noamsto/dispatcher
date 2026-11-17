@@ -1,8 +1,8 @@
 ╭ ▸ ATTENTION ───────────────────────────────────────────────────────────────────────────────────────── 9 need action ─╮
-│▌1 ✗ @tp relay to tp lost (1 remote workers)                                                 2h                       │
-│ 2 ✗ c3  dispatcher gone, 2 workers                                                          2h → relaunch dispatcher │
-│ 3 ✗ w-b reviewer: role reviewer engine exited (pane %9)                                     6m → peek                │
-│ 4 ✗ far far on far: ssh: connect to host far port 22: timed out                            10s → peek                │
+│▌1 ✗ @tp relay to tp lost (1 remote workers) — restore the relay link to the host            2h                       │
+│ 2 ✗ c3  dispatcher gone, 2 workers — relaunch the dispatcher or finish its workers          2h → relaunch dispatcher │
+│ 3 ✗ w-b reviewer: role reviewer engine exited (pane %9) — restart the role pane or `crew…   6m → peek                │
+│ 4 ✗ far far on far: ssh: connect to host far port 22: timed out — re-arm the remote watc…  10s → peek                │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭ CREWS ──────────────────────────────────────── 7 crews · 13 workers ─╮╭ CAPACITY ─────────────────────────── 3 free ─╮
 │ ● c1 @lap a alive 3w 1pr 1? 4!                                       ││ weight      █████████████░░░░░░░ 5/8 (+1)    │

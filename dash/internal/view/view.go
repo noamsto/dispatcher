@@ -32,6 +32,8 @@ type Inputs struct {
 	Crew   []string
 	// Dir is the directory every action runs in; nil means dash's cwd.
 	Dir *string
+	// ReapKeeps holds crew reap's keep reason per local worker; nil when unknown.
+	ReapKeeps map[data.WorkerKey]string
 }
 
 func (in Inputs) nowSec() int64 {

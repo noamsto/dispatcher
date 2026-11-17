@@ -8,13 +8,16 @@ import (
 // Request is `crew reap`'s parsed flags. Idle is --idle's digits; "" is the
 // default ReleaseGrace.
 type Request struct {
-	Quiet, DryRun, NoWait bool
-	Idle, Discard         string
+	Quiet, DryRun, NoWait, JSON bool
+	Idle, Discard               string
+	// keeps is the fleet run's shared recorder; a repo's Run appends to it
+	// instead of printing its own document.
+	keeps *keepLog
 }
 
 // flags is what the typed reap command resolves to.
 type flags struct {
-	quiet, dry, nowait bool
+	quiet, dry, nowait, json bool
 	// idle is --idle's seconds as given: digits only, so it is both the jq
 	// `--argjson idle` text and the release grace.
 	idle    string
@@ -22,7 +25,7 @@ type flags struct {
 }
 
 func newFlags(req Request) flags {
-	fl := flags{quiet: req.Quiet, dry: req.DryRun, nowait: req.NoWait, idle: req.Idle, discard: req.Discard}
+	fl := flags{quiet: req.Quiet, dry: req.DryRun, nowait: req.NoWait, json: req.JSON, idle: req.Idle, discard: req.Discard}
 	if fl.idle == "" {
 		fl.idle = strconv.Itoa(ReleaseGrace)
 	}

@@ -166,7 +166,14 @@ func (r *run) issueClosed(ctx context.Context, c *candidate) bool {
 
 // keep is the loop's `note "keeping $branch — …"`.
 func (r *run) keep(c *candidate, why string) {
+	r.record(c.scrow, c.branch, why)
 	r.note("keeping " + c.branch + " — " + why)
+}
+
+// keepSay is keep for the outcomes --quiet does not silence.
+func (r *run) keepSay(c *candidate, why string) {
+	r.record(c.scrow, c.branch, why)
+	r.say("keeping " + c.branch + " — " + why)
 }
 
 // prGate is the PR-mode check: the PR is MERGED or CLOSED, and a PR that is
@@ -193,7 +200,7 @@ func (r *run) prGate(ctx context.Context, c *candidate) bool {
 		return false
 	}
 	if !r.guardOK(gitguard.Check(r.paths.Common, r.paths.Common, r.stderr)) {
-		r.keep(c, "git config drift")
+		r.keep(c, "git config drift (run `crew git-baseline`)")
 		return false
 	}
 	switch r.isAncestor(ctx, c.branch, head) {
@@ -403,7 +410,7 @@ func dirt(st string) bool {
 // default branch. False has noted why the branch is kept.
 func (r *run) pushedGate(ctx context.Context, c *candidate) bool {
 	if !r.guardOK(gitguard.Check(r.paths.Common, r.paths.Common, r.stderr)) {
-		r.keep(c, "git config drift")
+		r.keep(c, "git config drift (run `crew git-baseline`)")
 		return false
 	}
 	def, ok := r.commonOutput(ctx, "symbolic-ref", "-q", "refs/remotes/origin/HEAD")
@@ -460,7 +467,7 @@ func splitMark(line string) (mark, rest string) {
 func (r *run) killIdle(ctx context.Context, c *candidate, idle []idleSample) bool {
 	if !r.guardOK(gitguard.Check(r.paths.Common, c.admin, r.stderr)) ||
 		!r.guardOK(gitguard.CheckCwd(r.paths.Common, r.trusted, r.stderr)) {
-		r.keep(c, "git config drift")
+		r.keep(c, "git config drift (run `crew git-baseline`)")
 		return false
 	}
 	resample := ""

@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
@@ -442,6 +443,16 @@ func TestHelpOverlay(t *testing.T) {
 	v, _ = ovKeys(v, "esc")
 	if v.mode != ovNormal || strings.Contains(stripped(v.View(150, 40)), "HELP") {
 		t.Errorf("esc did not close help")
+	}
+}
+
+func TestDetailOverlayShowsWhatClears(t *testing.T) {
+	v, _ := ovFixture(t, 150, 40, false, nil)
+	selectBranch(t, &v, "feat/a")
+	v, _ = ovKeys(v, "enter")
+	got := stripped(v.View(150, 40))
+	if want := "To clear: restart the role pane"; !strings.Contains(got, want) {
+		t.Errorf("detail lacks %q:\n%s", want, got)
 	}
 }
 
@@ -905,4 +916,27 @@ func TestOverviewActionsUseDir(t *testing.T) {
 			t.Errorf("%s %v ran in %q, want %q", c.Name, c.Args, c.Dir, dir)
 		}
 	}
+}
+
+func TestOverviewAttentionUsesReapKeeps(t *testing.T) {
+	in := viewtest.Inputs()
+	m := NewModel(Deps{
+		Now: in.Snap.Now, Crew: in.Crew,
+		Load: Loaders{ReapKeeps: func() map[data.WorkerKey]string {
+			return map[data.WorkerKey]string{{Crew: "c1", Branch: "feat/h"}: "unmerged commits"}
+		}},
+	}, func() time.Time { return time.UnixMilli(viewtest.NowMS) }, liveDeps{})
+	m.snap, m.digest = in.Snap, in.Bus
+	for i := range m.load {
+		m.load[i] = loadState{loaded: true}
+	}
+	for _, a := range vm.BuildOverview(m.viewInputs()).Attention {
+		if a.ID == "failed:c1:feat/h" {
+			if want := "kept by reap: unmerged commits"; a.Clears != want {
+				t.Fatalf("clears = %q, want %q", a.Clears, want)
+			}
+			return
+		}
+	}
+	t.Fatal("no failed:c1:feat/h item")
 }

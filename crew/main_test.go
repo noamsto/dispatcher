@@ -1816,6 +1816,7 @@ var refusalRows = []struct {
 	{"reap unknown flag", []string{"reap", "--bogus"}, reapUsage + "(got '--bogus')", 1},
 	{"reap extra positional", []string{"reap", "extra"}, reapUsage + "(got 'extra')", 1},
 	{"reap unknown flag equals", []string{"reap", "--bogus=x"}, reapUsage + "(got '--bogus')", 1},
+	{"reap json without dry-run", []string{"reap", "--json"}, "crew: reap: --json needs --dry-run", 1},
 	{"reap idle missing value", []string{"reap", "--idle"}, "crew: --idle needs a value in seconds", 1},
 	{"reap idle empty value", []string{"reap", "--idle", ""}, "crew: --idle needs a value in seconds", 1},
 	{"reap discard missing value", []string{"reap", "--discard"}, "crew: --discard needs a branch", 1},
@@ -1921,6 +1922,7 @@ var preLocateRefusalRows = []struct {
 	{"rate sweep-all root empty value", []string{"rate", "--sweep-all", "--root", ""}, rateRootNeedsDir, 1},
 	{"rate sweep-all root empty value equals", []string{"rate", "--sweep-all", "--root="}, rateRootNeedsDir, 1},
 	{"reap fleet discard", []string{"reap", "--fleet", "--discard", "b"}, "crew: reap: --discard cannot be combined with --fleet", 1},
+	{"reap fleet json without dry-run", []string{"reap", "--fleet", "--json"}, "crew: reap: --json needs --dry-run", 1},
 	{"reap fleet unknown flag", []string{"reap", "--fleet", "--bogus"}, reapUsage + "(got '--bogus')", 1},
 	{"git-baseline unknown flag", []string{"git-baseline", "--bogus"}, baselineUsage, 1},
 	{"git-baseline extra positional", []string{"git-baseline", "extra"}, baselineUsage, 1},
@@ -1947,7 +1949,7 @@ const (
 	stackUsage           = "usage: crew stack cut [--record] <child-branch|PR#> [<oid>]\n       crew stack align <top-PR#|branch>"
 	rateRootNeedsDir     = "crew: rate --root needs a directory"
 	whereUsage           = "usage: crew where <codename|branch|%id> [--crew ID]"
-	reapUsage            = "crew: reap takes --quiet, --dry-run, --no-wait, --fleet, --idle S and --discard BRANCH "
+	reapUsage            = "crew: reap takes --quiet, --dry-run, --no-wait, --fleet, --json, --idle S and --discard BRANCH "
 	baselineUsage        = "usage: crew git-baseline [--accept]"
 	wantRemoteRunUsage   = "usage: crew remote-run --host H [--env K=V]... [--spec-file F] -- <argv>..."
 	wantDispatchRowUsage = "usage: crew dispatch-row --session S [--crew ID]"

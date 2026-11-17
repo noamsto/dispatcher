@@ -152,7 +152,7 @@ func sized(m Model, w, h int) Model {
 // snapMsg is the snapshotMsg the root broadcasts once snap's sources landed
 // with these loaded flags.
 func snapMsg(snap data.Snapshot, loaded [numSources]bool) snapshotMsg {
-	return newSnapshotMsg(inputsOf(snap, data.BusDigest{}, loaded, snap.Now*1000, nil), loaded)
+	return newSnapshotMsg(inputsOf(snap, data.BusDigest{}, loaded, snap.Now*1000, nil, nil), loaded)
 }
 
 func testLiveView(snap data.Snapshot, loaded [numSources]bool, deps liveDeps, now func() time.Time) liveView {

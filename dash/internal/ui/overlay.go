@@ -187,6 +187,9 @@ func detailLines(ov vm.OverviewView, wi, iw int) []string {
 		}
 		glyph, gc := severityGlyph(a.Severity)
 		out = append(out, "   "+fg(gc).Render(glyph)+plain.Render(" "+cleanText(a.Message)+" ")+fg(colDim).Render("→ "+cmd))
+		if a.Clears != "" {
+			out = append(out, clearsLines(a.Clears, iw)...)
+		}
 	}
 	if n == 0 {
 		out = append(out, "   "+fg(colDim).Render("none"))
@@ -203,6 +206,23 @@ func detailLines(ov vm.OverviewView, wi, iw int) []string {
 	}
 	if n == 0 {
 		out = append(out, "   "+fg(colDim).Render("none"))
+	}
+	return out
+}
+
+// clearsLines is the "To clear:" line word-wrapped to the overlay's inner
+// width, continuation lines aligned under the text.
+func clearsLines(clears string, iw int) []string {
+	const label = "To clear: "
+	indent := strings.Repeat(" ", 5+len(label))
+	lines := strings.Split(ansi.Wrap(cleanText(clears), max(iw-len(indent), 1), ""), "\n")
+	out := make([]string, len(lines))
+	for i, l := range lines {
+		prefix := indent
+		if i == 0 {
+			prefix = "     " + label
+		}
+		out[i] = fg(colDim).Render(prefix + l)
 	}
 	return out
 }

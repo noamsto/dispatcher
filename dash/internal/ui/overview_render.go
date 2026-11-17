@@ -629,6 +629,10 @@ func attnLine(ov vm.OverviewView, r overviewRects, it placed, s *spans) string {
 	return attnStripLine(ov.Attention[r.stripOff:r.stripOff+r.stripRows], it.idx-r.stripOff, attnWorker, s)
 }
 
+// clearsMinWidth is the message column width below which the strip drops the
+// "what clears it" suffix; the drill overlay always shows it.
+const clearsMinWidth = 72
+
 // attnStripLine draws row i of an attention strip window: its digit, glyph,
 // who (from label), message, age and action, columns sized to the window.
 func attnStripLine(visible []vm.AttentionItem, i int, label func(vm.AttentionItem) string, s *spans) string {
@@ -649,6 +653,10 @@ func attnStripLine(visible []vm.AttentionItem, i int, label func(vm.AttentionIte
 	const ageW = 4
 	msgW := iw - 5 - workerW - 1 - 1 - ageW - actionPart - 1
 	glyph, gc := severityGlyph(a.Severity)
+	msg := a.Message
+	if msgW >= clearsMinWidth && a.Clears != "" {
+		msg += " — " + a.Clears
+	}
 
 	s.add(fmt.Sprint(i+1), fg(colDim).Bold(true)).
 		add(" ", lipgloss.NewStyle()).
@@ -656,7 +664,7 @@ func attnStripLine(visible []vm.AttentionItem, i int, label func(vm.AttentionIte
 		add(" ", lipgloss.NewStyle()).
 		col(label(a), workerW, fg(colText).Bold(true), false).
 		add(" ", lipgloss.NewStyle()).
-		col(a.Message, msgW, fg(colText), false).
+		col(msg, msgW, fg(colText), false).
 		add(" ", lipgloss.NewStyle()).
 		col(ovAge(a.AgeSec), ageW, fg(colDim), true)
 	if a.Action != nil {

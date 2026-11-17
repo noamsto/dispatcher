@@ -1,13 +1,13 @@
 ╭ ▸ ATTENTION ───────────────────────────────────────────────────────────────────────────────────────── 9 need action ─╮
-│▌1 ✗ @tp  relay to tp lost (1 remote workers)                                                2h                       │
-│ 2 ✗ c3   dispatcher gone, 2 workers                                                         2h → relaunch dispatcher │
-│ 3 ✗ w-b  reviewer: role reviewer engine exited (pane %9)                                    6m → peek                │
-│ 4 ✗ far  far on far: ssh: connect to host far port 22: timed out                           10s → peek                │
-│ 5 ! @mbp peer mbp sync failed: ssh: Connection refused                                     10m                       │
-│ 6 ! w-c5 blocked                                                                            5m → reply               │
-│ 7 ! c1   hold h-q1 matured                                                                  2m → inspect             │
-│ 8 ! c5   crew stream lane is stale                                                         now → inspect             │
-│ 9 ✓ w-b  PR #12 checks green, mergeable                                                     1m → squash-merge        │
+│▌1 ✗ @tp  relay to tp lost (1 remote workers) — restore the relay link to the host           2h                       │
+│ 2 ✗ c3   dispatcher gone, 2 workers — relaunch the dispatcher or finish its workers         2h → relaunch dispatcher │
+│ 3 ✗ w-b  reviewer: role reviewer engine exited (pane %9) — restart the role pane or `cre…   6m → peek                │
+│ 4 ✗ far  far on far: ssh: connect to host far port 22: timed out — re-arm the remote wat…  10s → peek                │
+│ 5 ! @mbp peer mbp sync failed: ssh: Connection refused — clears when the peer's next syn…  10m                       │
+│ 6 ! w-c5 blocked — a `crew reply` to its question                                           5m → reply               │
+│ 7 ! c1   hold h-q1 matured — release or drop the hold                                       2m → inspect             │
+│ 8 ! c5   crew stream lane is stale — re-arm `crew stream --crew c5`                        now → inspect             │
+│ 9 ✓ w-b  PR #12 checks green, mergeable — merge PR #12                                      1m → squash-merge        │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭ CREWS ──────────────────────────────────────── 7 crews · 13 workers ─╮╭ CAPACITY ─────────────────────────── 3 free ─╮
 │ ● c1 @lap a alive 3w 1pr 1? 4!                                       ││ weight      █████████████░░░░░░░ 5/8 (+1)    │

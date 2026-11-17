@@ -81,6 +81,7 @@ func run() int {
 		mapDeps, closeMap := resolveMap(runner)
 		defer closeMap()
 		fleet := newFleetCollector(runner, cfg)
+		fleet.background = true
 		deps := ui.Deps{
 			Ctx: ctx,
 			Load: ui.Loaders{
@@ -92,6 +93,7 @@ func run() int {
 				Bus: func(context.Context) data.BusDigest {
 					return busDigest(scanner, eventsErr, time.Now().UnixMilli())
 				},
+				ReapKeeps: func() map[data.WorkerKey]string { return fleet.reapKeeps(ctx) },
 				Fleet: func(ctx context.Context, emit func(view.FleetInputs)) view.FleetInputs {
 					return fleet.stream(ctx, time.Now().Unix(), emit)
 				},
@@ -168,8 +170,12 @@ func runView(ctx context.Context, cfg data.Config, o opts) int {
 	var commons func() []string
 	if o.view == "fleet" {
 		fc := newFleetCollector(runner, cfg)
+		fc.background = o.watch
 		commons = fc.knownCommons
 		collect = func(ctx context.Context) (any, error) {
+			if o.keeps {
+				fc.blockReapKeeps(ctx)
+			}
 			now := cfg.Now
 			if o.watch {
 				now = resolveNow()
@@ -178,6 +184,10 @@ func runView(ctx context.Context, cfg data.Config, o opts) int {
 		}
 	} else {
 		scanner := data.NewBusScanner(eventsPath)
+		var fc *fleetCollector
+		if o.keeps {
+			fc = newFleetCollector(runner, cfg)
+		}
 		if eventsErr == nil {
 			repo := filepath.Dir(filepath.Dir(eventsPath))
 			commons = func() []string { return []string{repo} }
@@ -188,12 +198,18 @@ func runView(ctx context.Context, cfg data.Config, o opts) int {
 				cfg.Now = resolveNow()
 			}
 			nowMS := cfg.Now * 1000
+			var keeps map[data.WorkerKey]string
+			if fc != nil {
+				fc.blockReapKeeps(ctx)
+				keeps = fc.reapKeeps(ctx)
+			}
 			return view.Build(o.view, view.Inputs{
-				Snap:   data.Collect(ctx, runner, cfg),
-				Bus:    busDigest(scanner, eventsErr, nowMS),
-				Loaded: view.Loaded{Settings: true, Budget: true, Retro: true, Ratings: true, Roster: true, Bus: true},
-				NowMS:  nowMS,
-				Crew:   cfg.Crew,
+				Snap:      data.Collect(ctx, runner, cfg),
+				Bus:       busDigest(scanner, eventsErr, nowMS),
+				Loaded:    view.Loaded{Settings: true, Budget: true, Retro: true, Ratings: true, Roster: true, Bus: true},
+				NowMS:     nowMS,
+				Crew:      cfg.Crew,
+				ReapKeeps: keeps,
 			})
 		}
 	}
@@ -271,6 +287,109 @@ type fleetCollector struct {
 	mu      sync.Mutex
 	commons []string
 	last    *view.FleetInputs
+
+	keeps keepCache
+	// background lets stream start keep refreshes; a one-shot process would
+	// orphan the probe when it exits.
+	background bool
+}
+
+const (
+	reapKeepsTTL   = 10 * time.Minute
+	reapKeepsRetry = 30 * time.Second
+)
+
+// keepCache holds the batched `crew reap --dry-run` answer for a TTL. The
+// probe is slow, so readers never wait on it: cached starts at most one
+// background refresh and returns what it has, and only fetchNow blocks. A
+// failed (nil) fetch keeps the last good value and is retried no sooner than
+// reapKeepsRetry.
+type keepCache struct {
+	mu       sync.Mutex
+	val      map[data.WorkerKey]string
+	at       time.Time // last successful fetch
+	tried    time.Time // last attempt
+	inflight chan struct{}
+}
+
+// begin claims the refresh when the value is stale, none is in flight and the
+// retry spacing allows; the caller then runs fetch and calls finish. wait is
+// non-nil when another refresh is in flight.
+func (k *keepCache) begin(now time.Time, force bool) (val map[data.WorkerKey]string, done chan struct{}, wait chan struct{}) {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	val = k.val
+	if k.inflight != nil {
+		return val, nil, k.inflight
+	}
+	fresh := !k.at.IsZero() && now.Sub(k.at) < reapKeepsTTL
+	backoff := !k.tried.IsZero() && now.Sub(k.tried) < reapKeepsRetry
+	if fresh || (backoff && !force) {
+		return val, nil, nil
+	}
+	k.tried = now
+	k.inflight = make(chan struct{})
+	return val, k.inflight, nil
+}
+
+func (k *keepCache) finish(now time.Time, v map[data.WorkerKey]string, done chan struct{}) map[data.WorkerKey]string {
+	k.mu.Lock()
+	if v != nil {
+		k.val, k.at = v, now
+	}
+	v = k.val
+	k.inflight = nil
+	k.mu.Unlock()
+	close(done)
+	return v
+}
+
+func (k *keepCache) cached(now func() time.Time, fetch func() map[data.WorkerKey]string) map[data.WorkerKey]string {
+	val, done, _ := k.begin(now(), false)
+	if done == nil {
+		return val
+	}
+	go func() { k.finish(now(), fetch(), done) }()
+	return val
+}
+
+// fetchNow blocks for one fetch unless the value is fresh, joining a refresh
+// already in flight; it returns nil when ctx ends.
+func (k *keepCache) fetchNow(ctx context.Context, now func() time.Time, fetch func() map[data.WorkerKey]string) map[data.WorkerKey]string {
+	val, done, wait := k.begin(now(), true)
+	if wait != nil {
+		select {
+		case <-wait:
+		case <-ctx.Done():
+			return nil
+		}
+		k.mu.Lock()
+		defer k.mu.Unlock()
+		return k.val
+	}
+	if done == nil {
+		return val
+	}
+	return k.finish(now(), fetch(), done)
+}
+
+// keepsFetch is the probe bound to this collector. It outlives the stream
+// that started it, so it ignores that stream's cancellation.
+func (fc *fleetCollector) keepsFetch(ctx context.Context) func() map[data.WorkerKey]string {
+	ctx = context.WithoutCancel(ctx)
+	return func() map[data.WorkerKey]string {
+		return data.CollectReapKeeps(ctx, fc.runner, fc.cfg)
+	}
+}
+
+// reapKeeps reads the cached keeps, starting a background refresh when stale.
+func (fc *fleetCollector) reapKeeps(ctx context.Context) map[data.WorkerKey]string {
+	return fc.keeps.cached(time.Now, fc.keepsFetch(ctx))
+}
+
+// blockReapKeeps waits for one fresh probe; one-shot JSON views opt in.
+func (fc *fleetCollector) blockReapKeeps(ctx context.Context) {
+	fc.keeps.fetchNow(ctx, time.Now, fc.keepsFetch(ctx))
 }
 
 func newFleetCollector(r data.Runner, cfg data.Config) *fleetCollector {
@@ -328,7 +447,15 @@ func (fc *fleetCollector) stream(ctx context.Context, nowSec int64, emit func(vi
 		acc.Crew = cfg.Crew
 		acc.Pending = view.FleetPending{}
 	}
+	fc.keeps.mu.Lock()
+	acc.ReapKeeps = fc.keeps.val
+	fc.keeps.mu.Unlock()
 	emit(acc)
+	// Started after the first emit so no subprocess precedes it; a stale value
+	// is replaced for the next stream.
+	if fc.background {
+		fc.reapKeeps(ctx)
+	}
 
 	var mu sync.Mutex
 	update := func(apply func(*view.FleetInputs), done func(*view.FleetPending)) {
@@ -417,10 +544,11 @@ func busDigest(s *data.BusScanner, pathErr error, nowMS int64) data.BusDigest {
 type opts struct {
 	mode, view string
 	watch      bool
+	keeps      bool // one-shot --json probes crew reap for keep reasons
 }
 
 func usage() string {
-	return "usage: crew dash [--once | --json [--view <name> [--watch]]]\n" +
+	return "usage: crew dash [--once | --json [--view <name> [--watch] [--keeps]]]\n" +
 		"views: " + strings.Join(view.Names, ", ") + "\n"
 }
 
@@ -439,6 +567,8 @@ func parseArgs(args []string) (opts, error) {
 			seen = &jsonFlag
 		case "--watch":
 			seen = &o.watch
+		case "--keeps":
+			seen = &o.keeps
 		case "--view":
 			if o.view != "" {
 				return opts{}, errors.New("--view given twice")
@@ -462,12 +592,16 @@ func parseArgs(args []string) (opts, error) {
 	}
 
 	switch {
-	case onceFlag && (jsonFlag || o.view != "" || o.watch):
+	case onceFlag && (jsonFlag || o.view != "" || o.watch || o.keeps):
 		return opts{}, errors.New("--once takes no other flags")
 	case o.view != "" && !jsonFlag:
 		return opts{}, errors.New("--view needs --json")
 	case o.watch && o.view == "":
 		return opts{}, errors.New("--watch needs --view")
+	case o.keeps && o.watch:
+		return opts{}, errors.New("--keeps does not combine with --watch")
+	case o.keeps && (!jsonFlag || (o.view != "fleet" && o.view != "overview")):
+		return opts{}, errors.New("--keeps needs --json --view fleet or overview")
 	case onceFlag:
 		o.mode = "once"
 	case jsonFlag:

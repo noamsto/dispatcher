@@ -83,3 +83,24 @@ func TestOverviewGoldenEmptyCrew(t *testing.T) {
 	}
 	checkGolden(t, "overview_empty_100x30.golden", out, 100, 30)
 }
+
+// The detail overlay's "To clear:" line wraps to the overlay width with
+// continuation lines under the text; feat/h has the long reap fallback.
+func TestOverviewDetailClearsGolden(t *testing.T) {
+	asciiProfile(t)
+	for _, sz := range [][2]int{{80, 24}, {150, 40}} {
+		w, h := sz[0], sz[1]
+		v := newOverviewView(viewtest.Inputs(), overviewNow)
+		v.View(w, h)
+		selectBranch(t, &v, "feat/h")
+		v, _ = ovKeys(v, "enter")
+		if v.mode != ovDetail {
+			t.Fatalf("mode %v, want detail", v.mode)
+		}
+		got := stripped(v.View(w, h))
+		if !strings.Contains(got, "To clear: reaped once") || !strings.Contains(got, "or re-dispatch") {
+			t.Errorf("%dx%d: clears text truncated:\n%s", w, h, got)
+		}
+		checkGolden(t, fmt.Sprintf("overview_detail_clears_%dx%d.golden", w, h), got, w, h)
+	}
+}

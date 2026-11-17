@@ -437,6 +437,7 @@ type reapCmd struct {
 	DryRun  bool    `name:"dry-run"`
 	NoWait  bool    `name:"no-wait"`
 	Fleet   bool    `name:"fleet"`
+	JSON    bool    `name:"json"`
 	Idle    *string `name:"idle"`
 	Discard *string `name:"discard"`
 }
@@ -809,7 +810,7 @@ var wordings = map[string]wording{
 }
 
 func reapUnknown(tok string) string {
-	return "crew: reap takes --quiet, --dry-run, --no-wait, --fleet, --idle S and --discard BRANCH (got '" + tok + "')"
+	return "crew: reap takes --quiet, --dry-run, --no-wait, --fleet, --json, --idle S and --discard BRANCH (got '" + tok + "')"
 }
 
 // kongRefusal maps kong's error for the refusal key (a subcommand, or `hold <action>`
@@ -958,6 +959,12 @@ func validate(sub string, r *root) *refusal {
 		}
 		if c.Fleet && c.Discard != nil {
 			return fail("crew: reap: --discard cannot be combined with --fleet")
+		}
+		if c.JSON && !c.DryRun {
+			return fail("crew: reap: --json needs --dry-run")
+		}
+		if c.JSON && c.Discard != nil {
+			return fail("crew: reap: --json cannot be combined with --discard")
 		}
 	case "reply":
 		if given(r.Reply.Crew) {

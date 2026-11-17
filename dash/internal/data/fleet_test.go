@@ -238,3 +238,57 @@ func TestFleetScannersIncremental(t *testing.T) {
 		t.Errorf("only requested commons are scanned: %v %v", d3, errs)
 	}
 }
+
+const reapKeepsKey = "crew reap --fleet --dry-run --json"
+
+func TestCollectReapKeeps(t *testing.T) {
+	cfg := Config{Crew: []string{"crew"}}
+	r := &FakeRunner{Responses: map[string]FakeResponse{reapKeepsKey: {
+		Stdout: []byte(`{"keeps":[{"repo":"/r/.git","crew":"c1","branch":"feat/a","reason":"unmerged commits"}]}`),
+	}}}
+	got := CollectReapKeeps(context.Background(), r, cfg)
+	if got[WorkerKey{Crew: "c1", Branch: "feat/a"}] != "unmerged commits" || got[WorkerKey{Branch: "feat/a"}] != "unmerged commits" || len(got) != 2 {
+		t.Errorf("keeps = %v", got)
+	}
+}
+
+func TestCollectReapKeepsDecodesPartialFailure(t *testing.T) {
+	cfg := Config{Crew: []string{"crew"}}
+	r := &FakeRunner{Responses: map[string]FakeResponse{reapKeepsKey: {
+		Stdout: []byte(`{"keeps":[{"crew":"c1","branch":"feat/a","reason":"why"}]}`),
+		Err:    FakeExitError{Code: 1},
+	}}}
+	got := CollectReapKeeps(context.Background(), r, cfg)
+	if got[WorkerKey{Crew: "c1", Branch: "feat/a"}] != "why" {
+		t.Errorf("keeps = %v", got)
+	}
+}
+
+func TestCollectReapKeepsToleratesFailure(t *testing.T) {
+	cfg := Config{Crew: []string{"crew"}}
+	for name, resp := range map[string]FakeResponse{
+		"exit":    {Err: FakeExitError{Code: 2}},
+		"garbage": {Stdout: []byte("not json")},
+	} {
+		r := &FakeRunner{Responses: map[string]FakeResponse{reapKeepsKey: resp}}
+		if got := CollectReapKeeps(context.Background(), r, cfg); got != nil {
+			t.Errorf("%s: keeps = %v, want nil", name, got)
+		}
+	}
+	if got := CollectReapKeeps(context.Background(), &FakeRunner{}, cfg); got != nil {
+		t.Errorf("no response: keeps = %v, want nil", got)
+	}
+}
+
+func TestCollectReapKeepsAmbiguousBranchHasNoFallback(t *testing.T) {
+	r := &FakeRunner{Responses: map[string]FakeResponse{
+		"crew reap --fleet --dry-run --json": {Stdout: []byte(`{"keeps":[{"repo":"a","crew":"c1","branch":"chore/x","reason":"ra"},{"repo":"b","crew":"c2","branch":"chore/x","reason":"rb"},{"repo":"a","crew":"c1","branch":"feat/u","reason":"ru"}]}`)},
+	}}
+	got := CollectReapKeeps(t.Context(), r, Config{Crew: []string{"crew"}})
+	if _, ok := got[WorkerKey{Branch: "chore/x"}]; ok {
+		t.Errorf("ambiguous branch got a crew-less entry: %v", got)
+	}
+	if got[WorkerKey{Branch: "feat/u"}] != "ru" {
+		t.Errorf("unique branch lost its fallback: %v", got)
+	}
+}

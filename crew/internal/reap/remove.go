@@ -53,36 +53,36 @@ func (r *run) remove(ctx context.Context, c *candidate) (removed bool, code int)
 	// The re-checks just before it are the keep gates.
 	if !r.guardOK(gitguard.Check(r.paths.Common, c.admin, r.stderr)) ||
 		!r.guardOK(gitguard.CheckCwd(r.paths.Common, r.trusted, r.stderr)) {
-		r.keep(c, "git config drift")
+		r.keep(c, "git config drift (run `crew git-baseline`)")
 		return false, 0
 	}
 	if !wtgit.GitlinkOK(c.admin, c.wtpath) {
-		r.say("keeping " + c.branch + " — " + tampered)
+		r.keepSay(c, tampered)
 		return false, 0
 	}
 	// --force skips git's own submodule refusal, and the status below hides
 	// gitlinks: one staged since the first gate would go with its embedded repo.
 	staged, ok := r.wtOutput(ctx, c, "ls-files", "--stage")
 	if !ok {
-		r.say("keeping " + c.branch + " — could not read its index")
+		r.keepSay(c, "could not read its index")
 		return false, 0
 	}
 	if hasGitlink(staged) {
-		r.say("keeping " + c.branch + " — it has submodules")
+		r.keepSay(c, "it has submodules")
 		return false, 0
 	}
 	st, err := wtgit.Status(ctx, c.admin, c.wtpath, wtgit.Opts{Stderr: r.stderr}, "--untracked-files=all")
 	if err != nil {
-		r.say("keeping " + c.branch + " — git status failed")
+		r.keepSay(c, "git status failed")
 		return false, 0
 	}
 	if r.discard != "" {
 		if why := r.discardRecheck(ctx, c, st); why != "" {
-			r.say("keeping " + c.branch + " — " + why)
+			r.keepSay(c, why)
 			return false, 0
 		}
 	} else if st != "" {
-		r.say("keeping " + c.branch + " — uncommitted changes")
+		r.keepSay(c, "uncommitted changes")
 		return false, 0
 	}
 	if cmd, err := wtgit.CommonCommand(ctx, r.paths.Common, wtgit.Opts{Stderr: io.Discard}, "worktree", "remove", "--force", c.wtpath); err == nil {
@@ -98,12 +98,12 @@ func (r *run) remove(ctx context.Context, c *candidate) (removed bool, code int)
 		case !filekind.IsDir(c.admin):
 			// git validates the gitfile before deleting anything, so a gone
 			// admin dir means a real tree whose contents only partly went.
-			r.say("keeping " + c.branch + " — removal failed partway; " + c.wtpath + " is no longer a worktree: tell the human (fix its permissions, then remove it)")
+			r.keepSay(c, "removal failed partway; "+c.wtpath+" is no longer a worktree: tell the human (fix its permissions, then remove it)")
 			removeAnchor(anchor)
 		case !wtgit.GitlinkOK(c.admin, c.wtpath):
-			r.say("keeping " + c.branch + " — " + tampered)
+			r.keepSay(c, tampered)
 		default:
-			r.say("keeping " + c.branch + " — worktree removal failed")
+			r.keepSay(c, "worktree removal failed")
 		}
 		return false, 0
 	}
