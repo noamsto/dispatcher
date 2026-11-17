@@ -364,6 +364,26 @@ if [ "$fresh" = 1 ] && [ -n "${DISPATCHER_LAUNCHER_PID:-}" ]; then
   exit 1
 fi
 
+# _relaunch_argv <agent> <model> <effort> <autocompact> — set relaunch_cmd to
+# the argv that restarts a crashed dispatcher crew in place.
+_relaunch_argv() {
+  # env -u CREW_OVERSEER: the relaunched dispatcher must not inherit the
+  # overseer's identity.
+  relaunch_cmd=(env -u CREW_OVERSEER dispatcher)
+  case "$1" in
+  claude | pi) relaunch_cmd+=(--fresh --no-note) ;;
+  esac
+  relaunch_cmd+=(--agent "$1" --model "$2")
+  [ -z "$3" ] || relaunch_cmd+=(--effort "$3")
+  relaunch_cmd+=(--autocompact "$4")
+  # codex and cursor have no --fresh, so the recovery steps ride as the task.
+  case "$1" in
+  codex | cursor)
+    relaunch_cmd+=("This dispatcher session for crew $CREW_ID was relaunched after a crash, without a handoff note. Run crew roster, answer every blocked worker, reconcile the other rows, and confirm the queue and standing instructions with the human before dispatching anything new.")
+    ;;
+  esac
+}
+
 # Relaunch: start a crashed crew's dispatcher again, in a new window of this
 # tmux session, from the launch record its launcher wrote. The record lives in
 # the git common dir, which every worker in the repo can write, so each field is
@@ -480,21 +500,7 @@ if [ -n "$relaunch_id" ]; then
   mv -f -- "$marker_tmp" "$marker"
   old_pid=$(cat -- "$crew_dir/pid" 2>/dev/null) || old_pid=""
 
-  # env -u CREW_OVERSEER: the relaunched dispatcher must not inherit the
-  # overseer's identity.
-  relaunch_cmd=(env -u CREW_OVERSEER dispatcher)
-  case "$rec_agent" in
-  claude | pi) relaunch_cmd+=(--fresh --no-note) ;;
-  esac
-  relaunch_cmd+=(--agent "$rec_agent" --model "$rec_model")
-  [ -z "$rec_effort" ] || relaunch_cmd+=(--effort "$rec_effort")
-  relaunch_cmd+=(--autocompact "$rec_autocompact")
-  # codex and cursor have no --fresh, so the recovery steps ride as the task.
-  case "$rec_agent" in
-  codex | cursor)
-    relaunch_cmd+=("This dispatcher session for crew $CREW_ID was relaunched after a crash, without a handoff note. Run crew roster, answer every blocked worker, reconcile the other rows, and confirm the queue and standing instructions with the human before dispatching anything new.")
-    ;;
-  esac
+  _relaunch_argv "$rec_agent" "$rec_model" "$rec_effort" "$rec_autocompact"
   # The window starts on a placeholder so remain-on-exit is set before the
   # launcher runs: one that dies at once would otherwise close the pane first.
   pane=$(tmux new-window -d -P -F '#{pane_id}' -c "$wt" -n "dispatcher:$(basename "$wt")" -- sleep 60) || {
@@ -850,6 +856,7 @@ if [ "$overseer" = 0 ]; then
   echo "crew id: $CREW_ID"
 fi
 
+registered=0
 if git rev-parse --git-common-dir >/dev/null 2>&1; then
   registered=1
   if [ "$adopted_live" = 1 ]; then
@@ -1020,6 +1027,25 @@ _handoff_prompt() {
 # marker naming this launcher, and a new session takes its place. Inline, not a
 # function: a function left of || runs with errexit off for its whole body, and
 # only the engine's own exit may be tolerated.
+# The pin keeps remux's generic hook from replacing the stamp with a
+# protocol-less `claude --resume`. Set after every refusal and before the first
+# engine so its SessionStart hook sees the pin; a restore re-enters as the
+# protocol's crash relaunch (--fresh --no-note).
+if [ -n "${TMUX:-}" ] && [ -n "${TMUX_PANE:-}" ] && [ "$overseer" = 0 ]; then
+  remux_cmd=''
+  if [ "$registered" = 1 ] && _plain_crew_id; then
+    _relaunch_argv "$agent" "${model:-$(orch_default model)}" "${effort:-$(orch_default effort)}" "${ac:-auto}"
+    if remux_command remux_cmd "$PWD" "$CREW_ID" "${relaunch_cmd[@]:3}"; then
+      remux_stamp "$TMUX_PANE" "$remux_cmd"
+    else
+      remux_pin_clear "$TMUX_PANE"
+    fi
+  else
+    remux_pin_clear "$TMUX_PANE"
+  fi
+  remux_owned=1
+fi
+
 handoff_prompt=""
 if [ "$fresh" = 1 ]; then
   handoff_prompt=$(_handoff_prompt)
@@ -1189,6 +1215,9 @@ if git rev-parse --git-common-dir >/dev/null 2>&1; then
     echo "dispatcher: the engine died by a signal (exit $rc); crew $CREW_ID stays registered and reads dead — 'dispatcher --relaunch $CREW_ID' restarts it" >&2
     exit "$rc"
   fi
+  [ -z "${remux_owned:-}" ] || remux_clear "$TMUX_PANE"
   crew deregister
+else
+  [ -z "${remux_owned:-}" ] || remux_clear "$TMUX_PANE"
 fi
 exit "$rc"
