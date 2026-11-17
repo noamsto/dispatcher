@@ -58,6 +58,10 @@ type Request struct {
 // readers of one session split a msg between them at most once. `crew await`
 // reads the marks once before its poll loop by design, so an await already
 // polling can still return a msg an --undelivered reader printed meanwhile.
+//
+// For a worker reader, --since never hides a msg addressed to it that is past
+// its delivered marks: the lead's seen-cursor can sit above a directive no peek
+// ever printed, and the watchdog keeps reporting it until a peek does.
 func Run(q Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int {
 	me, crew, since := q.Me, q.Crew, q.Since
 	if crew == "" {
@@ -98,14 +102,34 @@ func Run(q Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int {
 	// line each, and jq's exit status is the *last* input's outcome rather than
 	// a sticky flag (the rule internal/log documents).
 	failed := false
+	rescue := since != "" && !q.Undelivered && strings.HasPrefix(me, "worker:")
+	rowSince := since
+	if rescue {
+		rowSince = ""
+		held = marks.Read(paths.Dir, crew, me)
+	}
 	var selected []map[string]any
 	for _, ev := range events {
 		switch v := ev.Doc.(type) {
 		case map[string]any:
 			failed = false
 			v, _ = sender.ForeignOverseer(v, o.Hosts)
-			if !selects(v, crew, me, since, q.From) {
+			if !selects(v, crew, me, rowSince, q.From) {
 				continue
+			}
+			if rescue && !greaterThanNumber(v["ts"], since) {
+				// Only a msg addressed to this session exactly, never a broadcast.
+				if v["to"] != me {
+					continue
+				}
+				undelivered, err := marks.Past([]map[string]any{v}, held)
+				if err != nil {
+					say(stderr, "crew: inbox: %v\n", err)
+					return 1
+				}
+				if len(undelivered) == 0 {
+					continue
+				}
 			}
 			selected = append(selected, v)
 		case nil:

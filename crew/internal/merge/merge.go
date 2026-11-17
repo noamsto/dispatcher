@@ -1,24 +1,30 @@
 // Package merge is `crew merge <N>`: a squash-merge that first proves the PR's
 // head is green, the base is not red, and the worker's acceptance ledger still
-// validates — so a dispatcher never merges on a worker's report alone.
+// validates, and no directive of the dispatcher's is still undelivered to the
+// worker — so a dispatcher never merges on a worker's report alone.
 package merge
 
 import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/gh"
 	"github.com/noamsto/dispatcher/crew/internal/git"
 	"github.com/noamsto/dispatcher/crew/internal/ledger"
+	"github.com/noamsto/dispatcher/crew/internal/marks"
 	"github.com/noamsto/dispatcher/crew/internal/reply"
 	"github.com/noamsto/dispatcher/crew/internal/sender"
+	"github.com/noamsto/dispatcher/crew/internal/sessions"
+	"github.com/noamsto/dispatcher/crew/internal/unread"
 )
 
 // Usage is the one-line signature.
@@ -190,13 +196,31 @@ func Run(ctx context.Context, req Request, paths bus.Paths, stdout, stderr io.Wr
 		pass("base %s: not red", p.BaseRefName)
 	}
 
+	data, err := os.ReadFile(paths.Log)
+	if err != nil && !os.IsNotExist(err) {
+		return refuse("could not read the bus: %v", err)
+	}
+	var lines []string
+	if len(data) > 0 {
+		lines = strings.Split(strings.TrimSuffix(string(data), "\n"), "\n")
+	}
+	events, err := bus.ReadEventsTolerant(paths.Log)
+	var decodeErr *bus.DecodeError
+	if err != nil && !errors.Is(err, bus.ErrNoLog) && !errors.As(err, &decodeErr) {
+		return refuse("could not read the bus: %v", err)
+	}
+
 	if req.NoLedger {
 		pass("ledger: skipped (--no-ledger)")
 	} else {
 		var code int
-		if opened, code = checkLedger(ctx, req, p.URL, paths, o, refuse, pass); code != 0 {
+		if opened, code = checkLedger(ctx, req, p.URL, lines, paths, o, refuse, pass); code != 0 {
 			return code
 		}
+	}
+
+	if code := checkUnread(lines, events, req, p.URL, paths, refuse, pass); code != 0 {
+		return code
 	}
 
 	if req.DryRun {
@@ -284,28 +308,89 @@ func release(ctx context.Context, n int, opened statusRow, paths bus.Paths, stdo
 	say(stdout, "released %s\n", opened.From)
 }
 
-// checkLedger re-runs the pr_open gate on the newest pr_open row for this PR
-// and returns that row.
-func checkLedger(ctx context.Context, req Request, url string, paths bus.Paths, o Options, refuse func(string, ...any) int, pass func(string, ...any)) (*statusRow, int) {
-	data, err := os.ReadFile(paths.Log)
-	if err != nil && !os.IsNotExist(err) {
-		return nil, refuse("could not read the bus: %v", err)
-	}
-	var lines []string
-	if len(data) > 0 {
-		lines = strings.Split(strings.TrimSuffix(string(data), "\n"), "\n")
-	}
+// newestPROpen is the newest pr_open status row for the PR at url, from this
+// crew when crew is set; nil when there is none. Each raw line is decoded on its
+// own, so a corrupt line is skipped and does not hide the rows after it.
+func newestPROpen(lines []string, url, crew string) *statusRow {
 	var found *statusRow
 	for _, line := range lines {
 		var r statusRow
 		if json.Unmarshal([]byte(line), &r) != nil || r.Kind != "status" || r.Body.State != "pr_open" || r.Body.PRURL != url {
 			continue
 		}
-		if req.Crew != "" && r.CrewID != req.Crew {
+		if crew != "" && r.CrewID != crew {
 			continue
 		}
 		found = &r
 	}
+	return found
+}
+
+// checkUnread refuses while a dispatcher msg to the PR worker's newest session
+// is undelivered: the worker would be merged out from under a follow-up it never
+// read. Merge only reads the marks; delivery records them.
+func checkUnread(lines []string, events []bus.Event, req Request, url string, paths bus.Paths, refuse func(string, ...any) int, pass func(string, ...any)) int {
+	row := newestPROpen(lines, url, req.Crew)
+	if row == nil {
+		pass("unread: skipped (no worker pr_open for this PR)")
+		return 0
+	}
+	crew := row.CrewID
+	branch := strings.TrimPrefix(row.From, "worker:")
+	if i := strings.LastIndex(branch, "#s"); i >= 0 {
+		branch = branch[:i]
+	}
+	docs := make([]any, len(events))
+	for i, ev := range events {
+		docs[i] = ev.Doc
+	}
+	folded, err := sessions.Fold(docs, branch, crew, float64(time.Now().Unix()))
+	if err != nil {
+		return refuse("could not fold the sessions of %s: %v", branch, err)
+	}
+	// The pr_open session may have been replaced since; its successor is who a
+	// directive now reaches.
+	session := row.From
+	if rows, _ := folded.([]any); len(rows) > 0 {
+		if last, _ := rows[len(rows)-1].(map[string]any); last != nil {
+			if id, _ := last["worker_id"].(string); id != "" {
+				session = id
+			}
+		}
+	}
+	undelivered, err := unread.Directives(events, crew, session, marks.Read(paths.Dir, crew, session))
+	if err != nil {
+		return refuse("could not check %s for undelivered msgs: %v", session, err)
+	}
+	if len(undelivered) == 0 {
+		pass("unread: none for %s", session)
+		return 0
+	}
+	list := make([]string, len(undelivered))
+	for i, m := range undelivered {
+		list[i] = fmt.Sprintf("ts %v %q", m["ts"], excerpt(m["body"]))
+	}
+	return refuse("dispatcher msg(s) to %s not yet delivered: %s; let the worker read it (crew nudge %s), or re-dispatch the branch if its session ended", session, strings.Join(list, "; "), branch)
+}
+
+// excerpt is a msg body as one line of text, cut to 80 runes.
+func excerpt(body any) string {
+	text, ok := body.(string)
+	if !ok {
+		b, _ := json.Marshal(body)
+		text = string(b)
+	}
+	text = strings.NewReplacer("\r\n", " ", "\n", " ", "\r", " ").Replace(text)
+	if r := []rune(text); len(r) > 80 {
+		text = string(r[:80])
+	}
+	return text
+}
+
+// checkLedger re-runs the pr_open gate on the newest pr_open row for this PR
+// and returns that row.
+func checkLedger(ctx context.Context, req Request, url string, lines []string, paths bus.Paths, o Options, refuse func(string, ...any) int, pass func(string, ...any)) (*statusRow, int) {
+	found := newestPROpen(lines, url, req.Crew)
 	if found == nil {
 		return nil, refuse("no pr_open ledger on this bus for %s; check --crew, or pass --no-ledger for a PR no worker opened", url)
 	}

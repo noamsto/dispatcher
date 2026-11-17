@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -18,6 +19,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/git"
 	"github.com/noamsto/dispatcher/crew/internal/git/gittest"
 	"github.com/noamsto/dispatcher/crew/internal/ledger"
+	"github.com/noamsto/dispatcher/crew/internal/marks"
 	"github.com/noamsto/dispatcher/crew/internal/proc"
 	"github.com/noamsto/dispatcher/crew/internal/proc/proctest"
 	"github.com/noamsto/dispatcher/crew/internal/sender"
@@ -294,6 +296,7 @@ func TestAcceptanceLedgerRidesInTheStatusDetail(t *testing.T) {
 	f := newFixture(t)
 	f.doc("tier: trivial\nkind: implement\nengine: claude\n")
 	f.log(msgRow("dispatcher:c1", worker, "waive AC1 AC2 AC3"))
+	f.markDelivered(worker)
 	if code, stderr := f.status(worker, "pr_open", ledgerText, "https://example.com/pr/1"); code != 0 || stderr != "" {
 		t.Fatalf("code %d, stderr %q", code, stderr)
 	}
@@ -721,6 +724,7 @@ func TestLedgerRefusalSurfaced(t *testing.T) {
 		f := newFixture(t)
 		f.doc("tier: trivial\nkind: implement\n\n## Acceptance\n- AC1 x\n")
 		f.log(msgRow("dispatcher:c1", worker, "waive AC1"))
+		f.markDelivered(worker)
 		if code, stderr := f.status(worker, "pr_open", "AC1 waived(dispatcher)"); code != 0 {
 			t.Errorf("%d %q", code, stderr)
 		}
@@ -803,8 +807,9 @@ func TestUnreadableLog(t *testing.T) {
 			if err := os.Chmod(f.paths.Log, 0); err != nil {
 				t.Fatal(err)
 			}
-			want := "crew: refusing " + state + " for " + worker + " — could not read the crew log for the review seam (jq exit 2)\n"
-			if code, stderr := f.status(worker, state); code != 1 || stderr != want {
+			// The undelivered-directive gate reads the log first and fails closed.
+			want := "crew: refusing " + state + " for " + worker + " — could not read the crew log for the unread check: "
+			if code, stderr := f.status(worker, state); code != 1 || !strings.HasPrefix(stderr, want) {
 				t.Errorf("got %d %q", code, stderr)
 			}
 		})
@@ -1329,4 +1334,96 @@ func TestStatusNoPhasePointer(t *testing.T) {
 			t.Errorf("got %d %q", code, stderr)
 		}
 	})
+}
+
+// delivered is the mark of a dispatcher msg to the session: nil when none.
+func (f *fixture) delivered(session string) any {
+	f.t.Helper()
+	m, _ := marks.Read(f.paths.Dir, f.crew, session).(map[string]any)
+	return m["dispatcher:"+f.crew]
+}
+
+// markDelivered marks the dispatcher's ts-1 msgs as already handed to the
+// session, so a waiver seeded in the log does not trip the undelivered gate.
+func (f *fixture) markDelivered(session string) {
+	f.t.Helper()
+	unlock, err := marks.Lock(f.paths.Dir, f.crew, session)
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	defer unlock()
+	marks.RecordHeld(f.paths.Dir, f.crew, session, []any{map[string]any{"from": "dispatcher:" + f.crew, "ts": float64(1)}})
+}
+
+func TestUndeliveredDirectiveRefusesTerminalOnce(t *testing.T) {
+	const body = "approved — PR #7 is merged; post done"
+	for _, state := range []string{"pr_open", "done"} {
+		t.Run(state, func(t *testing.T) {
+			f := newFixture(t)
+			f.log(msgRow("dispatcher:c1", worker, body))
+			code, stderr := f.status(worker, state)
+			if code != 1 {
+				t.Fatalf("code %d, want 1: %q", code, stderr)
+			}
+			for _, want := range []string{"crew: refusing " + state + " for " + worker + " — 1 dispatcher msg(s)", "receiving-code-review", body} {
+				if !strings.Contains(stderr, want) {
+					t.Errorf("stderr lacks %q: %q", want, stderr)
+				}
+			}
+			if got := f.lines(); len(got) != 1 {
+				t.Errorf("rows after refusal = %q, want only the seeded msg", got)
+			}
+			if got := f.delivered(worker); fmt.Sprint(got) != "1" {
+				t.Errorf("mark = %v, want 1", got)
+			}
+			if code, stderr := f.status(worker, state); code != 0 {
+				t.Fatalf("retry code %d %q", code, stderr)
+			}
+			if got := len(f.lines()); got != 2 {
+				t.Errorf("rows after retry = %d, want 2", got)
+			}
+		})
+	}
+}
+
+func TestUndeliveredDirectiveNotRefused(t *testing.T) {
+	cases := []struct {
+		name, row string
+		seed      bool
+	}{
+		{"already delivered", msgRow("dispatcher:c1", worker, "x"), true},
+		{"reviewer sender", msgRow(rev, worker, "x"), false},
+		{"another session of the branch", msgRow("dispatcher:c1", "worker:feat/x#s2-1", "x"), false},
+		{"another crew", `{"ts":1,"crew_id":"c2","from":"dispatcher:c2","to":"` + worker + `","kind":"msg","body":"x"}`, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFixture(t)
+			f.log(tc.row)
+			if tc.seed {
+				f.markDelivered(worker)
+			}
+			if code, stderr := f.status(worker, "done"); code != 0 {
+				t.Fatalf("code %d %q", code, stderr)
+			}
+		})
+	}
+}
+
+func TestUndeliveredDirectiveLeavesOtherStates(t *testing.T) {
+	for _, state := range []string{"working", "blocked", "failed"} {
+		t.Run(state, func(t *testing.T) {
+			f := newFixture(t)
+			f.log(msgRow("dispatcher:c1", worker, "x"))
+			if code, stderr := f.status(worker, state); code != 0 {
+				t.Fatalf("code %d %q", code, stderr)
+			}
+			if got := len(f.lines()); got != 2 {
+				t.Errorf("rows = %d, want 2", got)
+			}
+			if got := f.delivered(worker); got != nil {
+				t.Errorf("mark = %v, want none", got)
+			}
+		})
+	}
 }
