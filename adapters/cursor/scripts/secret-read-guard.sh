@@ -438,23 +438,24 @@ awk_chars='
 # Positional, not a strip. Backslash-aware like bash: outside quotes `\"` is not
 # a quote-open; inside "..." a `\"` does not close the span; '...' has no
 # escapes. With S set, "..." contents show as themselves (only '...' blanks),
-# and $'...' (state "A") lets a backslash escape the next character.
+# and $'...' (state "A") lets a backslash escape the next character. A `$` that completes `$$`
+# (the PID) arms nothing, so `$$'` is a plain quote.
 awk_mask='
 BEGIN { SQ = sprintf("%c", 39); DQ = "\""; BS = "\\" }
-function mask(c,    pv) {
-  pv = mprev
-  mprev = c
+function mask(c,    pd) {
+  pd = mdl
+  mdl = 0
   if (mesc) {
     mesc = 0
-    mprev = ""
     return (mq == "" || (S && mq == DQ) ? c : " ")
   }
   if (mq == "") {
     if (c == BS) mesc = 1
     else if (c == SQ || c == DQ) {
-      mq = (S && c == SQ && pv == "$" ? "A" : c)
+      mq = (S && c == SQ && pd ? "A" : c)
       return " "
     }
+    else if (c == "$") mdl = !pd
     return c
   }
   if (mq == "A" && c == BS) mesc = 1
@@ -777,7 +778,7 @@ function code(c,    d, o, n, u) {
       if (W == 1) { slv[sp - 1] = 1; opn = 1 }
       else if (W == 2) { fr = 1; fb = 0 }
     }
-    else if (c == "$") { dl = 1; if (B) o = "$" }
+    else if (c == "$") { dl = !d; if (B) o = "$" }
     else if (d && (c == "{" || c == "[")) { axk[++ax] = c; axq[ax] = DQ }
     else if (ax > 0 && (c == "}" || c == "]") && axk[ax] == (c == "}" ? "{" : "[") && axq[ax] == DQ) ax--
   } else {
@@ -804,8 +805,8 @@ function code(c,    d, o, n, u) {
     else if (ax > 0 && (c == "]" || c == "}") && axk[ax] == (c == "}" ? "{" : "[") && axq[ax] == "") ax--
     else if (c == "#" && (J ? bol && sp == 0 && pd == 0 && ax == 0 : wordstart(prev) || (W == 1 && wo))) cm = 1
     else if (c == "$") {
-      dl = 1
-      if (D) { ud = 1; o = "" }
+      dl = !d
+      if (D && !d) { ud = 1; o = "" }
     }
   }
   return o
@@ -1397,14 +1398,67 @@ check_fish_spaces() {
   done
 }
 
-# A text-sink heredoc body is blanked as data, but ${x@P}, ${!x} and $[..] run a
-# $(..) stored in a variable, which the heredoc may have just written. Covered:
-# ${..@P}, ${!name} (not the key/name listings ${!a[@]}, ${!p@}), $[..], and
-# arithmetic subscripts/offsets ${a[i]}, ${s:off}. The view shows an unquoted
-# heredoc body, which bash expands, and blanks only '..' and quoted-delimiter bodies.
+# A text-sink heredoc body is blanked as data, but ${x@P}, ${!x}, $[..] and
+# arithmetic subscripts/offsets run a $(..) stored in a variable, which the
+# heredoc may have just written. Rule A is an allowlist, so unknown forms fail
+# closed: after joining \-newline continuations, deny any $[, replace each
+# innermost inert ${..} (literal-only subscript/offset, no @P, no ${!name}) with
+# `_` and deny if a ${ remains. The S view shows an unquoted heredoc body, which
+# bash expands, and blanks only '..' and quoted-delimiter bodies.
+# shellcheck disable=SC2016
+awk_inert='
+function chk(t,    n) {
+  if (t ~ /\$\[/) return 1
+  n = 0
+  while (n < 32 && gsub(INERT, "_", t)) n++
+  return t ~ /\$\{/
+}
+BEGIN {
+  P = "([A-Za-z_][A-Za-z0-9_]*|[0-9]+|[-@*#?$])"
+  INERT = "\\$\\{(#?" P "(\\[(-?[0-9]+|[@*])\\])?(:[ ]*-?[0-9]+(:[ ]*-?[0-9]+)?|(:?[-=?+]|[#%/^,])[^{}]*|@[QEAaKkULu])?|!|![A-Za-z_][A-Za-z0-9_]*(\\[[@*]\\]|[@*]))\\}"
+}
+{
+  if (buf != "") $0 = buf $0
+  if (match($0, /\\+$/) && RLENGTH % 2) { buf = substr($0, 1, length($0) - 1); next }
+  buf = ""
+  if (chk($0)) { hit = 1; exit }
+}
+END { if (!hit && buf != "" && chk(buf)) hit = 1; print hit + 0 }'
+
+# Rule B: bash evaluates the subscript of a name operand even inside single
+# quotes, so read/printf -v/test -v/-R operands must be bare identifiers.
+# shellcheck disable=SC2016
+awk_name_ops='
+BEGIN { n = split("sudo time nice nohup exec command then do else ! {", a, " "); for (i = 1; i <= n; i++) LEAD[a[i]] = 1 }
+{
+  t = $0
+  gsub(/>&/, ">\001", t); gsub(/<&/, "<\001", t)
+  ns = split(t, S, /[;&|()]/)
+  for (s = 1; s <= ns; s++) if (stage(S[s])) { hit = 1; exit }
+}
+function name(w) { return w ~ /^[A-Za-z_][A-Za-z0-9_]*$/ }
+function stage(g,    nw, j, k, cw, w, nm) {
+  nw = split(g, Wd)
+  for (j = 1; j <= nw && ((Wd[j] in LEAD) || Wd[j] ~ /^[A-Za-z_][A-Za-z0-9_]*\+?=/); j++) ;
+  if (j > nw) return 0
+  cw = Wd[j]
+  sub(/[<>].*/, "", cw)
+  if (cw != "read" && cw != "printf" && cw != "test" && cw != "[") return 0
+  nm = 0
+  for (k = j + 1; k <= nw; k++) {
+    w = Wd[k]
+    if (w ~ /^[0-9]*[<>]/) { if (w ~ /^[0-9]*[<>]+\001?$/) k++; continue }
+    if (nm) { if (!name(w)) return 1; nm = 0; continue }
+    if (cw == "read") {
+      if (w !~ /^-/ && w !~ /^[0-9.]+$/ && !name(w)) return 1
+    } else if (w == "-v" || (cw != "printf" && w == "-R")) nm = 1
+  }
+  return 0
+}
+END { print hit + 0 }'
+
 check_code_transforms() {
   local i view
-  local code_transform_re='@P\}|\$\{![^}]|\$\[|\$\{[A-Za-z_][A-Za-z0-9_]*\[[^]0-9@*]|\$\{[A-Za-z_][A-Za-z0-9_]*:[^-=?+}]*[A-Za-z_]'
   local -a texts=() ts=()
   local any=0
   while (($#)); do
@@ -1415,11 +1469,15 @@ check_code_transforms() {
   done
   ((any)) || return 0
   for i in "${!texts[@]}"; do
-    [[ ${texts[i]} == *"\${"* || ${texts[i]} == *"\$["* ]] || continue
+    [[ ${texts[i]} == *"\${"* || ${texts[i]} == *"\$["* || ${texts[i]} == *"\$\\"* ]] || continue
     view=$(mask_quotes "${texts[i]}" "${ts[i]}" 1)
-    view=$(sed -E 's/\$\{![A-Za-z_][A-Za-z0-9_]*(\[[@*]\]|[@*])\}//g' <<<"$view")
-    if [[ $view =~ $code_transform_re ]]; then
-      deny "This command writes a quoted heredoc or here-string as data and also uses a \${…@P}, \${!…}, \$[…], \${name[index]} or \${name:offset} expansion, which can run a \$(…) stored in a variable — including a file the heredoc just wrote — where the guard cannot see it. Split it into separate commands, or name the variable directly."
+    if [[ $(awk "$awk_inert" <<<"$view") == 1 ]]; then
+      deny "This command writes a quoted heredoc or here-string as data and also uses an expansion that can run a \$(…) stored in a variable — including a file the heredoc just wrote — where the guard cannot see it: \${…@P}, \${!name}, \$[…], or a \${…} whose subscript or offset is not a literal number, @ or *. Split it into separate commands, or name the variable directly."
+    fi
+  done
+  for view in "${dequoted_views[@]}"; do
+    if [[ $(awk "$awk_name_ops" <<<"$view") == 1 ]]; then
+      deny "This command writes a quoted heredoc or here-string as data and also gives read, printf -v, test -v/-R or [ -v a name operand that is not a bare identifier. Bash evaluates a subscript such as a[\$(…)] even inside single quotes, which can run a command the guard cannot see. Use a plain variable name, or split it into separate commands."
     fi
   done
 }
