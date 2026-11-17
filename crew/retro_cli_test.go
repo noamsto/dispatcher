@@ -941,6 +941,28 @@ func TestRetroDraftNoteAboutAnOlderBranchSharingACodenameIsNotTheNewerOnes(t *te
 	})
 }
 
+func TestRetroDraftNoteOlderThanTheSummaryIsNotARedispatchedIssues(t *testing.T) {
+	h, s := newRetroSeed(t)
+	draftDispatch(s, "feat/1457-old", 1000, "ember", "standard", "claude", "sonnet")
+	s.msg("dispatcher:c1", "retro:c1", 1200, note("misrouted", "#1457 misrouted"))
+	s.msg("dispatcher:c1", "retro:c1", 1500, summaryNote("ember·1457 done"))
+	draftDispatch(s, "fix/1457-retry", 2000, "ember", "standard", "claude", "sonnet")
+
+	wantDetail(t, draftParts(t, h, "--crew", "c1"), []string{
+		"ember {standard,claude,sonnet} —",
+	})
+}
+
+func TestRetroDraftDispatcherNoteNamingAnIssuelessBranchReachesIt(t *testing.T) {
+	h, s := newRetroSeed(t)
+	draftDispatch(s, "chore/scope-guard", 1000, "ember", "standard", "claude", "sonnet")
+	s.msg("dispatcher:c1", "retro:c1", 1200, note("misrouted", "chore/scope-guard touched auth"))
+
+	wantDetail(t, draftParts(t, h, "--crew", "c1"), []string{
+		"ember {standard,claude,sonnet} — [misrouted]",
+	})
+}
+
 func TestRetroDraftKeepsThePRWhenDoneFollowsPrOpen(t *testing.T) {
 	h, s := newRetroSeed(t)
 	draftDispatch(s, "feat/1186-scope-guard", 1000, "onyx", "standard", "claude", "sonnet")
