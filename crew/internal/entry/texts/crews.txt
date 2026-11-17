@@ -1,4 +1,4 @@
-usage: crew crews [--mine]
+usage: crew crews [--mine | --home]
 
 List every crew with traffic on this repo's bus: id, last and first event, worker
 count, dispatcher pid and whether that pid is alive. Both sources count — a crew
@@ -10,5 +10,13 @@ dir alone (watch creates one) and an id seen only in the log.
           to it. A dispatcher that adopted a restarted crew's workers uses this
           to watch every crew at once.
 
+  --home  List only the crews homed in this repo, not ones that merely dispatched
+          workers into it from another repo. Exclusive with --mine. A crew is home
+          by its homes/<id> record (written by register and adopt); a crew with
+          no record, or one naming another repo, counts when its pidfile.log has
+          a register or adopt ok/forced line, or its live dispatcher pid runs in
+          this repo.
+
   crew crews
   crew crews --mine
+  crew crews --home

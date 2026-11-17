@@ -85,6 +85,10 @@ func Run(sub, pid string, paths bus.Paths, stderr io.Writer, o Options) int {
 			say(stderr, "crew: register: %v\n", err)
 			return exitFailure
 		}
+		if err := crews.WriteHome(paths, crew); err != nil {
+			say(stderr, "crew: register: %v\n", err)
+			return exitFailure
+		}
 		logLine("register", "ok", pid)
 		// The pane, not just the pid: a worker reattaching to a live dispatcher
 		// has to retarget its `dispatcher_pane:` ping, and the pid alone cannot

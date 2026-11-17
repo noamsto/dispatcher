@@ -2,11 +2,14 @@ package adopt
 
 import (
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
+	"github.com/noamsto/dispatcher/crew/internal/crews"
 	"github.com/noamsto/dispatcher/crew/internal/tmux/tmuxtest"
 )
 
@@ -218,7 +221,57 @@ func TestReattachWrites(t *testing.T) {
 			if len(s.calls) != 0 {
 				t.Errorf("calls = %v, want no claim release", s.calls)
 			}
+			if _, ok := fileText(t, crews.HomePath(p, "c-re")); ok {
+				t.Error("home record written without a proven cwd")
+			}
 		})
+	}
+}
+
+func gitRepo(t *testing.T) bus.Paths {
+	t.Helper()
+	dir := t.TempDir()
+	if out, err := exec.Command("git", "-C", dir, "init", "-q").CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, out)
+	}
+	p, err := bus.Locate(t.Context(), dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+// An engine whose cwd is another repo is dispatching into this bus from
+// elsewhere: its crew is not homed here, so nothing is written.
+func TestReattachEngineInAnotherRepoWritesNothing(t *testing.T) {
+	here, other := gitRepo(t), gitRepo(t)
+	registerCrew(t, here, "c-re", "4321")
+	s := reattachWorld()
+	s.cwd = map[int]string{400: filepath.Dir(other.Common)}
+	got := run(t, s, here, reattachReq("c-re"))
+	if got.code != 0 || got.stdout != "" || got.stderr != "" {
+		t.Fatalf("code = %d, stdout = %q, stderr = %q; want a silent 0", got.code, got.stdout, got.stderr)
+	}
+	if pid := readPid(t, here, "c-re"); pid != "4321" {
+		t.Errorf("pid file = %q, want untouched 4321", pid)
+	}
+	for _, path := range []string{panePath(here, "c-re"), here.Dir + "/pidfile.log", crews.HomePath(here, "c-re")} {
+		if _, ok := fileText(t, path); ok {
+			t.Errorf("%s written", path)
+		}
+	}
+}
+
+func TestReattachEngineInThisRepoWritesHome(t *testing.T) {
+	here := gitRepo(t)
+	registerCrew(t, here, "c-re", "4321")
+	s := reattachWorld()
+	s.cwd = map[int]string{400: filepath.Dir(here.Common)}
+	if got := run(t, s, here, reattachReq("c-re")); got.code != 0 {
+		t.Fatalf("code = %d, stderr = %q", got.code, got.stderr)
+	}
+	if home, _ := fileText(t, crews.HomePath(here, "c-re")); strings.TrimSpace(home) != here.Common {
+		t.Errorf("home = %q, want %q", home, here.Common)
 	}
 }
 

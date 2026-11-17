@@ -12,6 +12,7 @@ import (
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/clock"
+	"github.com/noamsto/dispatcher/crew/internal/crews"
 	"github.com/noamsto/dispatcher/crew/internal/gh/ghtest"
 	"github.com/noamsto/dispatcher/crew/internal/git"
 	"github.com/noamsto/dispatcher/crew/internal/git/gittest"
@@ -35,6 +36,7 @@ type stub struct {
 	alive  map[int]bool
 	parent map[int]int
 	comm   map[int]string
+	cwd    map[int]string
 	args   string
 	now    time.Time
 }
@@ -45,6 +47,11 @@ func (s *stub) procs() *proctest.Table {
 	t := proctest.New(s.alive, s.parent)
 	for pid, c := range s.comm {
 		t.Procs[pid] = proctest.Proc{Parent: t.Procs[pid].Parent, Comm: c}
+	}
+	for pid, d := range s.cwd {
+		pr := t.Procs[pid]
+		pr.Cwd = d
+		t.Procs[pid] = pr
 	}
 	ppid := t.Procs[4241]
 	ppid.Args = s.args
@@ -740,6 +747,18 @@ func TestOutsideTmuxDropsAStalePane(t *testing.T) {
 	registerCrew(t, p, "c-none", "4321")
 	if got := run(t, s, p, Request{ID: "c-none", PID: "123"}); got.code != 0 {
 		t.Fatalf("code = %d, stderr = %q", got.code, got.stderr)
+	}
+}
+
+func TestPlainAdoptWritesHome(t *testing.T) {
+	p := testPaths(t)
+	registerCrew(t, p, "c-h", "4321")
+	s := &stub{now: time.Unix(1700000000, 0), env: map[string]string{}}
+	if got := run(t, s, p, Request{ID: "c-h", PID: "123"}); got.code != 0 {
+		t.Fatalf("code = %d, stderr = %q", got.code, got.stderr)
+	}
+	if home, _ := fileText(t, crews.HomePath(p, "c-h")); home != p.Common+"\n" {
+		t.Errorf("home = %q, want %q", home, p.Common+"\n")
 	}
 }
 

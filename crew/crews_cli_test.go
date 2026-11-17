@@ -397,6 +397,43 @@ func TestCrewsTable(t *testing.T) {
 	})
 }
 
+func TestCrewsHome(t *testing.T) {
+	t.Run("keeps a registered crew, drops a foreign one, keeps the home after deregister", func(t *testing.T) {
+		c := newCrewsCLI(t)
+		c.registerAs("c-home", strconv.Itoa(os.Getppid()))
+		c.registerAs("c-gone", strconv.Itoa(deadPid(t)))
+		c.as("c-gone")
+		c.mustRun("deregister")
+		c.as("c-foreign")
+		c.mustRun("status", "worker:feat/x#s1", "working")
+		if err := os.MkdirAll(c.crewDir("c-foreign"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(c.crewDir("c-foreign"), "pid"), []byte(strconv.Itoa(os.Getppid())+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		c.as("c-gone")
+		c.mustRun("status", "worker:feat/x#s1", "working")
+		if err := os.MkdirAll(filepath.Join(c.busDir(), "homes"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(c.busDir(), "homes", "c-foreign"), []byte("/elsewhere/.git\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		var ids []string
+		for _, l := range strings.Split(strings.TrimSpace(c.mustRun("crews", "--home")), "\n")[1:] {
+			ids = append(ids, strings.SplitN(l, "\t", 2)[0])
+		}
+		eq(t, "ids", strings.Join(ids, ","), "c-gone,c-home")
+	})
+
+	t.Run("--home with --mine is a usage error", func(t *testing.T) {
+		c := newCrewsCLI(t)
+		out, _ := c.expect(64, "crews", "--home", "--mine")
+		eq(t, "stdout", out, "")
+	})
+}
+
 func TestCrewsMine(t *testing.T) {
 	t.Run("lists the crew whose pid is an ancestor of the caller", func(t *testing.T) {
 		c := newCrewsCLI(t)

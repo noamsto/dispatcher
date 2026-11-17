@@ -261,11 +261,12 @@ _require_plain_crew_id() {
 }
 
 # _require_dead_crew <sole> <doing> <live-hint> — exit unless crew $CREW_ID is
-# in this repo's `crew crews` and not alive. <sole> 1 also refuses while any
-# other crew there is alive: two dispatchers in one repo split the workers.
+# homed in this repo (`crew crews --home`) and not alive. <sole> 1 also refuses
+# while any other crew there is alive: two dispatchers in one repo split the
+# workers.
 _require_dead_crew() {
   local sole=$1 doing=$2 hint=$3 table row_id row_pid row_alive header=1 known=0
-  if ! table=$(crew crews 2>/dev/null); then
+  if ! table=$(crew crews --home 2>/dev/null); then
     echo "dispatcher: 'crew crews' failed — cannot tell whether crew $CREW_ID's dispatcher is still live, so not $doing" >&2
     exit 1
   fi
@@ -633,8 +634,10 @@ fi
 # ---- Re-attach before minting (#929) -------------------------------------
 # Two dispatchers in one repo split attention: a worker's question reaches only
 # the dispatcher that started it, and each counts only its own workers against
-# the fan-out budget. So read `crew crews` first and mint only when there is
-# nothing to re-attach to; `--new` is the explicit choice to mint anyway.
+# the fan-out budget. So read `crew crews --home` first and mint only when there
+# is nothing to re-attach to; `--new` is the explicit choice to mint anyway.
+# Only crews homed in this repo count: a live dispatcher of another repo that
+# the shared bus lists is not ours to re-attach to or to refuse beside.
 #
 # `alive` and `last_event_s` come off the table itself — the launcher never
 # re-implements the live-pid test.
@@ -673,7 +676,7 @@ _reattach_or_switch() {
   local header=1
   # A failed read must not read as an empty table: that would mint beside crews
   # that are still there.
-  if ! table=$(crew crews 2>/dev/null); then
+  if ! table=$(crew crews --home 2>/dev/null); then
     echo "dispatcher: 'crew crews' failed — cannot tell which crews exist, so starting a fresh one; check this repo's crew bus" >&2
     return 0
   fi

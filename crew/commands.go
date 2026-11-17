@@ -52,7 +52,8 @@ type resolveCmd struct {
 }
 
 type crewsCmd struct {
-	Mine bool `name:"mine"`
+	Mine bool `name:"mine" xor:"scope"`
+	Home bool `name:"home" xor:"scope"`
 }
 
 type registerCmd struct {
