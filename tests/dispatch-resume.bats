@@ -3986,13 +3986,13 @@ STUB
   run ! grep -q '@remux_relaunch cd ' "$STUB_LOG"
 }
 
-@test "1588: resume stamps this run's --agent, --model and --effort overrides into the relaunch" {
+@test "1588: resume stamps this run's --agent, --model, --effort and --mcp overrides into the relaunch" {
   setup_worker_wt
   stub_tmux_with_pane_at_wt '@4' '%8' iris
   cd "$WT"
-  run run_resume --agent pi --model openrouter/deepseek/deepseek-v4-flash --effort high
+  run run_resume --agent pi --model openrouter/deepseek/deepseek-v4-flash --effort high --mcp sentry
   [ "$status" -eq 0 ]
-  grep -qxF "set-option -p -t %8 @remux_relaunch $(_remux_stamp_line "$WT" --agent pi --model openrouter/deepseek/deepseek-v4-flash --effort high)" "$STUB_LOG"
+  grep -qxF "set-option -p -t %8 @remux_relaunch $(_remux_stamp_line "$WT" --agent pi --model openrouter/deepseek/deepseek-v4-flash --effort high --mcp sentry)" "$STUB_LOG"
 }
 
 @test "1588: resume stamps a --model @class resolved, with the --ignore-map that went with it" {
