@@ -72,6 +72,14 @@ func reattach(ctx context.Context, req Request, paths bus.Paths, stderr io.Write
 		return 0
 	}
 
+	// An engine running in another repo is a dispatcher dispatching into this
+	// one, so this bus must not claim its crew. An unknown cwd is allowed as
+	// before but earns no home record.
+	repo := crews.PidRepo(ctx, o.Proc, paths, engine)
+	if repo == crews.RepoElsewhere {
+		return 0
+	}
+
 	newPID := strconv.Itoa(engine)
 	if err := os.MkdirAll(cdir, 0o755); err != nil {
 		say(stderr, "crew: adopt: %v\n", err)
@@ -84,6 +92,12 @@ func reattach(ctx context.Context, req Request, paths bus.Paths, stderr io.Write
 	if err := os.WriteFile(cdir+"/pane", []byte(pane+"\n"), 0o644); err != nil {
 		say(stderr, "crew: adopt: %v\n", err)
 		return exitFailure
+	}
+	if repo == crews.RepoHere {
+		if err := crews.WriteHome(paths, req.ID); err != nil {
+			say(stderr, "crew: adopt: %v\n", err)
+			return exitFailure
+		}
 	}
 	o.pidfileLog(paths, "reattach", "ok", req.ID, epid, newPID)
 	// No claim release: the caller carries on this crew's work, so the labels

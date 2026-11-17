@@ -1124,7 +1124,7 @@ EOF
   stub_crew_table "$(crews_tsv "$(printf 'c-live\t5\t5\t1\t4321\tyes')")"
   CREW_ID=c-existing run run_launcher
   [ "$status" -eq 0 ]
-  run grep -cx crews "$STUB_LOG"
+  run grep -c '^crews' "$STUB_LOG"
   [ "$output" = "0" ]
 }
 
@@ -1190,6 +1190,117 @@ EOF
   [[ "$out" == *"re-attached to crew c-live"* ]]
   [[ "$out" == *"crew adopt --force c-live"* ]]
   [[ "$out" == *"crew id: c-live"* ]]
+}
+
+# #1602: only crews homed in this repo are re-attach candidates. These rows
+# drive the REAL crew; the foreign crew's pid is alive and its cwd is repo A.
+_real_crew_stub() {
+  cat >"$STUB_DIR/crew" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >>"\$STUB_LOG"
+exec '$CREW_GO_BIN' "\$@"
+EOF
+  chmod +x "$STUB_DIR/crew"
+}
+
+# _foreign_crew_in_repo_a <homed> — repo A holds a live, really registered
+# crew c-foreign; repo B (cwd) gets its pid plus, when <homed> is 1, a home
+# record naming A. Sets live_pid (killed by teardown) and REPO_A.
+_foreign_crew_in_repo_a() {
+  local homed=$1 b_dir a_common crews_dir
+  b_dir=$(pwd)
+  REPO_A="$BATS_TEST_TMPDIR/repo-a"
+  mkdir -p "$REPO_A"
+  git -C "$REPO_A" init -q -b main .
+  cd "$REPO_A"
+  sleep 60 &
+  live_pid=$!
+  export CREW_REAP_PROC_CMD="printf '%s\\t%s\\n' $live_pid '$REPO_A'"
+  CREW_ID=c-foreign "$CREW_GO_BIN" register "$live_pid"
+  a_common=$(git rev-parse --path-format=absolute --git-common-dir)
+  cd "$b_dir"
+  crews_dir="$(git rev-parse --path-format=absolute --git-common-dir)/crew"
+  mkdir -p "$crews_dir/crews/c-foreign"
+  printf '%s\n' "$live_pid" >"$crews_dir/crews/c-foreign/pid"
+  [ "$homed" = 0 ] && return 0
+  mkdir -p "$crews_dir/homes"
+  printf '%s\n' "$a_common" >"$crews_dir/homes/c-foreign"
+}
+
+_assert_minted_not_reattached() {
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"re-attached"* ]]
+  run grep -c '^new' "$STUB_LOG"
+  [ "$output" = "1" ]
+  run grep -c 'switch-client' "$STUB_LOG"
+  [ "$output" = "0" ]
+  run grep -c '^adopt' "$STUB_LOG"
+  [ "$output" = "0" ]
+}
+
+@test "1602: a live crew homed in another repo is not re-attached; a new crew is minted" {
+  _real_crew_stub
+  _foreign_crew_in_repo_a 1
+  TMUX=/tmp/fake,1,0 TMUX_PANE=%1 run run_launcher
+  _assert_minted_not_reattached
+}
+
+@test "1602: a legacy crew (no home record) whose pid runs in another repo is not re-attached" {
+  _real_crew_stub
+  _foreign_crew_in_repo_a 0
+  TMUX=/tmp/fake,1,0 TMUX_PANE=%1 run run_launcher
+  _assert_minted_not_reattached
+}
+
+@test "1602: a live crew registered in this repo still switches the client to its pane" {
+  _real_crew_stub
+  sleep 30 &
+  live_pid=$!
+  CREW_ID=c-local "$CREW_GO_BIN" register "$live_pid"
+  stub_tmux_panes %7 "$live_pid"
+  TMUX=/tmp/fake,1,0 TMUX_PANE=%1 run run_launcher
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"crew c-local already has a live dispatcher in pane %7"* ]]
+  run grep -c 'switch-client -t %7' "$STUB_LOG"
+  [ "$output" = "1" ]
+}
+
+# A stub whose table differs with and without --home: the launcher must ask for
+# the home view, so the foreign live row never reaches it.
+_stub_home_filtered_table() { # <home-tsv>
+  printf '%s\n' "$1" >"$STUB_DIR/crews.home.tsv"
+  crews_tsv "$(printf 'c-foreign\t5\t5\t1\t4321\tyes')" "$(printf 'c-dead\t900\t900\t0\t998\tno')" >"$STUB_DIR/crews.tsv"
+  cat >"$STUB_DIR/crew" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$1" in
+new) echo c-minted ;;
+crews)
+  if [ "${2:-}" = --home ]; then cat "$STUB_DIR/crews.home.tsv"; else cat "$STUB_DIR/crews.tsv"; fi
+  ;;
+engine-cmd) exec "$CREW" "$@" ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/crew"
+}
+
+@test "1602: the launcher reads 'crew crews --home', so a foreign live row mints" {
+  _stub_home_filtered_table "$(crews_tsv)"
+  stub_tmux_panes %7 4321
+  TMUX=/tmp/fake,1,0 TMUX_PANE=%1 run run_launcher
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"re-attached"* && "$output" == *"crew id: c-minted"* ]]
+  grep -qx 'crews --home' "$STUB_LOG"
+  run grep -c 'switch-client' "$STUB_LOG"
+  [ "$output" = "0" ]
+}
+
+@test "1602: a dead home crew is still adopted when a foreign live crew exists" {
+  _stub_home_filtered_table "$(crews_tsv "$(printf 'c-dead\t900\t900\t0\t998\tno')")"
+  run run_launcher
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"re-attached to crew c-dead"* && "$output" == *"crew id: c-dead"* ]]
 }
 
 @test "929: a register failure is not tolerated for a crew with no live pid" {
@@ -1983,6 +2094,15 @@ _relaunch_refuses() { # message [repo]
   _relaunch_setup
   crews_tsv "$(printf 'c1\t5\t5\t1\t999999\tno')" "$(printf 'c2\t5\t5\t1\t4321\tyes')" >"$STUB_DIR/crews.tsv"
   _relaunch_refuses "crew c2's dispatcher is live in this repo — ask it instead"
+}
+
+@test "1602: --relaunch of a dead home crew passes while a foreign live crew exists" {
+  _relaunch_setup
+  _stub_home_filtered_table "$(crews_tsv "$(printf 'c1\t5\t5\t1\t999999\tno')")"
+  run run_launcher --relaunch c1 --repo "$TEST_REPO"
+  [ "$status" -eq 0 ]
+  live_pid=$(cat "$STUB_DIR/dispatcher.pid")
+  grep -qx 'crews --home' "$STUB_LOG"
 }
 
 @test "1420: --relaunch refuses a crew whose pane still runs an engine" {

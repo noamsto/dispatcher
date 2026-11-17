@@ -6,9 +6,14 @@
 // argv argument, which grew past MAX_ARG_STRLEN near ~1700 crews and killed
 // the command with "Argument list too long". The dir scan and the pid
 // liveness / ancestor probes stay Go, as in the arm's bash loop.
+//
+// `--home` narrows the table to crews whose dispatcher lives in this repo (see
+// Homes.IsHome for the record and the legacy rule), because a pid file alone
+// also appears for a crew that only dispatched workers into the repo.
 package crews
 
 import (
+	"context"
 	_ "embed"
 	"fmt"
 	"io"
@@ -48,13 +53,15 @@ type Options struct {
 // status, or nowhere, for stderr) — main.go's helper, same reason.
 func say(w io.Writer, format string, args ...any) { _, _ = fmt.Fprintf(w, format, args...) }
 
-// Run is the arm: --mine lists this caller's crews, otherwise the table prints.
-func Run(mineOnly bool, paths bus.Paths, stdout, stderr io.Writer, o Options) int {
+// Run is the arm: --mine lists this caller's crews, otherwise the table
+// prints, restricted to crews homed in this repo under homeOnly (see
+// Homes.IsHome).
+func Run(ctx context.Context, mineOnly, homeOnly bool, paths bus.Paths, stdout, stderr io.Writer, o Options) int {
 	if mineOnly {
 		mine(paths, stdout, o)
 		return 0
 	}
-	return table(paths, stdout, stderr, o)
+	return table(ctx, homeOnly, paths, stdout, stderr, o)
 }
 
 // mine is the arm's --mine branch: crews whose recorded dispatcher pid is a
@@ -84,7 +91,7 @@ func mine(paths bus.Paths, stdout io.Writer, o Options) {
 // table is the arm's table branch. The header goes out first, so an empty
 // bus still prints it, and no log outcome — missing, unreadable, corrupt —
 // fails the command.
-func table(paths bus.Paths, stdout, stderr io.Writer, o Options) int {
+func table(ctx context.Context, homeOnly bool, paths bus.Paths, stdout, stderr io.Writer, o Options) int {
 	say(stdout, "%s\n", header)
 	now := o.Clock.Now()
 	nowSec := float64(now.Unix()) + float64(now.Nanosecond()/1000)/1e6
@@ -93,6 +100,10 @@ func table(paths bus.Paths, stdout, stderr io.Writer, o Options) int {
 	logOK := logErr == nil
 
 	ids := discover(paths, events, logErr)
+	if homeOnly {
+		homes := NewHomes(ctx, paths, o)
+		ids = slices.DeleteFunc(ids, func(id string) bool { return !homes.IsHome(id) })
+	}
 	if len(ids) == 0 {
 		return 0
 	}

@@ -9,6 +9,7 @@ import (
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/clock"
+	"github.com/noamsto/dispatcher/crew/internal/crews"
 	"github.com/noamsto/dispatcher/crew/internal/proc/proctest"
 )
 
@@ -239,6 +240,27 @@ func TestDeregisterRefused(t *testing.T) {
 	wantLine := "2026-10-10T01:02:03Z deregister refused crew=c1 old=777 new=- pid=4242 ppid=4241 cwd=/repo by=claude --resume\n"
 	if got := logText(p); got != wantLine {
 		t.Errorf("log = %q", got)
+	}
+}
+
+func TestRegisterWritesHomeAndDeregisterKeepsIt(t *testing.T) {
+	p := testPaths(t)
+	w := newWorld("c1")
+	if code, stderr := run("register", "888", p, w); code != 0 {
+		t.Fatalf("register: code=%d stderr=%q", code, stderr)
+	}
+	home := crews.HomePath(p, "c1")
+	if got := readFile(t, home); got != p.Common+"\n" {
+		t.Errorf("home = %q, want %q", got, p.Common+"\n")
+	}
+	if code, stderr := run("deregister", "", p, w); code != 0 {
+		t.Fatalf("deregister: code=%d stderr=%q", code, stderr)
+	}
+	if _, err := os.Stat(p.CrewDir("c1")); err == nil {
+		t.Error("crew dir left")
+	}
+	if got := readFile(t, home); got != p.Common+"\n" {
+		t.Errorf("home after deregister = %q", got)
 	}
 }
 

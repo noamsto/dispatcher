@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"fmt"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -11,6 +13,7 @@ import (
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/clock"
+	"github.com/noamsto/dispatcher/crew/internal/proc"
 	"github.com/noamsto/dispatcher/crew/internal/proc/proctest"
 )
 
@@ -65,7 +68,7 @@ func runMine(t *testing.T, p bus.Paths, o Options) (string, string, int) {
 func runWith(t *testing.T, mine bool, p bus.Paths, o Options) (string, string, int) {
 	t.Helper()
 	var out, errB bytes.Buffer
-	code := Run(mine, p, &out, &errB, o)
+	code := Run(t.Context(), mine, false, p, &out, &errB, o)
 	return out.String(), errB.String(), code
 }
 
@@ -315,4 +318,103 @@ func TestFirstRunes(t *testing.T) {
 	if got := firstRunes("héllo", 10); got != "héllo" {
 		t.Errorf("firstRunes = %q", got)
 	}
+}
+
+func gitRepo(t *testing.T) bus.Paths {
+	t.Helper()
+	dir := t.TempDir()
+	if out, err := exec.Command("git", "-C", dir, "init", "-q").CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, out)
+	}
+	p, err := bus.Locate(t.Context(), dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+func homeOnly(t *testing.T, p bus.Paths, tbl proc.Table) []string {
+	t.Helper()
+	var out, errB bytes.Buffer
+	if code := Run(t.Context(), false, true, p, &out, &errB, Options{Proc: tbl, Clock: clock.Clock{Now: fakeNow}}); code != 0 {
+		t.Fatalf("code %d: %s", code, errB.String())
+	}
+	var ids []string
+	for _, l := range strings.Split(strings.TrimSpace(out.String()), "\n")[1:] {
+		ids = append(ids, strings.SplitN(l, "\t", 2)[0])
+	}
+	return ids
+}
+
+func writeHome(t *testing.T, p bus.Paths, id, common string) {
+	t.Helper()
+	if err := os.MkdirAll(p.Dir+"/homes", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(HomePath(p, id), []byte(common+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestHomeFilter(t *testing.T) {
+	here, other := gitRepo(t), gitRepo(t)
+	pidLog := func(t *testing.T, action, outcome, id string) {
+		t.Helper()
+		PidfileLog(here, Caller{Now: fakeNow(), PID: 1, PPID: 1, Pwd: "/x", By: "b"}, action, outcome, id, "", "9")
+	}
+	tbl := func(pid int, cwd string) *proctestTable {
+		return newProcs(map[int]string{pid: cwd})
+	}
+	cases := []struct {
+		name  string
+		setup func(t *testing.T)
+		procs *proctestTable
+		want  []string
+	}{
+		{"matching home kept after deregister", func(t *testing.T) { writeHome(t, here, "c-1", here.Common) }, nil, []string{"c-1"}},
+		{"foreign home with no legacy evidence dropped", func(t *testing.T) { writeHome(t, here, "c-1", other.Common) }, nil, nil},
+		{"mismatching home record falls through to a register ok log line", func(t *testing.T) {
+			writeHome(t, here, "c-1", other.Common)
+			pidLog(t, "register", "ok", "c-1")
+		}, nil, []string{"c-1"}},
+		{"foreign live pid file with no record dropped", func(t *testing.T) { crewDir(t, here, "c-1", "700\n") },
+			tbl(700, filepath.Dir(other.Common)), nil},
+		{"legacy register ok log line kept", func(t *testing.T) { pidLog(t, "register", "ok", "c-1") }, nil, []string{"c-1"}},
+		{"legacy adopt ok log line kept", func(t *testing.T) { pidLog(t, "adopt", "ok", "c-1") }, nil, []string{"c-1"}},
+		{"legacy adopt forced log line kept", func(t *testing.T) { pidLog(t, "adopt", "forced", "c-1") }, nil, []string{"c-1"}},
+		{"legacy reattach log line is no evidence", func(t *testing.T) {
+			crewDir(t, here, "c-1", "")
+			pidLog(t, "reattach", "ok", "c-1")
+		}, nil, nil},
+		{"legacy live pid in this repo kept", func(t *testing.T) { crewDir(t, here, "c-1", "700\n") },
+			tbl(700, filepath.Dir(here.Common)), []string{"c-1"}},
+		{"legacy dead pid with no log dropped", func(t *testing.T) { crewDir(t, here, "c-1", "700\n") }, nil, nil},
+		{"legacy no evidence dropped", func(t *testing.T) { crewDir(t, here, "c-1", "") }, nil, nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := os.RemoveAll(here.Dir); err != nil {
+				t.Fatal(err)
+			}
+			writeLog(t, here, status(1785951000, "c-1", "worker:feat/x#s1")+"\n")
+			tc.setup(t)
+			var tb proc.Table = newProcs(nil)
+			if tc.procs != nil {
+				tb = tc.procs
+			}
+			if got := homeOnly(t, here, tb); !slices.Equal(got, tc.want) {
+				t.Errorf("home crews = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+type proctestTable = proctest.Table
+
+func newProcs(cwds map[int]string) *proctest.Table {
+	t := proctest.New(nil, nil)
+	for pid, dir := range cwds {
+		t.Procs[pid] = proctest.Proc{Cwd: dir}
+	}
+	return t
 }

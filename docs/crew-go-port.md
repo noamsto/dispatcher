@@ -459,6 +459,18 @@ pr_open` for an implement task: the ledger's form, the empty-detail rule, the
   contract: the pid is written verbatim, whatever the caller passed. Liveness,
   the owner-pid walk and the recycle check run through `crews.Probes`; the log
   line is `crews.PidfileLog`.
+- Home records (`crews.IsHome`, #1602): `register` and plain `adopt` write
+  `$dir/homes/<id>` (this repo's git common dir); `adopt --reattach` writes it only
+  when the engine pid's cwd (`proc.Table.Cwds`) resolves to this repo, writes
+  nothing when it resolves elsewhere, and allows-without-recording when the cwd is
+  unknown (macOS has no `Cwds`). The record sits outside `crews/<id>/`, so
+  `deregister` keeps it. `crew crews --home` (exclusive with `--mine`) lists only
+  home crews. A record naming another repo is only a hint: such a crew, like one with no
+  record (legacy), is home when `pidfile.log` has a `register ok`, `adopt ok` or
+  `adopt forced` line for it, or its recorded pid is live and that
+  process's cwd resolves here; a cross-repo re-attach logs `reattach`, which is no
+  evidence. Plain `crew adopt <id>` is an explicit takeover and records home
+  unconditionally, so adopting a foreign crew by hand makes it home.
 - `crew/internal/panestate`: the three `@crew_*` pane options
   `_publish_pane_state` set (state, detail cut to 40 characters, source), in that
   order. One copy shared by `stall` and `status`, so there is nothing to guard.

@@ -170,6 +170,12 @@ func Run(ctx context.Context, req Request, paths bus.Paths, stdout, stderr io.Wr
 		say(stderr, "crew: adopt: %v\n", err)
 		return exitFailure
 	}
+	// Plain adopt is an explicit takeover by a dispatcher in this repo, so the
+	// crew becomes home here whatever it was before.
+	if err := crews.WriteHome(paths, id); err != nil {
+		say(stderr, "crew: adopt: %v\n", err)
+		return exitFailure
+	}
 	outcome := "ok"
 	if req.Force && live {
 		outcome = "forced"

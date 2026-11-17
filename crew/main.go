@@ -741,7 +741,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 	// --mine never reads it at all, so it stays off the shared fold path.
 	if sub == "crews" {
 		out := bufio.NewWriterSize(stdout, 64<<10)
-		code := crews.Run(parsed.typed.Crews.Mine, paths, out, stderr, crews.Options{
+		code := crews.Run(ctx, parsed.typed.Crews.Mine, parsed.typed.Crews.Home, paths, out, stderr, crews.Options{
 			Proc:  e.proc,
 			Clock: clock.FromEnv(),
 		})
