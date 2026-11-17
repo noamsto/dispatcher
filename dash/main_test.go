@@ -665,15 +665,28 @@ func TestFleetStreamEmitsBeforeSourcesFinish(t *testing.T) {
 		t.Errorf("final hosts/reach = %+v / %+v, want one each", got.Fleet.Hosts, got.Fleet.Reach)
 	}
 
-	var secondFirst view.FleetInputs
-	var gotFirst bool
-	fc.stream(ctx, cfg.Now, func(in view.FleetInputs) {
-		if !gotFirst {
-			secondFirst, gotFirst = in, true
+	before, err := json.Marshal(got.Fleet)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var second []view.FleetInputs
+	secondFinal := fc.stream(ctx, cfg.Now, func(in view.FleetInputs) { second = append(second, in) })
+	if len(second) == 0 {
+		t.Fatal("second stream emitted nothing")
+	}
+	if first := second[0]; first.Pending != (view.FleetPending{}) {
+		t.Errorf("second stream's first emit Pending = %+v, want none", first.Pending)
+	}
+	for i, in := range second {
+		if in.Fleet.Status == nil || in.Pending.Status {
+			t.Errorf("second stream emit %d wiped the previous snapshot: status %v pending %+v", i, in.Fleet.Status != nil, in.Pending)
 		}
-	})
-	if secondFirst.Pending != (view.FleetPending{}) || secondFirst.Fleet.Status == nil {
-		t.Errorf("second stream's first emit = pending %+v status %v, want the previous final", secondFirst.Pending, secondFirst.Fleet.Status != nil)
+	}
+	if after, err := json.Marshal(got.Fleet); err != nil || !bytes.Equal(before, after) {
+		t.Errorf("second stream mutated an already emitted value (err %v)", err)
+	}
+	if len(secondFinal.Fleet.Hosts) != 1 || len(secondFinal.Fleet.Reach) != 1 {
+		t.Errorf("second final hosts/reach = %+v / %+v, want one each", secondFinal.Fleet.Hosts, secondFinal.Fleet.Reach)
 	}
 }
 

@@ -108,6 +108,9 @@ func TestFleetTabRendersSkeletonBeforeStreamFinishes(t *testing.T) {
 			t.Errorf("skeleton frame lacks %q:\n%s", want, out)
 		}
 	}
+	if strings.Contains(out, "all clear") {
+		t.Errorf("skeleton frame shows all clear while status is pending:\n%s", out)
+	}
 	if !m.load[srcFleet].inFlight {
 		t.Error("fleet load not in flight while streaming")
 	}

@@ -297,7 +297,8 @@ func (fc *fleetCollector) collect(ctx context.Context, nowSec int64) view.FleetI
 // stream gathers the fleet inputs and emits the accumulated value as each
 // source lands, so a consumer can paint before the slowest one returns. The
 // first emit precedes any subprocess: the previous final result when there is
-// one, else an empty skeleton with every source pending. Settings, budget,
+// one (each source then overwrites its fields as it lands), else an empty
+// skeleton with every source pending. Settings, budget,
 // fleet status and fleet queue start together; reach waits only for settings
 // (the tailscale flag and host list), and the bus scans only for status. emit
 // runs under the accumulator lock, so it must not block. The returned final
@@ -319,10 +320,15 @@ func (fc *fleetCollector) stream(ctx context.Context, nowSec int64, emit func(vi
 		Pending: view.FleetPending{Status: true, Queue: true, Reach: true, Hosts: true},
 	}
 	if prev != nil {
-		emit(*prev)
-	} else {
-		emit(acc)
+		// Stale data stays visible while revalidating. Every source assigns
+		// whole fields, so nothing shared with the emitted *prev is mutated.
+		acc = *prev
+		acc.Snap.Now = nowSec
+		acc.NowMS = nowMS
+		acc.Crew = cfg.Crew
+		acc.Pending = view.FleetPending{}
 	}
+	emit(acc)
 
 	var mu sync.Mutex
 	update := func(apply func(*view.FleetInputs), done func(*view.FleetPending)) {

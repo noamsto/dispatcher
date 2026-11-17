@@ -278,7 +278,7 @@ func fleetLayout(w, h int, fv vm.FleetView, st fleetState) fleetRects {
 	n := len(fv.Attention)
 	y := 0
 	if n == 0 {
-		r.allClear = true
+		r.allClear = !fv.Pending.Status
 		y = min(1, h)
 	} else {
 		var stripH int
@@ -371,6 +371,8 @@ func renderFleet(w, h int, fv vm.FleetView, st fleetState, mode pillMode) string
 	lines := make([]string, 0, h)
 	if r.allClear {
 		lines = append(lines, truncateLine(" "+fg(colGreen).Render("✓ all clear"), w))
+	} else if len(fv.Attention) == 0 {
+		lines = append(lines, truncateLine(" "+fg(colDim).Render("loading…"), w))
 	}
 
 	crewsCount := fmt.Sprintf("%d crews · %d workers", fv.Summary.Crews, fv.Summary.Workers)
@@ -394,7 +396,7 @@ func renderFleet(w, h int, fv vm.FleetView, st fleetState, mode pillMode) string
 	}
 	pd := fv.Pending
 	pending := [numFleetPanels]bool{
-		fpAttention: pd.Status, fpCrews: pd.Status, fpCapacity: pd.Status,
+		fpCrews: pd.Status, fpCapacity: pd.Status,
 		fpHolds: pd.Queue, fpHosts: pd.Hosts || pd.Reach,
 	}
 	body := func(p fleetPanel) []string {
