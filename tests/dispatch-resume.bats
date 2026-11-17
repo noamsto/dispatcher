@@ -1379,6 +1379,25 @@ _ro_rule() { printf -v r ' %q' "Edit(/$1/**)"; }
   [[ "$line" == *"$r"* ]]
 }
 
+@test "claude resume stamps the read-only protocol dirs, never the artifacts dir or a recorded grant" {
+  setup_worker_wt
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  export DISPATCH_GRANT_ROOTS="$(realpath "$BATS_TEST_TMPDIR")"
+  extra="$(realpath "$BATS_TEST_TMPDIR")/extra"
+  mkdir -p "$extra"
+  _grant_record "$extra"
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 0 ]
+  for d in "$DISPATCHER_PROTOCOL_DIR" "$DISPATCHER_SKILLS_DIR"; do
+    run jq -e --arg p "$(realpath -e "$d")" '.projects[$p].hasTrustDialogAccepted == true' "$HOME/.claude.json"
+    [ "$status" -eq 0 ]
+  done
+  run jq -e --arg a "$TEST_REPO/.git/crew/artifacts/feat/7-a-thing" --arg g "$extra" \
+    '(.projects | has($a) | not) and (.projects | has($g) | not)' "$HOME/.claude.json"
+  [ "$status" -eq 0 ]
+}
+
 @test "resume stamps the window for --spawn-role and rewrites the protocol-dirs record" {
   setup_worker_wt
   stub_tmux_with_pane_at_wt '@4' '%8' iris

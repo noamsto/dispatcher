@@ -183,7 +183,7 @@ on it; name the worker by branch or codename
    is `dispatch-config | jq -r --arg h <h> '.hosts[$h].ssh'` (or view the mirror window
    `crew where <branch>` finds); never local `tmux`.
    `load:` and `budget:` details name no pane: skip to their handling in skill `dispatcher:watchdog`.
-2. A prompt → answer it in place (not `quota:`: stop; a tool-permission dialog: skill `dispatcher:watchdog`).
+2. A prompt → answer it in place (not `quota:`: stop; a tool-permission or add-dir trust dialog: skill `dispatcher:watchdog`).
 3. A dead turn or pane → kill the window, then re-dispatch (never re-dispatch a `quota:` or `budget:` block — it discards intact work). Remote:
    `ssh <hosts.<h>.ssh> tmux kill-window -t <%id>`, then `dispatch resume <branch>`
    (routed to the host).

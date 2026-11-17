@@ -986,6 +986,55 @@ claude_subagent_effort_env() {
   printf 'CLAUDE_CODE_SUBAGENT_EFFORT=%s ' "$sub"
 }
 
+# _claude_pretrust <path>... — stamp .projects[<path>].hasTrustDialogAccepted in
+# ~/.claude.json for every path in one locked write; a no-op (no lock, no write)
+# when every path is already stamped. Claude Code skips its "trust this
+# directory?" dialog, which tmux keys cannot answer, only for stamped paths.
+# Same ln -s lock idiom as dispatch.sh's dispatch_lock. claude_json_lock is a
+# global set only while the lock is held and cleared on every release, so
+# dispatch.sh's EXIT trap removes only a lock this process still holds. Callers
+# include a command substitution (launch_dir_args), so this returns 1 with a
+# stderr message and never exits.
+_claude_pretrust() {
+  local claude_json="$HOME/.claude.json" lock_path tmp existing p
+  lock_path="$claude_json.dispatch.lock"
+  if [ -f "$claude_json" ] && jq -e --args \
+    '. as $c | all($ARGS.positional[]; $c.projects[.].hasTrustDialogAccepted == true)' \
+    "$@" <"$claude_json" >/dev/null 2>&1; then
+    return 0
+  fi
+  for _ in 1 2 3 4 5; do
+    if ln -s "$$" "$lock_path" 2>/dev/null; then
+      claude_json_lock="$lock_path"
+      tmp="$(mktemp "$claude_json.tmp.XXXXXX")" || {
+        rm -f "$claude_json_lock"
+        claude_json_lock=""
+        return 1
+      }
+      if [ -f "$claude_json" ]; then
+        existing="$(cat "$claude_json")"
+      else
+        existing='{}'
+      fi
+      if printf '%s' "$existing" | jq --args \
+        'reduce $ARGS.positional[] as $p (.; .projects[$p].hasTrustDialogAccepted = true)' \
+        "$@" >"$tmp" && mv "$tmp" "$claude_json"; then
+        rm -f "$claude_json_lock"
+        claude_json_lock=""
+        return 0
+      fi
+      rm -f "$tmp" "$claude_json_lock"
+      claude_json_lock=""
+      echo "dispatch: could not update $claude_json" >&2
+      return 1
+    fi
+    sleep 1
+  done
+  p="$(readlink "$lock_path" 2>/dev/null || true)"
+  echo "dispatch: $lock_path is held${p:+ by pid $p}" >&2
+  return 1
+}
+
 # launch_dir_args <engine> <branch> — emit the ` --add-dir <dir>` flags a claude
 # launch needs so its tool calls never stop on a permission dialog nobody
 # watches: the protocol, skills, reviewers and critics dirs, the branch's own
@@ -1003,6 +1052,14 @@ claude_subagent_effort_env() {
 # only authority: the worker edits WORKER_TASK.md, so its add_dir: header
 # lines are a mirror, never read.
 #
+# Claude Code also asks "Is this a directory you trust?" at launch for every
+# --add-dir path with no trust record, and tmux keys cannot answer it. The four
+# read-only dirs are immutable store paths whose hash changes on every
+# dispatcher update, so their realpaths are stamped here. Only they are: a
+# persistent trust record for a mutable artifacts dir or a user-granted dir is
+# the owner's decision. A failed stamp warns and still emits every flag, since
+# the #442 deny rules must reach the launch line.
+#
 # claude's --add-dir and --disallowedTools are both variadic and would swallow
 # the positional prompt, so callers splice this in right before
 # --append-system-prompt-file, terminating both lists.
@@ -1012,7 +1069,7 @@ claude_subagent_effort_env() {
 # gates paths, and pi has no tool-permission layer at all.
 launch_dir_args() {
   [ "$1" = claude ] || return 0
-  local a c d bad line dirs=() rules=()
+  local a c d bad line dirs=() rules=() ro_real=() uniq=()
   local -A seen=()
   for d in "$PROTOCOL_DIR" "$SKILLS_DIR" "$REVIEWERS_DIR" "$CRITICS_DIR"; do
     [[ $d == /* ]] && [ -d "$d" ] || continue
@@ -1023,6 +1080,7 @@ launch_dir_args() {
       continue
     fi
     dirs+=("$d")
+    ro_real+=("$c")
     rules+=("Edit(/$d/**)")
     [ "$c" = "$d" ] || rules+=("Edit(/$c/**)")
   done
@@ -1046,6 +1104,12 @@ launch_dir_args() {
   for d in "${dirs[@]}"; do
     [ -z "${seen[$d]:-}" ] || continue
     seen[$d]=1
+    uniq+=("$d")
+  done
+  if [ "${#ro_real[@]}" -gt 0 ] && ! _claude_pretrust "${ro_real[@]}"; then
+    echo "dispatch: could not pre-trust protocol dirs for $2 — the worker may stall on Claude Code's add-dir trust dialog" >&2
+  fi
+  for d in "${uniq[@]}"; do
     printf ' --add-dir %q' "$d"
   done
   if [ "${#rules[@]}" -gt 0 ]; then

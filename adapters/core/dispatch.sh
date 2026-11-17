@@ -4321,6 +4321,7 @@ if ! ln -s "$$" "$dispatch_lock" 2>/dev/null; then
   exit 1
 fi
 ident_locked=""
+claude_json_lock=""
 ident_lock="$crew_dir/identity.lock"
 trap 'rm -f "$dispatch_lock" "${claude_json_lock:-}"; [ -z "$ident_locked" ] || rmdir "$ident_lock" 2>/dev/null' EXIT INT TERM HUP
 
@@ -4611,36 +4612,8 @@ wt_admin="$(_wt_admin_dir "${crew_dir%/crew}" "$wt_path")" || {
 # on failure — a worker that can't be pre-trusted just reproduces the wedge
 # this fixes.
 if [ "$agent" = claude ]; then
-  claude_json="$HOME/.claude.json"
-  claude_json_lock_path="$claude_json.dispatch.lock"
-  trusted=1
-  for _ in 1 2 3 4 5; do
-    # claude_json_lock (the trap-visible name at the top-level `trap` above)
-    # is only ever assigned once ln -s has actually made us the owner — a
-    # racer that exhausts all 5 attempts must exit with claude_json_lock still
-    # unset, or the EXIT trap would delete a lock file some other, still-running
-    # dispatch legitimately owns.
-    if ln -s "$$" "$claude_json_lock_path" 2>/dev/null; then
-      claude_json_lock="$claude_json_lock_path"
-      trust_tmp="$(mktemp "$claude_json.tmp.XXXXXX")"
-      if [ -f "$claude_json" ]; then
-        existing="$(cat "$claude_json")"
-      else
-        existing='{}'
-      fi
-      if printf '%s' "$existing" | jq --arg path "$wt_path" \
-        '.projects[$path].hasTrustDialogAccepted = true' >"$trust_tmp" &&
-        mv "$trust_tmp" "$claude_json"; then
-        trusted=0
-      else
-        rm -f "$trust_tmp"
-      fi
-      rm -f "$claude_json_lock"
-      break
-    fi
-    sleep 1
-  done
-  if [ "$trusted" -ne 0 ]; then
+  if ! _claude_pretrust "$wt_path"; then
+    claude_json_lock_path="$HOME/.claude.json.dispatch.lock"
     held=$(readlink "$claude_json_lock_path" 2>/dev/null || true)
     if [ -n "$held" ] && kill -0 "$held" 2>/dev/null; then
       echo "dispatch: could not pre-trust worktree $wt_path — $claude_json_lock_path is held by pid $held (another dispatch mid-scaffold) — the worker would wedge on the workspace-trust dialog" >&2

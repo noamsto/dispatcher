@@ -142,6 +142,29 @@ func IsPermissionPrompt(engine, text string) bool {
 	return anyMatch(above, reOption) && anyContains(above, "Do you want to proceed?")
 }
 
+// IsAddDirPrompt is claude's `Adding a new directory:` trust dialog: unnumbered
+// options and an `Esc to exit` footer, and tmux keys do not answer it.
+func IsAddDirPrompt(engine, text string) bool {
+	if engine != "claude" {
+		return false
+	}
+	// A named session paints its `── <name> ─` rule below the dialog.
+	t := Tail(text, 11)
+	if n := len(t); n > 0 && reNameRule.MatchString(t[n-1]) {
+		t = t[:n-1]
+	}
+	t = t[max(len(t)-10, 0):]
+	if len(t) == 0 {
+		return false
+	}
+	last := t[len(t)-1]
+	if !strings.Contains(last, "To add it, press ↓ to Yes, then Enter") && !strings.Contains(last, "Esc to exit") {
+		return false
+	}
+	above := t[:len(t)-1]
+	return anyContains(above, "Yes, add it") && anyContains(above, "Adding a new directory:")
+}
+
 // IsPrompt is _is_prompt.
 func IsPrompt(engine, text string) bool {
 	if engine == "codex" {
@@ -154,6 +177,9 @@ func IsPrompt(engine, text string) bool {
 	last := t[len(t)-1]
 	// The Code Mode first-use opt-in has unnumbered options, so reOption misses it.
 	if engine == "claude" && strings.Contains(last, "Esc to start without it") && anyContains(t[:len(t)-1], "Yes, turn on Code Mode") {
+		return true
+	}
+	if IsAddDirPrompt(engine, text) {
 		return true
 	}
 	if !strings.Contains(last, "Enter to select") && !strings.Contains(last, "Enter to confirm") {

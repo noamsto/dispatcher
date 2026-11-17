@@ -1,0 +1,8 @@
+Adding a new directory:
+/nix/store/abc-source/adapters/core/protocols
+This session hasn't worked here before. Is this a directory you created or one you trust?
+
+❯ No, exit
+  Yes, add it
+
+Esc to exit · To add it, press ↓ to Yes, then Enter
