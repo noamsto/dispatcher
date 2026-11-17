@@ -232,10 +232,14 @@ func (m Model) snapshotMsg() snapshotMsg {
 }
 
 func (m Model) viewInputs() vm.Inputs {
-	return inputsOf(m.snap, m.digest, m.loaded(), m.now().UnixMilli(), m.crew)
+	var keeps map[data.WorkerKey]string
+	if m.loaders.ReapKeeps != nil {
+		keeps = m.loaders.ReapKeeps()
+	}
+	return inputsOf(m.snap, m.digest, m.loaded(), m.now().UnixMilli(), m.crew, keeps)
 }
 
-func inputsOf(snap data.Snapshot, digest data.BusDigest, l [numSources]bool, nowMS int64, crew []string) vm.Inputs {
+func inputsOf(snap data.Snapshot, digest data.BusDigest, l [numSources]bool, nowMS int64, crew []string, keeps map[data.WorkerKey]string) vm.Inputs {
 	return vm.Inputs{
 		Snap: snap,
 		Bus:  digest,
@@ -243,8 +247,9 @@ func inputsOf(snap data.Snapshot, digest data.BusDigest, l [numSources]bool, now
 			Settings: l[srcSettings], Budget: l[srcBudget],
 			Retro: l[srcRetro], Ratings: l[srcRatings], Roster: l[srcRoster], Bus: l[srcBus],
 		},
-		NowMS: nowMS,
-		Crew:  crew,
+		NowMS:     nowMS,
+		Crew:      crew,
+		ReapKeeps: keeps,
 	}
 }
 

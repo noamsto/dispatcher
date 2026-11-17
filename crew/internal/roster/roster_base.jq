@@ -15,7 +15,7 @@
         | group_by(.branch)
         | map({key:.[0].branch, value:(sort_by(.ts) | last | .engine_session // null)}) | from_entries) as $esess
       | (map(select(.kind=="reap" and (.branch // "") != "")) | group_by(.branch)
-          | map({key:.[0].branch, value:(max_by(.ts) | {ts, pr_state})}) | from_entries) as $reaps
+          | map({key:.[0].branch, value:(max_by(.ts) | {ts, pr, pr_state, issues})}) | from_entries) as $reaps
       | . as $all
       | map(select(.crew_id==$crew and .kind=="status"
                    and ((.from // "") | startswith("worker:"))))
@@ -70,5 +70,7 @@
       # finished row for the branch is superseded by a later branch-level reap row.
       | map(. as $r | $reaps[.branch] as $rp
             | if (.state == "done" or .state == "failed" or .state == "exited") and $rp != null and $rp.ts > .ts
-              then . + {state: "reaped", detail: ("PR " + ($rp.pr_state // "")), source: "reap", ts: $rp.ts, age_s: ((now - ($rp.ts/1000))|floor)}
+              then . + {state: "reaped", detail: ($rp | if (.pr_state == "ISSUE_CLOSED") and ((.issues // []) | length > 0) then "issue #" + ((.issues | map(tostring)) | join(", #")) + " CLOSED"
+                                       elif (.pr // "") != "" and (.pr_state // "") != "" then "PR #" + (.pr | split("/") | last) + " " + .pr_state
+                                       else (.pr_state // "reaped") end), source: "reap", ts: $rp.ts, age_s: ((now - ($rp.ts/1000))|floor)}
               else . end)

@@ -38,6 +38,9 @@ type Loaders struct {
 	Ratings  func(context.Context) data.RunsSection
 	Roster   func(context.Context) data.RosterSection
 	Bus      func(context.Context) data.BusDigest
+	// ReapKeeps reads the cached crew reap keep reasons without blocking;
+	// nil when unknown.
+	ReapKeeps func() map[data.WorkerKey]string
 	// Fleet is not loaded at Init: the Fleet tab requests it on first activation.
 	// Fleet streams accumulated partial inputs through emit and returns the
 	// final; emit must not block.

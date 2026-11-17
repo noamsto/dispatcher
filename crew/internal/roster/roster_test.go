@@ -795,14 +795,19 @@ func TestFoldReapSupersedesOtherCrewsFinishedRow(t *testing.T) {
 	const b = "feat/1-x"
 	reap := fmt.Sprintf(`{"ts":%d,"kind":"reap","branch":%q,"pr":"https://github.com/o/r/pull/2","pr_state":"CLOSED"}`, t0+5000, b)
 	failed := status(t0+1000, "worker:"+b+"#s1-1", `{"state":"failed","detail":"migrating to halo"}`)
+	issueReap := fmt.Sprintf(`{"ts":%d,"kind":"reap","branch":%q,"pr":"","pr_state":"ISSUE_CLOSED","issues":["12","3"]}`, t0+5000, b)
+	bareReap := fmt.Sprintf(`{"ts":%d,"kind":"reap","branch":%q}`, t0+5000, b)
 	cases := []struct {
 		name   string
 		events []string
 		want   string
+		detail string
 	}{
-		{"older failed row, later reap row", []string{failed, reap}, "reaped"},
-		{"reap row older than the row", []string{reap, status(t0+9000, "worker:"+b+"#s1-1", `{"state":"failed"}`)}, "failed"},
-		{"a live row is never reaped", []string{status(t0+1000, "worker:"+b+"#s1-1", `{"state":"working"}`), reap}, "working"},
+		{"older failed row, later reap row", []string{failed, reap}, "reaped", "PR #2 CLOSED"},
+		{"issue-mode reap", []string{failed, issueReap}, "reaped", "issue #12, #3 CLOSED"},
+		{"reap row with nothing known", []string{failed, bareReap}, "reaped", "reaped"},
+		{"reap row older than the row", []string{reap, status(t0+9000, "worker:"+b+"#s1-1", `{"state":"failed"}`)}, "failed", ""},
+		{"a live row is never reaped", []string{status(t0+1000, "worker:"+b+"#s1-1", `{"state":"working"}`), reap}, "working", ""},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -816,6 +821,12 @@ func TestFoldReapSupersedesOtherCrewsFinishedRow(t *testing.T) {
 			}
 			if st, _ := got[0]["state"].(string); st != c.want {
 				t.Errorf("state = %q, want %q", st, c.want)
+			}
+			if c.detail == "" {
+				return
+			}
+			if d, _ := got[0]["detail"].(string); d != c.detail {
+				t.Errorf("detail = %q, want %q", d, c.detail)
 			}
 		})
 	}

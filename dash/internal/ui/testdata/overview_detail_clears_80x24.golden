@@ -1,0 +1,24 @@
+╭ ATTENTION ────────────────────────────────────────────────── 12 need action ─╮
+│▌1 ✗ feat/h exit 1 after test failure                           20m → peek    │
+│ 2 ✗ feat/g dead: quiet: no output 20m                          15m → peek    │
+│ 3 ✗ otter  reviewer: role reviewer engine exited (pane %9)      6m → peek    │
+│ ╭ ▸ DETAIL ─────────────────────────────────────────────────────── feat/h ─╮ │
+╰─│ ✗ feat/h  feat/h  standard  claude/sonnet  failed                        │─╯
+╭ │   exit 1 after test failure                                              │─╮
+│ │ PHASE                                                                    │—│
+│ │   ○ spec ○ plan ○ execute ○ gate ○ review ○ ship                         │ │
+│ │ ACCEPTANCE —                                                             │5│
+│ │ AGENTS                                                                   │ │
+│ │   lead sonnet standard failed                                            │—│
+│ │   execute subagents: not reported                                        │ │
+│ │ ATTENTION                                                                │—│
+│ │   ✗ exit 1 after test failure → crew where --crew c1 -- feat/h           │ │
+│ │     To clear: reaped once its PR merges/closes or its issue closes (crew │—│
+│ │               reap), or re-dispatch                                      │ │
+│ │ RECENT EVENTS                                                            │—│
+│ │   none                                                                   │ │
+│ ╰──────────────────────────────────────────────────────────────────────────╯—│
+│   ○─○─○─○─○─○ failed                                                         │
+│▌✗ feat/h standard                                                        AC —│
+│▌  ○─○─○─○─○─○ failed                                                         │
+╰──────────────────────────────────────────────────────────────────────────────╯

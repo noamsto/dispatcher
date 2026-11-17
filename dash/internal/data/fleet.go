@@ -341,13 +341,13 @@ func (f *FleetScanners) Scan(commons []string, nowMS int64) (map[string]BusDiges
 	return digests, errs
 }
 
-// CollectReapKeeps maps each branch crew reap would keep to its reason. Any
-// failure yields nil: a missing reason never becomes an error row.
+// CollectReapKeeps maps each branch crew reap would keep to its reason. The
+// document is decoded whenever stdout parses, because a fleet run exits 1
+// when one repo fails yet still lists every other repo's keeps; nil means no
+// parsable document, never an error row. Each branch also gets a crew-less
+// entry unless a row already owns it, for workers of an older session.
 func CollectReapKeeps(ctx context.Context, r Runner, cfg Config) map[WorkerKey]string {
-	out, _, err := r.Run(ctx, cfg.Crew[0], crewArgs(cfg, "reap", "--fleet", "--dry-run", "--json")...)
-	if exitCode(err) != 0 {
-		return nil
-	}
+	out, _, _ := r.Run(ctx, cfg.Crew[0], crewArgs(cfg, "reap", "--fleet", "--dry-run", "--json")...)
 	var doc struct {
 		Keeps []struct {
 			Crew   string `json:"crew"`
@@ -361,6 +361,11 @@ func CollectReapKeeps(ctx context.Context, r Runner, cfg Config) map[WorkerKey]s
 	keeps := map[WorkerKey]string{}
 	for _, k := range doc.Keeps {
 		keeps[WorkerKey{Crew: k.Crew, Branch: k.Branch}] = k.Reason
+	}
+	for _, k := range doc.Keeps {
+		if _, ok := keeps[WorkerKey{Branch: k.Branch}]; !ok {
+			keeps[WorkerKey{Branch: k.Branch}] = k.Reason
+		}
 	}
 	return keeps
 }

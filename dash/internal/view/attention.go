@@ -204,7 +204,7 @@ func buildAttention(in Inputs, rows []WorkerRow) []AttentionItem {
 		if kind, sev, key, ok := stateItem(w); ok {
 			var keep string
 			if w.Origin == OriginLocal {
-				keep = in.ReapKeeps[data.WorkerKey{Crew: w.Crew, Branch: w.Branch}]
+				keep = in.reapKeep(w)
 			}
 			it := attentionOf(w, kind, sev, key, message(w, w.State), keep)
 			if kind == KindBlocked && w.BlockedSince != nil {
@@ -318,4 +318,13 @@ func ledgerCount(detail string) (done, total int, ok bool) {
 		}
 	}
 	return done, total, total > 0
+}
+
+// reapKeep is crew reap's keep reason for w: its own crew's row first, then
+// the branch's newest one.
+func (in Inputs) reapKeep(w WorkerRow) string {
+	if r, ok := in.ReapKeeps[data.WorkerKey{Crew: w.Crew, Branch: w.Branch}]; ok {
+		return r
+	}
+	return in.ReapKeeps[data.WorkerKey{Branch: w.Branch}]
 }

@@ -247,7 +247,30 @@ func TestCollectReapKeeps(t *testing.T) {
 		Stdout: []byte(`{"keeps":[{"repo":"/r/.git","crew":"c1","branch":"feat/a","reason":"unmerged commits"}]}`),
 	}}}
 	got := CollectReapKeeps(context.Background(), r, cfg)
-	if got[WorkerKey{Crew: "c1", Branch: "feat/a"}] != "unmerged commits" || len(got) != 1 {
+	if got[WorkerKey{Crew: "c1", Branch: "feat/a"}] != "unmerged commits" || got[WorkerKey{Branch: "feat/a"}] != "unmerged commits" || len(got) != 2 {
+		t.Errorf("keeps = %v", got)
+	}
+}
+
+func TestCollectReapKeepsBranchFallbackFirstWins(t *testing.T) {
+	cfg := Config{Crew: []string{"crew"}}
+	r := &FakeRunner{Responses: map[string]FakeResponse{reapKeepsKey: {
+		Stdout: []byte(`{"keeps":[{"crew":"new","branch":"feat/a","reason":"first"},{"crew":"old","branch":"feat/a","reason":"second"}]}`),
+	}}}
+	got := CollectReapKeeps(context.Background(), r, cfg)
+	if got[WorkerKey{Branch: "feat/a"}] != "first" || got[WorkerKey{Crew: "old", Branch: "feat/a"}] != "second" {
+		t.Errorf("keeps = %v", got)
+	}
+}
+
+func TestCollectReapKeepsDecodesPartialFailure(t *testing.T) {
+	cfg := Config{Crew: []string{"crew"}}
+	r := &FakeRunner{Responses: map[string]FakeResponse{reapKeepsKey: {
+		Stdout: []byte(`{"keeps":[{"crew":"c1","branch":"feat/a","reason":"why"}]}`),
+		Err:    FakeExitError{Code: 1},
+	}}}
+	got := CollectReapKeeps(context.Background(), r, cfg)
+	if got[WorkerKey{Crew: "c1", Branch: "feat/a"}] != "why" {
 		t.Errorf("keeps = %v", got)
 	}
 }

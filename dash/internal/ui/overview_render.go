@@ -629,12 +629,12 @@ func attnLine(ov vm.OverviewView, r overviewRects, it placed, s *spans) string {
 	return attnStripLine(ov.Attention[r.stripOff:r.stripOff+r.stripRows], it.idx-r.stripOff, attnWorker, s)
 }
 
-// attnStripLine draws row i of an attention strip window: its digit, glyph,
-// who (from label), message, age and action, columns sized to the window.
 // clearsMinWidth is the message column width below which the strip drops the
 // "what clears it" suffix; the drill overlay always shows it.
 const clearsMinWidth = 72
 
+// attnStripLine draws row i of an attention strip window: its digit, glyph,
+// who (from label), message, age and action, columns sized to the window.
 func attnStripLine(visible []vm.AttentionItem, i int, label func(vm.AttentionItem) string, s *spans) string {
 	a := visible[i]
 	workerW, actionW := 0, 0

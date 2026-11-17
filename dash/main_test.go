@@ -270,7 +270,7 @@ func TestRetroReportWithoutRowsRendersNoNotesYet(t *testing.T) {
 	}
 }
 
-const usageText = "usage: crew dash [--once | --json [--view <name> [--watch]]]\n" +
+const usageText = "usage: crew dash [--once | --json [--view <name> [--watch] [--keeps]]]\n" +
 	"views: overview, roster, budget, runs, settings, map, fleet\n"
 
 func TestUnknownArgumentExits2WithUsage(t *testing.T) {
@@ -708,52 +708,118 @@ func TestResolveCrewMakesRelativeCrewBinAbsolute(t *testing.T) {
 	}
 }
 
-func TestKeepCacheTTL(t *testing.T) {
+func keepsOf(reason string) map[data.WorkerKey]string {
+	return map[data.WorkerKey]string{{Crew: "c", Branch: "b"}: reason}
+}
+
+// waitFor polls cond until it holds; the cache refreshes in the background.
+func waitFor(t *testing.T, cond func() bool) {
+	t.Helper()
+	for range 400 {
+		if cond() {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("condition not met")
+}
+
+func TestKeepCacheTTLNeverBlocks(t *testing.T) {
 	var kc keepCache
 	now := time.Unix(1000, 0)
 	clock := func() time.Time { return now }
-	calls := 0
-	fetch := func() map[data.WorkerKey]string {
-		calls++
-		return map[data.WorkerKey]string{{Crew: "c", Branch: "b"}: "why"}
-	}
-	for range 2 {
-		if got := kc.get(context.Background(), clock, fetch); got[data.WorkerKey{Crew: "c", Branch: "b"}] != "why" {
-			t.Fatalf("keeps = %v", got)
-		}
-	}
-	if calls != 1 {
-		t.Fatalf("fetch calls within TTL = %d, want 1", calls)
-	}
-	now = now.Add(reapKeepsTTL + time.Second)
-	kc.get(context.Background(), clock, fetch)
-	if calls != 2 {
-		t.Fatalf("fetch calls after TTL = %d, want 2", calls)
-	}
-}
-
-func TestKeepCacheSingleFlight(t *testing.T) {
-	var kc keepCache
-	release := make(chan struct{})
 	var calls atomic.Int32
+	release := make(chan struct{})
 	fetch := func() map[data.WorkerKey]string {
 		calls.Add(1)
 		<-release
-		return nil
+		return keepsOf("why")
 	}
-	var wg sync.WaitGroup
-	for range 3 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			kc.get(context.Background(), time.Now, fetch)
-		}()
+	if got := kc.cached(clock, fetch); got != nil {
+		t.Fatalf("cold read = %v, want nil without blocking", got)
 	}
-	time.Sleep(50 * time.Millisecond)
+	kc.cached(clock, fetch)
 	close(release)
-	wg.Wait()
+	waitFor(t, func() bool { return kc.cached(clock, fetch) != nil })
 	if n := calls.Load(); n != 1 {
 		t.Fatalf("fetch calls = %d, want 1", n)
+	}
+	now = now.Add(reapKeepsTTL + time.Second)
+	if got := kc.cached(clock, fetch); got[data.WorkerKey{Crew: "c", Branch: "b"}] != "why" {
+		t.Fatalf("stale read = %v, want the old value", got)
+	}
+	waitFor(t, func() bool { return calls.Load() == 2 })
+}
+
+func TestKeepCacheFailureRetriesAfterBackoffAndKeepsValue(t *testing.T) {
+	var kc keepCache
+	now := time.Unix(1000, 0)
+	clock := func() time.Time { return now }
+	var calls atomic.Int32
+	var result atomic.Pointer[map[data.WorkerKey]string]
+	fetch := func() map[data.WorkerKey]string {
+		calls.Add(1)
+		if r := result.Load(); r != nil {
+			return *r
+		}
+		return nil
+	}
+	settled := func(n int32) func() bool {
+		return func() bool {
+			kc.mu.Lock()
+			defer kc.mu.Unlock()
+			return calls.Load() == n && kc.inflight == nil
+		}
+	}
+	kc.cached(clock, fetch)
+	waitFor(t, settled(1))
+	kc.cached(clock, fetch)
+	if calls.Load() != 1 {
+		t.Fatalf("retried inside the backoff: %d calls", calls.Load())
+	}
+	now = now.Add(reapKeepsRetry + time.Second)
+	good := keepsOf("why")
+	result.Store(&good)
+	kc.cached(clock, fetch)
+	waitFor(t, settled(2))
+	if got := kc.cached(clock, fetch); got[data.WorkerKey{Crew: "c", Branch: "b"}] != "why" {
+		t.Fatalf("keeps = %v", got)
+	}
+	now = now.Add(reapKeepsTTL + time.Second)
+	result.Store(nil)
+	kc.cached(clock, fetch)
+	waitFor(t, settled(3))
+	if got := kc.cached(clock, fetch); got[data.WorkerKey{Crew: "c", Branch: "b"}] != "why" {
+		t.Fatalf("failed refresh dropped the last good value: %v", got)
+	}
+}
+
+func TestKeepCacheFetchNowBlocksOnceAndHonoursCtx(t *testing.T) {
+	var kc keepCache
+	clock := time.Now
+	var calls atomic.Int32
+	fetch := func() map[data.WorkerKey]string {
+		calls.Add(1)
+		return keepsOf("why")
+	}
+	for range 2 {
+		if got := kc.fetchNow(context.Background(), clock, fetch); got[data.WorkerKey{Crew: "c", Branch: "b"}] != "why" {
+			t.Fatalf("keeps = %v", got)
+		}
+	}
+	if calls.Load() != 1 {
+		t.Fatalf("fetch calls = %d, want 1", calls.Load())
+	}
+
+	var busy keepCache
+	release := make(chan struct{})
+	defer close(release)
+	go busy.fetchNow(context.Background(), clock, func() map[data.WorkerKey]string { <-release; return nil })
+	waitFor(t, func() bool { busy.mu.Lock(); defer busy.mu.Unlock(); return busy.inflight != nil })
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if got := busy.fetchNow(ctx, clock, nil); got != nil {
+		t.Fatalf("canceled waiter = %v, want nil", got)
 	}
 }
 
@@ -762,11 +828,13 @@ func TestFleetCollectorCachesReapKeeps(t *testing.T) {
 		"crew reap --fleet --dry-run --json": {Stdout: []byte(`{"keeps":[{"crew":"c1","branch":"feat/a","reason":"r"}]}`)},
 	}}
 	fc := newFleetCollector(r, data.Config{Crew: []string{"crew"}})
-	for range 2 {
-		in := fc.collect(context.Background(), 1794800010)
-		if in.ReapKeeps[data.WorkerKey{Crew: "c1", Branch: "feat/a"}] != "r" {
-			t.Fatalf("ReapKeeps = %v", in.ReapKeeps)
-		}
+	if in := fc.collect(context.Background(), 1794800010); in.ReapKeeps != nil {
+		t.Fatalf("first collect must not wait for the probe, got %v", in.ReapKeeps)
+	}
+	waitFor(t, func() bool { return fc.reapKeeps(context.Background()) != nil })
+	in := fc.collect(context.Background(), 1794800010)
+	if in.ReapKeeps[data.WorkerKey{Crew: "c1", Branch: "feat/a"}] != "r" {
+		t.Fatalf("ReapKeeps = %v", in.ReapKeeps)
 	}
 	n := 0
 	for _, c := range r.CallsSnapshot() {
@@ -776,5 +844,27 @@ func TestFleetCollectorCachesReapKeeps(t *testing.T) {
 	}
 	if n != 1 {
 		t.Fatalf("reap calls = %d, want 1", n)
+	}
+}
+
+func TestParseArgsKeeps(t *testing.T) {
+	for _, ok := range [][]string{
+		{"--json", "--view", "fleet", "--keeps"},
+		{"--json", "--view", "overview", "--keeps"},
+	} {
+		if o, err := parseArgs(ok); err != nil || !o.keeps {
+			t.Errorf("%v: %+v, %v", ok, o, err)
+		}
+	}
+	for _, bad := range [][]string{
+		{"--keeps"},
+		{"--json", "--keeps"},
+		{"--json", "--view", "roster", "--keeps"},
+		{"--once", "--keeps"},
+		{"--json", "--view", "fleet", "--keeps", "--keeps"},
+	} {
+		if _, err := parseArgs(bad); err == nil {
+			t.Errorf("%v: want error", bad)
+		}
 	}
 }

@@ -1,0 +1,40 @@
+╭ ATTENTION ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── 12 need action ─╮
+│▌1 ✗ feat/h exit 1 after test failure — reaped once its PR merges/closes or its issue closes (crew reap), or re-dispatch              20m → peek    │
+│ 2 ✗ feat/g dead: quiet: no output 20m — reaped once its PR merges/closes or its issue closes (crew reap), or re-dispatch             15m → peek    │
+│ 3 ✗ otter  reviewer: role reviewer engine exited (pane %9) — restart the role pane or `crew nudge` the worker                         6m → peek    │
+│ 4 ✗ c2     crew stream lane is dead — re-arm `crew stream --crew c2`                                                                 now → inspect │
+│ 5 ! feat/r need the staging db password — a `crew reply` to its question                                                              7m → reply   │
+│ 6 ! feat/c which s╭ ▸ DETAIL ───────────────────────────────────────────────────────────────────────────────────────── feat/h ─╮      5m → reply   │
+│ 7 ! feat/e quiet: │ ✗ feat/h  feat/h  standard  claude/sonnet  failed                                                          │      4m → nudge   │
+│ 8 ! feat/d prompt:│   exit 1 after test failure                                                                                │      3m → peek    │
+│ 9 ! feat/f runaway│ PHASE                                                                                                      │      2m → peek    │
+╰───────────────────│   ○ spec ○ plan ○ execute ○ gate ○ review ○ ship                                                           │───────────────────╯
+╭ ▸ CHECKLISTS ─────│ ACCEPTANCE —                                                                                               │────── 11 watched ─╮
+│ ● otter standard  │ AGENTS                                                                                                     │───────────────────│
+│   ●─●─◉─○─○─○ exec│   lead sonnet standard failed                                                                              │▁▁▁▁▁▁█▁ ok 45s    │
+│ ● heron standard  │   execute subagents: not reported                                                                          │▁▁▁▁▁▁▁▁ ok 10m    │
+│   ●─●─●─●─●─● pr_o│ ATTENTION                                                                                                  │▁▁▁▁▁▁▁▁ ok 5m     │
+│ ● feat/c standard │   ✗ exit 1 after test failure → crew where --crew c1 -- feat/h                                             │▁▁▁▁▁▁▁▁ prompt 3m │
+│   ○─○─○─○─○─○ bloc│     To clear: reaped once its PR merges/closes or its issue closes (crew reap), or re-dispatch             │▁▁▁▁▁▁▁▁ stall 4m  │
+│ ● feat/d standard │ RECENT EVENTS                                                                                              │▁▁▁▁▁▁▁▁ runaway 2m│
+│   ○─○─○─○─○─○ bloc│   none                                                                                                     │········ ok 7m     │
+│ ● feat/e standard ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────╯▁▁▁█▁▁▁▁ ok 30s    │
+│   ○─○─○─○─○─○ blocked                                    ││   roles —                                 ││ feat/p@mbp ···················· ok        │
+│ ● feat/f standard                                    AC —││ ● feat/f sonnet standard                  ││ feat/q@nuc ···················· ?         │
+│   ○─○─○─○─○─○ blocked                                    ││   roles —                                 ││ @halo      ···················· ?         │
+│ ✗ feat/g standard                                    AC —││ ✗ feat/g sonnet standard                  ││ PR CHECKS ────────────────────────────────│
+│   ○─○─○─○─○─○ failed                                     ││   roles —                                 ││ #12 ● checks ● merge 10m                  │
+│▌✗ feat/h standard                                    AC —││▌✗ feat/h sonnet standard                  ││ BUDGET ───────────────────────────────────│
+│▌  ○─○─○─○─○─○ failed                                     ││▌  roles —                                 ││ claude 5h   ██░░░░░░░░░░░░░░░░░░  10%     │
+│ ● feat/r@halo deep                                   AC —││ ● feat/r@halo gpt-5 deep                  ││ claude 7d   ████████████░░░░░░░░  62% ↑   │
+│   ?                                                      ││   roles ?                                 ││                                           │
+│ ● feat/j standard                                    AC —││ ● feat/j sonnet standard                  ││                                           │
+│   ●─-─◉─○─○─○ execute                                    ││   roles —                                 ││                                           │
+│ ● feat/p@mbp ?                                       AC —││ ● feat/p@mbp ? ?                          ││                                           │
+│   ?                                                      ││   roles ?                                 ││                                           │
+│ ○ feat/q@nuc ?                                       AC —││ ○ feat/q@nuc ? ?                          ││                                           │
+│   ?                                                      ││   roles ?                                 ││                                           │
+│ ○ @halo ?                                            AC —││ ○ @halo ? ?                               ││                                           │
+│   ?                                                      ││   roles ?                                 ││                                           │
+│                                                          ││                                           ││                                           │
+╰──────────────────────────────────────────────────────────╯╰───────────────────────────────────────────╯╰───────────────────────────────────────────╯
