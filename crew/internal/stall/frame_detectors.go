@@ -144,6 +144,11 @@ func (w *watch) d1() error {
 	switch kind {
 	case "permission":
 		detail = permissionDetail(w.text, w.cfg.pane)
+	case "prompt":
+		if frame.IsAddDirPrompt(w.cfg.engine, w.text) {
+			detail = "prompt: add-dir trust dialog in pane " + w.cfg.pane +
+				" — injected keys cannot answer it; relay to the human (a granted dir has no trust record in ~/.claude.json)"
+		}
 	case "quota":
 		prefix = "quota:"
 		detail = "quota: quota exhausted — worker parked on the rate-limit prompt in pane " + w.cfg.pane +

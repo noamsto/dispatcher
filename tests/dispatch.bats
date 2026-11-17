@@ -8901,6 +8901,112 @@ EOF
   run ! grep -q 'send-keys' "$STUB_LOG"
 }
 
+# The four read-only protocol dirs are immutable store paths whose hash changes
+# on every dispatcher update; Claude Code asks "do you trust this directory?" at
+# launch for each --add-dir path with no trust record, and tmux keys cannot
+# answer it. Launching stamps the same record the worktree gets.
+
+# _ro_dirs_fixture — fresh reviewers/critics dirs (reviewers via a symlink, so
+# the stamp key must be the realpath), exported for the dispatch under test.
+_ro_dirs_fixture() {
+  mkdir -p "$BATS_TEST_TMPDIR/rev-real" "$BATS_TEST_TMPDIR/critics"
+  ln -s "$BATS_TEST_TMPDIR/rev-real" "$BATS_TEST_TMPDIR/revlink"
+  export DISPATCHER_REVIEWERS_DIR="$BATS_TEST_TMPDIR/revlink"
+  export DISPATCHER_CRITICS_DIR="$BATS_TEST_TMPDIR/critics"
+  ro_dirs=("$DISPATCHER_PROTOCOL_DIR" "$DISPATCHER_SKILLS_DIR" "$DISPATCHER_REVIEWERS_DIR" "$DISPATCHER_CRITICS_DIR")
+}
+
+@test "trust: a claude dispatch stamps the four read-only protocol dirs by realpath" {
+  stub_launch_bins
+  _ro_dirs_fixture
+  run run_dispatch standard sonnet --effort medium --no-grid --crew-id c1 42 "title"
+  [ "$status" -eq 0 ]
+  for d in "${ro_dirs[@]}"; do
+    run jq -e --arg p "$(realpath -e "$d")" '.projects[$p].hasTrustDialogAccepted == true' "$HOME/.claude.json"
+    [ "$status" -eq 0 ]
+  done
+}
+
+@test "trust: stamping the protocol dirs preserves unrelated projects and top-level keys" {
+  stub_launch_bins
+  _ro_dirs_fixture
+  jq -n '{userID: "u1", projects: {"/somewhere/else": {hasTrustDialogAccepted: true, allowedTools: ["Bash"]}}}' \
+    >"$HOME/.claude.json"
+  run run_dispatch standard sonnet --effort medium --no-grid --crew-id c1 42 "title"
+  [ "$status" -eq 0 ]
+  run jq -e --arg p "$(realpath -e "$DISPATCHER_CRITICS_DIR")" \
+    '.userID == "u1" and (.projects["/somewhere/else"].allowedTools == ["Bash"]) and .projects[$p].hasTrustDialogAccepted == true' "$HOME/.claude.json"
+  [ "$status" -eq 0 ]
+}
+
+@test "trust: the artifacts dir and an explicit --add-dir grant are never stamped" {
+  stub_launch_bins
+  _ro_dirs_fixture
+  export DISPATCH_GRANT_ROOTS="$(realpath "$BATS_TEST_TMPDIR")"
+  real="$(realpath "$BATS_TEST_TMPDIR")/grant"
+  mkdir -p "$real"
+  run run_dispatch standard sonnet --effort medium --no-grid --add-dir "$real" --crew-id c1 42 "title"
+  [ "$status" -eq 0 ]
+  art="$TEST_REPO/.git/crew/artifacts/feat/42-title"
+  [ -d "$art" ]
+  run jq -e --arg a "$art" --arg g "$real" '(.projects | has($a) | not) and (.projects | has($g) | not)' "$HOME/.claude.json"
+  [ "$status" -eq 0 ]
+}
+
+@test "trust: the launch line keeps every --add-dir flag and Edit deny rule after stamping" {
+  stub_launch_bins
+  _ro_dirs_fixture
+  run run_dispatch standard sonnet --effort medium --no-grid --crew-id c1 42 "title"
+  [ "$status" -eq 0 ]
+  line="$(grep -F 'claude --name iris ' <(launch_log))"
+  for d in "${ro_dirs[@]}"; do
+    [[ "$line" == *"--add-dir $d "* ]]
+    _ro_rule "$d"
+    [[ "$line" == *"$r"* ]]
+    _ro_rule "$(realpath -e "$d")"
+    [[ "$line" == *"$r"* ]]
+  done
+  assert_add_dir_terminated "$line"
+}
+
+@test "trust: a launch with every dir already stamped does not rewrite ~/.claude.json" {
+  stub_launch_bins
+  _ro_dirs_fixture
+  run run_dispatch standard sonnet --effort medium --no-grid --crew-id c1 42 "title"
+  [ "$status" -eq 0 ]
+  before="$(stat -c %i "$HOME/.claude.json")"
+  (
+    export crew_dir="$TEST_REPO/.git/crew" PROTOCOL_DIR="$DISPATCHER_PROTOCOL_DIR" SKILLS_DIR="$DISPATCHER_SKILLS_DIR" \
+      REVIEWERS_DIR="$DISPATCHER_REVIEWERS_DIR" CRITICS_DIR="$DISPATCHER_CRITICS_DIR"
+    # shellcheck source=/dev/null
+    source "$BATS_TEST_DIRNAME/../adapters/core/launcher-common.sh"
+    launch_dir_args claude feat/42-title >/dev/null
+  )
+  [ "$(stat -c %i "$HOME/.claude.json")" = "$before" ]
+}
+
+@test "trust: a held ~/.claude.json lock still yields every --add-dir flag and Edit deny rule, with a warning" {
+  _ro_dirs_fixture
+  sleep 100 &
+  holder_pid=$!
+  ln -s "$holder_pid" "$HOME/.claude.json.dispatch.lock"
+  run bash -c '
+    export crew_dir="$1/.git/crew" PROTOCOL_DIR="$2" SKILLS_DIR="$3" REVIEWERS_DIR="$4" CRITICS_DIR="$5"
+    source "$6/adapters/core/launcher-common.sh"
+    launch_dir_args claude feat/42-title 2>&1 >"$7"
+  ' _ "$TEST_REPO" "$DISPATCHER_PROTOCOL_DIR" "$DISPATCHER_SKILLS_DIR" "$DISPATCHER_REVIEWERS_DIR" "$DISPATCHER_CRITICS_DIR" "$BATS_TEST_DIRNAME/.." "$BATS_TEST_TMPDIR/stdout"
+  kill "$holder_pid" 2>/dev/null || true
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"could not pre-trust protocol dirs for feat/42-title"* ]]
+  out="$(cat "$BATS_TEST_TMPDIR/stdout")"
+  for d in "${ro_dirs[@]}"; do
+    [[ "$out" == *"--add-dir $d"* ]]
+    _ro_rule "$d"
+    [[ "$out" == *"$r"* ]]
+  done
+  [ "$(readlink "$HOME/.claude.json.dispatch.lock")" = "$holder_pid" ]
+}
+
 # resume (#73): dispatching onto a branch that already exists continues the
 # interrupted run in place rather than dying on `wt switch -c`. Every fixture
 # below extends the create-mode gate pattern above — stub_launch_bins plus a

@@ -115,6 +115,15 @@ func TestPromptWatchRows(t *testing.T) {
 				strings.Repeat("x", 115) + " — pane %9"},
 			capped: true,
 		},
+		{
+			// The frame sits outside IsPrompt's `Enter to select` shape and
+			// injected keys do not answer it, so the detail says to relay it.
+			name:    "the add-dir trust dialog posts a relay-to-human prompt:",
+			frame:   "prompt_adddir.txt",
+			maxLife: "3",
+			want: []string{leadID + "|blocked|watchdog|prompt: add-dir trust dialog in pane %9 — " +
+				"injected keys cannot answer it; relay to the human (a granted dir has no trust record in ~/.claude.json)"},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			req := Request{Pane: ptr("%9"), MaxLife: ptr(tc.maxLife)}

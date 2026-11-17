@@ -2603,6 +2603,12 @@ row:pi working row: glyph not first	pi_working_row	0
 row:pi working row: no glyph	pi_working_row	0
 row:pi working row: no leading space	pi_working_row	1
 row:pi working row: non-braille symbol	pi_working_row	0
+row:prompt: add-dir trust dialog footer not last	prompt	0
+row:prompt: add-dir trust dialog is not for codex	prompt	0
+row:prompt: add-dir trust dialog uses the claude shape on pi	prompt	1
+row:prompt: add-dir trust dialog with a session-name rule below	prompt	1
+row:prompt: add-dir trust dialog without the Yes option	prompt	0
+row:prompt: add-dir trust dialog	prompt	1
 row:prompt: codex defers to the hook-review shape	prompt	0
 row:prompt: codex hook review	prompt	1
 row:prompt: Code Mode opt-in dialog	prompt	1
