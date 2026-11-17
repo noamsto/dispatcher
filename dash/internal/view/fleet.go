@@ -23,6 +23,12 @@ type FleetInputs struct {
 	Loaded     Loaded
 	NowMS      int64
 	Crew       []string
+	Pending    FleetPending
+}
+
+// FleetPending marks the sources a streamed partial has not delivered yet.
+type FleetPending struct {
+	Status, Queue, Reach, Hosts bool
 }
 
 func (f FleetInputs) nowSec() int64 {
@@ -44,6 +50,7 @@ type FleetView struct {
 	Hosts          []FleetHostRow       `json:"hosts"`
 	SuggestedHosts []data.SuggestedHost `json:"suggested_hosts"`
 	Errors         []string             `json:"errors"`
+	Pending        FleetPending         `json:"-"`
 }
 
 // FleetSummary counts the shown crews (one per head row); Dropped counts peer rows that claimed
@@ -510,6 +517,7 @@ func BuildFleet(f FleetInputs) FleetView {
 		Holds:          fleetHolds(f),
 		SuggestedHosts: nonNil(f.Fleet.Suggested),
 		Errors:         fleetErrors(f),
+		Pending:        f.Pending,
 	}
 	crews, dropped := fleetCrews(f)
 	v.Summary.Dropped = dropped

@@ -39,7 +39,9 @@ type Loaders struct {
 	Roster   func(context.Context) data.RosterSection
 	Bus      func(context.Context) data.BusDigest
 	// Fleet is not loaded at Init: the Fleet tab requests it on first activation.
-	Fleet func(context.Context) vm.FleetInputs
+	// Fleet streams accumulated partial inputs through emit and returns the
+	// final; emit must not block.
+	Fleet func(ctx context.Context, emit func(vm.FleetInputs)) vm.FleetInputs
 }
 
 // loadState tracks one source. again records a request that arrived while a
@@ -59,19 +61,67 @@ type sourceMsg struct {
 	fleet *vm.FleetInputs // set only by srcFleet
 }
 
+// fleetPartialMsg carries a non-final fleet partial; next waits for the
+// stream's following message.
+type fleetPartialMsg struct {
+	in   vm.FleetInputs
+	next tea.Cmd
+}
+
+// fleetCmd runs the fleet stream in the background and returns the wait
+// chain over it. Partials pass through a one-slot channel that a newer
+// partial replaces, so the collector never blocks on a slow UI. The channel
+// closes before the final is published, so no partial can follow it.
+func (l Loaders) fleetCmd(ctx context.Context) tea.Cmd {
+	return func() tea.Msg {
+		if l.Fleet == nil {
+			return sourceMsg{src: srcFleet, apply: func(*data.Snapshot) {}, fleet: &vm.FleetInputs{}}
+		}
+		parts := make(chan vm.FleetInputs, 1)
+		final := make(chan vm.FleetInputs, 1)
+		go func() {
+			f := l.Fleet(ctx, func(in vm.FleetInputs) {
+				for {
+					select {
+					case <-ctx.Done():
+						return
+					case parts <- in:
+						return
+					default:
+					}
+					select {
+					case <-parts:
+					default:
+					}
+				}
+			})
+			close(parts)
+			final <- f
+		}()
+		return waitFleetStream(parts, final)()
+	}
+}
+
+func waitFleetStream(parts <-chan vm.FleetInputs, final <-chan vm.FleetInputs) tea.Cmd {
+	return func() tea.Msg {
+		in, ok := <-parts
+		if ok {
+			return fleetPartialMsg{in: in, next: waitFleetStream(parts, final)}
+		}
+		f := <-final
+		return sourceMsg{src: srcFleet, apply: func(*data.Snapshot) {}, fleet: &f}
+	}
+}
+
 func (l Loaders) cmd(ctx context.Context, s source) tea.Cmd {
+	if s == srcFleet {
+		return l.fleetCmd(ctx)
+	}
 	return func() tea.Msg {
 		msg := sourceMsg{src: s, apply: l.collect(ctx, s)}
 		if s == srcBus && l.Bus != nil {
 			d := l.Bus(ctx)
 			msg.bus = &d
-		}
-		if s == srcFleet {
-			var in vm.FleetInputs
-			if l.Fleet != nil {
-				in = l.Fleet(ctx)
-			}
-			msg.fleet = &in
 		}
 		return msg
 	}
