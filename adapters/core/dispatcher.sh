@@ -871,8 +871,8 @@ if git rev-parse --git-common-dir >/dev/null 2>&1; then
   # closed, not crashed. Not INT: this launcher shares the pane's foreground
   # process group with the engine, so a Ctrl-C meant for the engine would
   # deregister before the handoff relaunch check below.
-  trap 'crew deregister || true; exit 129' HUP
-  trap 'crew deregister || true; exit 143' TERM
+  trap 'remux_keep=1; crew deregister || true; exit 129' HUP
+  trap 'remux_keep=1; crew deregister || true; exit 143' TERM
 
   # The launch record `dispatcher --relaunch` restarts a crashed crew from; a
   # deregister removes it with the crew dir.
@@ -1028,14 +1028,16 @@ _handoff_prompt() {
 # function: a function left of || runs with errexit off for its whole body, and
 # only the engine's own exit may be tolerated.
 # The pin keeps remux's generic hook from replacing the stamp with a
-# protocol-less `claude --resume`. Set after every refusal and before the first
-# engine so its SessionStart hook sees the pin; a restore re-enters as the
-# protocol's crash relaunch (--fresh --no-note).
+# protocol-less `claude --resume`. Set before the first engine so its
+# SessionStart hook sees the pin; a restore re-enters as the protocol's crash
+# relaunch (--fresh --no-note). The EXIT trap clears both options on every exit
+# (including a refusal inside the launch loop) except a signal kill, where
+# remux_keep leaves the stamp for the restore.
 if [ -n "${TMUX:-}" ] && [ -n "${TMUX_PANE:-}" ] && [ "$overseer" = 0 ]; then
   remux_cmd=''
   if [ "$registered" = 1 ] && _plain_crew_id; then
     _relaunch_argv "$agent" "${model:-$(orch_default model)}" "${effort:-$(orch_default effort)}" "${ac:-auto}"
-    if remux_command remux_cmd "$PWD" "$CREW_ID" "${relaunch_cmd[@]:3}"; then
+    if remux_command remux_cmd "$PWD" "$CREW_ID" "${relaunch_cmd[@]}"; then
       remux_stamp "$TMUX_PANE" "$remux_cmd"
     else
       remux_pin_clear "$TMUX_PANE"
@@ -1043,7 +1045,7 @@ if [ -n "${TMUX:-}" ] && [ -n "${TMUX_PANE:-}" ] && [ "$overseer" = 0 ]; then
   else
     remux_pin_clear "$TMUX_PANE"
   fi
-  remux_owned=1
+  trap '[ -n "${remux_keep:-}" ] || remux_clear "$TMUX_PANE"' EXIT
 fi
 
 handoff_prompt=""
@@ -1213,11 +1215,9 @@ done
 if git rev-parse --git-common-dir >/dev/null 2>&1; then
   if [ "$rc" -ge 128 ] && [ "$rc" != 130 ]; then
     echo "dispatcher: the engine died by a signal (exit $rc); crew $CREW_ID stays registered and reads dead — 'dispatcher --relaunch $CREW_ID' restarts it" >&2
+    remux_keep=1
     exit "$rc"
   fi
-  [ -z "${remux_owned:-}" ] || remux_clear "$TMUX_PANE"
   crew deregister
-else
-  [ -z "${remux_owned:-}" ] || remux_clear "$TMUX_PANE"
 fi
 exit "$rc"

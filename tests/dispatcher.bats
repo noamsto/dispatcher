@@ -2543,7 +2543,7 @@ _remux_launch() { # engine [launcher args...]
 @test "1588: launcher stamps the pinned relaunch before the engine starts" {
   _remux_launch claude
   [ "$status" -eq 0 ]
-  want="set-option -p -t %1 @remux_relaunch cd '$PWD' && exec env CREW_ID='c1' 'dispatcher' '--fresh' '--no-note' '--agent' 'claude' '--model' 'opus' '--effort' 'high' '--autocompact' '300000'"
+  want="set-option -p -t %1 @remux_relaunch cd '$PWD' && exec env CREW_ID='c1' 'env' '-u' 'CREW_OVERSEER' 'dispatcher' '--fresh' '--no-note' '--agent' 'claude' '--model' 'opus' '--effort' 'high' '--autocompact' '300000'"
   [ "$(_remux_set_lines)" = "$want" ]
   stamp=$(grep -nxF "$want" "$STUB_LOG" | cut -d: -f1)
   pin=$(grep -nx 'set-option -p -t %1 @remux_relaunch_pinned 1' "$STUB_LOG" | head -1 | cut -d: -f1)
@@ -2576,6 +2576,30 @@ _remux_launch() { # engine [launcher args...]
   _real_crew_logged
   REMUX_BODY='exit 137' _remux_launch claude
   [ "$status" -eq 137 ]
+  eng=$(_engine_line)
+  [ "$(_remux_set_lines | wc -l)" = 1 ]
+  if tail -n +"$((eng + 1))" "$STUB_LOG" | grep -q '@remux_relaunch'; then return 1; fi
+}
+
+@test "1588: launcher clears both options when the launch loop refuses" {
+  export HOME="$BATS_TEST_TMPDIR/home"
+  git remote add origin git@github.com:noamsto/dispatcher.git
+  _dispatcher_settings '{"dispatcherMcp":{"noamsto/dispatcher":["analytics"]}}'
+  _remux_engine claude
+  TMUX=/tmp/fake,1,0 TMUX_PANE=%1 CREW_ID=c1 run run_launcher
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"config is missing"* ]]
+  [ "$(_remux_set_lines | wc -l)" = 1 ]
+  grep -qx 'set-option -p -t %1 @remux_relaunch_pinned 1' "$STUB_LOG"
+  [ "$(grep -cx 'set-option -pu -t %1 @remux_relaunch' "$STUB_LOG")" -ge 1 ]
+  [ "$(grep -cx 'set-option -pu -t %1 @remux_relaunch_pinned' "$STUB_LOG")" -ge 1 ]
+  if grep -q '^ENGINE ' "$STUB_LOG"; then return 1; fi
+}
+
+@test "1588: launcher leaves the stamp when it is hung up" {
+  _real_crew_logged
+  REMUX_BODY='kill -HUP $PPID; sleep 5' _remux_launch claude
+  [ "$status" -eq 129 ]
   eng=$(_engine_line)
   [ "$(_remux_set_lines | wc -l)" = 1 ]
   if tail -n +"$((eng + 1))" "$STUB_LOG" | grep -q '@remux_relaunch'; then return 1; fi
