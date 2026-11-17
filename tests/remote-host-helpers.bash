@@ -154,28 +154,38 @@ esac
 exit 0
 EOF
   # wt creates the worktree under the repo it runs in, so it serves either side.
+  # `switch <branch>` (no -c) attaches an existing branch that has no worktree.
   cat >"$STUB_DIR/wt" <<'EOF'
 #!/usr/bin/env bash
 if [ "$1" = switch ]; then
-  br="" base=""
+  br="" base="" create=""
   shift
   while [ $# -gt 0 ]; do
     case "$1" in
     -c)
       br="$2"
+      create=1
       shift 2
       ;;
     -b)
       base="$2"
       shift 2
       ;;
-    *) shift ;;
+    -*) shift ;;
+    *)
+      [ -n "$br" ] || br="$1"
+      shift
+      ;;
     esac
   done
   [ -n "$br" ] || exit 1
   root="$(git worktree list --porcelain | awk '/^worktree /{print $2; exit}')"
   mkdir -p "$root/.worktrees"
-  git worktree add -q -b "$br" "$root/.worktrees/${br//\//-}" "${base:-HEAD}"
+  if [ -n "$create" ]; then
+    git worktree add -q -b "$br" "$root/.worktrees/${br//\//-}" "${base:-HEAD}"
+  elif ! git worktree list --porcelain | grep -qxF "branch refs/heads/$br"; then
+    git worktree add -q "$root/.worktrees/${br//\//-}" "$br"
+  fi
 fi
 exit 0
 EOF
