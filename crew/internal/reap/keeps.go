@@ -15,7 +15,6 @@ type Keep struct {
 	Reason string `json:"reason"`
 }
 
-// keepLog collects the keeps of a `--dry-run --json` reap.
 type keepLog struct{ keeps []Keep }
 
 // write prints the one document `--json` promises; keeps is [] when none.

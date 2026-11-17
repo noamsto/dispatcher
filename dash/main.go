@@ -344,7 +344,6 @@ func (k *keepCache) finish(now time.Time, v map[data.WorkerKey]string, done chan
 	return v
 }
 
-// cached returns the current value without blocking.
 func (k *keepCache) cached(now func() time.Time, fetch func() map[data.WorkerKey]string) map[data.WorkerKey]string {
 	val, done, _ := k.begin(now(), false)
 	if done == nil {
