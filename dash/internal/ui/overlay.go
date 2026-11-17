@@ -187,6 +187,9 @@ func detailLines(ov vm.OverviewView, wi, iw int) []string {
 		}
 		glyph, gc := severityGlyph(a.Severity)
 		out = append(out, "   "+fg(gc).Render(glyph)+plain.Render(" "+cleanText(a.Message)+" ")+fg(colDim).Render("→ "+cmd))
+		if a.Clears != "" {
+			out = append(out, "     "+fg(colDim).Render("To clear: "+cleanText(a.Clears)))
+		}
 	}
 	if n == 0 {
 		out = append(out, "   "+fg(colDim).Render("none"))

@@ -602,7 +602,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 		}
 		c := parsed.typed.Reap
 		return reap.RunFleet(ctx, reap.Request{
-			Quiet: c.Quiet, DryRun: c.DryRun, NoWait: c.NoWait, Idle: str(c.Idle), Discard: str(c.Discard),
+			Quiet: c.Quiet, DryRun: c.DryRun, NoWait: c.NoWait, JSON: c.JSON, Idle: str(c.Idle), Discard: str(c.Discard),
 		}, stdout, stderr, reapOptions(ctx), reap.FleetOptions{})
 	case "overseer":
 		// It picks its own bus, so it runs before Locate and outside any repo.
@@ -725,7 +725,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 		}
 		c := parsed.typed.Reap
 		return reap.Run(ctx, reap.Request{
-			Quiet: c.Quiet, DryRun: c.DryRun, NoWait: c.NoWait, Idle: str(c.Idle), Discard: str(c.Discard),
+			Quiet: c.Quiet, DryRun: c.DryRun, NoWait: c.NoWait, JSON: c.JSON, Idle: str(c.Idle), Discard: str(c.Discard),
 		}, paths, cwd, stdout, stderr, o)
 	}
 

@@ -115,7 +115,7 @@ func (r *run) discardBranch(ctx context.Context) int {
 		r.say("no uncommitted changes to save")
 	}
 	if postSt, err := wtgit.Status(ctx, c.admin, wt, wtgit.Opts{Stderr: r.stderr}, "--untracked-files=all"); err != nil || postSt != preSt {
-		r.say("keeping " + c.branch + " — changed while saving")
+		r.keepSay(c, "changed while saving")
 		return 1
 	}
 	r.discardPatch, r.discardSt, r.discardTree = patch, preSt, tree
@@ -153,7 +153,7 @@ func (r *run) discardGates(ctx context.Context, c *candidate) string {
 	}
 	if !r.guardOK(gitguard.Check(r.paths.Common, admin, r.stderr)) ||
 		!r.guardOK(gitguard.CheckCwd(r.paths.Common, r.trusted, r.stderr)) {
-		return "git config drift"
+		return "git config drift (run `crew git-baseline`)"
 	}
 	return ""
 }

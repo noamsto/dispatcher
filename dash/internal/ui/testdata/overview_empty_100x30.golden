@@ -1,5 +1,5 @@
 ╭ ▸ ATTENTION ───────────────────────────────────────────────────────────────────── 1 need action ─╮
-│▌1 ✗ c2 crew stream lane is dead                                                    now → inspect │
+│▌1 ✗ c2 crew stream lane is dead — re-arm `crew stream --crew c2`                   now → inspect │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭ CHECKLISTS ──────────── 0 of 0 done ─╮╭ AGENTS ───────── 0 agents ─╮╭ MONITORS ────── 0 watched ─╮
 │ no live workers in this crew         ││ no live agents             ││ nothing watched            │

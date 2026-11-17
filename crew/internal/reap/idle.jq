@@ -9,7 +9,7 @@
 #     and booleans as text) and its error on an array or object cell.
 #
 # `.` is the slurped bus, `now` the wall clock, $idle and $terminal the arm's
-# `--argjson`s. Cells: branch session state ts.
+# `--argjson`s. Cells: branch session state ts crew.
 def wid_branch: ltrimstr("worker:") | sub("#[^#]*$";"");
 def wid_session: ltrimstr("worker:") | (if test("#") then (split("#") | last) else null end);
 def _tsvcells: map(
@@ -29,5 +29,5 @@ map(select((.kind=="status" or .kind=="claim") and ((.from // "") | startswith("
 # A watchdog-posted failed marks a hung pane: keep it as evidence.
 | map(select((.body.source // "") != "watchdog" or .body.state != "failed"))
 | map(select((((now*1000) - .ts) / 1000) >= $idle))
-| .[] | [(.from | wid_branch), (((.from | wid_session) // "") | if . == "" then "-" else . end), .body.state, .ts] | _tsvcells
+| .[] | [(.from | wid_branch), (((.from | wid_session) // "") | if . == "" then "-" else . end), .body.state, .ts, (.crew_id // "")] | _tsvcells
 ]

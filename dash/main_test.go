@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -704,5 +705,76 @@ func TestResolveCrewMakesRelativeCrewBinAbsolute(t *testing.T) {
 	}
 	if !slices.Equal(got, []string{want}) {
 		t.Errorf("resolveCrew = %v, want [%s]", got, want)
+	}
+}
+
+func TestKeepCacheTTL(t *testing.T) {
+	var kc keepCache
+	now := time.Unix(1000, 0)
+	clock := func() time.Time { return now }
+	calls := 0
+	fetch := func() map[data.WorkerKey]string {
+		calls++
+		return map[data.WorkerKey]string{{Crew: "c", Branch: "b"}: "why"}
+	}
+	for range 2 {
+		if got := kc.get(context.Background(), clock, fetch); got[data.WorkerKey{Crew: "c", Branch: "b"}] != "why" {
+			t.Fatalf("keeps = %v", got)
+		}
+	}
+	if calls != 1 {
+		t.Fatalf("fetch calls within TTL = %d, want 1", calls)
+	}
+	now = now.Add(reapKeepsTTL + time.Second)
+	kc.get(context.Background(), clock, fetch)
+	if calls != 2 {
+		t.Fatalf("fetch calls after TTL = %d, want 2", calls)
+	}
+}
+
+func TestKeepCacheSingleFlight(t *testing.T) {
+	var kc keepCache
+	release := make(chan struct{})
+	var calls atomic.Int32
+	fetch := func() map[data.WorkerKey]string {
+		calls.Add(1)
+		<-release
+		return nil
+	}
+	var wg sync.WaitGroup
+	for range 3 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			kc.get(context.Background(), time.Now, fetch)
+		}()
+	}
+	time.Sleep(50 * time.Millisecond)
+	close(release)
+	wg.Wait()
+	if n := calls.Load(); n != 1 {
+		t.Fatalf("fetch calls = %d, want 1", n)
+	}
+}
+
+func TestFleetCollectorCachesReapKeeps(t *testing.T) {
+	r := &data.FakeRunner{Responses: map[string]data.FakeResponse{
+		"crew reap --fleet --dry-run --json": {Stdout: []byte(`{"keeps":[{"crew":"c1","branch":"feat/a","reason":"r"}]}`)},
+	}}
+	fc := newFleetCollector(r, data.Config{Crew: []string{"crew"}})
+	for range 2 {
+		in := fc.collect(context.Background(), 1794800010)
+		if in.ReapKeeps[data.WorkerKey{Crew: "c1", Branch: "feat/a"}] != "r" {
+			t.Fatalf("ReapKeeps = %v", in.ReapKeeps)
+		}
+	}
+	n := 0
+	for _, c := range r.CallsSnapshot() {
+		if strings.Contains(strings.Join(c.Args, " "), "reap") {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Fatalf("reap calls = %d, want 1", n)
 	}
 }

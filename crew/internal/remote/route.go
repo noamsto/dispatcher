@@ -17,10 +17,15 @@ type Worker struct {
 	TS                 any
 }
 
-// RemoteWorkers is crew's remote workers, sorted by host then branch.
+// RemoteWorkers is crew's remote workers, sorted by host then branch. A reap
+// row (it carries no crew_id) drops its branch until a later remote dispatch.
 func RemoteWorkers(rows []bus.Event, crew string) []Worker {
 	newest := map[string]Worker{}
 	for _, e := range rows {
+		if e.Kind == bus.KindReap {
+			delete(newest, e.Branch)
+			continue
+		}
 		doc, ok := dispatchRow(e, crew)
 		if !ok {
 			continue

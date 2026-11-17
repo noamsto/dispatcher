@@ -35,7 +35,16 @@ var nonAlnum = regexp.MustCompile(`[^A-Za-z0-9]`)
 type Deps struct {
 	Common, Log string
 	Say, Note   func(string)
-	P           Probes
+	// Keep, when set, also receives each keep's branch and reason.
+	Keep func(branch, why string)
+	P    Probes
+}
+
+func (d Deps) keep(branch, why string) {
+	if d.Keep != nil {
+		d.Keep(branch, why)
+	}
+	d.Note("keeping " + branch + " — " + why)
 }
 
 // ReleaseWindows is `_release_windows`: kill the WINDOWs of a finished worker
@@ -64,7 +73,7 @@ func ReleaseWindows(ctx context.Context, d Deps, branch, session, state string, 
 	// releasable, engine or not: an agent legitimately idles in its pane after
 	// posting `done`, which is exactly what idle-release exists to clean up (#17).
 	if state == "exited" && slices.ContainsFunc(occ, func(o Occupant) bool { return o.Engine }) {
-		d.Note("keeping " + branch + " — exited but an engine is still running there")
+		d.keep(branch, "exited but an engine is still running there")
 		return 0, nil
 	}
 	windows := make([]string, len(occ))
@@ -72,11 +81,11 @@ func ReleaseWindows(ctx context.Context, d Deps, branch, session, state string, 
 		windows[i] = o.Window
 	}
 	if why, ok := humanPresent(ctx, d.P, windows, wt, tsMS, grace); ok {
-		d.Note("keeping " + branch + " — human present: " + why)
+		d.keep(branch, "human present: "+why)
 		return 3, nil
 	}
 	if why, ok := framesBusy(ctx, d.P, occ); ok {
-		d.Note("keeping " + branch + " — pane busy: " + why)
+		d.keep(branch, "pane busy: "+why)
 		return 3, nil
 	}
 	for _, w := range windows {

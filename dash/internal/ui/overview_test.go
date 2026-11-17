@@ -445,6 +445,16 @@ func TestHelpOverlay(t *testing.T) {
 	}
 }
 
+func TestDetailOverlayShowsWhatClears(t *testing.T) {
+	v, _ := ovFixture(t, 150, 40, false, nil)
+	selectBranch(t, &v, "feat/a")
+	v, _ = ovKeys(v, "enter")
+	got := stripped(v.View(150, 40))
+	if want := "To clear: restart the role pane"; !strings.Contains(got, want) {
+		t.Errorf("detail lacks %q:\n%s", want, got)
+	}
+}
+
 func TestDetailOverlay(t *testing.T) {
 	v, _ := ovFixture(t, 150, 40, false, nil)
 	selectBranch(t, &v, "feat/a")

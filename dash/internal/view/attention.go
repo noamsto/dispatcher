@@ -53,6 +53,7 @@ type AttentionItem struct {
 	Severity Severity `json:"severity"`
 	Kind     Kind     `json:"kind"`
 	Message  string   `json:"message"`
+	Clears   string   `json:"clears"`
 	AgeSec   int64    `json:"age_sec"`
 	Action   *Action  `json:"action"`
 }
@@ -135,7 +136,7 @@ func message(w WorkerRow, fallback string) string {
 	return fallback
 }
 
-func attentionOf(w WorkerRow, kind Kind, sev Severity, key, msg string) AttentionItem {
+func attentionOf(w WorkerRow, kind Kind, sev Severity, key, msg, keep string) AttentionItem {
 	id := fmt.Sprintf("%s:%s:%s", kind, w.Crew, w.Branch)
 	if w.Host != "" {
 		id = fmt.Sprintf("%s:%s/%s:%s", kind, w.Host, w.Crew, w.Branch)
@@ -150,6 +151,7 @@ func attentionOf(w WorkerRow, kind Kind, sev Severity, key, msg string) Attentio
 		Severity: sev,
 		Kind:     kind,
 		Message:  msg,
+		Clears:   clearsText(kind, clearsCtx{PR: w.PR, Branch: w.Branch, CrewID: w.Crew, Keep: keep}),
 		AgeSec:   derefInt(w.AgeS),
 		Action:   w.action(key),
 	}
@@ -200,14 +202,18 @@ func buildAttention(in Inputs, rows []WorkerRow) []AttentionItem {
 			byKey[data.WorkerKey{Crew: w.Crew, Branch: w.Branch}] = w
 		}
 		if kind, sev, key, ok := stateItem(w); ok {
-			it := attentionOf(w, kind, sev, key, message(w, w.State))
+			var keep string
+			if w.Origin == OriginLocal {
+				keep = in.ReapKeeps[data.WorkerKey{Crew: w.Crew, Branch: w.Branch}]
+			}
+			it := attentionOf(w, kind, sev, key, message(w, w.State), keep)
 			if kind == KindBlocked && w.BlockedSince != nil {
 				it.AgeSec = max(now-*w.BlockedSince/1000, 0)
 			}
 			items = append(items, it)
 		}
 		if mergeReady(w, in) {
-			items = append(items, attentionOf(w, KindMergeReady, SeverityReady, "m", fmt.Sprintf("PR #%d checks green, mergeable", *w.PR)))
+			items = append(items, attentionOf(w, KindMergeReady, SeverityReady, "m", fmt.Sprintf("PR #%d checks green, mergeable", *w.PR), ""))
 		}
 	}
 
@@ -228,7 +234,7 @@ func buildAttention(in Inputs, rows []WorkerRow) []AttentionItem {
 			parts = append(parts, role+": "+r.Detail)
 			age = max(age, now-r.TS/1000)
 		}
-		it := attentionOf(w, KindRoleFailed, SeverityCritical, "p", strings.Join(parts, "; "))
+		it := attentionOf(w, KindRoleFailed, SeverityCritical, "p", strings.Join(parts, "; "), "")
 		it.AgeSec = age
 		items = append(items, it)
 	}
@@ -242,7 +248,8 @@ func buildAttention(in Inputs, rows []WorkerRow) []AttentionItem {
 			act := withDir(newAction("", "inspect", "inspect", false, InspectLaneArgv(in.Crew, c.ID)), in.Dir)
 			items = append(items, AttentionItem{
 				ID: fmt.Sprintf("%s:%s:", kind, c.ID), Crew: c.ID, Origin: OriginLocal,
-				Severity: sev, Kind: kind, Message: "crew stream lane is " + c.Lane.State, Action: &act,
+				Severity: sev, Kind: kind, Message: "crew stream lane is " + c.Lane.State,
+				Clears: clearsText(kind, clearsCtx{CrewID: c.ID}), Action: &act,
 			})
 		}
 		for _, h := range c.Holds {
@@ -262,7 +269,8 @@ func buildAttention(in Inputs, rows []WorkerRow) []AttentionItem {
 			}
 			items = append(items, AttentionItem{
 				ID: fmt.Sprintf("%s:%s:%s", KindHoldMatured, c.ID, hr.ID), Crew: c.ID, Origin: OriginLocal,
-				Severity: SeverityWarning, Kind: KindHoldMatured, Message: msg, AgeSec: age, Action: &act,
+				Severity: SeverityWarning, Kind: KindHoldMatured, Message: msg,
+				Clears: clearsText(KindHoldMatured, clearsCtx{}), AgeSec: age, Action: &act,
 			})
 		}
 	}

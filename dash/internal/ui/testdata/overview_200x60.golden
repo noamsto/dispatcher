@@ -1,13 +1,13 @@
 ╭ ▸ ATTENTION ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── 12 need action ─╮
-│▌1 ✗ feat/h exit 1 after test failure                                                                                                                                                   20m → peek    │
-│ 2 ✗ feat/g dead: quiet: no output 20m                                                                                                                                                  15m → peek    │
-│ 3 ✗ otter  reviewer: role reviewer engine exited (pane %9)                                                                                                                              6m → peek    │
-│ 4 ✗ c2     crew stream lane is dead                                                                                                                                                    now → inspect │
-│ 5 ! feat/r need the staging db password                                                                                                                                                 7m → reply   │
-│ 6 ! feat/c which schema should the migration target?                                                                                                                                    5m → reply   │
-│ 7 ! feat/e quiet: no output 4m                                                                                                                                                          4m → nudge   │
-│ 8 ! feat/d prompt: permission dialog                                                                                                                                                    3m → peek    │
-│ 9 ! feat/f runaway: 900 tool calls in 10m                                                                                                                                               2m → peek    │
+│▌1 ✗ feat/h exit 1 after test failure — reaped once its PR merges/closes or its issue closes (crew reap), or re-dispatch                                                                20m → peek    │
+│ 2 ✗ feat/g dead: quiet: no output 20m — reaped once its PR merges/closes or its issue closes (crew reap), or re-dispatch                                                               15m → peek    │
+│ 3 ✗ otter  reviewer: role reviewer engine exited (pane %9) — restart the role pane or `crew nudge` the worker                                                                           6m → peek    │
+│ 4 ✗ c2     crew stream lane is dead — re-arm `crew stream --crew c2`                                                                                                                   now → inspect │
+│ 5 ! feat/r need the staging db password — a `crew reply` to its question                                                                                                                7m → reply   │
+│ 6 ! feat/c which schema should the migration target? — a `crew reply` to its question                                                                                                   5m → reply   │
+│ 7 ! feat/e quiet: no output 4m — clears on next output; dead after 30 min more                                                                                                          4m → nudge   │
+│ 8 ! feat/d prompt: permission dialog — answer the prompt in pane (crew where feat/d)                                                                                                    3m → peek    │
+│ 9 ! feat/f runaway: 900 tool calls in 10m — clears when the worker emits output or `crew nudge` wakes it                                                                                2m → peek    │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭ CHECKLISTS ─────────────────────────────────────────────────── 0 of 13 done ─╮╭ AGENTS ────────────────────────────────────── 16 agents ─╮╭ MONITORS ─────────────────────────────────── 11 watched ─╮
 │ ● otter standard                                                         AC —││ ● otter sonnet standard                                  ││ WATCHDOG ────────────────────────────────────────────────│

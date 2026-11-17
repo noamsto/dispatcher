@@ -271,6 +271,50 @@ type fleetCollector struct {
 	mu      sync.Mutex
 	commons []string
 	last    *view.FleetInputs
+
+	keeps keepCache
+}
+
+const reapKeepsTTL = 10 * time.Minute
+
+// keepCache holds the batched `crew reap --dry-run` answer for a TTL; the
+// probe is slow, so a refresh within it reuses the value and one in flight is
+// never doubled.
+type keepCache struct {
+	mu       sync.Mutex
+	val      map[data.WorkerKey]string
+	at       time.Time
+	inflight chan struct{}
+}
+
+func (k *keepCache) get(ctx context.Context, now func() time.Time, fetch func() map[data.WorkerKey]string) map[data.WorkerKey]string {
+	for {
+		k.mu.Lock()
+		if !k.at.IsZero() && now().Sub(k.at) < reapKeepsTTL {
+			v := k.val
+			k.mu.Unlock()
+			return v
+		}
+		if wait := k.inflight; wait != nil {
+			k.mu.Unlock()
+			<-wait
+			continue
+		}
+		done := make(chan struct{})
+		k.inflight = done
+		k.mu.Unlock()
+
+		v := fetch()
+
+		k.mu.Lock()
+		if ctx.Err() == nil {
+			k.val, k.at = v, now()
+		}
+		k.inflight = nil
+		k.mu.Unlock()
+		close(done)
+		return v
+	}
 }
 
 func newFleetCollector(r data.Runner, cfg data.Config) *fleetCollector {
@@ -340,7 +384,14 @@ func (fc *fleetCollector) stream(ctx context.Context, nowSec int64, emit func(vi
 	}
 
 	var wg sync.WaitGroup
-	wg.Add(4)
+	wg.Add(5)
+	go func() {
+		defer wg.Done()
+		keeps := fc.keeps.get(ctx, time.Now, func() map[data.WorkerKey]string {
+			return data.CollectReapKeeps(ctx, fc.runner, cfg)
+		})
+		update(func(in *view.FleetInputs) { in.ReapKeeps = keeps }, func(*view.FleetPending) {})
+	}()
 	go func() {
 		defer wg.Done()
 		settings := data.CollectSettings(ctx, fc.runner, cfg)

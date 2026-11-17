@@ -28,6 +28,11 @@ type FleetOptions struct {
 func RunFleet(ctx context.Context, req Request, stdout, stderr io.Writer, o Options, fo FleetOptions) int {
 	found := repos.Discover(repos.Options{Registry: fo.Registry, Getenv: fo.Getenv, Stderr: stderr, Prefix: "crew: reap --fleet"})
 	failed := 0
+	if req.JSON {
+		req.keeps = &keepLog{}
+		defer req.keeps.write(stdout)
+		stdout = io.Discard
+	}
 	// Absolutize every candidate before any reap runs. Discovery does not
 	// normalize: a relative CREW_SWEEP_ROOTS entry or registry line yields a
 	// relative Common, and reap.Run hands the checkout cwd to

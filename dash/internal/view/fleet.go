@@ -24,6 +24,7 @@ type FleetInputs struct {
 	NowMS      int64
 	Crew       []string
 	Pending    FleetPending
+	ReapKeeps  map[data.WorkerKey]string
 }
 
 // FleetPending marks the sources a streamed partial has not delivered yet.
@@ -347,6 +348,9 @@ func (c fleetCrew) inputs(f FleetInputs) Inputs {
 		NowMS:  f.NowMS,
 		Crew:   f.Crew,
 	}
+	if c.origin == OriginLocal {
+		in.ReapKeeps = f.ReapKeeps
+	}
 	if c.origin == OriginPeer {
 		in.Snap.Roster.Peers = c.peerRows
 		return in
@@ -443,13 +447,14 @@ func (c fleetCrew) linkItems(rows []WorkerRow) []AttentionItem {
 				continue
 			}
 			msg := fmt.Sprintf("%s on %s: %s", w.display(), w.Host, *w.HostError)
-			items = append(items, attentionOf(w, KindRemoteWatchDead, SeverityCritical, "p", msg))
+			items = append(items, attentionOf(w, KindRemoteWatchDead, SeverityCritical, "p", msg, ""))
 		}
 	}
 	if c.orphaned(rows) {
 		item := AttentionItem{
 			ID: fmt.Sprintf("%s:%s:", KindDispatcherGone, c.crew), Crew: c.crew, Origin: OriginLocal,
 			Severity: SeverityWarning, Kind: KindDispatcherGone,
+			Clears:  clearsText(KindDispatcherGone, clearsCtx{}),
 			Message: fmt.Sprintf("dispatcher closed, %d workers", unfinished(rows)),
 			AgeSec:  derefInt(c.home.Dispatcher.LastEventS),
 		}
@@ -851,7 +856,7 @@ func fleetHosts(f FleetInputs, locals []builtCrew, now int64) ([]FleetHostRow, [
 			}
 			items = append(items, AttentionItem{
 				ID: fmt.Sprintf("%s::%s", KindRelayLost, h.Name), Host: h.Name, Origin: OriginRemote,
-				Severity: SeverityCritical, Kind: KindRelayLost, AgeSec: age,
+				Severity: SeverityCritical, Kind: KindRelayLost, AgeSec: age, Clears: clearsText(KindRelayLost, clearsCtx{}),
 				Message: fmt.Sprintf("relay to %s lost (%d remote workers)", h.Name, lost),
 			})
 		}
@@ -866,6 +871,7 @@ func fleetHosts(f FleetInputs, locals []builtCrew, now int64) ([]FleetHostRow, [
 			items = append(items, AttentionItem{
 				ID: fmt.Sprintf("%s::%s", KindPeerStale, h.Name), Host: h.Name, Origin: OriginPeer,
 				Severity: SeverityWarning, Kind: KindPeerStale, AgeSec: derefInt(s.LagSec), Message: msg,
+				Clears: clearsText(KindPeerStale, clearsCtx{}),
 			})
 		}
 	}

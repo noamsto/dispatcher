@@ -340,3 +340,27 @@ func (f *FleetScanners) Scan(commons []string, nowMS int64) (map[string]BusDiges
 	wg.Wait()
 	return digests, errs
 }
+
+// CollectReapKeeps maps each branch crew reap would keep to its reason. Any
+// failure yields nil: a missing reason never becomes an error row.
+func CollectReapKeeps(ctx context.Context, r Runner, cfg Config) map[WorkerKey]string {
+	out, _, err := r.Run(ctx, cfg.Crew[0], crewArgs(cfg, "reap", "--fleet", "--dry-run", "--json")...)
+	if exitCode(err) != 0 {
+		return nil
+	}
+	var doc struct {
+		Keeps []struct {
+			Crew   string `json:"crew"`
+			Branch string `json:"branch"`
+			Reason string `json:"reason"`
+		} `json:"keeps"`
+	}
+	if json.Unmarshal(bytes.TrimSpace(out), &doc) != nil {
+		return nil
+	}
+	keeps := map[WorkerKey]string{}
+	for _, k := range doc.Keeps {
+		keeps[WorkerKey{Crew: k.Crew, Branch: k.Branch}] = k.Reason
+	}
+	return keeps
+}

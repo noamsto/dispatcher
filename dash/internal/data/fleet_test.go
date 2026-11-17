@@ -238,3 +238,32 @@ func TestFleetScannersIncremental(t *testing.T) {
 		t.Errorf("only requested commons are scanned: %v %v", d3, errs)
 	}
 }
+
+const reapKeepsKey = "crew reap --fleet --dry-run --json"
+
+func TestCollectReapKeeps(t *testing.T) {
+	cfg := Config{Crew: []string{"crew"}}
+	r := &FakeRunner{Responses: map[string]FakeResponse{reapKeepsKey: {
+		Stdout: []byte(`{"keeps":[{"repo":"/r/.git","crew":"c1","branch":"feat/a","reason":"unmerged commits"}]}`),
+	}}}
+	got := CollectReapKeeps(context.Background(), r, cfg)
+	if got[WorkerKey{Crew: "c1", Branch: "feat/a"}] != "unmerged commits" || len(got) != 1 {
+		t.Errorf("keeps = %v", got)
+	}
+}
+
+func TestCollectReapKeepsToleratesFailure(t *testing.T) {
+	cfg := Config{Crew: []string{"crew"}}
+	for name, resp := range map[string]FakeResponse{
+		"exit":    {Err: FakeExitError{Code: 2}},
+		"garbage": {Stdout: []byte("not json")},
+	} {
+		r := &FakeRunner{Responses: map[string]FakeResponse{reapKeepsKey: resp}}
+		if got := CollectReapKeeps(context.Background(), r, cfg); got != nil {
+			t.Errorf("%s: keeps = %v, want nil", name, got)
+		}
+	}
+	if got := CollectReapKeeps(context.Background(), &FakeRunner{}, cfg); got != nil {
+		t.Errorf("no response: keeps = %v, want nil", got)
+	}
+}

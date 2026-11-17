@@ -109,3 +109,23 @@ func TestRemoteWorkers(t *testing.T) {
 		t.Fatalf("RemoteWorkers(z) = %v", got)
 	}
 }
+
+func TestRemoteWorkersReap(t *testing.T) {
+	dispatch := `{"ts":1,"kind":"dispatch","crew_id":"c","branch":"feat/b","name":"bee","host":"mini","remote":true}`
+	reap := `{"ts":2,"kind":"reap","branch":"feat/b"}`
+	for _, tc := range []struct {
+		name  string
+		lines []string
+		want  int
+	}{
+		{"reap after dispatches", []string{dispatch, dispatch, reap}, 0},
+		{"dispatch after reap", []string{dispatch, reap, dispatch}, 1},
+		{"reap of another branch", []string{dispatch, `{"ts":2,"kind":"reap","branch":"feat/x"}`}, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := RemoteWorkers(busRows(t, tc.lines...), "c"); len(got) != tc.want {
+				t.Fatalf("RemoteWorkers = %v, want %d", got, tc.want)
+			}
+		})
+	}
+}

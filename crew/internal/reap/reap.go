@@ -50,6 +50,8 @@ type run struct {
 	stdout, stderr io.Writer
 	// live is the `list-panes` rows read once before the candidate loop.
 	live string
+	// keeps is non-nil under --json.
+	keeps *keepLog
 	// The --discard state `_reap_remove` re-checks against: the saved patch
 	// ("" when there was nothing to save), the status and the scratch-index
 	// tree it was saved from.
@@ -67,6 +69,14 @@ type run struct {
 // `cd`'d.
 func Run(ctx context.Context, req Request, paths bus.Paths, cwd string, stdout, stderr io.Writer, o Options) int {
 	r := &run{flags: newFlags(req), paths: paths, reapCwd: cwd, p: o.Probes, o: o, stdout: stdout, stderr: stderr, clean: &cleaner{}}
+	if req.JSON {
+		r.keeps = req.keeps
+		r.stdout = io.Discard
+		if r.keeps == nil {
+			r.keeps = &keepLog{}
+			defer r.keeps.write(stdout)
+		}
+	}
 	// Never run reap's git from a worker's worktree (#633).
 	dir, err := wtgit.TrustedCwd(paths.Common, cwd, stderr)
 	if err == nil {
@@ -232,6 +242,9 @@ func originGitHubRepo(ctx context.Context, g git.Client) string {
 // it. dispatch waits (it reads branch state right after its reap); the stream
 // passes --no-wait. done means the arm exits with code here.
 func (r *run) lockReap() (code int, done bool) {
+	if r.json {
+		return 0, false
+	}
 	ld := r.paths.Dir + "/reap.lock.d"
 	owner := strconv.Itoa(r.o.PID)
 	for waited := 0; !lock.Acquire(ld, owner); waited++ {
@@ -268,6 +281,8 @@ func (r *run) idleRelease(ctx context.Context) int {
 		if row[0] == "" {
 			continue
 		}
+		crew := row[4]
+		d.Keep = func(branch, why string) { r.record(crew, branch, why) }
 		ts, _ := strconv.ParseFloat(row[3], 64)
 		if _, err := ReleaseWindows(ctx, d, row[0], row[1], row[2], int64(ts), grace, r.dry); err != nil {
 			_, _ = fmt.Fprintf(r.stderr, "crew: reap: %v\n", err)
