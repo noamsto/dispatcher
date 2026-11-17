@@ -1472,12 +1472,14 @@ check_code_transforms() {
     [[ ${texts[i]} == *"\${"* || ${texts[i]} == *"\$["* || ${texts[i]} == *"\$\\"* ]] || continue
     view=$(mask_quotes "${texts[i]}" "${ts[i]}" 1)
     if [[ $(awk "$awk_inert" <<<"$view") == 1 ]]; then
-      deny "This command writes a quoted heredoc or here-string as data and also uses an expansion that can run a \$(…) stored in a variable — including a file the heredoc just wrote — where the guard cannot see it: \${…@P}, \${!name}, \$[…], or a \${…} whose subscript or offset is not a literal number, @ or *. Split it into separate commands, or name the variable directly."
+      # shellcheck disable=SC2016 # the deny text is literal prose, not an expansion
+      deny 'This command writes a quoted heredoc or here-string as data and also uses an expansion that can run a $(…) stored in a variable — including a file the heredoc just wrote — where the guard cannot see it: ${…@P}, ${!name}, $[…], or a ${…} whose subscript or offset is not a literal number, @ or *. Split it into separate commands, or name the variable directly.'
     fi
   done
   for view in "${dequoted_views[@]}"; do
     if [[ $(awk "$awk_name_ops" <<<"$view") == 1 ]]; then
-      deny "This command writes a quoted heredoc or here-string as data and also gives read, printf -v, test -v/-R or [ -v a name operand that is not a bare identifier. Bash evaluates a subscript such as a[\$(…)] even inside single quotes, which can run a command the guard cannot see. Use a plain variable name, or split it into separate commands."
+      # shellcheck disable=SC2016 # the deny text is literal prose, not an expansion
+      deny 'This command writes a quoted heredoc or here-string as data and also gives read, printf -v, test -v/-R or [ -v a name operand that is not a bare identifier. Bash evaluates a subscript such as a[$(…)] even inside single quotes, which can run a command the guard cannot see. Use a plain variable name, or split it into separate commands.'
     fi
   done
 }
