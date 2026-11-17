@@ -437,13 +437,13 @@ awk_chars='
 # included) with a space, so quoted data can never look like a command.
 # Positional, not a strip. Backslash-aware like bash: outside quotes `\"` is not
 # a quote-open; inside "..." a `\"` does not close the span; '...' has no
-# escapes.
+# escapes. With S set, "..." contents show as themselves (only '...' blanks).
 awk_mask='
 BEGIN { SQ = sprintf("%c", 39); DQ = "\""; BS = "\\" }
 function mask(c) {
   if (mesc) {
     mesc = 0
-    return (mq == "" ? c : " ")
+    return (mq == "" || (S && mq == DQ) ? c : " ")
   }
   if (mq == "") {
     if (c == BS) mesc = 1
@@ -453,9 +453,12 @@ function mask(c) {
     }
     return c
   }
-  if (c == mq) mq = ""
-  else if (mq == DQ && c == BS) mesc = 1
-  return " "
+  if (c == mq) {
+    mq = ""
+    return " "
+  }
+  if (mq == DQ && c == BS) mesc = 1
+  return (S && mq == DQ ? c : " ")
 }'
 
 # Text holding `<<` runs mask() inside awk_mask_cmd's heredoc model (Q=1, see
@@ -463,11 +466,11 @@ function mask(c) {
 # mask(); `$2` is the text's T verdict (text_verdicts).
 mask_quotes() {
   if [[ $1 != *'<<'* ]]; then
-    awk "$awk_mask$awk_chars"'
+    awk -v S="${3:-}" "$awk_mask$awk_chars"'
 function feed(c) { printf "%s", mask(c) }' <<<"$1"
     return
   fi
-  awk -v W=0 -v Q=1 -v T="$2" "$awk_mask${awk_mask_cmd/function feed(c,/function step(c,}$awk_chars"'
+  awk -v W=0 -v Q=1 -v T="$2" -v S="${3:-}" "$awk_mask${awk_mask_cmd/function feed(c,/function step(c,}$awk_chars"'
 function feed(c,    tb) {
   tb = body && T && !hraw
   step(c)
@@ -1387,6 +1390,28 @@ check_fish_spaces() {
   done
 }
 
+# A text-sink heredoc body is blanked as data, but ${x@P}, ${!x} and $[..] run a
+# $(..) stored in a variable, which the heredoc may have just written.
+check_code_transforms() {
+  local i view
+  local -a texts=() ts=()
+  local any=0
+  while (($#)); do
+    texts+=("$1")
+    ts+=("$2")
+    if [[ $2 == 1 ]]; then any=1; fi
+    shift 2
+  done
+  ((any)) || return 0
+  for i in "${!texts[@]}"; do
+    [[ ${texts[i]} == *"\${"* || ${texts[i]} == *"\$["* ]] || continue
+    view=$(mask_quotes "${texts[i]}" "${ts[i]}" 1)
+    if [[ $view =~ \$\{[^}]*@P\}|\$\{![^}]|\$\[ ]]; then
+      deny "This command writes a quoted heredoc or here-string as data and also uses a \${…@P}, \${!…} or \$[…] expansion, which can run a \$(…) stored in a variable — including a file the heredoc just wrote — where the guard cannot see it. Split it into separate commands, or name the variable directly."
+    fi
+  done
+}
+
 case $kind in
 read)
   [[ -n $path ]] || exit 0
@@ -1605,6 +1630,9 @@ shell)
   # (`e""nv`, `de"cl"are -p`) hides it from both masks but not from bash.
   check_dump_spaces "${search_spaces[@]}" "${dequoted_views[@]}"
   check_fish_spaces ${fish_spaces[@]+"${fish_spaces[@]}"} ${dequoted_fish_views[@]+"${dequoted_fish_views[@]}"}
+  transform_args=()
+  for ((k = 0; k < ${#subs[@]}; k++)); do transform_args+=("${subs[k]}" "${sub_t[k]}"); done
+  check_code_transforms "$command" "$command_t" ${transform_args[@]+"${transform_args[@]}"}
 
   printf -v proc_views '%s\n' "$command" "${dequoted_views[@]}"
   if grep -qE "$proc_environ_re" <<<"$proc_views"; then

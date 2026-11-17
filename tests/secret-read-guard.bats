@@ -2463,6 +2463,36 @@ assert_allow_within_each_awk() {
   deny_both "$h"$'Y=\'b[$(bash /tmp/x)]\'; export \'a[Y]=1\''
 }
 
+@test "secret-read-guard: #1572 denies a code-running expansion beside a text-sink heredoc" {
+  # The heredoc body is blanked as text, so the file it writes is never
+  # scanned; these expansions run a `$(…)` held in a variable, here one read
+  # from a quoted here-string, with no `(` or dumper word left to see.
+  local h=$'cat > /tmp/x <<\'EOF\'\nenv\nEOF\n'
+  deny_both "$h"$'read -r v <<<\'$(bash /tmp/x)\'; echo "${v@P}"'
+  deny_both "$h"$'read -r v <<<\'$(bash /tmp/x)\'; echo ${v@P}'
+  deny_both "$h"$'read -r v <<<\'$(bash /tmp/x)\'; echo ${v[0]@P}'
+  deny_both "$h"$'read -r n <<<v; read -r v <<<\'$(bash /tmp/x)\'; echo "${!n@P}"'
+  deny_both "$h"$'read -r n <<<v; echo "${!n}"'
+  deny_both "$h"$'read -r n <<<v; echo ${!n}'
+  deny_both "$h"$'read -r v <<<\'a[$(bash /tmp/x)]\'; echo $[v]'
+  deny_both "$h"$'read -r v <<<\'a[$(bash /tmp/x)]\'; echo "$[v]"'
+  # A here-string alone is a text sink too.
+  deny_both $'read -r v <<<\'$(env)\'; echo "${v@P}"'
+  # Inside a `-c` body, where the parent's single quotes are code again.
+  deny_both $'bash -c \'read -r v <<<"\\$(env)"; echo ${v@P}\''
+}
+
+@test "secret-read-guard: #1572 still allows plain expansions and quoted mentions beside a text-sink heredoc" {
+  local h=$'cat > /tmp/x <<\'EOF\'\nenv\nEOF\n'
+  allow_both "$h"
+  allow_both "$h"'echo "${HOME}" ${PWD:-x} "${v:-x}" $v ${#v} ${v[0]} $!'
+  allow_both "$h"'echo ${!}'
+  # Single-quoted text never expands.
+  allow_both "$h"$'echo \'${v@P} ${!n} $[v]\''
+  allow_both $'gh pr create --title \'guard: deny ${V@P}\' --body-file - <<\'EOF\'\nCovers ${V@P}, ${!N} and $[N].\nEOF'
+  allow_both $'git commit -F - <<\'EOF\'\nfix: ${V@P} and ${!N}\nEOF'
+}
+
 @test "secret-read-guard: rule 2 — denies a dumper after a separator inside an inline comment (accepted over-deny)" {
   deny_cmd 'ls # then; env'
 }
