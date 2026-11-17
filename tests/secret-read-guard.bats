@@ -2559,6 +2559,7 @@ assert_allow_within_each_awk() {
   allow_both "$h"$'echo ${!} ${!a[*]} ${!pre@} ${!pre*} "${!a[@]}"'
   allow_both "$h"$'echo ${a[0]} ${a[@]} ${#a[@]} ${v:0:3} ${v: -1} ${a[@]:1:2} ${@:2} ${#} ${#@} ${?} ${10} ${a[-1]}'
   allow_both "$h"$'echo ${v#*/} ${v%%.*} ${v//a/b} ${v^^} ${v,} ${v@Q} ${a[@]@K} ${v:=x} ${v:?x} ${v:+x} ${v-x}'
+  allow_both "$h"'echo ${v} ${v%x} ${v##x} ${v/a/b} ${v,,} ${a[*]} ${v:2:3}'
   allow_both "$h"$'echo ${v:-${HOME}} ${v:-${w:-$HOME}}'
   allow_both "$h"$'cat <<\'EOF2\'\n${v@P} ${a[v]} $[v] ${!n}\nEOF2\n'
   allow_both "$h"$'echo \'${v@P} ${!n} $[v] ${a[v]}\''
