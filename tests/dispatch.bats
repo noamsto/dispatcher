@@ -1981,7 +1981,6 @@ EOF
   done
 }
 
-# #1617: a --pr or provided-plan launch must not read as license to skip First action.
 @test "a claude --plan provided launch prompt names First action as step 1, provided plan included" {
   stub_launch_bins
   DISPATCH_PROFILE=personal run run_dispatch trivial haiku --agent claude --effort low --plan provided --crew-id c1 42 "first action claude"

@@ -5171,8 +5171,8 @@ fi
 # someone else's PR head. Swap the mandate instead of relying on the contract to
 # talk the worker out of it.
 push_mandate=" Push when pre-push passes; open a PR."
-# A short or provided-plan prompt reads as license to skip the protocol's First
-# action, so no `working` row appears (#1617). Name it as step 1 for every launch.
+# A terse prompt ("run it end-to-end", "do not re-plan") gets read as license to
+# skip First action, so name it for every launch.
 first_action_note=" Step 1, before anything else: do the protocol's First action — announce with crew status \"\$CREW_WORKER_ID\" working, then drain the bus once. A provided plan or a --pr launch does not waive it."
 if [ "$kind" != review ] && [ "$tier" != trivial ]; then
   push_mandate=" Run your code review gate and record its review seam before you push.$push_mandate"
