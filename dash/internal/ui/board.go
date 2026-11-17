@@ -80,7 +80,7 @@ type cardFields struct {
 }
 
 var (
-	issueRe  = regexp.MustCompile(`[0-9]+`)
+	issueRe  = regexp.MustCompile(`\A([0-9]+)(?:-|\z)`)
 	foldIDRe = regexp.MustCompile(`\A(?:[A-Za-z]+-[0-9]+|[0-9]+)\z`)
 )
 
@@ -121,7 +121,10 @@ func fieldsOf(w vm.WorkerRow) cardFields {
 	if _, r, ok := strings.Cut(rest, "/"); ok {
 		rest = r
 	}
-	issue := issueRe.FindString(rest)
+	issue := ""
+	if m := issueRe.FindStringSubmatch(rest); m != nil {
+		issue = m[1]
+	}
 	if issue == "" && foldIDRe.MatchString(suffix) {
 		issue = suffix
 	}
