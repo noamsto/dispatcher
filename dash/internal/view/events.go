@@ -44,7 +44,11 @@ func eventText(e data.RecentEvent) string {
 	case "msg":
 		return msgText(ev["body"])
 	case "dispatch":
-		return strings.TrimSpace("dispatched " + joinStr(ev, "engine", "model", "tier") + ": " + evStr(ev, "title"))
+		t := strings.TrimSpace("dispatched " + joinStr(ev, "engine", "model", "tier"))
+		if title := evStr(ev, "title"); title != "" {
+			t += ": " + title
+		}
+		return t
 	case "claim":
 		return "claimed"
 	case "claim-issue":
@@ -79,7 +83,11 @@ func msgText(body any) string {
 	}
 	switch {
 	case obj["seam"] != nil && obj["tag"] != nil:
-		return strings.TrimSpace(fmt.Sprintf("retro %v: %v", obj["tag"], obj["detail"]))
+		t := "retro " + evStr(obj, "tag")
+		if d := evStr(obj, "detail"); d != "" {
+			t += ": " + d
+		}
+		return t
 	case obj["seam"] != nil:
 		return seamText(obj)
 	case obj["rework_count"] != nil:
