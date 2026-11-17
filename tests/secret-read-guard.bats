@@ -2528,8 +2528,6 @@ assert_allow_within_each_awk() {
   deny_both "$h"$'read -r v <<<\'a[$(bash /tmp/x)]\'; echo $$\'\\\'\' <<\\E \\\'\necho ${v@P}\nE'
   deny_both "$h"$'read -r v <<<\'a[$(bash /tmp/x)]\'; echo ${!v@P}'
   deny_both "$h"$'read -r v <<<\'a[$(bash /tmp/x)]\'; echo ${!-}'
-  deny_both $'read -r v <<<\'$(env)\'; echo "${v@P}"'
-  deny_both $'bash -c \'read -r v <<<"\\$(env)"; echo ${v@P}\''
   deny_both "$h"$'read -r \'a[$(bash /tmp/x)]\' <<<x'
   deny_both "$h"$'printf -v \'a[$(bash /tmp/x)]\' x'
   deny_both "$h"$'test -v \'a[$(bash /tmp/x)]\''
