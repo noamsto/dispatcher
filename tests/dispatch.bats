@@ -1303,6 +1303,61 @@ EOF
   run ! grep -q -- 'select-layout' "$STUB_LOG"
 }
 
+# _assert_pin_cleared <pane> — the pane is pinned with no relaunch and no owner,
+# all logged before its send-keys, and never given a relaunch value.
+_assert_pin_cleared() {
+  local pane="$1" launch
+  launch="$(_line_of "send-keys -t $pane ")"
+  [ -n "$launch" ]
+  for opt in 'set-option -p -t '"$pane"' @remux_relaunch_pinned 1' \
+    'set-option -pu -t '"$pane"' @remux_relaunch' \
+    'set-option -pu -t '"$pane"' @remux_relaunch_owner'; do
+    line="$(grep -n -x -F -m1 -- "$opt" "$STUB_LOG" | cut -d: -f1)"
+    [ -n "$line" ]
+    [ "$line" -lt "$launch" ]
+  done
+  run ! grep -qE "^set-option -p -t $pane @remux_relaunch " "$STUB_LOG"
+}
+
+@test "1588: dispatch stamps the lead pane with a pinned dispatch resume --exec relaunch" {
+  stub_launch_bins
+  _grid_tmux_stub
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --agent claude --effort high --crew-id c1 42 "order"
+  [ "$status" -eq 0 ]
+  wt="$TEST_REPO/.dispatch-wt/feat-42-order"
+  [ -d "$wt" ]
+  launch="$(_line_of 'send-keys -t %1 ')"
+  stamp="$(grep -n -x -F -m1 -- "set-option -p -t %1 @remux_relaunch cd '$wt' && exec env CREW_ID='c1' 'dispatch' 'resume' '--exec'" "$STUB_LOG" | cut -d: -f1)"
+  pinned="$(grep -n -x -F -m1 -- 'set-option -p -t %1 @remux_relaunch_pinned 1' "$STUB_LOG" | cut -d: -f1)"
+  owner="$(grep -n -x -F -m1 -- 'set-option -pu -t %1 @remux_relaunch_owner' "$STUB_LOG" | cut -d: -f1)"
+  [ -n "$stamp" ] && [ -n "$pinned" ] && [ -n "$owner" ]
+  [ "$stamp" -lt "$pinned" ]
+  [ "$pinned" -lt "$owner" ]
+  [ "$owner" -lt "$launch" ]
+}
+
+@test "1588: dispatch pin-clears every eager grid role pane without stamping a relaunch" {
+  stub_launch_bins
+  _grid_tmux_stub
+  cat >"$STUB_DIR/tmux-grid-refit" <<'EOF'
+#!/usr/bin/env bash
+printf 'tmux-grid-refit %s\n' "$*" >>"$STUB_LOG"
+exit 0
+EOF
+  chmod +x "$STUB_DIR/tmux-grid-refit"
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --agent claude --roles "reviewer,plan-critic" --effort high --crew-id c1 42 "order"
+  [ "$status" -eq 0 ]
+  _assert_pin_cleared %6
+  [ "$(grep -c -x -F -- 'set-option -p -t %6 @remux_relaunch_pinned 1' "$STUB_LOG")" -eq 2 ]
+}
+
+@test "1588: dispatch --spawn-role pin-clears the spawned role pane" {
+  _spawn_role_fixture
+  run run_dispatch --spawn-role reviewer
+  [ "$status" -eq 0 ]
+  _assert_pin_cleared %6
+}
+
 @test "grid: --spawn-role publishes @crew_grid and refits" {
   _spawn_role_fixture
   cat >"$STUB_DIR/tmux-grid-refit" <<'EOF'
@@ -3920,6 +3975,15 @@ EOF
   grep -qx 'set-environment -t =crew-c1 -u CREW_ID' "$STUB_LOG"
   grep -qx 'dispatcher_pane: ' "$TEST_REPO/.dispatch-wt/feat-42-remote-worker/WORKER_TASK.md"
   run ! grep -qE '^(new-window|resize-window)|^roster-render' "$STUB_LOG"
+}
+
+@test "1588: dispatch on the remote side pin-clears the lead pane and stamps no relaunch" {
+  stub_launch_bins
+  _remote_mode_tmux
+  TMUX_PANE=%7 DISPATCH_TMUX_SESSION=crew-c1 \
+    run run_dispatch standard sonnet --effort medium --crew-id c1 42 "remote worker"
+  [ "$status" -eq 0 ]
+  _assert_pin_cleared %1
 }
 
 @test "remote mode: DISPATCH_TMUX_SESSION=dispatcher creates the dispatcher's own session" {

@@ -1957,6 +1957,10 @@ launch_role() {
   write_launch_script exit_line "$exit_cmd" exit
   tmux set-option -p -t "$pane" @crew_model "$r_model" 2>/dev/null || true
   tmux set-option -p -t "$pane" @crew_delivery "$(role_delivery "$r_agent")" 2>/dev/null || true
+  # A role restored as plain `claude --resume` lacks GRID_PROTOCOL and its permission
+  # mode; a pinned pane with no relaunch restores as a shell, which resume's role
+  # re-arm marks exited for the lead to respawn with full flags.
+  remux_pin_clear "$pane"
   tmux send-keys -t "$pane" "$launch_line ; $exit_line" Enter
 }
 
@@ -5369,6 +5373,16 @@ if [ "${#role_panes[@]}" -gt 0 ] || [ -n "$status_pane" ]; then
   guard_role_width "$win"
 fi
 
+# Pin the restore relaunch to `dispatch resume --exec` so a restored lead keeps its
+# CREW_* env and protocol; the branch is derived from the worktree, never stamped.
+# A remote worker's own dispatcher drives its recovery.
+if [ "$wire_side" = remote ]; then
+  remux_pin_clear "$pane"
+elif remux_cmd="" && remux_command remux_cmd "$wt_path" "$crew_id" dispatch resume --exec; then
+  remux_stamp "$pane" "$remux_cmd"
+else
+  remux_pin_clear "$pane"
+fi
 tmux send-keys -t "$pane" "$launch_line" Enter
 for i in "${!role_panes[@]}"; do
   role="${role_names[$i]}"
