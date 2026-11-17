@@ -98,15 +98,18 @@ crew_script() {
   done
 }
 
-# dispatch copies dispatch-resume's flags into its resume block; this keeps the
-# copy and dispatch-resume.sh's parser equal, in both directions.
-@test "dispatch resume's flags match dispatch-resume's parser" {
-  parsed="$(parser_flags dispatch-resume)"
-  for f in $parsed; do
-    grep -qE -- "^complete -c dispatch -n '__fish_seen_subcommand_from resume' .*-l ${f#--}( |\$)" "$COMP/dispatch.fish" || { echo "dispatch resume: no $f"; return 1; }
-  done
-  for f in $(grep "^complete -c dispatch -n '__fish_seen_subcommand_from resume'" "$COMP/dispatch.fish" | grep -oE -- '-l [a-z-]+' | cut -d' ' -f2); do
-    grep -qx -- "--$f" <<<"$parsed" || { echo "dispatch-resume.sh has no --$f"; return 1; }
+# dispatch copies dispatch-resume's and dispatch-migrate's flags into their
+# blocks; this keeps each copy and its script's parser equal, in both directions.
+@test "dispatch subcommand flags match their parsers" {
+  for pair in resume:dispatch-resume migrate:dispatch-migrate; do
+    sub="${pair%%:*}" script="${pair#*:}"
+    parsed="$(parser_flags "$script")"
+    for f in $parsed; do
+      grep -qE -- "^complete -c dispatch -n '__fish_seen_subcommand_from $sub' .*-l ${f#--}( |\$)" "$COMP/dispatch.fish" || { echo "dispatch $sub: no $f"; return 1; }
+    done
+    for f in $(grep "^complete -c dispatch -n '__fish_seen_subcommand_from $sub'" "$COMP/dispatch.fish" | grep -oE -- '-l [a-z-]+' | cut -d' ' -f2); do
+      grep -qx -- "--$f" <<<"$parsed" || { echo "$script.sh has no --$f"; return 1; }
+    done
   done
 }
 

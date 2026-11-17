@@ -57,7 +57,13 @@ named in the message); `kind: review` workers; stacked (`base:`) workers.
   is required with `migrated` and refused with every other state; `<h>` must
   match the host-name regex `^[A-Za-z0-9][A-Za-z0-9._-]*$`. Body gains
   `to_host` (`omitempty`). Posted by the worker itself in cooperative mode.
-  Terminal dedupe applies like `done`/`failed`.
+  Terminal dedupe applies like `done`/`failed`; for `migrated` the dedupe key
+  includes `to_host`.
+- **Directive-gated.** A worker's `migrated --to-host H` is refused unless the
+  newest dispatcher `migrate`/`migrate-cancel` directive msg to that session
+  is `{"directive":"migrate","to_host":"H"}`. `{"directive":"migrate-cancel",
+"to_host":"H"}` withdraws it; `dispatch migrate` sends it on a cooperative
+  timeout (exit 3). `crew watch` does not wake on `migrated`.
 - `bus.State` gains `StateMigrated`; `Terminal()` includes it.
 - **Authoritative row.** The release evidence is a `migrated` status row with
   `source:"migrate"`, written only by `crew migrate mark` (C3) under the
@@ -133,14 +139,18 @@ worktree record, never a bus path.
   `SPEC.md`, `PLAN.md`, `DECOMPOSITION.md`, `REVIEW_NOTES.md`,
   `PLAN_ROUND<n>.md`, never `WORKER_TASK.md` — so a mid-run worker keeps
   them), `hasGitlink` (embedded-repo refusal), `writeDiff`
-  (`--binary --full-index`), symlink-guarded artifacts dir and no-clobber
-  link. Same safety refusals as `--discard`: live engine at the worktree, cwd
+  (`--binary --full-index`), with a fresh symlink-guarded bundle dir in place
+  of the artifacts dir. Same safety refusals as `--discard`: live engine at the worktree, cwd
   inside it, no admin dir, gitlink mismatch, `config.worktree`, submodules,
-  git-config drift (`gitguard`). Never removes or modifies anything. Writes
-  `<crew_dir>/artifacts/<branch>/migrate-<UTC>/patch` when non-empty and
-  prints one JSON line `{"dir":…,"patch":<path|"">,"tree":<sha>,"tip":<sha>}`.
+  git-config drift (`gitguard`). Never removes or modifies anything. Always
+  creates the bundle dir `<crew_dir>/migrate/<branch>/<UTC ts>` (0700, fresh:
+  refused when it exists; never under the worker-writable `artifacts/`),
+  writes `<dir>/patch` when non-empty and prints one JSON line
+  `{"dir":…,"patch":<path|"">,"tree":<sha>,"tip":<sha>}`.
 - `crew migrate mark --crew C <branch> --to-host H --mode coop|now --tip T
---tree S [--patch P]` — appends the authoritative `migrated` row (C1) as the
+--tree S --dir D [--patch P]` — D is the bundle dir snapshot printed
+  (a real directory, no symlink on its path) and the row records it as `dir`;
+  appends the authoritative `migrated` row (C1) as the
   branch's newest worker session: `{state:"migrated", to_host, source:
 "migrate", mode, tip, tree, patch, detail:"moved to H"}`.
 
@@ -161,8 +171,9 @@ worktree record, never a bus path.
   dir `migrate/`, exported to the child as `DISPATCH_MIGRATE_DIR`.
 - The local side of `dispatch` (`_dispatch_remote`) forwards
   `--migrate-dir "$DISPATCH_MIGRATE_BUNDLE"` when that env is set. The bundle
-  must be a `migrate-*` directory under `<crew_dir>/artifacts/` (realpath
-  check); `DISPATCH_MIGRATE_BUNDLE` without `--host` is refused, and
+  must realpath to `<crew_dir>/migrate/<branch>/<UTC ts>` (never under the
+  worker-writable `artifacts/`); `DISPATCH_MIGRATE_BUNDLE` without `--host` is
+  refused, and
   `DISPATCH_MIGRATE_DIR` with `--host` is refused.
 - Transcript budget: when the gzipped+base64 transcript would push the
   request over 30 MiB, it is dropped and the launch goes fresh (recorded,
@@ -211,15 +222,18 @@ first`.
 <S>` (best effort; its result is logged), then poll the worker's status
      until S (default 1800, `--wait`) elapses. Outcomes: - worker posts `migrated` → go on (its detail may say uncommitted work
      was left for the patch, C8); - worker posts `blocked` whose detail starts `migrate:` (its push failed)
-     → print that detail verbatim, exit 1, worker untouched and live; - worker reaches `done`/`failed`/`exited` → exit 1 naming it; - timeout → exit 3: `worker did not quiesce within Ns — ask the human;
+     → print that detail verbatim, exit 1, worker untouched and live; - worker reaches `done`/`failed`/`exited` → exit 1 naming it; - timeout → send `{"directive":"migrate-cancel","to_host":"H"}` (C1) and
+     exit 3: `worker did not quiesce within Ns — ask the human;
 dispatch migrate --now only if they are leaving now`. Never falls
      through to `--now`.
    - _Forced (`--now`):_ no directive.
 5. `crew migrate stop` (both modes: a cooperative worker's engine is idle but
    still running).
 6. `crew migrate snapshot` → patch, tree, tip.
-7. **Push.** `--now`: `git -C <wt> push origin <branch>` (plain, hooks run,
-   never `--no-verify`, never force); on failure print git's output verbatim,
+7. **Push.** `--now`: `git --git-dir <admin dir> -C <wt> push origin <branch>`
+   (anchored on the repo's admin dir, not the worker's gitlink; plain; the
+   hooks run on purpose, an owner requirement; never `--no-verify`, never
+   force); on failure print git's output verbatim,
    print `the worker is stopped; nothing was marked — resume it here with:
 dispatch resume <branch>` and exit 1. Cooperative: the worker pushed; the
    dispatcher only verifies. Both: after the push, `refs/remotes/origin/<b>`
@@ -231,7 +245,7 @@ dispatch resume <branch>` and exit 1. Cooperative: the worker pushed; the
    `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/<encoded wt>/<uuid>.jsonl`.
    Missing record, `-`, other engine, missing file or over budget → no
    transcript, reason recorded.
-9. **Bundle** `<crew_dir>/artifacts/<branch>/migrate-<UTC>/`: `meta.json`
+9. **Bundle**, the dir snapshot made (`<crew_dir>/migrate/<branch>/<UTC ts>`, C3): `meta.json`
    (C4 fields), `patch`, `transcript.jsonl`, and the `handoff` text. The
    handoff is crew-dir data that travels only over ssh, never to GitHub:
    - the dispatcher's part: from host, mode, time, tip, whether a patch
@@ -243,7 +257,9 @@ dispatch resume <branch>` and exit 1. Cooperative: the worker pushed; the
    - the worker's part (cooperative): the worker's own
      `<crew_dir>/artifacts/<branch>/handoff.md` (C8), when present, appended
      verbatim.
-10. `crew migrate mark …` — the branch is now released to H.
+10. **Size precheck**, then `crew migrate mark … --dir <bundle dir>` — a
+    payload over the transport limit exits 1 before the mark, the worker
+    stopped but not released. The branch is then released to H.
 11. **Remote resume** through the existing remote path:
     `DISPATCH_SPEC=<task body> DISPATCH_SKIP_SPEC_LINT=1
     DISPATCH_MIGRATE_BUNDLE=<bundle> [DISPATCH_DRAFT_PR=1] dispatch <tier>
@@ -265,18 +281,21 @@ resumed|fresh: <reason>; patch: <path>|none)`.
 migrated to H", exit 0. Branch released to H but not yet remote (step 11
 failed) → skip steps 4–10, verify the worktree's scratch tree and tip still
 equal the mark's `tree`/`tip` (else refuse), rebuild the bundle from the
-recorded patch and transcript, retry step 11. Released to H, asked for K →
-refuse naming H. On a failed step 11: `migration to H failed (exit rc); the
+mark's recorded `dir` (patch and transcript), retry step 11. Released to H, asked for K →
+refuse naming H. A failed step 11 exits 1: `migration to H failed (exit rc); the
 worker is stopped and marked migrating to H — retry: dispatch migrate <b>
 --host H; abandon: dispatch resume <b>`.
 
 ### C6. Remote half (`dispatch` with `DISPATCH_MIGRATE_DIR`)
 
-The remote runs its own `dispatch`, unchanged except:
+The remote runs its own `dispatch`, unchanged except (`--migrate-check` runs
+the same config guard first):
 
 1. **Before the claim gate**, with `meta.branch`: `git fetch origin
 refs/heads/<b>:refs/heads/<b>` (non-force; refuse a diverged or
-   checked-out local ref with git's message), then require
+   checked-out local ref with git's message; a retry after the remote
+   worktree exists is accepted when the branch is checked out in a
+   dispatcher-recorded worktree at the tip), then require
    `refs/heads/<b>` = `meta.tip`. Load-bearing: it puts the run on
    `switch_mode=resume` and the claim gate's resume exemption.
 2. After branch derivation: the derived branch must equal `meta.branch`, and
@@ -321,7 +340,7 @@ removal only when **all** hold:
 Otherwise it keeps the worktree with a reason. No PR/issue gate applies. It
 deletes the local branch ref but **never** the origin branch (the remote
 worker owns it), then posts `reaped` as today. The mark's patch stays in the
-artifacts dir.
+bundle dir (`<crew_dir>/migrate/<branch>/<ts>`), not artifacts.
 
 ### C8. Worker half and docs
 
@@ -346,7 +365,10 @@ failed: <git's words>"` and block→await (C5 step 4 surfaces it
      verbatim);
   6. success → `crew status "$CREW_WORKER_ID" migrated --to-host H "<one
 line; say 'uncommitted work travels as a patch' when step 4 fired>"`, no
-     metrics snapshot (the run continues on H), stop.
+     metrics snapshot (the run continues on H), stop. A later
+     `{"directive":"migrate-cancel"}` withdraws the directive: a worker that
+     has not posted `migrated` carries on (re-stamps `working`), and
+     `migrated` is refused after a cancel (C1).
 - `adapters/core/skills/remote-host/SKILL.md` and `resume/SKILL.md`: when and
   how to migrate, the exit codes, recovery and abandon paths.
 - `DISPATCHER_PROTOCOL.md` terminal-state sentences learn `migrated`;

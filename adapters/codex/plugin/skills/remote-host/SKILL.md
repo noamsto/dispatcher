@@ -1,6 +1,6 @@
 ---
 name: remote-host
-description: Use when a worker runs on another machine (--host), to follow, recover and route its events
+description: Use when a worker runs on another machine (--host), to follow, recover and route its events, or to move a running local worker there (`dispatch migrate`)
 ---
 
 # remote-host
@@ -16,9 +16,9 @@ description: Use when a worker runs on another machine (--host), to follow, reco
   - **Broken link.** Exit 255 means the link dropped mid-dispatch and the remote worker could not be confirmed. Once the link is back, run the `dispatch --host <h> --recover <session> --crew-id <id>` the message names; it writes nothing when the remote made no worker.
   - **Holds.** `crew hold` does not record `--host`: name the host in the held spec's prose and re-pass `--host` on release.
 - **Migrate a running worker.** `dispatch migrate <branch|codename|#N> --host <h> [--now] [--wait S]`, run by you (never from a worker env or pane), moves a live local worker to host `<h>`.
-  - **Modes.** Cooperative (default): sends the worker a `migrate` directive; it checkpoints, pushes and posts `migrated` itself (`--wait`, default 1800 s). `--now`: no directive; stops the engine, snapshots tracked, staged and untracked work as one patch, and pushes only the worker's own commits through its hooks (never `--no-verify`, never force). Use `--now` only when the human is leaving now.
+  - **Modes.** Cooperative (default): sends the worker a `migrate` directive; it checkpoints, pushes and posts `migrated` itself (`--wait`, default 1800 s). `--now`: no directive; stops the engine, snapshots tracked, staged and untracked work as one patch, and pushes only the worker's own commits, anchored on the repo's admin dir, through its hooks on purpose (never `--no-verify`, never force); a push failure comes back verbatim. The bundle (patch, transcript, handoff) lives in `<crew_dir>/migrate/<branch>/<UTC ts>`, never under `artifacts/`. Use `--now` only when the human is leaving now.
   - **Refused before anything stops (exit 2).** A worker env, a remote worker (already on a host), `add_dir:`, `base:`, `kind: review`, `lazy`, `code_mode:`, a lane `profile:`, an `## Owner authorization` section, and a host whose `dispatch --migrate-check` fails (no migrate support: update it first). Relay the refusal verbatim.
-  - **Exit codes.** 0: done, or already migrated to that host. 1: failure. Push hook output and a worker `blocked` whose detail starts `migrate:` come back verbatim; a failed remote resume (worker stopped, marked migrating) → retry `dispatch migrate <b> --host <h>`, or abandon with `dispatch resume <b>`. 2: refused. 3: cooperative timeout (worker did not quiesce) → ask the human; never rerun with `--now` on your own.
+  - **Exit codes.** 0: done, or already migrated to that host. 1: failure. Push hook output and a worker `blocked` whose detail starts `migrate:` come back verbatim; a failed remote resume (worker stopped, marked migrating) → retry `dispatch migrate <b> --host <h>`, or abandon with `dispatch resume <b>`. 2: refused. 3: cooperative timeout (worker did not quiesce); the dispatcher sends `migrate-cancel`, which withdraws the directive (the worker's `migrated` is then refused) → ask the human; never rerun with `--now` on your own.
   - **`migrated` is not `failed`.** No attention item, no rating; the run continues on `<h>` and is rated there.
   - **Claim.** Released only to `<h>`; a dispatch to a third host stays blocked. After the local reap, that block rests on the remote row's 24 h freshness.
   - **Local reap.** `crew reap` removes the local worktree only once the remote row exists and the mark's tip is on origin; it never deletes the origin branch (the remote worker owns it).

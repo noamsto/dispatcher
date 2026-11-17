@@ -2767,7 +2767,7 @@ _spec_lint() {
 # that guard this machine's quota and claims, the remote dispatch, then the
 # local record of the row the remote confirms.
 _dispatch_remote() {
-  local refused="" engines out row rc=0 wid occupied tok n holder v spec rest role_agent role_model role_effort sigil lead_model migrate_bundle artifacts_real
+  local refused="" engines out row rc=0 wid occupied tok n holder v spec rest role_agent role_model role_effort sigil lead_model migrate_bundle migrate_real
   local -a avoid=() run_env=() role_specs=()
   [ "${#add_dir_flags[@]}" -eq 0 ] || refused=--add-dir
   [ -z "$base_flag" ] || refused=--base
@@ -2799,9 +2799,9 @@ _dispatch_remote() {
   migrate_bundle=""
   if [ -n "${DISPATCH_MIGRATE_BUNDLE:-}" ]; then
     migrate_bundle="$(realpath -e -- "$DISPATCH_MIGRATE_BUNDLE" 2>/dev/null)" || migrate_bundle=""
-    artifacts_real="$(realpath -e -- "$crew_dir/artifacts" 2>/dev/null)" || artifacts_real=""
-    if [ -z "$artifacts_real" ] || [ ! -d "$migrate_bundle" ] || [[ $migrate_bundle != "$artifacts_real"/* || ${migrate_bundle##*/} != migrate-* ]]; then
-      echo "dispatch: DISPATCH_MIGRATE_BUNDLE must be a migrate-* directory under $crew_dir/artifacts/ (got '$DISPATCH_MIGRATE_BUNDLE')" >&2
+    migrate_real="$(realpath -e -- "$crew_dir/migrate" 2>/dev/null)" || migrate_real=""
+    if [ -z "$migrate_real" ] || [ ! -d "$migrate_bundle" ] || [[ $migrate_bundle != "$migrate_real"/?*/* || ! ${migrate_bundle##*/} =~ ^[0-9]{8}T[0-9]{6}Z$ ]]; then
+      echo "dispatch: DISPATCH_MIGRATE_BUNDLE must be a crew migrate snapshot directory under $crew_dir/migrate/ (got '$DISPATCH_MIGRATE_BUNDLE')" >&2
       exit 1
     fi
   fi

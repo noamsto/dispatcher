@@ -28,8 +28,10 @@ seed_local_worker() {
 }
 
 mark_migrated_to() { # <host>
+  local dir="${LBUS%/*}/migrate/$BRANCH/20261117T000000Z"
+  mkdir -p "$dir"
   (cd "$TEST_REPO" && crew migrate mark --crew c1 "$BRANCH" --to-host "$1" --mode coop \
-    --tip "$(git rev-parse HEAD)" --tree "$(git rev-parse 'HEAD^{tree}')")
+    --tip "$(git rev-parse HEAD)" --tree "$(git rev-parse 'HEAD^{tree}')" --dir "$dir")
 }
 
 worker_status() { # <body json>
@@ -167,7 +169,7 @@ scratch_tree() { # <worktree> <tip> — read-tree <tip> + add -A in a private in
 }
 
 # make_bundle [--no-transcript] [--tip <oid>] — BUNDLE under the local crew dir's
-# artifacts, as dispatch migrate builds it.
+# migrate tree, as dispatch migrate builds it.
 make_bundle() {
   local transcript=1 tip="$TIP"
   while [ $# -gt 0 ]; do
@@ -180,7 +182,7 @@ make_bundle() {
     esac
     shift
   done
-  BUNDLE="${LBUS%/*}/artifacts/$BRANCH/migrate-20261117T000000Z"
+  BUNDLE="${LBUS%/*}/migrate/$BRANCH/20261117T000000Z"
   mkdir -p "$BUNDLE"
   cp "$PATCH" "$BUNDLE/patch"
   if [ -n "$transcript" ]; then
@@ -305,18 +307,21 @@ migrate_dispatch() { # dispatch_remote --host mini 7 x carrying $BUNDLE
   assert_nothing_recorded_locally
 }
 
-@test "a bundle outside the crew dir's artifacts is refused before the remote is called" {
+@test "a bundle outside the crew dir's migrate tree, the worker-writable artifacts included, is refused before the remote is called" {
   seed_pushed_branch
   make_bundle
-  outside="$BATS_TEST_TMPDIR/migrate-outside"
-  cp -r "$BUNDLE" "$outside"
-  BUNDLE="$outside"
+  built="$BUNDLE"
+  for outside in "$BATS_TEST_TMPDIR/20261117T000000Z" "${LBUS%/*}/artifacts/$BRANCH/migrate-20261117T000000Z"; do
+    mkdir -p "${outside%/*}"
+    cp -r "$built" "$outside"
+    BUNDLE="$outside"
 
-  migrate_dispatch
-  [ "$status" -eq 1 ]
-  [[ $stderr == *"DISPATCH_MIGRATE_BUNDLE"*"artifacts"* ]]
-  [ ! -s "$SSH_CMDS" ]
-  assert_nothing_recorded_locally
+    migrate_dispatch
+    [ "$status" -eq 1 ]
+    [[ $stderr == *"DISPATCH_MIGRATE_BUNDLE"*"/migrate/"* ]]
+    [ ! -s "$SSH_CMDS" ]
+    assert_nothing_recorded_locally
+  done
 }
 
 @test "dispatch --migrate-check passes a clone that can take the branch, and refuses one that has it checked out" {
@@ -506,10 +511,11 @@ worker_says() { # <crew status args...> — posted as the local worker
   (cd "$TEST_REPO" && CREW_ID=c1 CREW_WORKER_ID="$WID" crew status "$WID" "$@")
 }
 
-# coop_worker <clean|uncommitted|blocked> — the worker's half of a cooperative
-# migration, in the background: on the directive it commits and pushes the
-# fixed checkpoint, writes its handoff note and posts migrated. `uncommitted`
-# also leaves a tracked edit behind; `blocked` only reports a failed push.
+# coop_worker <clean|uncommitted|blocked|symlinked> — the worker's half of a
+# cooperative migration, in the background: on the directive it commits and
+# pushes the fixed checkpoint, writes its handoff note and posts migrated.
+# `uncommitted` also leaves a tracked edit behind; `blocked` only reports a
+# failed push; `symlinked` plants its handoff note as a symlink to another file.
 coop_worker() {
   (
     poll_for 600 directive_posted || exit 1
@@ -523,7 +529,12 @@ coop_worker() {
     git -C "$LWT" push -q origin "$BRANCH"
     [ "$1" != uncommitted ] || printf 'more\n' >>"$LWT/work.txt"
     mkdir -p "${LBUS%/*}/artifacts/$BRANCH"
-    printf 'handoff from the worker\n' >"${LBUS%/*}/artifacts/$BRANCH/handoff.md"
+    if [ "$1" = symlinked ]; then
+      printf 'NOT THE WORKER NOTE\n' >"$BATS_TEST_TMPDIR/elsewhere"
+      ln -s "$BATS_TEST_TMPDIR/elsewhere" "${LBUS%/*}/artifacts/$BRANCH/handoff.md"
+    else
+      printf 'handoff from the worker\n' >"${LBUS%/*}/artifacts/$BRANCH/handoff.md"
+    fi
     worker_says migrated --to-host mini "checkpoint pushed"
   ) >"$BATS_TEST_TMPDIR/coop.log" 2>&1 3>&- &
   COOP_PID=$!
@@ -571,6 +582,11 @@ commit_unpushed_and_dirty() {
   migrated_ok
   tip="$(git -C "$TEST_REPO" rev-parse "refs/heads/$BRANCH")"
   [ "$(mark_rows | jq -r '[.from, .body.to_host, .body.mode, .body.tip, .body.patch] | @tsv')" = "$WID	mini	coop	$tip	" ]
+  bundle="$(mark_rows | jq -r .body.dir)"
+  [[ $bundle == "${LBUS%/*}/migrate/$BRANCH/"* ]]
+  [ "$(stat -c %a "$bundle/meta.json")" = 600 ]
+  [ "$(cat "$bundle/transcript.jsonl")" = '{"type":"local-transcript"}' ]
+  [ -z "$(find "$bundle" -name '.*')" ]
   [ "$(remote_rows | wc -l)" -eq 1 ]
   jq -e --arg b "$BRANCH" --arg h "$(uname -n | cut -d. -f1)" \
     '.host == "mini" and .branch == $b and .migrated_from == $h and .engine_context == "resumed"' <<<"$(remote_rows)"
@@ -603,7 +619,8 @@ commit_unpushed_and_dirty() {
   migrated_ok
   mark="$(mark_rows)"
   patch="$(jq -r .body.patch <<<"$mark")"
-  [[ $patch == "${LBUS%/*}/artifacts/$BRANCH/migrate-"*/patch ]]
+  [ "$patch" = "$(jq -r .body.dir <<<"$mark")/patch" ]
+  [[ $patch == "${LBUS%/*}/migrate/$BRANCH/"*/patch ]]
   wt="$(remote_wt "$BRANCH")"
   [ "$(scratch_tree "$wt" "$(jq -r .body.tip <<<"$mark")")" = "$(jq -r .body.tree <<<"$mark")" ]
   [ "$(cat "$wt/work.txt")" = "$(printf 'work\nmore')" ]
@@ -641,8 +658,8 @@ commit_unpushed_and_dirty() {
 @test "a failed remote step leaves the worker marked and kept; the re-run retries only that step, then reap removes the worktree" {
   start_local_worker
   SSH_FAIL_MIGRATE=1 DISPATCH_HOST_RECOVER_TRIES=1 DISPATCH_HOST_RECOVER_SLEEP=0 migrate 7 --host mini --now
-  [ "$status" -ne 0 ]
-  [[ $stderr == *"dispatch migrate: migration to mini failed (exit $status); the worker is stopped and marked migrating to mini — retry: dispatch migrate $BRANCH --host mini; abandon: dispatch resume $BRANCH"* ]]
+  [ "$status" -eq 1 ]
+  [[ $stderr == *"dispatch migrate: migration to mini failed (exit "[0-9]*"); the worker is stopped and marked migrating to mini — retry: dispatch migrate $BRANCH --host mini; abandon: dispatch resume $BRANCH"* ]]
   [ "$(mark_rows | wc -l)" -eq 1 ]
   [ -z "$(remote_rows)" ]
 
@@ -660,15 +677,22 @@ commit_unpushed_and_dirty() {
   [ -n "$(git -C "$TEST_REPO" ls-remote origin "refs/heads/$BRANCH")" ]
 }
 
-@test "a pre-push hook refusing the --now push surfaces verbatim; nothing is marked and the worktree is intact" {
+@test "a pre-push hook refusing the --now push surfaces verbatim, without the dispatcher's identity; nothing is marked and the worktree is intact" {
   start_local_worker
   commit_unpushed_and_dirty
-  printf '#!/bin/sh\necho "HOOK SAYS NO" >&2\nexit 1\n' >"$TEST_REPO/.git/hooks/pre-push"
+  cat >"$TEST_REPO/.git/hooks/pre-push" <<EOF
+#!/bin/sh
+echo "\${CREW_ID-unset} \${TMUX_PANE-unset}" >"$BATS_TEST_TMPDIR/hook.env"
+echo "HOOK SAYS NO" >&2
+exit 1
+EOF
   chmod +x "$TEST_REPO/.git/hooks/pre-push"
+  dispatcher_pane="$(tmux new-session -d -s main -P -F '#{pane_id}')"
 
-  migrate 7 --host mini --now
+  CREW_ID=c1 TMUX_PANE="$dispatcher_pane" migrate 7 --host mini --now
   [ "$status" -eq 1 ]
   [[ $stderr == *"HOOK SAYS NO"* ]]
+  [ "$(cat "$BATS_TEST_TMPDIR/hook.env")" = "unset unset" ]
   [[ $stderr == *"the worker is stopped; nothing was marked — resume it here with: dispatch resume $BRANCH"* ]]
   [ -z "$(jq -c 'select(.kind == "status" and .body.state == "migrated")' "$LBUS")" ]
   [ -z "$(remote_rows)" ]
@@ -759,15 +783,78 @@ EOF
   [ ! -s "$SSH_CMDS" ]
 }
 
-@test "a cooperative worker that does not quiesce in time exits 3 with the human escalation, untouched" {
+@test "a cooperative worker that does not quiesce in time exits 3 with the human escalation, untouched, its directive withdrawn" {
   start_local_worker
 
   migrate 7 --host mini --wait 2
   [ "$status" -eq 3 ]
-  [[ $stderr == *"worker did not quiesce within 2s — ask the human; dispatch migrate --now only if they are leaving now"* ]]
+  [[ $stderr == *"worker did not quiesce within 2s; the migrate directive was withdrawn — ask the human; dispatch migrate --now only if they are leaving now"* ]]
+  jq -e --arg w "$WID" 'select(.kind == "msg" and .to == $w and .from == "dispatcher:c1") | .body | fromjson
+    | select(.directive == "migrate-cancel" and .to_host == "mini")' "$LBUS"
   local_engine_live
   [ -z "$(mark_rows)" ]
   [ -z "$(find "${LBUS%/*}" -maxdepth 1 -name 'migrate-*.lock')" ]
+
+  # The late worker can no longer report it migrated.
+  run --separate-stderr worker_says migrated --to-host mini "checkpoint pushed"
+  [ "$status" -ne 0 ]
+  [[ $stderr == *"migrated needs a dispatcher migrate directive naming --to-host mini"* ]]
+}
+
+@test "a cooperative worker's symlinked handoff note is not carried" {
+  start_local_worker
+  coop_worker symlinked
+
+  migrate 7 --host mini --wait 60
+  migrated_ok
+  handoff="$(remote_crew_dir)/artifacts/$BRANCH/migrated.md"
+  grep -qx -- '- mode: coop' "$handoff"
+  run ! grep -qF 'NOT THE WORKER NOTE' "$handoff"
+  run ! grep -qF "The worker's handoff note" "$handoff"
+}
+
+@test "dispatch migrate --now does not carry a transcript that is a symlink" {
+  start_local_worker
+  SID="$(cut -d' ' -f2 "${LBUS%/*}/leads/$BRANCH")"
+  local_transcript="$LHOME/.claude/projects/${LWT//[^A-Za-z0-9]/-}/$SID.jsonl"
+  mkdir -p "${local_transcript%/*}"
+  printf '{"type":"elsewhere"}\n' >"$BATS_TEST_TMPDIR/elsewhere.jsonl"
+  ln -s "$BATS_TEST_TMPDIR/elsewhere.jsonl" "$local_transcript"
+
+  migrate 7 --host mini --now
+  migrated_ok
+  [[ $stderr == *"no transcript travels: the lead's claude session has no transcript"* ]]
+  [ ! -e "$(mark_rows | jq -r .body.dir)/transcript.jsonl" ]
+  jq -e '.engine_context == "fresh"' <<<"$(remote_rows)"
+  [ ! -e "$(remote_transcript "$(remote_wt "$BRANCH")")" ]
+}
+
+@test "a transcript that would push the bundle over the request budget is dropped; the worker still moves" {
+  start_local_worker
+  SID="$(cut -d' ' -f2 "${LBUS%/*}/leads/$BRANCH")"
+  local_transcript="$LHOME/.claude/projects/${LWT//[^A-Za-z0-9]/-}/$SID.jsonl"
+  mkdir -p "${local_transcript%/*}"
+  head -c 200000 /dev/urandom | base64 >"$local_transcript"
+
+  DISPATCH_MIGRATE_MAX_BYTES=$((96 << 10)) migrate 7 --host mini --now
+  migrated_ok
+  [[ $stderr == *"no transcript travels: transcript dropped: bundle over budget"* ]]
+  bundle="$(mark_rows | jq -r .body.dir)"
+  [ ! -e "$bundle/transcript.jsonl" ]
+  jq -e 'has("session") | not' "$bundle/meta.json"
+  jq -e '.engine_context == "fresh"' <<<"$(remote_rows)"
+}
+
+@test "a bundle over the request budget without its transcript is refused before the mark; the worker stays stopped here" {
+  start_local_worker
+  head -c 200000 /dev/urandom >"$LWT/noise.bin"
+
+  DISPATCH_MIGRATE_MAX_BYTES=$((96 << 10)) migrate 7 --host mini --now
+  [ "$status" -eq 1 ]
+  [[ $stderr == *"bundle too large for one request ("[0-9]*" MiB) — nothing was marked; the worker is stopped — resume it here with: dispatch resume $BRANCH"* ]]
+  [ -z "$(mark_rows)" ]
+  [ -z "$(remote_rows)" ]
+  [ -f "$LWT/noise.bin" ]
 }
 
 # dispatch-migrate --help names every flag its parse loop has an arm for.

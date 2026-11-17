@@ -43,6 +43,9 @@ retry or abandon), 2 refused before anything stopped, 3 the worker did not
 quiesce in time. After a failed remote step a re-run retries only that step;
 dispatch resume <target> abandons the migration and resumes the worker here.
 
+DISPATCH_MIGRATE_MAX_BYTES (for tests) lowers the one-request budget the
+bundle must fit (default 31 MiB).
+
   dispatch migrate '#42' --host studio
   dispatch migrate feat/42-fix-the-roster-column --host studio --now
 HELP
@@ -118,6 +121,9 @@ fi
 
 _host_re='^[A-Za-z0-9][A-Za-z0-9._-]*$'
 [[ $host =~ $_host_re ]] || _die 2 "--host takes a settings host name (got '$host')"
+# Under crew remote-run's 32 MiB migrate request limit.
+max_bytes="${DISPATCH_MIGRATE_MAX_BYTES:-$((31 << 20))}"
+[[ $max_bytes =~ ^[1-9][0-9]{0,10}$ ]] || _die 2 "DISPATCH_MIGRATE_MAX_BYTES takes a whole number of bytes (got '$max_bytes')"
 
 # The pane check mirrors dispatch's _refuse_chrome_from_worker.
 if [ -n "${CREW_WORKER_ID:-}" ] || [ -n "${CREW_ROLE_ID:-}" ] ||
@@ -352,6 +358,12 @@ fi
 stopped_hint="the worker is stopped; nothing was marked — resume it here with: dispatch resume $branch"
 oid_re='^[0-9a-f]{40}([0-9a-f]{24})?$'
 
+# _bundle_dir_ok <dir> — a real snapshot dir <crew_dir>/migrate/<branch>/<UTC>,
+# where crew migrate snapshot makes one, outside the worker-writable artifacts.
+_bundle_dir_ok() {
+  [ -d "$1" ] && [ ! -L "$1" ] && [[ $(realpath -m -- "$1") =~ ^"$cdir/migrate/$branch/"[0-9]{8}T[0-9]{6}Z$ ]]
+}
+
 # _snapshot — crew migrate snapshot's line into snap_dir/patch/tree/tip.
 _snapshot() {
   local snap
@@ -361,9 +373,16 @@ _snapshot() {
   tree="$(jq -r .tree <<<"$snap")"
   tip="$(jq -r .tip <<<"$snap")"
   [[ $tree =~ $oid_re && $tip =~ $oid_re ]] || _die 1 "crew migrate snapshot gave no tree and tip — $stopped_hint"
-  [[ $(realpath -m -- "$snap_dir") == "$cdir/artifacts/$branch/migrate-"* ]] ||
-    _die 1 "crew migrate snapshot named $snap_dir, outside $crew_dir/artifacts/$branch — $stopped_hint"
+  _bundle_dir_ok "$snap_dir" ||
+    _die 1 "crew migrate snapshot named $snap_dir, not a bundle dir under $crew_dir/migrate/$branch — $stopped_hint"
 }
+
+# The task body, verbatim; it rides in the same request as the bundle.
+spec_file=""
+if grep -qx '## Task' "$task_doc"; then
+  spec_file="$scratch/spec.md"
+  sed '1,/^## Task$/d' "$task_doc" >"$spec_file"
+fi
 
 if [ -n "$recovery" ]; then
   # The mark stands, so the worker was stopped and its bundle built: verify the
@@ -372,28 +391,17 @@ if [ -n "$recovery" ]; then
   mark_tip="$(jq -r '.release.tip // empty' <<<"$state")"
   mark_tree="$(jq -r '.release.tree // empty' <<<"$state")"
   mark_patch="$(jq -r '.release.patch // empty' <<<"$state")"
+  bundle="$(jq -r '.release.dir // empty' <<<"$state")"
   _snapshot
-  # The verifying snapshot's own copy of the patch is not the mark's.
-  if [ -n "$patch" ]; then
-    rm -f -- "$patch"
-    rmdir -- "$snap_dir" 2>/dev/null || true
-  fi
+  # The verifying snapshot's own fresh dir is not the mark's.
+  rm -f -- "$snap_dir/patch"
+  rmdir -- "$snap_dir" 2>/dev/null || true
   if [ "$tree" != "$mark_tree" ] || [ "$tip" != "$mark_tip" ]; then
     _die 1 "$branch changed since it was marked migrating to $host (tip $tip, tree $tree; the mark has $mark_tip, $mark_tree) — abandon: dispatch resume $branch"
   fi
   patch="$mark_patch"
-  bundle=""
-  if [ -n "$patch" ]; then
-    bundle="${patch%/patch}"
-  else
-    for d in "$crew_dir/artifacts/$branch"/migrate-*/; do
-      d="${d%/}"
-      [ ! -L "$d" ] && [ -f "$d/meta.json" ] || continue
-      [ "$(jq -r '.tip // empty' "$d/meta.json" 2>/dev/null)" = "$mark_tip" ] && bundle="$d"
-    done
-  fi
-  [ -n "$bundle" ] && [ ! -L "$bundle" ] && [ -f "$bundle/meta.json" ] ||
-    _die 1 "no migration bundle for $branch at $mark_tip under $crew_dir/artifacts/$branch — abandon: dispatch resume $branch"
+  _bundle_dir_ok "$bundle" && [ -f "$bundle/meta.json" ] && [ ! -L "$bundle/meta.json" ] ||
+    _die 1 "the mark names no migration bundle for $branch ('$bundle') — abandon: dispatch resume $branch"
 else
   mode=coop
   [ -z "$now" ] || mode=now
@@ -421,6 +429,15 @@ else
     # Read once more past the deadline: a migrated posted while the nudge
     # waited out a live turn is never missed.
     [ -n "$outcome" ] || outcome="$(_coop_outcome)"
+    withdrawn=""
+    if [ -z "$outcome" ]; then
+      # crew status refuses migrated once the cancel lands, so a migrated row
+      # read after it was posted before it, and still stands.
+      withdrawn="the migrate directive was withdrawn"
+      crew reply --crew "$crew_id" -- "$worker" "$(jq -nc --arg h "$host" '{directive: "migrate-cancel", to_host: $h}')" >/dev/null ||
+        withdrawn="withdrawing the migrate directive failed, so it may still be pending"
+      outcome="$(_coop_outcome)"
+    fi
     o_state="$(cut -f1 <<<"$outcome")"
     o_host="$(cut -f2 <<<"$outcome")"
     o_detail="$(cut -f3- <<<"$outcome")"
@@ -432,7 +449,7 @@ else
       printf '%s\n' "$o_detail" >&2
       _die 1 "$worker could not checkpoint (above); it is untouched and live — answer it, then retry"
       ;;
-    "") _die 3 "worker did not quiesce within ${wait_s}s — ask the human; dispatch migrate --now only if they are leaving now" ;;
+    "") _die 3 "worker did not quiesce within ${wait_s}s; $withdrawn — ask the human; dispatch migrate --now only if they are leaving now" ;;
     *) _die 1 "$worker posted $o_state${o_detail:+ ($o_detail)} instead of migrating — nothing was moved" ;;
     esac
   fi
@@ -444,8 +461,12 @@ else
   # through the hooks and never forced. Either way origin must hold the tip.
   if [ "$mode" = now ]; then
     _wt_cfg_guard "$common" "$admin" || _die 1 "$stopped_hint"
+    _wt_gitlink_ok "$admin" "$wt" || _die 1 "$wt/.git no longer points at $admin — $stopped_hint"
     push_rc=0
-    push_out="$(git -C "$wt" push origin "$branch" 2>&1)" || push_rc=$?
+    # Hooks run here on purpose (owner requirement: a hook's refusal surfaces
+    # verbatim, never bypassed); the one dispatcher-side git call that runs them.
+    push_out="$(env -u CREW_ID -u CREW_WORKER_ID -u CREW_ROLE_ID -u TMUX -u TMUX_PANE \
+      git --git-dir="$admin" --work-tree="$wt" push origin "refs/heads/$branch:refs/heads/$branch" 2>&1)" || push_rc=$?
     if [ "$push_rc" -ne 0 ]; then
       printf '%s\n' "$push_out" >&2
       _die 1 "$stopped_hint"
@@ -455,14 +476,24 @@ else
   [ "$origin_tip" = "$tip" ] || _die 1 "origin/$branch is at ${origin_tip:-nothing}, not the worker's tip $tip — $stopped_hint"
 
   bundle="$snap_dir"
-  if bad="$(_artifacts_dir_bad "$branch")"; then
-    _die 1 "$bad is a symlink or not a directory — $stopped_hint"
-  fi
-  [ ! -L "$bundle" ] || _die 1 "$bundle is a symlink — $stopped_hint"
-  (umask 077 && mkdir -p -- "$bundle")
+  # _bundle_put <name> — stdin to <bundle>/<name>; the rename replaces, never
+  # follows, whatever is at that name.
+  _bundle_put() {
+    local tmp
+    tmp="$(mktemp "$bundle/.$1.XXXXXX")"
+    cat >"$tmp"
+    mv -fT -- "$tmp" "$bundle/$1"
+  }
+  # _b64gz_bytes <file> — what <file> takes in the request: gzipped, then base64.
+  _b64gz_bytes() {
+    local n
+    n="$(gzip -c -- "$1" | wc -c)"
+    echo $((4 * ((n + 2) / 3)))
+  }
 
   # Claude only: the lead's recorded session, at claude's key for this worktree.
   session=""
+  transcript=""
   transcript_why=""
   lead_rec="$crew_dir/leads/$branch"
   if [ "$agent" != claude ]; then
@@ -473,26 +504,38 @@ else
     rec_engine="" rec_id="" rec_extra=""
     read -r rec_engine rec_id rec_extra <"$lead_rec" || true
     projects="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects"
-    transcript="$projects/${wt//[^A-Za-z0-9]/-}/$rec_id.jsonl"
     if [ "$rec_engine" != claude ] || [ -n "$rec_extra" ] ||
       ! [[ $rec_id =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]]; then
       transcript_why="the lead session record is not a claude session"
     else
-      if [ ! -f "$transcript" ]; then
+      # A symlink would carry whatever it points at to the other host.
+      transcript="$projects/${wt//[^A-Za-z0-9]/-}/$rec_id.jsonl"
+      if [ ! -f "$transcript" ] || [ -L "$transcript" ]; then
+        transcript=""
         for f in "$projects"/*/"$rec_id".jsonl; do
-          [ -f "$f" ] && transcript="$f"
+          [ -f "$f" ] && [ ! -L "$f" ] && transcript="$f"
         done
       fi
-      if [ ! -f "$transcript" ]; then
+      if [ -z "$transcript" ]; then
         transcript_why="the lead's claude session has no transcript"
-      elif [ $(($(gzip -c -- "$transcript" | wc -c) * 4 / 3)) -gt $((30 << 20)) ]; then
-        transcript_why="the transcript is over the 30 MiB transfer budget"
       else
-        (umask 077 && cp -- "$transcript" "$bundle/transcript.jsonl")
         session="$rec_id"
       fi
     fi
   fi
+
+  # One request carries the patch, the transcript and the task body, each
+  # gzipped and base64'd; the slack covers meta.json and the argv.
+  req_bytes=$((64 << 10))
+  [ -z "$patch" ] || req_bytes=$((req_bytes + $(_b64gz_bytes "$patch")))
+  [ -z "$spec_file" ] || req_bytes=$((req_bytes + $(wc -c <"$spec_file")))
+  [ "$req_bytes" -le "$max_bytes" ] ||
+    _die 1 "bundle too large for one request ($(((req_bytes + (1 << 20) - 1) >> 20)) MiB) — nothing was marked; the worker is stopped — resume it here with: dispatch resume $branch"
+  if [ -n "$session" ] && [ $((req_bytes + $(_b64gz_bytes "$transcript"))) -gt "$max_bytes" ]; then
+    session=""
+    transcript_why="transcript dropped: bundle over budget"
+  fi
+  [ -z "$session" ] || _bundle_put transcript.jsonl <"$transcript"
   [ -z "$transcript_why" ] || echo "dispatch migrate: no transcript travels: $transcript_why" >&2
 
   # The handoff: crew-dir data that travels over ssh only. The msgs the old
@@ -504,12 +547,19 @@ else
     | if $q == null then empty
       elif any($all[]; .kind == "msg" and .to == $w and ((.ts | numbers) // 0) > (($q.ts | numbers) // 0)) then empty
       else $q.body.detail // empty | tostring end' "$events")"
-  mapfile -t msgs < <(crew inbox "$worker" "$crew_id" --undelivered |
-    jq -r '"- \(.from // "?") at \(((.ts | numbers) // 0) / 1000 | floor | todate): \(.body | if type == "string" then . else tojson end | gsub("\n"; " "))"' 2>/dev/null || true)
+  msgs=()
+  inbox_failed=""
+  if crew inbox "$worker" "$crew_id" --undelivered >"$scratch/inbox.jsonl"; then
+    mapfile -t msgs < <(jq -r '"- \(.from // "?") at \(((.ts | numbers) // 0) / 1000 | floor | todate): \(.body | if type == "string" then . else tojson end | gsub("\n"; " "))"' "$scratch/inbox.jsonl")
+  else
+    inbox_failed=1
+    echo "dispatch migrate: could not read the messages $worker never pulled (above) — the handoff says so" >&2
+  fi
   worker_note=""
   handoff_md="$crew_dir/artifacts/$branch/handoff.md"
+  # Worker-writable: a symlink would pull another file in.
   if [ "$mode" = coop ] && [ -f "$handoff_md" ] && [ ! -L "$handoff_md" ]; then
-    worker_note="$(cat -- "$handoff_md")"
+    worker_note="$(head -c $((32 << 10)) -- "$handoff_md")"
   fi
   _handoff() { # <dropped msg count> <msg lines...>
     local dropped="$1"
@@ -520,7 +570,9 @@ else
     printf -- '- engine transcript: %s\n' "${session:+travels}${transcript_why:+not carried ($transcript_why)}"
     printf -- '- last status: %s\n' "$(jq -r '"\(.state // "none")\(if (.detail // "") != "" then " — \(.detail)" else "" end)"' <<<"$last")"
     [ -z "$question" ] || printf -- '- last unanswered blocked question: %s\n' "$question"
-    if [ $# -gt 0 ] || [ "$dropped" -gt 0 ]; then
+    if [ -n "$inbox_failed" ]; then
+      printf '\n## Messages to the old session it never read\n\nmessages could not be read\n'
+    elif [ $# -gt 0 ] || [ "$dropped" -gt 0 ]; then
       printf '\n## Messages to the old session it never read\n\n'
       [ "$dropped" -eq 0 ] || printf '(%s older messages dropped to keep this handoff under 64 KiB)\n' "$dropped"
       [ $# -eq 0 ] || printf '%s\n' "$@"
@@ -536,23 +588,16 @@ else
   if [ "$(printf '%s' "$handoff" | wc -c)" -gt $((64 << 10)) ]; then
     handoff="$(printf '%s' "$handoff" | head -c $(((64 << 10) - 64)))"$'\n(truncated to 64 KiB)'
   fi
-  (
-    umask 077
-    jq -n --arg b "$branch" --arg t "$tip" --arg f "$from_host" --arg m "$mode" --arg s "$session" --arg h "$handoff" \
-      '{v: 1, branch: $b, tip: $t, from_host: $f, mode: $m} + (if $s != "" then {session: $s} else {} end) + {handoff: $h}' >"$bundle/meta.json"
-  )
+  jq -n --arg b "$branch" --arg t "$tip" --arg f "$from_host" --arg m "$mode" --arg s "$session" --arg h "$handoff" \
+    '{v: 1, branch: $b, tip: $t, from_host: $f, mode: $m} + (if $s != "" then {session: $s} else {} end) + {handoff: $h}' |
+    _bundle_put meta.json
 
-  crew migrate mark --crew "$crew_id" "$branch" --to-host "$host" --mode "$mode" --tip "$tip" --tree "$tree" ${patch:+--patch "$patch"} >&2 ||
+  crew migrate mark --crew "$crew_id" "$branch" --to-host "$host" --mode "$mode" --tip "$tip" --tree "$tree" --dir "$bundle" ${patch:+--patch "$patch"} >&2 ||
     _die 1 "could not mark $branch released to $host — $stopped_hint"
 fi
 
 # The remote resume, through dispatch --host and every guard it keeps, with
 # the old header's settings and the task body verbatim.
-spec_file=""
-if grep -qx '## Task' "$task_doc"; then
-  spec_file="$scratch/spec.md"
-  sed '1,/^## Task$/d' "$task_doc" >"$spec_file"
-fi
 argv=(dispatch "$tier" "$model" --host "$host" --agent "$agent" --effort "$effort" --plan "$plan" --crew-id "$crew_id")
 [ -z "$mcp" ] || argv+=(--mcp "$mcp")
 [ -z "$roles" ] || argv+=(--roles "$roles")
@@ -567,7 +612,7 @@ run_env=(DISPATCH_SKIP_SPEC_LINT=1 "DISPATCH_MIGRATE_BUNDLE=$bundle")
 rc=0
 env -u DISPATCH_SPEC -u DISPATCH_DRAFT_PR "${run_env[@]}" "${argv[@]}" || rc=$?
 [ "$rc" -eq 0 ] ||
-  _die "$rc" "migration to $host failed (exit $rc); the worker is stopped and marked migrating to $host — retry: dispatch migrate $branch --host $host; abandon: dispatch resume $branch"
+  _die 1 "migration to $host failed (exit $rc); the worker is stopped and marked migrating to $host — retry: dispatch migrate $branch --host $host; abandon: dispatch resume $branch"
 
 context="$(jq -rnR --arg b "$branch" --arg h "$host" '[inputs | fromjson? | objects
   | select(.kind == "dispatch" and .remote == true and .branch == $b and .host == $h)] | last // {}

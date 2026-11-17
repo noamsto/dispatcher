@@ -188,6 +188,8 @@ A dispatcher msg `{"directive":"migrate","to_host":"H"}` at a peek seam moves th
 5. Push plainly through the hooks (never `--no-verify`, never force). Failure → `crew status "$CREW_WORKER_ID" blocked "migrate: push failed: <git's words>"`, then block→await.
 6. Success → `crew status "$CREW_WORKER_ID" migrated --to-host H "<one line>"` (say `uncommitted work travels as a patch` when step 4 fired), no metrics snapshot (the run continues on H), stop.
 
+A later `{"directive":"migrate-cancel"}` from the dispatcher withdraws the directive: if you have not posted `migrated`, carry on with the run (re-stamp `working`). `crew status … migrated` is refused after a cancel.
+
 ## Retro notes (all tiers)
 
 A note records, in your own words, why something went wrong, tagged to group across runs. Write one only when a branch below is taken; never for success or per seam unconditionally.

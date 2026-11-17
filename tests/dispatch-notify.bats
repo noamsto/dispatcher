@@ -203,6 +203,8 @@ stub_tmux() {
 @test "notify: a worker that already reported migrated is not given an exited row" {
   stub_tmux
   task_doc %9
+  # crew status takes migrated only after the dispatcher's migrate directive.
+  CREW_ID=c1 "$CREW" msg dispatcher:c1 'worker:feat/x#s1-1' '{"directive":"migrate","to_host":"mini"}'
   seed_status migrated --to-host mini
 
   CREW_WORKER_ID='worker:feat/x#s1-1' run run_notify
