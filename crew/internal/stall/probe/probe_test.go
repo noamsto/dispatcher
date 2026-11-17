@@ -180,6 +180,8 @@ func TestPaneCmdEffective(t *testing.T) {
 		{"darwin path with a space", "%7\tzsh\t100", table("100 1 /bin/zsh\n200 100 /Applications/My Tools/claude"), "claude"},
 		{"only non-engine children", "%7\tfish\t100", table("100 1 fish\n200 100 sleep\n201 100 git"), "fish"},
 		{"engine elsewhere in the table", "%7\tfish\t100", table("100 1 fish\n500 1 claude"), "fish"},
+		{"node child only", "%7\tfish\t100", table("100 1 fish\n200 100 node"), "fish"},
+		{"node child with engine grandchild", "%7\tfish\t100", table("100 1 fish\n200 100 node\n300 200 claude"), "claude"},
 		{"already an engine", "%7\tclaude\t100", never, "claude"},
 		{"unparsable pane_pid", "%7\tfish\tx", never, "fish"},
 		{"pane_pid 1", "%7\tfish\t1", never, "fish"},

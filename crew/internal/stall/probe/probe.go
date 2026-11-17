@@ -322,7 +322,9 @@ func engineBelow(table string, root int) string {
 				if seen[k.pid] {
 					continue
 				}
-				if name := path.Base(k.comm); k.comm != "" && roster.IsEngineCmd(name) {
+				// node as an arbitrary descendant (dev server, MCP/language server)
+				// is weak evidence and would mask launch-not-started, dead: and EOL.
+				if name := path.Base(k.comm); k.comm != "" && name != "node" && roster.IsEngineCmd(name) {
 					return name
 				}
 				if seen[k.pid] = true; len(seen) >= maxVisited {

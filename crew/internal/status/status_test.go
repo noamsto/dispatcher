@@ -1011,8 +1011,11 @@ func TestPanePublish(t *testing.T) {
 		f.log(statusRow(worker, `{"state":"done"}`))
 		f.status(worker, "done")
 		f.status(worker, "bogus")
-		if got := f.tm.Calls(); len(got) != 0 {
-			t.Errorf("tmux touched: %q", got)
+		// The deduped done still runs the relaunch-clear query, which publishes nothing.
+		for _, c := range f.tm.Calls() {
+			if strings.HasPrefix(c, "set-option") {
+				t.Errorf("published: %q", c)
+			}
 		}
 	})
 }
@@ -1037,6 +1040,7 @@ func TestClearRelaunch(t *testing.T) {
 		{"done non-grid worker", worker, "done", "%5", "", "feat/x\x1f", true, true},
 		{"failed clears", worker, "failed", "%5", "", "feat/x\x1flead", true, true},
 		{"session suffix parsed", "worker:feat/x#s123", "done", "%5", "", "feat/x\x1flead", true, true},
+		{"hash in branch", "worker:feat/7-a#b#s123", "done", "%5", "", "feat/7-a#b\x1flead", true, true},
 		{"pr_open keeps", worker, "pr_open", "%5", "", "feat/x\x1flead", false, false},
 		{"working keeps", worker, "working", "%5", "", "feat/x\x1flead", false, false},
 		{"blocked keeps", worker, "blocked", "%5", "", "feat/x\x1flead", false, false},
@@ -1074,6 +1078,32 @@ func TestClearRelaunch(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestClearRelaunchOnDedupedRepeat(t *testing.T) {
+	f := newFixture(t)
+	f.tm = &tmuxtest.Fake{Func: func(args []string) (string, error) {
+		if args[0] == "display-message" && strings.Contains(args[len(args)-1], "@crew_branch") {
+			return "feat/x\x1flead", nil
+		}
+		return f.role, nil
+	}}
+	f.role = "lead"
+	f.env["TMUX_PANE"] = "%5"
+	for range 2 {
+		if code, msg := f.status(worker, "failed"); code != 0 {
+			t.Fatalf("status = %d: %s", code, msg)
+		}
+	}
+	n := 0
+	for _, c := range f.tm.Calls() {
+		if c == "set-option -pu -t %5 @remux_relaunch" {
+			n++
+		}
+	}
+	if n != 2 {
+		t.Errorf("relaunch unset issued %d times, want 2 (second post deduped); calls %q", n, f.tm.Calls())
 	}
 }
 
