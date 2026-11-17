@@ -44,7 +44,6 @@ const (
 	// misrouted always.
 	inboxWindow = 24 * time.Hour
 
-	// buildConcurrency bounds the repos built at once.
 	buildConcurrency = 8
 	// remoteConcurrency bounds the ssh probes in flight across all repos.
 	remoteConcurrency = 8
