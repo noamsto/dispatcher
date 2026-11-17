@@ -298,11 +298,11 @@ const (
 // a `pid ppid comm` table, breadth first. comm is the rest of the line: darwin
 // prints full paths, which may contain spaces.
 func engineBelow(table string, root int) string {
-	type proc struct {
+	type child struct {
 		pid  int
 		comm string
 	}
-	kids := map[int][]proc{}
+	kids := map[int][]child{}
 	for line := range strings.SplitSeq(table, "\n") {
 		pidText, rest, _ := strings.Cut(strings.TrimSpace(line), " ")
 		ppidText, comm, _ := strings.Cut(strings.TrimSpace(rest), " ")
@@ -311,7 +311,7 @@ func engineBelow(table string, root int) string {
 		if err1 != nil || err2 != nil {
 			continue
 		}
-		kids[ppid] = append(kids[ppid], proc{pid, strings.TrimSpace(comm)})
+		kids[ppid] = append(kids[ppid], child{pid, strings.TrimSpace(comm)})
 	}
 	seen := map[int]bool{root: true}
 	level := []int{root}

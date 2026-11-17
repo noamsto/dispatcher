@@ -254,8 +254,8 @@ func publishPane(ctx context.Context, o Options, state, detail string) {
 // @crew_role check proves the caller sits in that worker's pane: a dispatcher
 // process post (another TMUX_PANE) and role panes clear nothing. Watchdog
 // terminal rows are written by stall-watch directly and never reach RunStatus,
-// so they never clear. A deduped repeat terminal post clears too; the unset is
-// idempotent. pr_open keeps the stamp, since the worker still goes on to done.
+// so they never clear. pr_open keeps the stamp, since the worker still goes on
+// to done.
 // Best effort: it must never fail the write that precedes it.
 func clearRelaunch(ctx context.Context, o Options, from, state string) {
 	if state != "done" && state != "failed" {

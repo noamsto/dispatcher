@@ -2871,8 +2871,9 @@ fi
 # the subcommand — `dispatch resume --agent pi` — as the usage line shows.
 if [ "${1:-}" = resume ]; then
   shift
-  # Resolved while this launcher's pinned PATH still finds it; it then starts from the
-  # caller's PATH and re-pins only its own dirs, so ours never leak into the engine (#1588).
+  # Resolved while this launcher's pinned PATH still finds it; dispatch-resume then
+  # starts from the caller's PATH and re-pins only its own dirs, so dispatch's never
+  # leak into the engine.
   resume_bin="$(command -v dispatch-resume)" || {
     echo "dispatch: dispatch-resume not found on PATH" >&2
     exit 1
