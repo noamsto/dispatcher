@@ -4,16 +4,16 @@
 │ 3 ✗ w-b reviewer: role reviewer engine exited (pane %9)                                     6m → peek                │
 │ 4 ✗ far far on far: ssh: connect to host far port 22: timed out                            10s → peek                │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
-╭ CREWS ──────────────────────────────────────── 8 crews · 13 workers ─╮╭ CAPACITY ─────────────────────────── 3 free ─╮
-│ ● a c1    alive 3w 1pr 1? 4!                                         ││ weight      █████████████░░░░░░░ 5/8 (+1)    │
-│ ● b c5    stale 1b        2!                                         ││ load        1.5/8                            │
-│ ✗ a c3    —     1w 1pr    1! orphaned                                ││ qwen        1/2                              │
-│ ● b c1    alive 1pr                                                  ││ BUDGET ──────────────────────────────────────│
+╭ CREWS ──────────────────────────────────────── 7 crews · 13 workers ─╮╭ CAPACITY ─────────────────────────── 3 free ─╮
+│ ● c1 @lap a alive 3w 1pr 1? 4!                                       ││ weight      █████████████░░░░░░░ 5/8 (+1)    │
+│ ●   └ b     alive 1pr                                                ││ load        1.5/8                            │
+│ ● c5 @lap b stale 1b        2!                                       ││ qwen        1/2                              │
+│ ✗ c3 @lap a —     1w 1pr    1! orphaned                              ││ BUDGET ──────────────────────────────────────│
 │ PEERS ───────────────────────────────────────────────────────────────││ claude 5h   ██░░░░░░░░░░░░░░░░░░  10%        │
-│ ○ @mbp p1       1?                                                   ││ claude 7d   ████████████░░░░░░░░  62% ↑      │
-│ ○ @box p2       1w                                                   │╰──────────────────────────────────────────────╯
-│ ○ @mbp p2       1?                                                   │╭ HOLDS ───────────────────────────── 4 holds ─╮
-│ ○ @box p3       1pr                                                  ││ high   a/feat/q1         due              15m│
+│ ○ @box p2         1w                                                 ││ claude 7d   ████████████░░░░░░░░  62% ↑      │
+│ ○ @box p3         1pr                                                │╰──────────────────────────────────────────────╯
+│ ○ @mbp p1         1?                                                 │╭ HOLDS ───────────────────────────── 4 holds ─╮
+│ ○ @mbp p2         1?                                                 ││ high   a/feat/q1         due              15m│
 │                                                                      ││ quota  a c1              due               2m│
 │                                                                      ││ normal b/feat/q2         waiting:load      3m│
 │                                                                      ││ low    b/feat/q3         parked:oversize  16m│
@@ -35,6 +35,6 @@
 │                                                                      ││                                              │
 │                                                                      ││                                              │
 │                                                                      ││                                              │
-│                                                                      ││                                              │
+│ w working · b blocked · f failed · pr pr_open · N! attention         ││                                              │
 ╰──────────────────────────────────────────────────────────────────────╯╰──────────────────────────────────────────────╯
  ! 1 source errors: tailscale: exit 127
