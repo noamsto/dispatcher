@@ -271,7 +271,7 @@ func hasLegend(inner rect) bool { return inner.h >= 4 }
 // fleetLegends are the counter legend from fullest to shortest; the Crews
 // panel draws the first that fits its width.
 var fleetLegends = []string{
-	"w working · b blocked · f failed · pr pr_open · d done · x exited · ? unknown · N! attention",
+	"w working · b blocked · f failed · pr pr_open · d done · x exited · m migrated · ? unknown · N! attention",
 	"w working · b blocked · f failed · pr pr_open · N! attention",
 	"w work · b block · f fail · pr pr · N! attn",
 }
@@ -772,7 +772,7 @@ func dispatcherGlyphState(c vm.FleetCrewRow) string {
 
 var countAbbrevs = []struct{ state, abbr string }{
 	{"working", "w"}, {"blocked", "b"}, {"pr_open", "pr"}, {"done", "d"},
-	{"failed", "f"}, {"exited", "x"}, {"unknown", "?"},
+	{"failed", "f"}, {"exited", "x"}, {"migrated", "m"}, {"unknown", "?"},
 }
 
 // workerCounts is by_state as "3w 1b 1pr": known states abbreviated in a

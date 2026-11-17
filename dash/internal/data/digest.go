@@ -19,7 +19,7 @@ const (
 
 var (
 	phaseNames    = []string{"spec", "plan", "execute", "gate", "review", "ship"}
-	terminalState = []string{"done", "failed", "exited", "reaped"}
+	terminalState = []string{"done", "failed", "exited", "reaped", "migrated"}
 )
 
 type WorkerKey struct{ Crew, Branch string }

@@ -163,6 +163,12 @@ func WorkerRowOf(crew []string, crewID string, w map[string]any) WorkerRow {
 	if row.Name != nil {
 		name = *row.Name
 	}
+	if row.State == "migrated" {
+		if to := str(w, "to_host"); to != "" {
+			detail := "moved to " + to
+			row.Detail = &detail
+		}
+	}
 	row.Actions = WorkerActions(origin, crew, crewID, row.Branch, name, pr)
 	return row
 }

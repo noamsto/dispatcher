@@ -350,3 +350,24 @@ func TestBoardIssueFollowsBranchRule(t *testing.T) {
 		})
 	}
 }
+
+func TestMigratedIsDoneDimArrow(t *testing.T) {
+	if g := boardGroup("migrated"); g != grpDone {
+		t.Errorf("boardGroup(migrated) = %d, want grpDone", g)
+	}
+	if c := stateColor("migrated"); c == stateFailedColor {
+		t.Error("migrated uses the failed colour")
+	}
+	if g := stateGlyph("migrated"); g != "→" {
+		t.Errorf("glyph = %q, want →", g)
+	}
+	if c := glyphColor("migrated"); c == stateFailedColor || c == stateDoneColor {
+		t.Errorf("glyph colour = %q, want neutral dim", c)
+	}
+	if got := workerCounts(map[string]int{"working": 1, "migrated": 2}); got != "1w 2m" {
+		t.Errorf("workerCounts = %q", got)
+	}
+	if !strings.Contains(fleetLegends[0], "m migrated") {
+		t.Errorf("legend lacks migrated: %q", fleetLegends[0])
+	}
+}
