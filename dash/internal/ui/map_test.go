@@ -133,7 +133,7 @@ func (r *mapRig) model(w, h int) Model {
 
 // open sizes the model to 100x30 and shows the Map tab, running its render.
 func (r *mapRig) open() Model {
-	return r.press(r.model(100, 30), keyRune('7'))
+	return r.press(r.model(100, 31), keyRune('7'))
 }
 
 // press delivers msg and runs the Cmds it leads to: renders land, action
@@ -230,9 +230,9 @@ func click(x, y int) tea.MouseMsg {
 }
 
 // cellOf is the root-model mouse position of the cell at image pixel (px, py)
-// for the 100x30 rig, where the block starts at the body's top-left and the
-// tab bar is one line.
-func cellOf(px, py float64) (x, y int) { return int(px / 10), int(py/20) + 1 }
+// for the 100x31 rig, where the block starts at the body's top-left and the
+// tab bar and crew header are two lines.
+func cellOf(px, py float64) (x, y int) { return int(px / 10), int(py/20) + 2 }
 
 func TestMapOpensOnLiveCursorCrewAndSelection(t *testing.T) {
 	r := newMapRig(t, false, true)
@@ -402,6 +402,7 @@ func TestMapClickOnTabBarOrOtherButtonsIsIgnored(t *testing.T) {
 	x, y := cellOf(g.Planets[5].CX, g.Planets[5].CY)
 	for name, msg := range map[string]tea.MouseMsg{
 		"header row":   click(x, 0),
+		"crew row":     click(x, 1),
 		"right button": {X: x, Y: y, Action: tea.MouseActionPress, Button: tea.MouseButtonRight},
 		"left release": {X: x, Y: y, Action: tea.MouseActionRelease, Button: tea.MouseButtonLeft},
 		"left motion":  {X: x, Y: y, Action: tea.MouseActionMotion, Button: tea.MouseButtonLeft},
@@ -413,15 +414,15 @@ func TestMapClickOnTabBarOrOtherButtonsIsIgnored(t *testing.T) {
 }
 
 // Planet 0 spans pixel rows 34-86, so body row 0 (pixels 0-20) misses it and
-// body row 1 hits. Only with the tab bar's line removed does root row 1 mean
+// body row 1 hits. Only with the tab bar and crew line removed does root row 2 mean
 // body row 0.
 func TestMapClickHeaderOffsetBoundary(t *testing.T) {
 	r := newMapRig(t, false, true)
 	m := r.open()
-	if got := mapSel(r.press(m, click(50, 1))); got != "feat/101-basil" {
+	if got := mapSel(r.press(m, click(50, 2))); got != "feat/101-basil" {
 		t.Fatalf("the first body row selected %q, want a miss", got)
 	}
-	if got := mapSel(r.press(m, click(50, 2))); got != "feat/100-amber" {
+	if got := mapSel(r.press(m, click(50, 3))); got != "feat/100-amber" {
 		t.Fatalf("the second body row selected %q, want planet 0", got)
 	}
 }
@@ -791,7 +792,7 @@ func TestMapFallbackWhenNotCapable(t *testing.T) {
 	}
 	assertNoImage(t, frame)
 	assertNoImage(t, m.views[mapTab].View(100, 24))
-	assertWidth(t, frame, 100, 30)
+	assertWidth(t, frame, 100, 31)
 	if got := len(r.fake.CallsSnapshot()); got != 0 {
 		t.Fatalf("%d runner calls while not capable", got)
 	}
@@ -816,7 +817,7 @@ func TestMapFrameHasPlaceholdersOfExactWidth(t *testing.T) {
 	r := newMapRig(t, false, true)
 	m := r.open()
 	frame := m.View()
-	assertWidth(t, frame, 100, 30)
+	assertWidth(t, frame, 100, 31)
 	lines := strings.Split(frame, "\n")
 	var block []string
 	for _, l := range lines {
@@ -845,7 +846,7 @@ func TestMapFrameHasPlaceholdersOfExactWidth(t *testing.T) {
 
 func TestMapBlockIsCentredAndClicksFollowIt(t *testing.T) {
 	r := newMapRig(t, false, true)
-	m := r.model(400, 30)
+	m := r.model(400, 31)
 	r.respond("c1", "2970x500", func() mapgeom.Geometry {
 		g := loadMapGeometry(t)
 		g.W = 2970
@@ -978,7 +979,7 @@ func TestMapTabKeyMovesSelectionWhenOwnedElseSwitchesViews(t *testing.T) {
 	}
 
 	// Before the first image lands the tab does not own tab.
-	loading := r.model(100, 30)
+	loading := r.model(100, 31)
 	nm, _ := loading.Update(keyRune('7'))
 	nm, _ = nm.Update(keyType(tea.KeyTab))
 	if nm.(Model).active != fleetTab {
@@ -999,11 +1000,11 @@ func TestMapResizeRendersWhenTheBlockChanges(t *testing.T) {
 	r := newMapRig(t, false, true)
 	m := r.open()
 	before := renders(r.fake)
-	m = r.press(m, tea.WindowSizeMsg{Width: 100, Height: 30})
+	m = r.press(m, tea.WindowSizeMsg{Width: 100, Height: 31})
 	if renders(r.fake) != before {
 		t.Fatalf("an unchanged size rendered again")
 	}
-	m = r.press(m, tea.WindowSizeMsg{Width: 80, Height: 24})
+	m = r.press(m, tea.WindowSizeMsg{Width: 80, Height: 25})
 	if got := renders(r.fake) - before; got != 1 {
 		t.Fatalf("%d renders after a resize, want 1", got)
 	}
@@ -1011,15 +1012,15 @@ func TestMapResizeRendersWhenTheBlockChanges(t *testing.T) {
 	if last := calls[len(calls)-1]; !slices.Contains(last, "800x380") {
 		t.Fatalf("resize render did not ask for the new size: %q", last)
 	}
-	assertWidth(t, m.View(), 80, 24)
+	assertWidth(t, m.View(), 80, 25)
 }
 
 func TestMapHelpToggleKeepsFrameWithinTerminal(t *testing.T) {
 	r := newMapRig(t, false, true)
 	m := r.press(r.open(), keyRune('?'))
-	assertWidth(t, m.View(), 100, 30)
+	assertWidth(t, m.View(), 100, 31)
 	m = r.press(m, keyRune('?'))
-	assertWidth(t, m.View(), 100, 30)
+	assertWidth(t, m.View(), 100, 31)
 }
 
 func TestMapStatusLineDoesNotResizeTheImage(t *testing.T) {
@@ -1033,13 +1034,13 @@ func TestMapStatusLineDoesNotResizeTheImage(t *testing.T) {
 	if renders(r.fake) != before {
 		t.Fatalf("a status line re-rendered the map")
 	}
-	assertWidth(t, m.View(), 100, 30)
+	assertWidth(t, m.View(), 100, 31)
 }
 
 func goldenMap(t *testing.T, prefix string, capable bool) {
 	t.Helper()
 	asciiProfile(t)
-	for _, sz := range [][2]int{{80, 24}, {160, 40}} {
+	for _, sz := range [][2]int{{80, 25}, {160, 41}} {
 		r := newMapRig(t, false, capable)
 		m := r.press(r.model(sz[0], sz[1]), keyRune('7'))
 		checkGolden(t, fmt.Sprintf("%s_%dx%d.golden", prefix, sz[0], sz[1]), m.View(), sz[0], sz[1])
@@ -1086,7 +1087,7 @@ func footer(m Model) string {
 
 func TestMapHelpAdvertisesTabAsSelectionOnlyWhileItOwnsTab(t *testing.T) {
 	r := newMapRig(t, false, true)
-	bar := footer(r.press(r.model(160, 40), keyRune('7')))
+	bar := footer(r.press(r.model(160, 41), keyRune('7')))
 	if strings.Contains(bar, "next view") || !strings.Contains(bar, "←/→/tab select") {
 		t.Fatalf("owning map footer: %q", bar)
 	}
@@ -1102,7 +1103,7 @@ func TestMapHelpAdvertisesTabAsSelectionOnlyWhileItOwnsTab(t *testing.T) {
 		}
 	}
 
-	loading := r.model(160, 40)
+	loading := r.model(160, 41)
 	nm, _ := loading.Update(keyRune('7'))
 	if bar := footer(nm.(Model)); !strings.Contains(bar, "tab next view") {
 		t.Fatalf("map before its image lands lost %q: %q", "tab next view", bar)
@@ -1127,10 +1128,10 @@ func TestMapShrinkBeforeTheNewRenderLandsKeepsInfoLinesAndWidth(t *testing.T) {
 				m = r.press(m, keyRune('m'))
 			}
 			// The new render is started but not delivered.
-			nm, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+			nm, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 25})
 			m = nm.(Model)
 			frame := m.View()
-			assertWidth(t, frame, 80, 24)
+			assertWidth(t, frame, 80, 25)
 			want := "basil · feat/101-basil · blocked"
 			if prompt {
 				want = "reply to basil: "
@@ -1158,7 +1159,7 @@ func TestMapClickOutsideTheShownBlockAfterAShrinkIsIgnored(t *testing.T) {
 	g := loadMapGeometry(t)
 	// The new render is started but not delivered. The box is now 80x21, so
 	// 19 body rows of the 100x25 block show: body row 19 is the info line.
-	nm, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	nm, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 25})
 	m = nm.(Model)
 	before := renders(r.fake)
 	for name, planet := range map[string]int{

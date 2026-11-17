@@ -352,11 +352,8 @@ func eventRows(recent []data.RecentEvent) []EventRow {
 	rows := make([]EventRow, 0, len(recent))
 	for i := len(recent) - 1; i >= 0; i-- {
 		e := recent[i]
-		text := e.Detail
-		if e.Kind == "status" {
-			text = strings.TrimSpace(e.State + " " + e.Detail)
-		}
-		rows = append(rows, EventRow{TS: e.TS / 1000, Worker: e.From, Text: text})
+		from, text := summarizeEvent(e)
+		rows = append(rows, EventRow{TS: e.TS / 1000, Worker: from, Text: text})
 	}
 	return rows
 }

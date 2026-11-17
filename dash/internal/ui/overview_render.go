@@ -438,7 +438,7 @@ func overviewLayout(w, h int, ov vm.OverviewView, st overviewState) overviewRect
 		case panelMonitors:
 			es = monitorEntries(ov, ix)
 		}
-		contentH = max(contentH, totalLines(es))
+		contentH = max(contentH, max(1, totalLines(es)))
 	}
 	contentH += 2
 
@@ -498,6 +498,9 @@ func renderOverview(w, h int, ov vm.OverviewView, st overviewState, mode pillMod
 		for _, it := range pl.items {
 			content = append(content, rowLines(ov, r, st, it, pl.inner.w)...)
 		}
+		if len(content) == 0 {
+			content = []string{" " + fg(colDim).Render(emptyReason(ov, p))}
+		}
 		return renderPanel(pl.rect.w, pl.rect.h, sp, mode, content)
 	}
 
@@ -529,6 +532,31 @@ func renderOverview(w, h int, ov vm.OverviewView, st overviewState, mode pillMod
 		lines[i] = truncateLine(lines[i], w)
 	}
 	return strings.Join(lines[:h], "\n")
+}
+
+// emptyReason says why a panel has no rows. It speaks only when the input has
+// none, so a search filter that hides every row stays silent.
+func emptyReason(ov vm.OverviewView, p ovPanel) string {
+	switch p {
+	case panelChecklists:
+		if len(ov.Workers) == 0 {
+			return "no live workers in this crew"
+		}
+	case panelAgents:
+		if len(ov.Agents) == 0 {
+			return "no live agents"
+		}
+	case panelMonitors:
+		m := ov.Monitors
+		if len(m.Watchdogs)+len(m.PRChecks)+len(m.Budgets) == 0 {
+			return "nothing watched"
+		}
+	case panelEvents:
+		if len(ov.Events) == 0 {
+			return "no bus events yet"
+		}
+	}
+	return ""
 }
 
 func stateGlyph(state string) string {

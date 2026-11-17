@@ -1,4 +1,5 @@
   Overview │ ▸ Live │   Board │   Budget │   Runs │   Settings │   Map │   Fleet
+ crew › c1, c2, c3
 claude 5h 10%  codex ?  cursor ?  pi ?
 6 blocked · 3 holds
   crew  name    state    age  tier/engine/model             pr    detail
@@ -23,7 +24,6 @@ claude 5h 10%  codex ?  cursor ?  pi ?
   hold c1h0: claude 7d until 2026-09-25T02:13:20Z — hold task 0 for c1
   hold c1h1: claude 7d until 2026-09-25T02:13:20Z — hold task 1 for c1
   hold c3h0: claude 7d until 2026-09-25T02:13:20Z — hold task 0 for c3
-
 
 
 
