@@ -53,7 +53,7 @@ type FleetView struct {
 	Pending        FleetPending         `json:"-"`
 }
 
-// FleetSummary counts the shown crews; Dropped counts peer rows that claimed
+// FleetSummary counts the shown crews (one per head row); Dropped counts peer rows that claimed
 // a local crew id (crew's per-repo drops plus the cross-repo ones).
 type FleetSummary struct {
 	Crews          int            `json:"crews"`
@@ -67,7 +67,10 @@ type FleetSummary struct {
 }
 
 // FleetCrewRow is one crew on one repo bus (local) or one peer host's crew.
-// Peer rows have no dispatcher, repo or dir and never any action.
+// Peer rows have no dispatcher, repo or dir and never any action. A crew's
+// rows form a group: the head row, then Sub rows for other repos with work;
+// the head's IdleRepos counts the repos folded away. Section is the group's
+// live, orphaned, peer or dead bucket.
 type FleetCrewRow struct {
 	Key            string               `json:"key"`
 	Origin         Origin               `json:"origin"`
@@ -83,6 +86,9 @@ type FleetCrewRow struct {
 	Workers        FleetWorkerCounts    `json:"workers"`
 	RemoteWorkers  int                  `json:"remote_workers"`
 	Attention      int                  `json:"attention"`
+	Sub            bool                 `json:"sub"`
+	Section        string               `json:"section"`
+	IdleRepos      int                  `json:"idle_repos"`
 	Dir            *string              `json:"dir" dash:"raw"`
 }
 
@@ -206,6 +212,28 @@ func dispatcherRank(state string) int {
 	return 3
 }
 
+// keptRepos marks one repo per canonical common dir, so a repo reached
+// through a symlink is not listed twice. The copy whose path is already
+// canonical wins, else the first.
+func keptRepos(repos []data.FleetRepo) []bool {
+	keep := make([]bool, len(repos))
+	chosen := map[string]int{}
+	for i, r := range repos {
+		canon := r.Common
+		if p, err := filepath.EvalSymlinks(r.Common); err == nil {
+			canon = p
+		}
+		j, ok := chosen[canon]
+		if !ok || (r.Common == canon && repos[j].Common != canon) {
+			chosen[canon] = i
+		}
+	}
+	for _, i := range chosen {
+		keep[i] = true
+	}
+	return keep
+}
+
 // fleetCrews lists local rows in repo order, then peer crews in first-seen
 // order, and counts the peer rows dropped for claiming a local crew id.
 func fleetCrews(f FleetInputs) ([]fleetCrew, int) {
@@ -215,7 +243,11 @@ func fleetCrews(f FleetInputs) ([]fleetCrew, int) {
 	}
 	type ref struct{ rank, repo, crew int }
 	homes := map[string]ref{}
+	keep := keptRepos(st.Repos)
 	for ri, repo := range st.Repos {
+		if !keep[ri] {
+			continue
+		}
 		for ci, c := range repo.Crews {
 			r := dispatcherRank(c.Dispatcher.State)
 			if h, ok := homes[c.CrewID]; !ok || r < h.rank {
@@ -225,6 +257,9 @@ func fleetCrews(f FleetInputs) ([]fleetCrew, int) {
 	}
 	var crews []fleetCrew
 	for ri := range st.Repos {
+		if !keep[ri] {
+			continue
+		}
 		repo := &st.Repos[ri]
 		for ci := range repo.Crews {
 			c := &repo.Crews[ci]
@@ -239,7 +274,10 @@ func fleetCrews(f FleetInputs) ([]fleetCrew, int) {
 	dropped := 0
 	groups := map[[2]string]int{}
 	seen := map[[3]string]bool{}
-	for _, repo := range st.Repos {
+	for ri, repo := range st.Repos {
+		if !keep[ri] {
+			continue
+		}
 		dropped += repo.Peers.Dropped
 		for _, row := range repo.Peers.Rows {
 			host, id := str(row, "host"), str(row, "crew_id")
@@ -484,6 +522,7 @@ func BuildFleet(f FleetInputs) FleetView {
 	crews, dropped := fleetCrews(f)
 	v.Summary.Dropped = dropped
 	var locals []builtCrew
+	var built []builtRow
 	for _, c := range crews {
 		in := c.inputs(f)
 		rows := overviewRows(in)
@@ -501,7 +540,7 @@ func BuildFleet(f FleetInputs) FleetView {
 			items[i].ID = key + "#" + items[i].ID
 		}
 		row := c.row(rows, len(items))
-		v.Crews = append(v.Crews, row)
+		built = append(built, builtRow{row: row, home: c.repo == c.homeRepo, live: c.live()})
 		v.Attention = append(v.Attention, items...)
 		v.Summary.Workers += row.Workers.Total
 		for s, n := range row.Workers.ByState {
@@ -513,16 +552,7 @@ func BuildFleet(f FleetInputs) FleetView {
 	v.Attention = append(v.Attention, hostItems...)
 	sortAttention(v.Attention)
 
-	slices.SortFunc(v.Crews, func(a, b FleetCrewRow) int {
-		return cmp.Or(
-			cmp.Compare(originRank(a.Origin), originRank(b.Origin)),
-			cmp.Compare(b.Attention, a.Attention),
-			cmp.Compare(deref(a.Repo), deref(b.Repo)),
-			cmp.Compare(a.Crew, b.Crew),
-			cmp.Compare(a.Key, b.Key),
-		)
-	})
-	v.Summary.Crews = len(v.Crews)
+	v.Crews, v.Summary.Crews = groupCrews(built)
 	v.Summary.Attention = len(v.Attention)
 	v.Summary.Hosts = len(v.Hosts)
 	for _, h := range v.Hosts {
@@ -533,11 +563,91 @@ func BuildFleet(f FleetInputs) FleetView {
 	return v
 }
 
-func originRank(o Origin) int {
-	if o == OriginPeer {
-		return 1
+type builtRow struct {
+	row  FleetCrewRow
+	home bool
+	live bool
+}
+
+func homeRank(home bool) int {
+	if home {
+		return 0
 	}
-	return 0
+	return 1
+}
+
+type crewGroup struct {
+	rows      []FleetCrewRow
+	rank      int
+	attention int
+}
+
+// groupCrews gathers each local crew's per-repo rows (peer rows stand alone)
+// under a head and orders the groups live, orphaned, peer, dead. Non-head
+// rows with no workers and no attention fold into the head's IdleRepos.
+func groupCrews(built []builtRow) ([]FleetCrewRow, int) {
+	byCrew := map[[2]string][]builtRow{}
+	var order [][2]string
+	for _, b := range built {
+		k := [2]string{b.row.Host, b.row.Crew}
+		if b.row.Origin == OriginPeer {
+			k = [2]string{b.row.Host, b.row.Key}
+		}
+		if _, ok := byCrew[k]; !ok {
+			order = append(order, k)
+		}
+		byCrew[k] = append(byCrew[k], b)
+	}
+	groups := make([]crewGroup, 0, len(order))
+	for _, k := range order {
+		rows := byCrew[k]
+		slices.SortStableFunc(rows, func(a, b builtRow) int {
+			return cmp.Or(cmp.Compare(homeRank(a.home), homeRank(b.home)), cmp.Compare(deref(a.row.Repo), deref(b.row.Repo)))
+		})
+		head := rows[0].row
+		orphaned := head.Orphaned
+		g := crewGroup{attention: head.Attention}
+		idle := 0
+		for _, b := range rows[1:] {
+			orphaned = orphaned || b.row.Orphaned
+			if b.row.Workers.Total == 0 && b.row.Attention == 0 {
+				idle++
+				continue
+			}
+			b.row.Sub = true
+			g.attention += b.row.Attention
+			g.rows = append(g.rows, b.row)
+		}
+		head.IdleRepos = idle
+		g.rank, head.Section = 3, "dead"
+		switch {
+		case head.Origin == OriginPeer:
+			g.rank, head.Section = 2, "peer"
+		case rows[0].live:
+			g.rank, head.Section = 0, "live"
+		case orphaned:
+			g.rank, head.Section = 1, "orphaned"
+		}
+		for i := range g.rows {
+			g.rows[i].Section = head.Section
+		}
+		g.rows = slices.Insert(g.rows, 0, head)
+		groups = append(groups, g)
+	}
+	slices.SortFunc(groups, func(a, b crewGroup) int {
+		return cmp.Or(
+			cmp.Compare(a.rank, b.rank),
+			cmp.Compare(b.attention, a.attention),
+			cmp.Compare(a.rows[0].Host, b.rows[0].Host),
+			cmp.Compare(a.rows[0].Crew, b.rows[0].Crew),
+			cmp.Compare(a.rows[0].Key, b.rows[0].Key),
+		)
+	})
+	out := []FleetCrewRow{}
+	for _, g := range groups {
+		out = append(out, g.rows...)
+	}
+	return out, len(groups)
 }
 
 func fleetCapacity(f FleetInputs) FleetCapacity {
@@ -586,7 +696,11 @@ func fleetHolds(f FleetInputs) []FleetHoldRow {
 		})
 	}
 	if st := f.Fleet.Status; st != nil {
-		for _, repo := range st.Repos {
+		keep := keptRepos(st.Repos)
+		for ri, repo := range st.Repos {
+			if !keep[ri] {
+				continue
+			}
 			for _, c := range repo.Crews {
 				for _, h := range c.Holds {
 					if h.Kind != "quota" {
@@ -773,7 +887,11 @@ func fleetErrors(f FleetInputs) []string {
 	if f.Fleet.Status == nil {
 		return errs
 	}
-	for _, repo := range f.Fleet.Status.Repos {
+	keep := keptRepos(f.Fleet.Status.Repos)
+	for ri, repo := range f.Fleet.Status.Repos {
+		if !keep[ri] {
+			continue
+		}
 		add("repo "+repo.Repo+": peers", repo.PeersError)
 		if e, ok := f.DigestErrs[repo.Common]; ok {
 			add("repo "+repo.Repo+": bus", &e)

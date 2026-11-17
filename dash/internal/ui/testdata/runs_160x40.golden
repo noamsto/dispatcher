@@ -1,4 +1,5 @@
   Overview │   Live │   Board │   Budget │ ▸ Runs │   Settings │   Map │   Fleet
+ crew › c1
 Ratings — sort: tier ▲
   tier      engine  model              n     pr%   success  burn(med)
 › deep      claude  opus               8     100   87.5(7)        2.3
@@ -9,7 +10,6 @@ Runs (newest first)
   crew c1  Landed the budget gauges after two review rounds.  misrouted
   fix/123-widget  standard/codex/gpt-5.6-terra  abandoned  spec_too_thin
   crew c2  Quiet run, no issues.  
-
 
 
 

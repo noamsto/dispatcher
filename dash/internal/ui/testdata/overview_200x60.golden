@@ -56,5 +56,5 @@
 │   5m feat/d                   blocked prompt: permission dialog                                                                                                                                      │
 │   6m otter:reviewer           blocked role reviewer engine exited (pane %9)                                                                                                                          │
 │   8m otter                    progress note                                                                                                                                                          │
-│  10m pr-watch:12              {"ts": 1, "repo": "o/r", "pr": 12, "url": "https://github.com/o/r/pull/12", "changed": ["checks"], "state": {"state": "OPEN", "checks": "SUCCESS", "mergeable": "MERGE…│
+│  10m pr-watch:12              PR #12 changed checks                                                                                                                                                  │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯

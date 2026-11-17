@@ -4,21 +4,21 @@
 │▌3 ✗ w-b reviewer: role reviewer engine exited (p…   6m → peek                │
 │▌4 ✗ far far on far: ssh: connect to host far por…  10s → peek                │
 ╰──────────────────────────────────────────────────────────────────────────────╯
-╭ ▸ CREWS ────────────────────────────────────────────── 8 crews · 13 workers ─╮
-│▌● a c1    alive 3w 1pr 1? 4!                                                 │
-│ ● b c5    stale 1b        2!                                                 │
-│ ✗ a c3    —     1w 1pr    1! orphaned                                        │
-│ ● b c1    alive 1pr                                                          │
+╭ ▸ CREWS ────────────────────────────────────────────── 7 crews · 13 workers ─╮
+│▌● c1 @lap a alive 3w 1pr 1? 4!                                               │
+│ ●   └ b     alive 1pr                                                        │
+│ ● c5 @lap b stale 1b        2!                                               │
+│ ✗ c3 @lap a —     1w 1pr    1! orphaned                                      │
 │ PEERS ───────────────────────────────────────────────────────────────────────│
-│ ○ @mbp p1       1?                                                           │
-│ ○ @box p2       1w                                                           │
-│ ○ @mbp p2       1?                                                           │
-│ ○ @box p3       1pr                                                          │
+│ ○ @box p2         1w                                                         │
+│ ○ @box p3         1pr                                                        │
+│ ○ @mbp p1         1?                                                         │
+│ ○ @mbp p2         1?                                                         │
 │                                                                              │
 │                                                                              │
 │                                                                              │
 │                                                                              │
 │                                                                              │
 │                                                                              │
-│                                                                              │
+│ w working · b blocked · f failed · pr pr_open · N! attention                 │
 ╰──────────────────────────────────────────────────────────────────────────────╯

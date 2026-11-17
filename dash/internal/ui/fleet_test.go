@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"fmt"
 	"reflect"
 	"slices"
 	"strconv"
@@ -373,7 +374,7 @@ func TestFleetMove(t *testing.T) {
 		t.Errorf("attention j: cursor = %d", v.sel().cursor)
 	}
 
-	vis := newFleetIndex(v.fv, "").visible()
+	vis := v.st.index(v.fv).visible()
 	selectCrew(t, &v, v.fv.Crews[vis[0]].Key)
 	v, _ = flKeys(v, "j")
 	if got := selCrewKey(v); got != v.fv.Crews[vis[1]].Key {
@@ -683,18 +684,18 @@ func TestFleetFilter(t *testing.T) {
 		t.Fatal("/ did not open the filter")
 	}
 	v, _ = flKeys(v, "p2")
-	if n := len(newFleetIndex(v.fv, v.st.filter).visible()); n != 2 {
+	if n := len(v.st.index(v.fv).visible()); n != 2 {
 		t.Fatalf("filter p2 shows %d crews, want 2", n)
 	}
 	v, _ = flKeys(v, "enter")
 	if v.Capturing() || v.st.filter != "p2" {
 		t.Fatalf("enter: capturing %v filter %q", v.Capturing(), v.st.filter)
 	}
-	if !strings.Contains(stripped(v.View(120, 40)), "2 of 8 crews") {
+	if want := fmt.Sprintf("2 of %d crews", v.fv.Summary.Crews); !strings.Contains(stripped(v.View(120, 40)), want) {
 		t.Error("filtered count not shown")
 	}
 	for _, needle := range []string{"box", "b", "c5"} {
-		if len(newFleetIndex(v.fv, needle).visible()) == 0 {
+		if len(fleetState{filter: needle}.index(v.fv).visible()) == 0 {
 			t.Errorf("filter %q (host/repo/crew) matched nothing", needle)
 		}
 	}
@@ -940,5 +941,140 @@ func TestFleetChangeCooldown(t *testing.T) {
 	nm, _ = m.Update(fleetChangedMsg{})
 	if !nm.(Model).load[srcFleet].inFlight {
 		t.Error("change after the cooldown did not load")
+	}
+}
+
+// deadFixture is the fixture fleet plus two dead local crews (one with a sub
+// row) as the view layer sorts them: the final rows.
+func deadFixture(t *testing.T) fleetView {
+	t.Helper()
+	v, _ := flFixture(t, 120, 40, false)
+	base := v.fv.Crews[3]
+	for _, name := range []string{"deadone", "deadtwo"} {
+		c := base
+		c.Key, c.Crew, c.Section, c.Orphaned, c.Attention = "lap|/r/d/.git|"+name, name, "dead", false, 0
+		c.Workers = vm.FleetWorkerCounts{}
+		v.fv.Crews = append(v.fv.Crews, c)
+	}
+	sub := v.fv.Crews[len(v.fv.Crews)-1]
+	sub.Key, sub.Sub, sub.Repo = sub.Key+"-sub", true, new("subrepo")
+	v.fv.Crews = append(v.fv.Crews, sub)
+	return v
+}
+
+func TestFleetDeadCollapsedByDefault(t *testing.T) {
+	v := deadFixture(t)
+	out := stripped(v.View(120, 40))
+	if !strings.Contains(out, "dead (2)") || !strings.Contains(out, "D expand") {
+		t.Errorf("collapsed dead entry missing:\n%s", out)
+	}
+	if strings.Contains(out, "deadone") || strings.Contains(out, "subrepo") {
+		t.Errorf("dead rows shown while collapsed:\n%s", out)
+	}
+	items := v.layout().panels[fpCrews].items
+	if last := items[len(items)-1]; last.kind != eSection || last.idx != secDead {
+		t.Errorf("dead entry is not last: %+v", last)
+	}
+
+	v, _ = flKeys(v, "D")
+	out = stripped(v.View(120, 40))
+	if !strings.Contains(out, "D collapse") || !strings.Contains(out, "deadone") || !strings.Contains(out, "subrepo") {
+		t.Errorf("D did not expand:\n%s", out)
+	}
+	if strings.Index(out, "dead (2)") > strings.Index(out, "deadone") {
+		t.Error("dead header should precede its rows")
+	}
+	v, _ = flKeys(v, "D")
+	if strings.Contains(stripped(v.View(120, 40)), "deadone") {
+		t.Error("second D did not collapse")
+	}
+}
+
+func TestFleetDeadMoveSkipsCollapsed(t *testing.T) {
+	v := deadFixture(t)
+	last := v.st.index(v.fv).visible()
+	selectCrew(t, &v, v.fv.Crews[last[len(last)-1]].Key)
+	v, _ = flKeys(v, "j")
+	if got := selCrewKey(v); got != v.fv.Crews[last[len(last)-1]].Key {
+		t.Errorf("j walked into collapsed dead rows: %s", got)
+	}
+}
+
+func TestFleetDeadPinnedByAttention(t *testing.T) {
+	v := deadFixture(t)
+	dead := v.fv.Crews[8].Key
+	v.fv.Attention[0].CrewKey = &dead
+	v, _ = flKeys(v, "tab", "shift+tab") // strip focus, cursor 0
+	v.st.focus = fpAttention
+	v.setCursor(0)
+	if got := selCrewKey(v); got != dead {
+		t.Fatalf("attention cursor on a dead crew selects %q, want %q", got, dead)
+	}
+	if !strings.Contains(stripped(v.View(120, 40)), "deadone") {
+		t.Error("pinned dead crew not shown while collapsed")
+	}
+	v, _ = flKeys(v, "tab")
+	if v.st.focus != fpCrews || selCrewKey(v) != dead {
+		t.Errorf("tab dropped the pinned dead crew: focus %v sel %q", v.st.focus, selCrewKey(v))
+	}
+}
+
+func TestFleetKeysNameDead(t *testing.T) {
+	v, _ := flFixture(t, 120, 40, false)
+	if !slices.ContainsFunc(v.Keys(), func(b key.Binding) bool { return b.Help().Key == "D" && b.Help().Desc == "dead" }) {
+		t.Error("footer keys do not name D")
+	}
+}
+
+func TestFleetLegend(t *testing.T) {
+	v, _ := flFixture(t, 120, 40, false)
+	if out := stripped(v.View(120, 40)); !strings.Contains(out, "w working") || !strings.Contains(out, "N! att") {
+		t.Errorf("legend missing:\n%s", out)
+	}
+	if !strings.Contains(stripped(strings.Join(v.helpLines(), "\n")), "dead") {
+		t.Error("help does not name the dead toggle")
+	}
+}
+
+func TestFleetDeadPinnedHeaderPrecedesRow(t *testing.T) {
+	v := deadFixture(t)
+	dead := v.fv.Crews[8].Key
+	v.fv.Attention[0].CrewKey = &dead
+	v.st.focus = fpAttention
+	v.setCursor(0)
+	items := v.layout().panels[fpCrews].items
+	hdr, row := -1, -1
+	for n, e := range items {
+		if e.kind == eSection && e.idx == secDead {
+			hdr = n
+		}
+		if e.kind == eCrew && e.idx == 8 {
+			row = n
+		}
+	}
+	if hdr < 0 || row < 0 || hdr > row {
+		t.Errorf("dead header at %d, pinned dead row at %d", hdr, row)
+	}
+}
+
+func TestFleetFilterKeepsGroupsWhole(t *testing.T) {
+	v := deadFixture(t)
+	n := len(v.fv.Crews)
+	// only the dead sub row's repo matches
+	ix := fleetState{filter: "subrepo"}.index(v.fv)
+	if ix.vis[n-1] || ix.vis[n-2] {
+		t.Errorf("collapsed dead group shown: sub %v head %v", ix.vis[n-1], ix.vis[n-2])
+	}
+	if ix.deadN != 1 {
+		t.Errorf("deadN = %d, want 1", ix.deadN)
+	}
+	ix = fleetState{filter: "subrepo", showDead: true}.index(v.fv)
+	if !ix.vis[n-1] || !ix.vis[n-2] {
+		t.Errorf("expanded: sub %v head %v, want both", ix.vis[n-1], ix.vis[n-2])
+	}
+	// pinned sub pulls its head in while collapsed
+	ix = fleetState{crew: v.fv.Crews[n-1].Key}.index(v.fv)
+	if !ix.vis[n-1] || !ix.vis[n-2] {
+		t.Errorf("pinned sub: sub %v head %v, want both", ix.vis[n-1], ix.vis[n-2])
 	}
 }

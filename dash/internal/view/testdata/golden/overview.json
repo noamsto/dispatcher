@@ -2137,7 +2137,7 @@
     {
       "ts": 1794799990,
       "worker": "pr-watch:12",
-      "text": "{\"ts\": 1, \"repo\": \"o/r\", \"pr\": 12, \"url\": \"https://github.com/o/r/pull/12\", \"changed\": [\"checks\"], \"state\": {\"state\": \"OPEN\", \"checks\": \"SUCCESS\", \"mergeable\": \"MERGEABLE\"}, \"was\": {}}"
+      "text": "PR #12 changed checks"
     },
     {
       "ts": 1794799920,
@@ -2147,7 +2147,7 @@
     {
       "ts": 1794799910,
       "worker": "pr-watch:12",
-      "text": "{\"ts\": 1, \"repo\": \"o/r\", \"pr\": 12, \"url\": \"https://github.com/o/r/pull/12\", \"changed\": [\"checks\"], \"state\": {\"state\": \"OPEN\", \"checks\": \"PENDING\", \"mergeable\": \"MERGEABLE\"}, \"was\": {}}"
+      "text": "PR #12 changed checks"
     },
     {
       "ts": 1794799900,
@@ -2182,7 +2182,7 @@
     {
       "ts": 1794799330,
       "worker": "role:feat/a:plan-critic",
-      "text": "{\"role\": \"plan-critic\", \"seam\": \"plan\", \"verdict\": \"accept\", \"findings\": []}"
+      "text": "seam plan: accept"
     },
     {
       "ts": 1794799325,

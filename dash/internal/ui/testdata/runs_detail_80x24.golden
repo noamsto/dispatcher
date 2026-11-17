@@ -1,4 +1,5 @@
   Overview │   Live │   Board │   Budget │ ▸ Runs │   Settings │   Map │   Fleet
+ crew › c1
 feat/584-crew-dash  deep/claude/opus  merged  2026-09-21T14:05:00Z
 
 review · gate_thrash
@@ -12,7 +13,6 @@ This is a deliberately long detail line meant to exercise the detail pane's
 word-wrap logic across more than eighty columns of terminal width so the golden
 frame actually shows wrapped continuation lines instead of a single truncated
 row.
-
 
 
 

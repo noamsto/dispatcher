@@ -54,6 +54,8 @@ type PRWatch struct {
 type RecentEvent struct {
 	TS                        int64
 	From, Kind, State, Detail string
+	// Ev is the decoded bus row, read-only; nil for rows built without one.
+	Ev Event
 }
 
 // BusDigest is the bus log folded into what the Overview needs: per-worker
@@ -147,7 +149,7 @@ func (s *BusScanner) apply(ev Event) {
 	crew, _ := ev["crew_id"].(string)
 	from, _ := ev["from"].(string)
 	kind, _ := ev["kind"].(string)
-	body := bodyObject(ev["body"])
+	body := BodyObject(ev["body"])
 
 	state, _ := body["state"].(string)
 	detail, _ := body["detail"].(string)
@@ -155,7 +157,7 @@ func (s *BusScanner) apply(ev Event) {
 	if str, ok := ev["body"].(string); ok && kind != "status" {
 		summary = str
 	}
-	s.d.Recent = append(s.d.Recent, RecentEvent{TS: ts, From: from, Kind: kind, State: state, Detail: summary})
+	s.d.Recent = append(s.d.Recent, RecentEvent{TS: ts, From: from, Kind: kind, State: state, Detail: summary, Ev: ev})
 	if len(s.d.Recent) > recentCap {
 		s.d.Recent = slices.Clone(s.d.Recent[len(s.d.Recent)-recentCap:])
 	}
@@ -262,9 +264,9 @@ func (d BusDigest) clone() BusDigest {
 	return out
 }
 
-// bodyObject returns the event body as an object, decoding it first when the
+// BodyObject returns the event body as an object, decoding it first when the
 // bus carries it as a JSON-encoded string.
-func bodyObject(v any) map[string]any {
+func BodyObject(v any) map[string]any {
 	switch b := v.(type) {
 	case map[string]any:
 		return b

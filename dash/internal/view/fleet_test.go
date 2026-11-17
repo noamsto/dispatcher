@@ -98,7 +98,7 @@ func TestFleetActiveFilter(t *testing.T) {
 	if slices.Contains(crewKeys(v), keyA4) {
 		t.Errorf("closed crew with only terminal workers shown: %v", crewKeys(v))
 	}
-	if v.Summary.HiddenCrews != 2 || v.Summary.Crews != len(v.Crews) {
+	if v.Summary.HiddenCrews != 2 || v.Summary.Crews != countHeads(v) {
 		t.Errorf("summary crews/hidden = %d/%d, rows %d", v.Summary.Crews, v.Summary.HiddenCrews, len(v.Crews))
 	}
 
@@ -703,4 +703,118 @@ func deref(s *string) string {
 		return ""
 	}
 	return *s
+}
+
+func wk(branch, state string) map[string]any {
+	return map[string]any{"branch": branch, "name": branch, "state": state, "tier": "standard", "engine": "claude", "live": true}
+}
+
+func fleetIn(repos ...data.FleetRepo) view.FleetInputs {
+	return view.FleetInputs{
+		Fleet:      data.FleetSection{Status: &data.FleetStatus{Repos: repos}},
+		Digests:    map[string]data.BusDigest{},
+		DigestErrs: map[string]string{},
+		Loaded:     view.Loaded{Settings: true, Budget: true, Retro: true, Ratings: true, Roster: true, Bus: true},
+		NowMS:      viewtest.FleetNowMS,
+		Crew:       []string{"crew"},
+	}
+}
+
+func crewIn(id, state string, workers ...map[string]any) data.FleetCrew {
+	return data.FleetCrew{CrewID: id, Dispatcher: data.FleetDispatcher{State: state}, Workers: workers}
+}
+
+func TestFleetSymlinkedReposDedupe(t *testing.T) {
+	dir := t.TempDir()
+	real := filepath.Join(dir, "real", ".git")
+	if err := os.MkdirAll(real, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "link")
+	if err := os.Symlink(filepath.Join(dir, "real"), link); err != nil {
+		t.Fatal(err)
+	}
+	linked := filepath.Join(link, ".git")
+	w := wk("feat/x", "working")
+	quota := crewIn("c1", "live", w)
+	quota.Holds = []data.FleetCrewHold{{ID: "q1", Kind: "quota"}}
+	in := fleetIn(
+		data.FleetRepo{Host: "lap", Repo: "r", Common: linked, Crews: []data.FleetCrew{quota}, PeersError: strp("boom")},
+		data.FleetRepo{Host: "lap", Repo: "r", Common: real, Crews: []data.FleetCrew{quota}, PeersError: strp("boom")},
+	)
+	v := view.BuildFleet(in)
+	if len(v.Crews) != 1 {
+		t.Fatalf("rows = %v, want one", crewKeys(v))
+	}
+	if c := v.Crews[0]; c.IdleRepos != 0 || *c.Common != real {
+		t.Errorf("row = idle %d common %s, want 0 and the real path", c.IdleRepos, *c.Common)
+	}
+	if v.Summary.Workers != 1 {
+		t.Errorf("workers = %d, want 1", v.Summary.Workers)
+	}
+	if got := view.ActiveCommons(in.Fleet); len(got) != 1 {
+		t.Errorf("ActiveCommons = %v, want one", got)
+	}
+	if n := len(v.Holds); n != 1 {
+		t.Errorf("holds = %d, want 1", n)
+	}
+	if n := slices.ContainsFunc(v.Errors, func(e string) bool { return strings.Contains(e, "peers") }); !n || strings.Count(strings.Join(v.Errors, "\n"), "peers") != 1 {
+		t.Errorf("errors = %v, want one peers error", v.Errors)
+	}
+}
+
+func TestFleetMultiRepoCrewFoldsIdle(t *testing.T) {
+	in := fleetIn(
+		data.FleetRepo{Host: "lap", Repo: "a", Common: "/r/a/.git", Crews: []data.FleetCrew{crewIn("c1", "live", wk("f/a", "working"))}},
+		data.FleetRepo{Host: "lap", Repo: "b", Common: "/r/b/.git", Crews: []data.FleetCrew{crewIn("c1", "live", wk("f/b", "pr_open"))}},
+		data.FleetRepo{Host: "lap", Repo: "c", Common: "/r/c/.git", Crews: []data.FleetCrew{crewIn("c1", "live")}},
+		data.FleetRepo{Host: "lap", Repo: "d", Common: "/r/d/.git", Crews: []data.FleetCrew{crewIn("c1", "live")}},
+	)
+	v := view.BuildFleet(in)
+	if len(v.Crews) != 2 {
+		t.Fatalf("rows = %v, want head + one sub", crewKeys(v))
+	}
+	head, sub := v.Crews[0], v.Crews[1]
+	if head.Sub || !sub.Sub || *head.Repo != "a" || *sub.Repo != "b" {
+		t.Errorf("head/sub = %v/%v repos %s/%s", head.Sub, sub.Sub, *head.Repo, *sub.Repo)
+	}
+	if head.IdleRepos != 2 || sub.IdleRepos != 0 {
+		t.Errorf("idle repos = %d/%d, want 2/0", head.IdleRepos, sub.IdleRepos)
+	}
+	if v.Summary.Crews != 1 {
+		t.Errorf("summary crews = %d, want 1 head", v.Summary.Crews)
+	}
+}
+
+func TestFleetSectionOrder(t *testing.T) {
+	in := fleetIn(data.FleetRepo{
+		Host: "lap", Repo: "a", Common: "/r/a/.git",
+		Crews: []data.FleetCrew{
+			crewIn("dead", "dead", wk("f/d", "failed")),
+			crewIn("orph", "dead", wk("f/o", "working")),
+			crewIn("live", "live", wk("f/l", "working")),
+		},
+		Peers: data.FleetPeers{Rows: []map[string]any{
+			{"host": "box", "crew_id": "p1", "branch": "f/p", "state": "working"},
+		}},
+	})
+	v := view.BuildFleet(in)
+	var got []string
+	for _, c := range v.Crews {
+		got = append(got, c.Crew+":"+c.Section)
+	}
+	want := []string{"live:live", "orph:orphaned", "p1:peer", "dead:dead"}
+	if !slices.Equal(got, want) {
+		t.Errorf("rows = %v, want %v", got, want)
+	}
+}
+
+func countHeads(v view.FleetView) int {
+	n := 0
+	for _, c := range v.Crews {
+		if !c.Sub {
+			n++
+		}
+	}
+	return n
 }

@@ -3,7 +3,7 @@
   "view": "fleet",
   "generated_at": 1794800010,
   "summary": {
-    "crews": 8,
+    "crews": 7,
     "hidden_crews": 2,
     "workers": 13,
     "by_state": {
@@ -282,7 +282,40 @@
       },
       "remote_workers": 3,
       "attention": 4,
+      "sub": false,
+      "section": "live",
+      "idle_repos": 0,
       "dir": "/r/a"
+    },
+    {
+      "key": "lap|/r/b/.git|c1",
+      "origin": "local",
+      "host": "lap",
+      "repo": "b",
+      "common": "/r/b/.git",
+      "crew": "c1",
+      "home_repo": "a",
+      "orphaned": false,
+      "actions": [],
+      "dispatcher": {
+        "state": "live",
+        "lane": "alive",
+        "last_event_s": 4,
+        "pid": 4242
+      },
+      "attention_state": "attended",
+      "workers": {
+        "total": 1,
+        "by_state": {
+          "pr_open": 1
+        }
+      },
+      "remote_workers": 0,
+      "attention": 0,
+      "sub": true,
+      "section": "live",
+      "idle_repos": 0,
+      "dir": "/r/b"
     },
     {
       "key": "lap|/r/b/.git|c5",
@@ -309,6 +342,9 @@
       },
       "remote_workers": 0,
       "attention": 2,
+      "sub": false,
+      "section": "live",
+      "idle_repos": 0,
       "dir": "/r/b"
     },
     {
@@ -354,56 +390,10 @@
       },
       "remote_workers": 0,
       "attention": 1,
+      "sub": false,
+      "section": "orphaned",
+      "idle_repos": 0,
       "dir": "/r/a"
-    },
-    {
-      "key": "lap|/r/b/.git|c1",
-      "origin": "local",
-      "host": "lap",
-      "repo": "b",
-      "common": "/r/b/.git",
-      "crew": "c1",
-      "home_repo": "a",
-      "orphaned": false,
-      "actions": [],
-      "dispatcher": {
-        "state": "live",
-        "lane": "alive",
-        "last_event_s": 4,
-        "pid": 4242
-      },
-      "attention_state": "attended",
-      "workers": {
-        "total": 1,
-        "by_state": {
-          "pr_open": 1
-        }
-      },
-      "remote_workers": 0,
-      "attention": 0,
-      "dir": "/r/b"
-    },
-    {
-      "key": "mbp||p1",
-      "origin": "peer",
-      "host": "mbp",
-      "repo": null,
-      "common": null,
-      "crew": "p1",
-      "home_repo": null,
-      "orphaned": false,
-      "actions": [],
-      "dispatcher": null,
-      "attention_state": null,
-      "workers": {
-        "total": 1,
-        "by_state": {
-          "unknown": 1
-        }
-      },
-      "remote_workers": 0,
-      "attention": 0,
-      "dir": null
     },
     {
       "key": "box||p2",
@@ -425,28 +415,9 @@
       },
       "remote_workers": 0,
       "attention": 0,
-      "dir": null
-    },
-    {
-      "key": "mbp||p2",
-      "origin": "peer",
-      "host": "mbp",
-      "repo": null,
-      "common": null,
-      "crew": "p2",
-      "home_repo": null,
-      "orphaned": false,
-      "actions": [],
-      "dispatcher": null,
-      "attention_state": null,
-      "workers": {
-        "total": 1,
-        "by_state": {
-          "unknown": 1
-        }
-      },
-      "remote_workers": 0,
-      "attention": 0,
+      "sub": false,
+      "section": "peer",
+      "idle_repos": 0,
       "dir": null
     },
     {
@@ -469,6 +440,59 @@
       },
       "remote_workers": 0,
       "attention": 0,
+      "sub": false,
+      "section": "peer",
+      "idle_repos": 0,
+      "dir": null
+    },
+    {
+      "key": "mbp||p1",
+      "origin": "peer",
+      "host": "mbp",
+      "repo": null,
+      "common": null,
+      "crew": "p1",
+      "home_repo": null,
+      "orphaned": false,
+      "actions": [],
+      "dispatcher": null,
+      "attention_state": null,
+      "workers": {
+        "total": 1,
+        "by_state": {
+          "unknown": 1
+        }
+      },
+      "remote_workers": 0,
+      "attention": 0,
+      "sub": false,
+      "section": "peer",
+      "idle_repos": 0,
+      "dir": null
+    },
+    {
+      "key": "mbp||p2",
+      "origin": "peer",
+      "host": "mbp",
+      "repo": null,
+      "common": null,
+      "crew": "p2",
+      "home_repo": null,
+      "orphaned": false,
+      "actions": [],
+      "dispatcher": null,
+      "attention_state": null,
+      "workers": {
+        "total": 1,
+        "by_state": {
+          "unknown": 1
+        }
+      },
+      "remote_workers": 0,
+      "attention": 0,
+      "sub": false,
+      "section": "peer",
+      "idle_repos": 0,
       "dir": null
     }
   ],

@@ -43,7 +43,7 @@ func fleetWalkSeed(t *testing.T, seed uint64, steps int) {
 	}
 }
 
-var fleetWalkKeys = []string{"tab", "shift+tab", "j", "k", "enter", "esc", "/", "?", "1", "2", "3", "4", "5", "6", "7", "8", "9", "L", "R", "[", "]", "y", "n"}
+var fleetWalkKeys = []string{"tab", "shift+tab", "j", "k", "enter", "esc", "/", "?", "1", "2", "3", "4", "5", "6", "7", "8", "9", "L", "D", "R", "[", "]", "y", "n"}
 
 func fleetWalkStep(rng *rand.Rand, m Model) (Model, string) {
 	if rng.IntN(12) == 0 {
@@ -85,7 +85,7 @@ func fleetFrameInvariant(m Model) string {
 	if s.crew < 0 {
 		return ""
 	}
-	if !slices.Contains(newFleetIndex(fl.fv, fl.st.filter).visible(), s.crew) {
+	if !slices.Contains(fl.st.index(fl.fv).visible(), s.crew) {
 		return fmt.Sprintf("selected crew %d is outside the filter %q", s.crew, fl.st.filter)
 	}
 	return ""
