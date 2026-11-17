@@ -356,31 +356,30 @@ func TestAbsentLogIsSilent(t *testing.T) {
 	})
 }
 
-// A torn trailing line costs the parse but not the msgs above it, or the marks
-// they raised. The straggler fold (`--since`) reads the same prefix.
-func TestTornTailKeepsThePrefixAndExitsFive(t *testing.T) {
+// A torn line costs only itself: the msgs above and below it are printed and
+// marked, and the read exits 0 with no parse note, as the status gate's does.
+func TestTornLineKeepsTheRowsAroundIt(t *testing.T) {
+	later := `{"ts":1785951266000,"crew_id":"c1","kind":"msg","from":"dispatcher:c1","to":"worker:feat/x#s1-1","body":{"text":"after"}}`
 	for _, tc := range []struct {
 		name string
 		args []string
 	}{
 		{"plain read", nil},
 		{"the straggler fold", []string{"--since", "0"}},
+		{"undelivered", []string{"--undelivered"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			p := fixture(t)
-			writeLog(t, p, msgRow+"\n"+`{"ts":1785951265000,"crew_id":"c1","kind":"msg","from":"a","to":"me`+"\n")
+			writeLog(t, p, msgRow+"\n"+`{"ts":1785951265000,"crew_id":"c1","kind":"msg","from":"a","to":"me`+"\n"+later+"\n")
 
 			stdout, stderr, code := run(t, p, append([]string{me, "c1"}, tc.args...)...)
-			if code != 5 {
-				t.Fatalf("code %d, want 5", code)
+			if code != 0 || stderr != "" {
+				t.Fatalf("code %d stderr %q", code, stderr)
 			}
-			if canon(stdout) != canon(msgRow+"\n") {
+			if canon(stdout) != canon(msgRow+"\n"+later+"\n") {
 				t.Errorf("stdout = %q", stdout)
 			}
-			if !strings.Contains(stderr, "crew: inbox: "+p.Log+":") {
-				t.Errorf("stderr = %q", stderr)
-			}
-			if got := readMarks(t, p, "c1", me); !strings.Contains(got, `"dispatcher:c1":1785951264000`) {
+			if got := readMarks(t, p, "c1", me); !strings.Contains(got, `1785951266000`) {
 				t.Errorf("marks = %q", got)
 			}
 		})
@@ -838,21 +837,6 @@ func TestUndeliveredExactlyOnceUnderConcurrency(t *testing.T) {
 
 	if lines != 1 {
 		t.Errorf("printed %d lines across %d readers, want 1", lines, readers)
-	}
-}
-
-// The torn-tail exit is unchanged: the prefix is printed and recorded, then the
-// parse failure is reported.
-func TestUndeliveredTornTailKeepsThePrefix(t *testing.T) {
-	p := fixture(t)
-	writeLog(t, p, msgRow+"\n"+`{"ts":1785951270000,"crew_id":"c1","kind":"msg","fr`)
-
-	stdout, stderr, code := run(t, p, me, "c1", "--undelivered")
-	if code != exitType || canon(stdout) != canon(msgRow+"\n") || !strings.Contains(stderr, "crew: inbox: ") {
-		t.Fatalf("code %d stderr %q stdout %q", code, stderr, stdout)
-	}
-	if got, want := readMarks(t, p, "c1", me), `{"dispatcher:c1":1785951264000}`; compactJSON(got) != want {
-		t.Errorf("marks = %s, want %s", got, want)
 	}
 }
 
