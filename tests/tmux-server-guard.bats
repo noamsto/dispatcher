@@ -322,3 +322,75 @@ worker_env() {
   assert_block 'runtime dir'
   [ "$elapsed" -lt 5000 ]
 }
+
+@test "tmux-server-guard: refuses runtime-dir deletes through quoted defaults, quoted assignments, arrays, += and for variables" {
+  runtime_env
+  local cmd
+  for cmd in 'd=${D:-"$XDG_RUNTIME_DIR"}; rm -rf "$d"' ": \${D:='/run/user/1000'}; rm -rf \"\$D\"" \
+    'export "D=$XDG_RUNTIME_DIR"; rm -rf "$D"' "export 'D=/run/user/1000'; echo 'x'; rm -rf \"\$D\"" \
+    'd=; d+=/run/user/1000; rm -rf "$d"' 'd=/run/user; d+=/1000; rm -rf "$d"' \
+    'a=("$XDG_RUNTIME_DIR"); rm -rf "${a[@]}"' 'a=(x "$XDG_RUNTIME_DIR"); rm -rf "${a[1]}"' \
+    'a=(); a+=(/run/user/1000); rm -rf "$a"' \
+    'for d in "$XDG_RUNTIME_DIR"/tmux-*; do rm -rf "$d"; done' \
+    $'for d in a /run/user/1000\ndo rm -rf "$d"; done' \
+    'git commit -m "fix \"x\""; rm -rf /run/user/1000' 'echo "a \\" ; rm -rf /run/user/1000'; do
+    run run_guard <<<"$(claude_bash "$cmd")"
+    echo "claude: $cmd"
+    assert_block 'runtime dir'
+    run run_guard <<<"$(pi_bash "$cmd")"
+    echo "pi: $cmd"
+    assert_block 'runtime dir'
+  done
+}
+
+@test "tmux-server-guard: allows deletes through the same constructs when no value reaches the runtime dir" {
+  runtime_env
+  local cmd
+  for cmd in 'for d in a b; do rm -rf "$d/"; done' 'a=(x y); rm -rf "${a[@]}"' \
+    'export "D=/tmp/x"; rm -rf "$D"' 'd=${D:-"/tmp/x"}; rm -rf "$d"' 'd=/tmp; d+=/x; rm -rf "$d"' \
+    'git commit -m "fix \"x\""; rm -rf /tmp/x' 'for d in $(ls "$XDG_RUNTIME_DIR"); do rm -rf "$d"; done'; do
+    run run_guard <<<"$(claude_bash "$cmd")"
+    echo "claude: $cmd"
+    assert_allow
+  done
+}
+
+@test "tmux-server-guard: the candidate cap has its own reason" {
+  runtime_env
+  run run_guard <<<"$(claude_bash 'rm -rf "${a:-x}${b:-x}${c:-x}${d:-x}${e:-x}"')"
+  assert_block 'candidate values'
+  [[ $output != *'resolves to the per-user'* ]]
+}
+
+# A chain a0=$a1/$a1 … doubles its value per level: unmemoised it ran for
+# minutes, past the hook timeout (4 s pi), which fails open.
+doubling_chain() { # <levels> <leaf>
+  local i out=''
+  for ((i = 0; i < $1; i++)); do out+="a$i=\$a$((i + 1))/\$a$((i + 1)); "; done
+  printf '%s' "${out}a$1=$2; rm -rf \"\$a0\""
+}
+
+assert_within() { # <name> <ms> <command>
+  local start elapsed
+  start=$(date +%s%N)
+  run run_guard <<<"$(claude_bash "$3")"
+  elapsed=$((($(date +%s%N) - start) / 1000000))
+  echo "$1: elapsed ${elapsed}ms" >&2
+  [ "$elapsed" -lt "$2" ]
+}
+
+# bats test_tags=timing
+@test "tmux-server-guard: a doubling variable chain is refused within the hook timeout" {
+  runtime_env
+  assert_within acyclic 3000 "$(doubling_chain 12 /tmp)"
+  assert_block 'expansion budget'
+  assert_within runtime 3000 "$(doubling_chain 12 '$XDG_RUNTIME_DIR')"
+  assert_block 'expansion budget'
+}
+
+# bats test_tags=timing
+@test "tmux-server-guard: a cyclic doubling chain exhausts the step budget and is refused" {
+  runtime_env
+  assert_within cyclic 3000 "$(doubling_chain 25 '$a0')"
+  assert_block 'expansion budget'
+}

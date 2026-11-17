@@ -21,15 +21,18 @@
 # ($XDG_RUNTIME_DIR, /run/user/<x>), which holds the D-Bus, systemd and tmux
 # sockets. Paths resolve lexically, never evaluated. A `$NAME` stands for every
 # value it may hold: its exported value in the guard's environment plus every
-# `NAME=value` or `${NAME:=value}` anywhere on the line, whatever its order or
+# `NAME=value`, `NAME+=value`, array element, `for NAME in` word or
+# `${NAME:=value}` anywhere on the line, whatever its order or
 # scope (prefix, subshell, pipe element, branch, substitution). The delete is
 # refused when any of them reaches the runtime dir, so rebinding an inherited
 # name to a private dir does not make deleting through it safe; deleting
 # through a fresh name (`d=$(mktemp -d); rm -rf "$d"`) is. A part it cannot know
-# (an unset, loop or read variable, `$1`, a glob, a command substitution)
+# (an unset or read variable, `$1`, a glob, a command substitution)
 # matches any one segment, but a relative path or one whose first part is
 # unknown is allowed, since that is how a private scratch dir from `mktemp -d`
-# looks. An operand with more than 16 candidate values is refused.
+# looks. An operand with more than 16 candidate values, a candidate over 512
+# characters, or a lookup chain past 1500 steps is refused, each with its own
+# reason: past the hook's timeout the guard would fail open.
 #
 #   engine        event                  command at             verdict shape
 #   claude        PreToolUse Bash        tool_input.command     hookSpecificOutput deny
@@ -46,8 +49,7 @@
 # kill-server"`, `tmux new -d \; kill-server`); a unique-prefix abbreviation
 # (`kill-serv`); `xargs tmux kill-server`; a long wrapper option with a separate
 # value (`env --unset TMUX tmux kill-server`). Here-doc bodies are read as
-# commands, so a body line starting with `tmux kill-server` is denied, and an
-# escaped quote inside a double-quoted string ends the quote early (also a deny).
+# commands, so a body line starting with `tmux kill-server` is denied.
 # For deletes: symlinks into the runtime dir; `cd` then a relative path (`cd
 # "$XDG_RUNTIME_DIR" && rm -rf tmux-1000`); `mv`, `shred`, `rsync --delete`;
 # `xargs rm` and `find -exec rm`; operands after an unquoted command
@@ -150,6 +152,20 @@ split_words() { # <command>
         d=${s:i:1}
         i=$((i + 1))
         if [[ $d == "$q" ]]; then break; fi
+        # Inside double quotes a backslash escapes only these four; before
+        # anything else it is a literal backslash.
+        if [[ $q == '"' && $d == \\ ]]; then
+          case ${s:i:1} in
+          '"' | \\ | '$' | '`')
+            d=${s:i:1}
+            i=$((i + 1))
+            ;;
+          $'\n')
+            i=$((i + 1))
+            continue
+            ;;
+          esac
+        fi
         w+=$d
       done
       continue
@@ -204,6 +220,7 @@ split_words() { # <command>
             d=${s:i:1}
             i=$((i + 1))
             if [[ $d == "$q" ]]; then break; fi
+            if [[ $q == '"' && $d == \\ ]]; then i=$((i + 1)); fi
           done
           continue
           ;;
@@ -313,15 +330,34 @@ del_target=''
 unk=$'\002'
 # Most candidates one operand may expand to; past it the delete is refused.
 max_cands=16
-# Every NAME=value and ${NAME:=value} on the line: names in $bn, raw values
-# (quotes stripped, substitutions made $unk) in $bv.
+# Why the delete is refused: '' the runtime dir, `cap` too many candidates,
+# `budget` the expansion budget ran out.
+del_why=''
+# Every NAME=value, NAME+=value, ${NAME:=value}, array element and `for NAME in`
+# word on the line: names in $bn, raw values (quotes stripped, substitutions
+# made $unk) in $bv, `a` in $bk for an append.
 bn=()
 bv=()
-re_bind_word='(^|[[:space:];&|()`])([A-Za-z_][A-Za-z0-9_]*)=$'
+bk=()
+re_bind_word='(^|[[:space:];&|()`])(["'"'"']?)([A-Za-z_][A-Za-z0-9_]*)([+]?)=$'
 re_bind_brace='[$][{]([A-Za-z_][A-Za-z0-9_]*):?=$'
+re_for='(^|[[:space:];&|()`])for[[:space:]]+([A-Za-z_][A-Za-z0-9_]*)[[:space:]]+in([[:space:]]|$)'
 collected=0
 visiting=' '
 over=0
+# Lookups are memoised per name; a result that met a cycle is not, so a cyclic
+# chain can still double per level. The step budget and the length cap bound that:
+# past either the delete is refused, because running past the hook's timeout would
+# fail open.
+memo_n=()
+memo_v=()
+cyc=0
+steps=0
+max_steps=1500
+# Longest candidate value; a chain that doubles its value per level reaches
+# megabytes, which the segment walk would not finish within the timeout.
+max_len=512
+budget=0
 
 # Index just past the `)` matching the `(` before $2 in $1, quotes skipped.
 skip_parens() { # <string> <index>
@@ -334,7 +370,10 @@ skip_parens() { # <string> <index>
     '(') d=$((d + 1)) ;;
     ')') d=$((d - 1)) ;;
     "'" | '"')
-      while ((sp < n)) && [[ ${s:sp:1} != "$c" ]]; do sp=$((sp + 1)); done
+      while ((sp < n)) && [[ ${s:sp:1} != "$c" ]]; do
+        if [[ $c == '"' && ${s:sp:1} == \\ ]]; then sp=$((sp + 1)); fi
+        sp=$((sp + 1))
+      done
       sp=$((sp + 1))
       ;;
     \\) sp=$((sp + 1)) ;;
@@ -360,14 +399,109 @@ match_brace() { # <string> <index>
   mb=-1
 }
 
-# Fill $bn/$bv from the raw command. A binding counts wherever it appears —
+# Read one word of a binding from $1 at index $2 ($3 is 1 when it starts inside
+# double quotes) into $rv; $ri is where it ended. A word runs to the first blank
+# or operator outside quotes and `$( … )`/backticks, which are opaque.
+read_value() { # <string> <index> <dq>
+  local rest=$1 i=$2 dq=$3 n=${#1} c q v=''
+  while ((i < n)); do
+    c=${rest:i:1}
+    case $c in
+    ' ' | $'\t' | $'\n' | ';' | '|' | '&' | '(' | ')' | '<' | '>')
+      ((dq)) || break
+      v+=$c
+      ;;
+    '"') dq=$((1 - dq)) ;;
+    "'")
+      if ((dq)); then
+        v+=$c
+      else
+        q=${rest:i+1}
+        q=${q%%"'"*}
+        v+=$q
+        i=$((i + ${#q} + 1))
+      fi
+      ;;
+    \\)
+      i=$((i + 1))
+      v+=${rest:i:1}
+      ;;
+    '`')
+      v+=$unk
+      i=$((i + 1))
+      while ((i < n)) && [[ ${rest:i:1} != '`' ]]; do i=$((i + 1)); done
+      ;;
+    '$')
+      if [[ ${rest:i+1:1} == '(' ]]; then
+        v+=$unk
+        skip_parens "$rest" $((i + 2))
+        i=$sp
+        continue
+      fi
+      if [[ ${rest:i+1:1} == '{' ]]; then
+        match_brace "$rest" $((i + 2))
+        ((mb >= 0)) || mb=$((n - 1))
+        strip_quotes "${rest:i:mb-i+1}"
+        v+=$sq
+        i=$((mb + 1))
+        continue
+      fi
+      v+=$c
+      ;;
+    *) v+=$c ;;
+    esac
+    i=$((i + 1))
+  done
+  rv=$v
+  ri=$i
+}
+
+# $1 without its quote characters, in $sq. The text of a `${X:-"w"}` is
+# expanded as a plain word later, where a quote would be a literal character.
+strip_quotes() { # <string>
+  sq=${1//\"/}
+  sq=${sq//"'"/}
+}
+
+# Bind NAME ($1) to each word of $2: the elements of an array, or the list of a
+# `for NAME in`, which ends at the first operator or newline. Whichever element
+# the shell hands out, the name may hold it.
+bind_words() { # <name> <text> <list: 1 for a for-list, 0 for an array>
+  local t=$2 i=0 n=${#2} c
+  ((n)) || return 0
+  if [[ $3 == 0 ]]; then t=${t//$'\n'/ }; fi
+  while ((i < n)); do
+    c=${t:i:1}
+    case $c in
+    ' ' | $'\t')
+      i=$((i + 1))
+      continue
+      ;;
+    ';' | $'\n' | '&' | '|' | '(' | ')' | '<' | '>') break ;;
+    esac
+    read_value "$t" "$i" 0
+    ((ri > i)) || break
+    i=$ri
+    if [[ $rv =~ ^\[[^]]*\]=(.*)$ ]]; then rv=${BASH_REMATCH[1]}; fi
+    bn+=("$1")
+    bv+=("$rv")
+    bk+=('')
+  done
+}
+
+# Fill $bn/$bv/$bk from the raw command. A binding counts wherever it appears —
 # prefix, subshell, pipe element, branch, inside a substitution — so a name's
-# candidates are a superset of what the shell could hold. `$( … )` and
-# backticks are opaque, so a value runs to the first blank or operator outside
-# them and quotes.
+# candidates are a superset of what the shell could hold.
 collect_bindings() {
-  local rest=$command pre='' name v c i n q dq
+  local rest=$command pre='' name oq app m len
   collected=1
+  while [[ $rest =~ $re_for ]]; do
+    name=${BASH_REMATCH[2]}
+    m=${BASH_REMATCH[0]}
+    rest=${rest#*"$m"}
+    bind_words "$name" "$rest" 1
+  done
+  rest=$command
   # The text before each `=` decides whether it binds; only the `=` itself is
   # kept as context for the next one.
   while [[ $rest == *=* ]]; do
@@ -376,8 +510,11 @@ collect_bindings() {
     if [[ $pre =~ $re_bind_brace ]]; then
       match_brace "$rest" 0
       ((mb >= 0)) || mb=${#rest}
-      bn+=("${BASH_REMATCH[1]}")
-      bv+=("${rest:0:mb}")
+      name=${BASH_REMATCH[1]}
+      strip_quotes "${rest:0:mb}"
+      bn+=("$name")
+      bv+=("$sq")
+      bk+=('')
       pre='='
       continue
     fi
@@ -385,61 +522,29 @@ collect_bindings() {
       pre='='
       continue
     fi
-    name=${BASH_REMATCH[2]}
+    oq=${BASH_REMATCH[2]}
+    name=${BASH_REMATCH[3]}
+    app=${BASH_REMATCH[4]}
     pre='='
-    v=''
-    i=0
-    n=${#rest}
-    dq=0
-    while ((i < n)); do
-      c=${rest:i:1}
-      case $c in
-      ' ' | $'\t' | $'\n' | ';' | '|' | '&' | '(' | ')' | '<' | '>')
-        ((dq)) || break
-        v+=$c
-        ;;
-      '"') dq=$((1 - dq)) ;;
-      "'")
-        if ((dq)); then
-          v+=$c
-        else
-          q=${rest:i+1}
-          q=${q%%"'"*}
-          v+=$q
-          i=$((i + ${#q} + 1))
-        fi
-        ;;
-      \\)
-        i=$((i + 1))
-        v+=${rest:i:1}
-        ;;
-      '`')
-        v+=$unk
-        i=$((i + 1))
-        while ((i < n)) && [[ ${rest:i:1} != '`' ]]; do i=$((i + 1)); done
-        ;;
-      '$')
-        if [[ ${rest:i+1:1} == '(' ]]; then
-          v+=$unk
-          skip_parens "$rest" $((i + 2))
-          i=$sp
-          continue
-        fi
-        if [[ ${rest:i+1:1} == '{' ]]; then
-          match_brace "$rest" $((i + 2))
-          ((mb >= 0)) || mb=$((n - 1))
-          v+=${rest:i:mb-i+1}
-          i=$((mb + 1))
-          continue
-        fi
-        v+=$c
-        ;;
-      *) v+=$c ;;
-      esac
-      i=$((i + 1))
-    done
+    if [[ ${rest:0:1} == '(' ]]; then
+      # An array: every element is a plain binding of the name, `+=` or not.
+      skip_parens "$rest" 1
+      len=$((sp - 2))
+      ((len >= 0)) || len=0
+      bind_words "$name" "${rest:1:len}" 0
+      continue
+    fi
+    if [[ $oq == "'" ]]; then
+      # `export 'D=value'`: the word is literal up to the closing quote.
+      rv=${rest%%"'"*}
+    elif [[ $oq == '"' ]]; then
+      read_value "$rest" 0 1
+    else
+      read_value "$rest" 0 0
+    fi
     bn+=("$name")
-    bv+=("$v")
+    bv+=("$rv")
+    bk+=("${app:+a}")
   done
 }
 
@@ -449,10 +554,11 @@ collect_bindings() {
 # variable says nothing about the worker's shell. An unset or empty value, or
 # a name with no candidates, is unknown, never empty, so `rm -rf "$dir/"` is
 # not `rm -rf /`. A binding that refers back to its own name (`d=$d/x`) reads
-# that name as unknown.
+# that name as unknown. An append (`d+=v`) holds v alone and v after every other
+# candidate, whatever its order on the line.
 lookup_var() { # <name>
-  local i e
-  local -a out=()
+  local i e c cyc0 pass joined
+  local -a out=() add
   case $1 in
   UID)
     lv=("$UID")
@@ -463,6 +569,17 @@ lookup_var() { # <name>
     return 0
     ;;
   esac
+  steps=$((steps + 1))
+  if ((steps > max_steps)); then budget=1; fi
+  if ((budget)); then
+    lv=("$unk")
+    return 0
+  fi
+  for ((i = 0; i < ${#memo_n[@]}; i++)); do
+    [[ ${memo_n[i]} == "$1" ]] || continue
+    IFS=$'\003' read -r -a lv <<<"${memo_v[i]}"
+    return 0
+  done
   # export -p, not compgen -e: nixpkgs' non-interactive bash has no compgen.
   # Posix mode (POSIXLY_CORRECT) prints `export NAME=` lines.
   if [[ -z $exported ]]; then exported=$'\n'$(export -p)$'\n'; fi
@@ -470,14 +587,33 @@ lookup_var() { # <name>
   *$'\n'"declare -x $1="* | *$'\n'"export $1="*) [[ -z ${!1:-} ]] || out=("${!1}") ;;
   esac
   ((collected)) || collect_bindings
+  cyc0=$cyc
   case $visiting in
-  *" $1 "*) out+=("$unk") ;;
+  *" $1 "*)
+    cyc=$((cyc + 1))
+    out+=("$unk")
+    ;;
   *)
     visiting+="$1 "
-    for ((i = 0; i < ${#bn[@]}; i++)); do
-      [[ ${bn[i]} == "$1" ]] || continue
-      expand_word "${bv[i]}"
-      for e in "${exs[@]}"; do out+=("${e:-$unk}"); done
+    for pass in '' a; do
+      for ((i = 0; i < ${#bn[@]}; i++)); do
+        if ((budget)); then break 2; fi
+        [[ ${bn[i]} == "$1" && ${bk[i]} == "$pass" ]] || continue
+        expand_word "${bv[i]}"
+        if [[ -z $pass ]]; then
+          for e in "${exs[@]}"; do out+=("${e:-$unk}"); done
+          continue
+        fi
+        add=()
+        for e in "${exs[@]}"; do
+          add+=("${e:-$unk}")
+          for c in ${out[@]+"${out[@]}"}; do
+            add+=("$c$e")
+            if ((${#c} + ${#e} > max_len)); then budget=1; fi
+          done
+        done
+        out+=("${add[@]}")
+      done
     done
     visiting=${visiting%"$1 "}
     ;;
@@ -485,6 +621,14 @@ lookup_var() { # <name>
   if ((${#out[@]} > max_cands)); then over=1; fi
   ((${#out[@]})) || out=("$unk")
   lv=("${out[@]}")
+  # Cached only when no cycle cut it short: a name read while an ancestor was
+  # being visited may be missing that ancestor's values.
+  if ((cyc == cyc0 && !budget)); then
+    joined=''
+    for c in "${out[@]}"; do joined+=$c$'\003'; done
+    memo_n+=("$1")
+    memo_v+=("${joined%$'\003'}")
+  fi
 }
 
 # Expand the parameters in one word into $exs, the list of values it may take
@@ -498,6 +642,12 @@ lookup_var() { # <name>
 expand_word() { # <word>
   local s=$1 i=0 n=${#1} c inner name op lit='' a l
   local -a acc=('') vals next
+  steps=$((steps + 1))
+  if ((steps > max_steps)); then budget=1; fi
+  if ((budget)); then
+    exs=("$unk")
+    return 0
+  fi
   while ((i <= n)); do
     c=${s:i:1}
     i=$((i + 1))
@@ -526,6 +676,8 @@ expand_word() { # <word>
           if [[ $inner =~ ^([A-Za-z_][A-Za-z0-9_]*)(.*)$ ]]; then
             name=${BASH_REMATCH[1]}
             op=${BASH_REMATCH[2]}
+            # An array subscript (`${a[@]}`, `${a[0]}`): any element.
+            if [[ $op == \[* ]]; then op=${op#*]}; fi
             case $op in
             '' | :\?* | \?* | %*)
               lookup_var "$name"
@@ -571,7 +723,10 @@ expand_word() { # <word>
     fi
     next=()
     for a in "${acc[@]}"; do
-      for l in "${vals[@]}"; do next+=("$a$lit$l"); done
+      for l in "${vals[@]}"; do
+        next+=("$a$lit$l")
+        if ((${#a} + ${#lit} + ${#l} > max_len)); then budget=1; fi
+      done
     done
     lit=''
     if ((${#next[@]} > max_cands)); then
@@ -628,8 +783,14 @@ judge_target() { # <operand>
   local c
   [[ -z $del_target ]] || return 0
   expand_word "$1"
+  if ((budget)); then
+    del_target=$1
+    del_why=budget
+    return 0
+  fi
   if ((over)); then
     del_target=$1
+    del_why=cap
     return 0
   fi
   for c in "${exs[@]}"; do
@@ -787,6 +948,12 @@ done < <(split_words "$command")
 if [[ -n $deny_what ]]; then
   reason="This tmux command reaches the live tmux server: '$deny_what' with no -L/-S. A worker's panes inherit \$TMUX, which tmux resolves before TMUX_TMPDIR, so a scratch server built with TMUX_TMPDIR alone does not isolate it.
 Fix: run 'unset TMUX', point a private 'export TMUX_TMPDIR=\$(mktemp -d)', and pass '-L <name>' on every tmux call, including kill-server."
+elif [[ $del_why == cap ]]; then
+  reason="This deletes '$del_target', which expands to more than $max_cands candidate values, too many for the guard to check against the per-user runtime dir. The guard refuses what it cannot check.
+Fix: delete one concrete path per command, or a private dir you created ('d=\$(mktemp -d); rm -rf \"\$d\"')."
+elif [[ $del_why == budget ]]; then
+  reason="This deletes '$del_target', whose variables chain too deeply for the guard to resolve within its expansion budget, so it cannot rule out the per-user runtime dir. The guard refuses what it cannot check.
+Fix: delete a concrete path or a private dir you created ('d=\$(mktemp -d); rm -rf \"\$d\"'), without a long chain of variables."
 elif [[ -n $del_target ]]; then
   reason="This deletes '$del_target', which resolves to the per-user runtime dir (\$XDG_RUNTIME_DIR, /run/user/<uid>) or one of its parents or children: it holds the D-Bus, systemd and tmux sockets, and deleting it breaks the owner's session until reboot.
 Fix: make scratch dirs with 'mktemp -d' and delete them through a name you created, e.g. 'd=\$(mktemp -d); rm -rf \"\$d\"' (for a nested session: 'rt=\$(mktemp -d); XDG_RUNTIME_DIR=\$rt Hyprland; rm -rf \"\$rt\"'). Never delete through an inherited variable such as TMUX_TMPDIR or XDG_RUNTIME_DIR, even after rebinding it: the guard counts every value the name may hold."
