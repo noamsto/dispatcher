@@ -344,7 +344,7 @@ func checkUnread(lines []string, events []bus.Event, req Request, url string, pa
 	// Every crew: a re-dispatch of the branch may carry another crew id.
 	folded, err := sessions.Fold(docs, branch, "", float64(time.Now().Unix()))
 	if err != nil {
-		return refuse("could not fold the sessions of %s: %v", plain(branch), err)
+		return refuse("could not fold the sessions of %s: %s", plain(branch), plain(err.Error()))
 	}
 	// The pr_open session may have been replaced since; its successor is who a
 	// directive now reaches.
@@ -361,7 +361,7 @@ func checkUnread(lines []string, events []bus.Event, req Request, url string, pa
 	for _, crew := range sessionCrews(events, session, row.CrewID) {
 		found, err := unread.Directives(events, crew, session, marks.Read(paths.Dir, crew, session))
 		if err != nil {
-			return refuse("could not check %s for undelivered msgs: %v", plain(session), err)
+			return refuse("could not check %s for undelivered msgs: %s", plain(session), plain(err.Error()))
 		}
 		undelivered = append(undelivered, found...)
 	}

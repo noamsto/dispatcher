@@ -294,7 +294,9 @@ func TestUnreadDirectives(t *testing.T) {
 		escMsg  = `{"ts":6,"crew_id":"c1","from":"dispatcher:c1","to":"` + escSess + `","kind":"msg","body":"x"}`
 		escBare = `{"kind":"dispatch","branch":"feat/x","session":"\u009b31m\u202e","ts":5,"crew_id":"c1"}`
 		msgC2   = `{"ts":3,"crew_id":"c2","from":"dispatcher:c2","to":"` + succ + `","kind":"msg","body":"rebase please"}`
-		forged  = `{"ts":"%s red","crew_id":"c1","from":"dispatcher:c1","to":"` + sess + `","kind":"msg","body":"x"}`
+		// badTS is a status whose string ts makes the sessions fold fail.
+		badTS  = `{"ts":"\u202e","crew_id":"c1","from":"` + sess + `","to":"dispatcher:c1","kind":"status","body":{"state":"working"}}`
+		forged = `{"ts":"%s red","crew_id":"c1","from":"dispatcher:c1","to":"` + sess + `","kind":"msg","body":"x"}`
 	)
 	tests := []struct {
 		name   string
@@ -325,6 +327,8 @@ func TestUnreadDirectives(t *testing.T) {
 		{name: "session-less newest session refuses", log: []string{okRow, bare, msgToOld}, code: 1, stderr: []string{"no session id", "dispatch --pr 7"}},
 		{name: "successor under another crew refuses", log: []string{okRow, dispatchC2, workingC2, msgC2}, code: 1, stderr: []string{succ, "ts 3", "rebase please"}},
 		{name: "successor under another crew, delivered, merges", log: []string{okRow, dispatchC2, workingC2, msgC2}, marked: succ, markedCrew: "c2", merged: true},
+		{name: "directives under the pr_open crew and the dispatch crew are both checked", log: []string{okRow, dispatchC2, workingC2, msgC2, msgToNew}, marked: succ, markedCrew: "c2", code: 1, stderr: []string{succ, "ts 6", "rebase please"}},
+		{name: "fold error is escaped", log: []string{okRow, badTS}, code: 1, stderr: []string{"could not fold", `\u{202E}`}, notStderr: []string{"\u202e"}},
 		{name: "forged status under another crew does not hide a directive", log: []string{okRow, msgToOld, forgedZZ}, code: 1, stderr: []string{sess, "ts 3", "fix the flaky"}},
 		{name: "session-less session id is escaped", log: []string{okRow, escBare}, code: 1, stderr: []string{"no session id", `\u{009B}`, `\u{202E}`}, notStderr: []string{"\u009b", "\u202e"}},
 		{name: "session id with ESC is escaped on the not-delivered path", log: []string{okRow, escDisp, escMsg}, code: 1, stderr: []string{`\u{001B}`, "not yet delivered"}, notStderr: []string{"\x1b"}},
