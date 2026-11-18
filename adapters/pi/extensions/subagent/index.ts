@@ -5,9 +5,12 @@
 // upstream restructured the spawn into `let proc` + `proc = spawn(...)` and turned the
 // `message_end` guard into an early return; neither changes the argv shape, the JSON
 // event mode or which event carries the final message, so we keep the 1.4.0 shape here
-// and tag both lines `pinned`/`upstream` in contract.txt. To re-pin: copy the new
-// upstream index.ts and agents.ts, re-apply the `dispatcher patch:` hunks, then run
-// `bash scripts/pi-subagent-contract.sh --installed`.
+// and tag both lines `pinned`/`upstream` in contract.txt — upstream also reworked abort
+// escalation and exit-status handling there, which we have not ported. To re-pin: copy
+// the new upstream index.ts and agents.ts, re-apply the `dispatcher patch:` hunks,
+// reconcile the `pinned`/`upstream` rows in contract.txt (a line that matches upstream
+// again becomes `both`), then run `bash scripts/pi-subagent-contract.sh --pinned` AND
+// `--installed`: only `--pinned` checks this copy.
 /**
  * Subagent Tool - Delegate tasks to specialized agents
  *
