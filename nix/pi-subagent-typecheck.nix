@@ -8,7 +8,11 @@
   src,
   contract,
 }: let
-  pinned = builtins.head (builtins.match ".*\nversion\t([^\n]+)\n.*" (builtins.readFile contract));
+  m = builtins.match "(.*\n)?version\t([^\n]+)(\n.*)?" (builtins.readFile contract);
+  pinned =
+    if m == null
+    then throw "pi-subagent-typecheck: no version row in ${contract}"
+    else builtins.elemAt m 1;
   root = "${pi}/lib/node_modules/pi-monorepo";
   tsconfig = pkgs.writeText "tsconfig.json" (builtins.toJSON {
     compilerOptions = {
