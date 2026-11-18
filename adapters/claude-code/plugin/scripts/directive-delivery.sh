@@ -33,9 +33,9 @@
 # costs one slow-path call. Every cursor write is the size read at the START of
 # the call: a row appended meanwhile is rechecked next call. A last byte that is
 # not a newline is a row its writer has not finished, so the cursor stays put and
-# that chunk is rescanned. A row `crew inbox` cannot parse stops its read for good
-# (exit 5), so a complete tail moves the cursor past it anyway; otherwise every
-# later tool call would run the slow path.
+# that chunk is rescanned. A row `crew inbox` cannot parse is skipped, so a
+# complete tail moves the cursor past it anyway; otherwise every later tool call
+# would run the slow path.
 #
 # The msg body is data. It travels only as jq input: never eval'd, never a printf
 # format. Both markers carry a per-call nonce the body, written before this
@@ -159,8 +159,8 @@ rows=$(crew inbox "$CREW_WORKER_ID" "$crew" --from "dispatcher:$crew" --undelive
 rc=$?
 # Whatever it printed is already marked delivered, so it is rendered even when
 # the exit was non-zero (a torn tail). The cursor advances on success, so a failed
-# call is retried; exit 5 over a complete tail is a corrupt row, which no retry
-# fixes, so it advances too. Any other exit (a dead crew) keeps the cursor.
+# call is retried; exit 5 over a complete tail is a row no retry fixes, so it
+# advances too. Any other exit (a dead crew) keeps the cursor.
 if ((rc == 0 || (rc == 5 && next == size))); then
   save_cursor "$next"
 fi

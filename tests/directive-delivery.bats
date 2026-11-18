@@ -379,12 +379,12 @@ cursor_file() { printf '%s\n' "$CURDIR"/*; }
   chmod +x "$BATS_TEST_TMPDIR/countbin/crew"
   export PATH="$BATS_TEST_TMPDIR/countbin:$PATH"
 
-  # Names the dispatcher so the prefilter sends it to `crew inbox`, which stops
-  # at it with exit 5.
+  # Names the dispatcher so the prefilter sends it to `crew inbox`, which skips
+  # the corrupt row and exits 0.
   mkdir -p "$(dirname "$LOG")"
   printf '{"kind":"msg","from":"dispatcher:c1" not json\n' >>"$LOG"
   run --separate-stderr crew inbox "$ID" c1 --from dispatcher:c1 --undelivered
-  [ "$status" -eq 5 ]
+  [ "$status" -eq 0 ]
   : >"$CALLS"
 
   deliver

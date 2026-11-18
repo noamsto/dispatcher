@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 
 	"github.com/noamsto/dispatcher/crew/internal/ascii"
@@ -67,7 +68,7 @@ func Run(q Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int {
 	if crew == "" {
 		crew = o.CrewID()
 	}
-	events, err := bus.ReadEventsTolerant(paths.Log)
+	events, err := readEvents(paths.Log)
 	if errors.Is(err, bus.ErrNoLog) {
 		return 0
 	}
@@ -77,10 +78,7 @@ func Run(q Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int {
 		say(stderr, "crew: --since must be an integer ms timestamp\n")
 		return 1
 	}
-	// A torn or corrupt tail keeps the events parsed before the break: `jq -c`
-	// had already printed them, and its parse error lands after the last line.
-	var decode *bus.DecodeError
-	if err != nil && !errors.As(err, &decode) {
+	if err != nil {
 		msg, code := bus.JQFailure(err)
 		say(stderr, "crew: inbox: %s: %s\n", paths.Log, msg)
 		return code
@@ -152,8 +150,7 @@ func Run(q Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int {
 		_ = jsonval.Encode(stdout, invisible.Value(v), false)
 	}
 	// A session that has read its inbox has been handed these msgs, so a later
-	// await must not return them again (#290) — including the prefix of a bus
-	// whose tail then failed to parse, which is all the arm recorded too.
+	// await must not return them again (#290).
 	//
 	// The rows have to be on the wire first: the arm's `printf` under `set -e`
 	// died before `_await_record` when the write failed, and a mark raised for
@@ -175,14 +172,27 @@ func Run(q Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int {
 			marks.Record(paths.Dir, crew, me, recorded)
 		}
 	}
-	if decode != nil {
-		say(stderr, "crew: inbox: %s: %v\n", paths.Log, decode.Err)
-		return exitType
-	}
 	if failed {
 		return exitType
 	}
 	return 0
+}
+
+// readEvents decodes the log per line, as the status gate and `crew merge`
+// do, so a torn or corrupt line never hides a directive after it. A missing
+// log, or one that is not a regular file, is bus.ErrNoLog.
+func readEvents(path string) ([]bus.Event, error) {
+	if st, err := os.Stat(path); err != nil || !st.Mode().IsRegular() {
+		return nil, bus.ErrNoLog
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, &bus.OpenError{Path: path, Err: err}
+	}
+	if len(data) == 0 {
+		return nil, nil
+	}
+	return bus.EventsFromLines(strings.Split(strings.TrimSuffix(string(data), "\n"), "\n")), nil
 }
 
 // selects is the arm's select: the crew, the kind and the addressee are
