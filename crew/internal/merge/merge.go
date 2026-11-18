@@ -372,7 +372,7 @@ func checkUnread(lines []string, events []bus.Event, req Request, url string, pa
 	list := make([]string, len(undelivered))
 	for i, m := range undelivered {
 		ts, _ := json.Marshal(m["ts"])
-		list[i] = fmt.Sprintf("ts %s %q", plain(string(ts)), excerpt(m["body"]))
+		list[i] = fmt.Sprintf("ts %s %s", plain(string(ts)), plain(fmt.Sprintf("%q", excerpt(m["body"]))))
 	}
 	if terminal, _ := newest["terminal"].(bool); terminal {
 		state, _ := newest["state"].(string)

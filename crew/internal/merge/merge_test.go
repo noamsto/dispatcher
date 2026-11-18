@@ -333,6 +333,7 @@ func TestUnreadDirectives(t *testing.T) {
 		{name: "session-less session id is escaped", log: []string{okRow, escBare}, code: 1, stderr: []string{"no session id", `\u{009B}`, `\u{202E}`}, notStderr: []string{"\u009b", "\u202e"}},
 		{name: "session id with ESC is escaped on the not-delivered path", log: []string{okRow, escDisp, escMsg}, code: 1, stderr: []string{`\u{001B}`, "not yet delivered"}, notStderr: []string{"\x1b"}},
 		{name: "session id with ESC is escaped on the pass line", log: []string{okRow, escDisp}, req: merge.Request{DryRun: true}, stdout: `unread: none for worker:feat/x#\u{001B}[2J#s9-9`},
+		{name: "invisible code points in the undelivered excerpt are escaped", log: []string{okRow, `{"ts":3,"crew_id":"c1","from":"dispatcher:c1","to":"` + sess + `","kind":"msg","body":"a` + string([]rune{0xFE0F, 0xE0100, 0x034F}) + `b"}`}, code: 1, stderr: []string{`\u{FE0F}`, `\u{E0100}`, `\u{034F}`}, notStderr: []string{string(rune(0xFE0F)), string(rune(0xE0100)), string(rune(0x034F))}},
 		{name: "successor lookup ignores --crew", log: []string{okRow, dispatchC2, workingC2, msgC2}, req: merge.Request{Crew: "c1"}, code: 1, stderr: []string{succ, "ts 3"}},
 		{name: "forged ts with bidi is escaped", log: []string{okRow, fmt.Sprintf(forged, "\u202e")}, code: 1, stderr: []string{`\u{202E}`}, notStderr: []string{"\u202e"}},
 		{name: "forged ts with C1 is escaped", log: []string{okRow, fmt.Sprintf(forged, "\u009b")}, code: 1, stderr: []string{`\u{009B}`}, notStderr: []string{"\u009b"}},
