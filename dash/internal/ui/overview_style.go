@@ -10,20 +10,20 @@ import (
 	vm "github.com/noamsto/dispatcher/dash/internal/view"
 )
 
-// Overview palette. Spans carry colours; the profile downsamples them, so an
+// Overview palette, set by applyPalette (theme.go). Spans carry colours; the profile downsamples them, so an
 // ASCII profile renders the same layout without any SGR.
 var (
-	colText      = lipgloss.Color("#cdd6f4")
-	colDim       = lipgloss.Color("#7f849c")
-	colBorderOff = lipgloss.Color("#585b70")
-	colSelBg     = lipgloss.Color("#2f3350")
-	colPillFg    = lipgloss.Color("#11111b")
-	colTeal      = lipgloss.Color("#94e2d5")
-	colPurple    = lipgloss.Color("#b4befe")
-	colAmber     = lipgloss.Color("#f9e2af")
-	colRed       = lipgloss.Color("#f38ba8")
-	colGreen     = lipgloss.Color("#a6e3a1")
-	colBlue      = lipgloss.Color("#89b4fa")
+	colText      lipgloss.Color
+	colDim       lipgloss.Color
+	colBorderOff lipgloss.Color
+	colSelBg     lipgloss.Color
+	colPillFg    lipgloss.Color
+	colTeal      lipgloss.Color
+	colPurple    lipgloss.Color
+	colAmber     lipgloss.Color
+	colRed       lipgloss.Color
+	colGreen     lipgloss.Color
+	colBlue      lipgloss.Color
 )
 
 func fg(c lipgloss.Color) lipgloss.Style { return lipgloss.NewStyle().Foreground(c) }

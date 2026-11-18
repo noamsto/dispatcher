@@ -132,9 +132,10 @@ func waitForFleetChange(w buswatch.Watcher) tea.Cmd {
 
 // Model is the root Bubble Tea model.
 type Model struct {
-	now     func() time.Time
-	ctx     context.Context
-	loaders Loaders
+	themePinned bool // CREW_DASH_THEME fixes the theme; theme reports are ignored
+	now         func() time.Time
+	ctx         context.Context
+	loaders     Loaders
 
 	snap   data.Snapshot
 	digest data.BusDigest
@@ -413,6 +414,12 @@ func (m Model) fleetTick() tea.Cmd {
 }
 
 func (m Model) update(msg tea.Msg) (Model, tea.Cmd) {
+	if t, ok := themeReport(msg); ok {
+		if !m.themePinned {
+			applyPalette(t)
+		}
+		return m, nil
+	}
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height

@@ -940,6 +940,20 @@ crew dash --json --view fleet --watch    # the machine-wide fleet view
 crew dash --json --view fleet --keeps    # also probe `crew reap --dry-run --json` for keep reasons (~30s)
 ```
 
+Theme: the dash draws Catppuccin Mocha on dark terminals and Latte on light
+ones. At startup it picks, in order: `CREW_DASH_THEME=light|dark`, tmux's
+`@catppuccin_flavor` (inside tmux; `latte` is light, any other value dark), the
+terminal background query, then dark. `CREW_DASH_THEME` pins the theme: when
+set, the dash does not switch live. Otherwise it follows the terminal's
+theme-change reports (DEC mode 2031, forwarded by tmux builds that support mode
+2031: 3.5+ per its changelog, check yours) and recolours without a restart;
+terminals that send none keep the startup choice. Inside tmux without
+`@catppuccin_flavor` the terminal library skips the startup background query,
+so startup is dark until the terminal sends a theme-change report (set
+`CREW_DASH_THEME` or `@catppuccin_flavor` to avoid this). On a light theme worker codenames are darkened to the same hue so
+they stay readable; this applies to 256-colour indices 16-255, while indices
+0-15 follow the terminal palette. The recorded tmux colour is unchanged.
+
 `crew dash` execs `crew-dash`, a Go binary under `dash/`. Eight tabs. The first
 seven each read from an already-cached or already-run source, never probed
 live; Fleet loads on first activation (see below):

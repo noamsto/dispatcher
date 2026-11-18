@@ -14,7 +14,7 @@ func TestOverlayComposite(t *testing.T) {
 	lipgloss.SetColorProfile(termenv.TrueColor)
 	t.Cleanup(func() { lipgloss.SetColorProfile(orig) })
 
-	red := lipgloss.NewStyle().Foreground(lipgloss.Color("#f38ba8"))
+	red := lipgloss.NewStyle().Foreground(lipgloss.Color(mochaPalette.red))
 	row := red.Render(strings.Repeat("a", 30))
 	base := []string{row, row, row, row}
 	box := []string{"+--------+", "|  box   |", "+--------+"}
