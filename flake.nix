@@ -437,19 +437,23 @@
           # escalation and a signal exit being a failed result. The contract check
           # byte-checks the spawn lines and the typecheck only runs tsc, so nothing
           # else ever executes that code.
-          pi-subagent-behaviour =
+          # Runs the .ts test file as-is, so it needs node with unflagged type
+          # stripping and --test-force-exit (node ≥ 22.18 / 23.6); the assert names
+          # that requirement if a nixpkgs bump ever drops it.
+          pi-subagent-behaviour = assert pkgs.lib.versionAtLeast pkgs.nodejs.version "22.18";
             pkgs.runCommand "pi-subagent-behaviour" {
               nativeBuildInputs = [pkgs.nodejs];
             } ''
               work=$(mktemp -d)
-              cp ${./adapters/pi/extensions/subagent}/outcome.ts "$work/"
-              cp ${./adapters/pi/extensions/subagent}/outcome.test.ts "$work/"
+              # Every .ts in the dir, so a test added next to outcome.test.ts is run
+              # rather than silently skipped — same reason as the typecheck's cp glob.
+              cp ${./adapters/pi/extensions/subagent}/*.ts "$work/"
               printf '{"type":"module"}\n' >"$work/package.json"
               cd "$work"
               # --test-force-exit: a leaked child holds its stdio pipe open, which would
               # otherwise keep node alive until the timeout even though every test
               # awaited its own child's close.
-              timeout 300 node --test --test-force-exit outcome.test.ts
+              timeout 300 node --test --test-force-exit
               touch $out
             '';
 

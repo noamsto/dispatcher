@@ -1,6 +1,7 @@
 // Derived from pi 1.4.0 examples/extensions/subagent. Dispatcher patches (each marked
 // `dispatcher patch:` in the code): agents dir relative to this file, no project-scope
-// agents, --no-approve and CREW_SUBAGENT=1 for the child, fixed-roster tool text. The
+// agents, --no-approve and CREW_SUBAGENT=1 for the child, fixed-roster tool text,
+// child-exit logic in ./outcome.ts. The
 // child-spawn contract (contract.txt `version`) is verified against pi 1.5.2 while this
 // copy keeps the 1.4.0 shape: the two lines upstream rewrote there leave the argv, the
 // JSON event mode and the final-message event alone, so contract.txt tags them
@@ -40,6 +41,9 @@ import {
 import { Container, Markdown, Spacer, Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { type AgentConfig, type AgentScope, discoverAgents } from "./agents.ts";
+// dispatcher patch: the child's kill escalation and signal-exit classification live in
+// ./outcome.ts so the pi-subagent-behaviour check can run them without pi; on a re-pin,
+// port upstream's inline changes into that file rather than back into this one.
 import { type ProcessOutcome, KILL_GRACE_MS, isFailedResult, recordOutcome, terminateChild } from "./outcome.ts";
 
 const MAX_PARALLEL_TASKS = 8;
