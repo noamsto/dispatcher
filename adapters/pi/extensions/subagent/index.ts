@@ -4,7 +4,8 @@
 // child-spawn contract (contract.txt `version`) is verified against pi 1.5.2 while this
 // copy keeps the 1.4.0 shape: the two lines upstream rewrote there leave the argv, the
 // JSON event mode and the final-message event alone, so contract.txt tags them
-// `pinned`/`upstream`. Upstream's abort-escalation and exit-status rework is not ported.
+// `pinned`/`upstream`. Upstream's abort-escalation and exit-status rework is ported; the
+// 1.4.0 `exitCode` result shape is kept.
 // To re-pin: copy the new upstream index.ts and agents.ts, re-apply the `dispatcher
 // patch:` hunks, reconcile the `pinned`/`upstream` rows (a line matching upstream again
 // becomes `both`), then run `bash scripts/pi-subagent-contract.sh --pinned` AND
@@ -153,11 +154,17 @@ interface UsageStats {
 	turns: number;
 }
 
+interface ProcessOutcome {
+	code: number | null;
+	signal: NodeJS.Signals | null;
+}
+
 interface SingleResult {
 	agent: string;
 	agentSource: "user" | "project" | "unknown";
 	task: string;
 	exitCode: number;
+	terminationSignal?: NodeJS.Signals;
 	messages: Message[];
 	stderr: string;
 	usage: UsageStats;
@@ -187,7 +194,12 @@ function getFinalOutput(messages: Message[]): string {
 }
 
 function isFailedResult(result: SingleResult): boolean {
-	return result.exitCode !== 0 || result.stopReason === "error" || result.stopReason === "aborted";
+	return (
+		result.exitCode !== 0 ||
+		result.stopReason === "error" ||
+		result.stopReason === "aborted" ||
+		result.terminationSignal !== undefined
+	);
 }
 
 function getResultOutput(result: SingleResult): string {
@@ -349,7 +361,7 @@ async function runSingleAgent(
 		args.push(`Task: ${task}`);
 		let wasAborted = false;
 
-		const exitCode = await new Promise<number>((resolve) => {
+		const outcome = await new Promise<ProcessOutcome>((resolve) => {
 			const invocation = getPiInvocation(args);
 			const proc = spawn(invocation.command, invocation.args, {
 				cwd: cwd ?? defaultCwd,
@@ -359,6 +371,9 @@ async function runSingleAgent(
 				stdio: ["ignore", "pipe", "pipe"],
 			});
 			let buffer = "";
+			let settled = false;
+			let exited = false;
+			let killTimer: ReturnType<typeof setTimeout> | undefined;
 
 			const processLine = (line: string) => {
 				if (!line.trim()) return;
@@ -397,6 +412,24 @@ async function runSingleAgent(
 				}
 			};
 
+			const abortProcess = () => {
+				// proc.killed is set as soon as SIGTERM is sent, so it cannot gate the escalation
+				if (exited || proc.exitCode !== null || proc.signalCode !== null) return;
+				if (!proc.kill("SIGTERM")) return;
+				wasAborted = true;
+				killTimer = setTimeout(() => {
+					if (!exited && proc.exitCode === null && proc.signalCode === null) proc.kill("SIGKILL");
+				}, 5000);
+			};
+
+			const finish = (result: ProcessOutcome) => {
+				if (settled) return;
+				settled = true;
+				if (killTimer) clearTimeout(killTimer);
+				if (signal) signal.removeEventListener("abort", abortProcess);
+				resolve(result);
+			};
+
 			proc.stdout.on("data", (data) => {
 				buffer += data.toString();
 				const lines = buffer.split("\n");
@@ -408,29 +441,28 @@ async function runSingleAgent(
 				currentResult.stderr += data.toString();
 			});
 
-			proc.on("close", (code) => {
+			proc.on("exit", () => {
+				exited = true;
+			});
+
+			proc.on("close", (code, terminationSignal) => {
 				if (buffer.trim()) processLine(buffer);
-				resolve(code ?? 0);
+				finish({ code, signal: terminationSignal ?? null });
 			});
 
 			proc.on("error", () => {
-				resolve(1);
+				finish({ code: 1, signal: null });
 			});
 
 			if (signal) {
-				const killProc = () => {
-					wasAborted = true;
-					proc.kill("SIGTERM");
-					setTimeout(() => {
-						if (!proc.killed) proc.kill("SIGKILL");
-					}, 5000);
-				};
-				if (signal.aborted) killProc();
-				else signal.addEventListener("abort", killProc, { once: true });
+				if (signal.aborted) abortProcess();
+				else signal.addEventListener("abort", abortProcess, { once: true });
 			}
 		});
 
-		currentResult.exitCode = exitCode;
+		currentResult.exitCode = outcome.code ?? 1;
+		currentResult.terminationSignal = outcome.signal ?? undefined;
+		if (outcome.signal) currentResult.errorMessage ||= `Subagent terminated by signal ${outcome.signal}`;
 		if (wasAborted) throw new Error("Subagent was aborted");
 		return currentResult;
 	} finally {
