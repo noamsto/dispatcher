@@ -716,6 +716,9 @@ func cardLines(ov vm.OverviewView, lines int, it placed, line func() *spans, iw 
 }
 
 func phaseLabel(w vm.OverviewWorker) string {
+	if w.NeedsCleanup {
+		return "stale"
+	}
 	if w.Phase == nil {
 		return ""
 	}

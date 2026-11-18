@@ -8,7 +8,7 @@ import (
 
 // AllKinds lists every Kind; a test requires clearsText to cover each.
 var AllKinds = []Kind{
-	KindBlocked, KindPrompt, KindStall, KindWatchdog, KindDead, KindFailed,
+	KindBlocked, KindPrompt, KindStall, KindWatchdog, KindDead, KindFailed, KindStale,
 	KindRoleFailed, KindMergeReady, KindLaneDead, KindLaneStale, KindHoldMatured,
 	KindRelayLost, KindPeerStale, KindDispatcherGone, KindRemoteWatchDead,
 }
@@ -19,6 +19,7 @@ type clearsCtx struct {
 	PR                   *int
 	Branch, CrewID, Role string
 	Keep                 string
+	Inspect, Remove      string
 }
 
 var branchIssueRe = regexp.MustCompile(`^[a-z]+/(\d+)-`)
@@ -35,6 +36,8 @@ func clearsText(kind Kind, c clearsCtx) string {
 		return "clears when the worker emits output or `crew nudge` wakes it"
 	case KindDead, KindFailed:
 		return reapClears(c)
+	case KindStale:
+		return "inspect: " + c.Inspect + "; remove: " + c.Remove
 	case KindRoleFailed:
 		return "restart the role pane or `crew nudge` the worker"
 	case KindMergeReady:

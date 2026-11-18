@@ -450,7 +450,7 @@ func projectWorker(raw map[string]json.RawMessage) map[string]any {
 			row[key] = n
 		}
 	}
-	for _, key := range []string{"live", "stale", "finished_window", "remote_unprobed", "pr_candidate"} {
+	for _, key := range []string{"live", "stale", "finished_window", "remote_unprobed", "pr_candidate", "needs_cleanup"} {
 		var b bool
 		present, ok := rowField(raw, key, &b)
 		if !ok {
@@ -474,6 +474,12 @@ func projectWorker(raw map[string]json.RawMessage) map[string]any {
 		if present, ok := rowField(raw, key, &v); present && ok && v.ident() {
 			row[key] = string(v)
 		}
+	}
+	// The cleanup commands are never projected: a far host's text must not
+	// reach a command a human copies from this host's view.
+	var cleanup farText
+	if present, ok := rowField(raw, "cleanup_reason", &cleanup); present && ok {
+		row["cleanup_reason"] = cleanup.text()
 	}
 	var detail farEnum
 	if present, ok := rowField(raw, "detail", &detail); present && ok && detail.in(details) {

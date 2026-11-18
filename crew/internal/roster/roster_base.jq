@@ -74,3 +74,14 @@
                                        elif (.pr // "") != "" and (.pr_state // "") != "" then "PR #" + (.pr | split("/") | last) + " " + .pr_state
                                        else (.pr_state // "reaped") end), source: "reap", ts: $rp.ts, age_s: ((now - ($rp.ts/1000))|floor)}
               else . end)
+      # `crew reap` posts a `stale` row when it keeps a finished worker's tree
+      # for a human; the newest one per branch flags the row until a
+      # `stale:false` row or a newer status supersedes it.
+      | (($all | map(select(.crew_id==$crew and .kind=="stale" and (.branch // "") != "")) | group_by(.branch)
+          | map({key:.[0].branch, value:(max_by(.ts))}) | from_entries)) as $stale
+      | map(. as $r | $stale[.branch] as $s
+            | if (.state == "done" or .state == "failed" or .state == "exited")
+                 and $s != null and $s.stale == true and $s.ts > .ts
+              then . + {needs_cleanup: true, cleanup_reason: $s.reason, cleanup_worktree: $s.worktree,
+                        cleanup_inspect: $s.inspect, cleanup_remove: $s.remove}
+              else . end)

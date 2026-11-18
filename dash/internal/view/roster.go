@@ -56,6 +56,14 @@ type WorkerRow struct {
 	ExitSuspect  *bool    `json:"exit_suspect"`
 	Actions      []Action `json:"actions"`
 
+	// NeedsCleanup marks a finished worker crew reap kept for a human; the
+	// Cleanup strings are reap's reason and the commands to run.
+	NeedsCleanup    bool   `json:"needs_cleanup,omitempty"`
+	CleanupReason   string `json:"cleanup_reason,omitempty"`
+	CleanupWorktree string `json:"cleanup_worktree,omitempty"`
+	CleanupInspect  string `json:"cleanup_inspect,omitempty"`
+	CleanupRemove   string `json:"cleanup_remove,omitempty"`
+
 	stale bool
 }
 
@@ -144,6 +152,12 @@ func WorkerRowOf(crew []string, crewID string, w map[string]any) WorkerRow {
 		Live:         optBool(w, "live"),
 		ExitSuspect:  optBool(w, "exit_suspect"),
 		stale:        w["stale"] == true,
+
+		NeedsCleanup:    w["needs_cleanup"] == true,
+		CleanupReason:   str(w, "cleanup_reason"),
+		CleanupWorktree: str(w, "cleanup_worktree"),
+		CleanupInspect:  str(w, "cleanup_inspect"),
+		CleanupRemove:   str(w, "cleanup_remove"),
 	}
 	name := ""
 	if row.Name != nil {

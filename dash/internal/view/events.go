@@ -55,6 +55,11 @@ func eventText(e data.RecentEvent) string {
 		return "claimed issue #" + evStr(ev, "issue")
 	case "reap":
 		return strings.TrimSpace("reaped " + prRef(evStr(ev, "pr")) + " " + evStr(ev, "pr_state"))
+	case "stale":
+		if b, ok := ev["stale"].(bool); ok && !b {
+			return "stale cleared"
+		}
+		return strings.TrimSpace("stale " + evStr(ev, "reason"))
 	case "release":
 		return strings.TrimSpace("released " + evStr(ev, "state"))
 	case "resume":

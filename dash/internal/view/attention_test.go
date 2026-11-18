@@ -171,3 +171,74 @@ func TestAttentionAnsweredWorkerHasNoItem(t *testing.T) {
 		t.Errorf("worker = %+v", w)
 	}
 }
+
+func staleFields() map[string]any {
+	return map[string]any{
+		"needs_cleanup":    true,
+		"cleanup_reason":   "uncommitted changes; issue closed",
+		"cleanup_worktree": "/w/h",
+		"cleanup_inspect":  "git -C '/w/h' status --short",
+		"cleanup_remove":   "git worktree remove --force '/w/h' && git branch -D 'feat/h'",
+	}
+}
+
+func TestAttentionStaleReplacesFailed(t *testing.T) {
+	base := view.BuildOverview(viewtest.Inputs())
+	in := viewtest.Inputs()
+	setWorker(in, "feat/h", staleFields())
+	v := view.BuildOverview(in)
+
+	if slices.Contains(ids(v), "failed:c1:feat/h") {
+		t.Errorf("stale worker still raises failed: %v", ids(v))
+	}
+	a := item(t, v, "stale:c1:feat/h")
+	if a.Kind != view.KindStale || a.Severity != view.SeverityWarning {
+		t.Errorf("kind/severity = %s/%s", a.Kind, a.Severity)
+	}
+	if want := "stale: needs human cleanup — uncommitted changes; issue closed"; a.Message != want {
+		t.Errorf("message = %q, want %q", a.Message, want)
+	}
+	if want := "inspect: git -C '/w/h' status --short; remove: git worktree remove --force '/w/h' && git branch -D 'feat/h'"; a.Clears != want {
+		t.Errorf("clears = %q, want %q", a.Clears, want)
+	}
+	if len(v.Attention) != len(base.Attention) {
+		t.Errorf("attention = %d, want %d (stale replaces failed)", len(v.Attention), len(base.Attention))
+	}
+
+	w := worker(t, v, "feat/h")
+	if !w.NeedsCleanup {
+		t.Error("worker not flagged needs_cleanup")
+	}
+	if v.Workers[len(v.Workers)-1].Branch != "feat/h" {
+		t.Errorf("stale worker not sorted last: %s", v.Workers[len(v.Workers)-1].Branch)
+	}
+	if v.Summary.Workers != base.Summary.Workers {
+		t.Errorf("workers = %d, want %d", v.Summary.Workers, base.Summary.Workers)
+	}
+	if v.Summary.Agents != base.Summary.Agents-1 || len(v.Agents) != len(base.Agents)-1 {
+		t.Errorf("agents = %d/%d, want one fewer than %d/%d", v.Summary.Agents, len(v.Agents), base.Summary.Agents, len(base.Agents))
+	}
+	for _, ag := range v.Agents {
+		if ag.Branch == "feat/h" {
+			t.Error("stale worker listed as an agent")
+		}
+	}
+}
+
+func TestAttentionReapedStaleRowYieldsNoItem(t *testing.T) {
+	in := viewtest.Inputs()
+	fields := staleFields()
+	fields["state"] = "reaped"
+	setWorker(in, "feat/h", fields)
+	v := view.BuildOverview(in)
+	for _, a := range v.Attention {
+		if a.Branch == "feat/h" {
+			t.Errorf("reaped row produced %s", a.ID)
+		}
+	}
+	for _, w := range v.Workers {
+		if w.Branch == "feat/h" {
+			t.Error("reaped row listed")
+		}
+	}
+}

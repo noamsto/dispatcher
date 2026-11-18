@@ -1,6 +1,7 @@
 package view
 
 import (
+	"cmp"
 	"fmt"
 	"slices"
 	"strings"
@@ -75,6 +76,7 @@ type OverviewWorker struct {
 	Phase        *Phase      `json:"phase"`
 	Acceptance   *Acceptance `json:"acceptance"`
 	Actions      []Action    `json:"actions"`
+	NeedsCleanup bool        `json:"needs_cleanup,omitempty"`
 }
 
 type AgentNode struct {
@@ -141,6 +143,13 @@ type EventRow struct {
 	TS     int64  `json:"ts"`
 	Worker string `json:"worker"`
 	Text   string `json:"text"`
+}
+
+func boolRank(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
 }
 
 func isTerminal(state string) bool { return slices.Contains(terminalStates, state) }
@@ -395,6 +404,10 @@ func overviewErrors(in Inputs, rows []WorkerRow) []string {
 func BuildOverview(in Inputs) OverviewView {
 	now := in.nowSec()
 	rows := overviewRows(in)
+	// Stale workers wait on a human, not an agent: list them after the active ones.
+	slices.SortStableFunc(rows, func(a, b WorkerRow) int {
+		return cmp.Compare(boolRank(a.NeedsCleanup), boolRank(b.NeedsCleanup))
+	})
 	v := OverviewView{
 		SchemaVersion: SchemaVersion,
 		View:          "overview",
@@ -415,10 +428,13 @@ func BuildOverview(in Inputs) OverviewView {
 			Title: w.Title, PRURL: w.PRURL, PR: w.PR, AgeSec: w.AgeS,
 			BlockedSince: w.BlockedSince, AnsweredAt: w.AnsweredAt,
 			Phase: phaseOf(w, d, now), Acceptance: acceptanceOf(w, d), Actions: w.Actions,
+			NeedsCleanup: w.NeedsCleanup,
 		})
-		agent := agentRow(w, in, now)
-		v.Agents = append(v.Agents, agent)
-		v.Summary.Agents += 1 + len(agent.Roles)
+		if !w.NeedsCleanup {
+			agent := agentRow(w, in, now)
+			v.Agents = append(v.Agents, agent)
+			v.Summary.Agents += 1 + len(agent.Roles)
+		}
 		if w.State == "" {
 			v.Summary.ByState["unknown"]++
 		} else {

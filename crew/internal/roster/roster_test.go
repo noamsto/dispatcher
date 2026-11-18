@@ -870,3 +870,59 @@ func TestFoldSuffixFollowsBranchIssueRule(t *testing.T) {
 		}
 	}
 }
+
+// The newest stale row per branch flags a terminal worker as needing a human
+// cleanup, until a stale:false row or a newer status row clears it.
+func TestFoldNeedsCleanup(t *testing.T) {
+	const b = "feat/9-x"
+	from := "worker:" + b + "#s1-1"
+	stale := func(ts int64, on bool) string {
+		if !on {
+			return fmt.Sprintf(`{"ts":%d,"crew_id":"c1","kind":"stale","branch":%q,"session":"s1-1","stale":false}`, ts, b)
+		}
+		return fmt.Sprintf(`{"ts":%d,"crew_id":"c1","kind":"stale","branch":%q,"session":"s1-1","stale":true,"reason":"uncommitted changes; issue closed","worktree":"/w/x","inspect":"git -C '/w/x' status --short","remove":"git worktree remove --force '/w/x'"}`, ts, b)
+	}
+	failed := status(t0+1000, from, state("failed"))
+	cases := []struct {
+		name   string
+		events []string
+		want   bool
+	}{
+		{"stale row after terminal status", []string{failed, stale(t0+2000, true)}, true},
+		{"done and exited count", []string{status(t0+1000, from, state("done")), stale(t0+2000, true)}, true},
+		{"no stale row", []string{failed}, false},
+		{"stale:false row is newest", []string{failed, stale(t0+2000, true), stale(t0+3000, false)}, false},
+		{"stale:true row is newest again", []string{failed, stale(t0+2000, false), stale(t0+3000, true)}, true},
+		{"newer status row", []string{stale(t0+2000, true), status(t0+3000, from, state("failed"))}, false},
+		{"non-terminal state", []string{status(t0+1000, from, state("working")), stale(t0+2000, true)}, false},
+		{"reaped", []string{failed, stale(t0+2000, true), fmt.Sprintf(`{"ts":%d,"kind":"reap","branch":%q}`, t0+3000, b)}, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			p := Probes{Tmux: &tmuxtest.Fake{Out: map[string]string{}}, Worktrees: func() (string, error) { return "", nil }}
+			got, err := Fold(t.Context(), decodeEvents(t, c.events), "c1", now, p)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(got) != 1 {
+				t.Fatalf("rows = %d, want 1: %s", len(got), compact(t, got))
+			}
+			r := got[0]
+			if nc, _ := r["needs_cleanup"].(bool); nc != c.want {
+				t.Fatalf("needs_cleanup = %v, want %v: %s", nc, c.want, compact(t, r))
+			}
+			if !c.want {
+				for _, k := range []string{"cleanup_reason", "cleanup_worktree", "cleanup_inspect", "cleanup_remove"} {
+					if _, ok := r[k]; ok {
+						t.Errorf("%s present on a row that needs no cleanup", k)
+					}
+				}
+				return
+			}
+			if r["cleanup_reason"] != "uncommitted changes; issue closed" || r["cleanup_worktree"] != "/w/x" ||
+				r["cleanup_inspect"] != "git -C '/w/x' status --short" || r["cleanup_remove"] != "git worktree remove --force '/w/x'" {
+				t.Errorf("cleanup fields wrong: %s", compact(t, r))
+			}
+		})
+	}
+}

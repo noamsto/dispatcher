@@ -27,6 +27,7 @@ const (
 	KindWatchdog    Kind = "watchdog"
 	KindDead        Kind = "dead"
 	KindFailed      Kind = "failed"
+	KindStale       Kind = "stale"
 	KindRoleFailed  Kind = "role_failed"
 	KindMergeReady  Kind = "merge_ready"
 	KindLaneDead    Kind = "lane_dead"
@@ -109,6 +110,9 @@ func watchdogKind(detail string) Kind {
 func stateItem(w WorkerRow) (kind Kind, sev Severity, key string, ok bool) {
 	detail := deref(w.Detail)
 	watchdog := deref(w.Source) == "watchdog"
+	if w.NeedsCleanup {
+		return KindStale, SeverityWarning, "p", true
+	}
 	switch w.State {
 	case "blocked":
 		if !watchdog {
@@ -151,7 +155,7 @@ func attentionOf(w WorkerRow, kind Kind, sev Severity, key, msg, keep string) At
 		Severity: sev,
 		Kind:     kind,
 		Message:  msg,
-		Clears:   clearsText(kind, clearsCtx{PR: w.PR, Branch: w.Branch, CrewID: w.Crew, Keep: keep}),
+		Clears:   clearsText(kind, clearsCtx{PR: w.PR, Branch: w.Branch, CrewID: w.Crew, Keep: keep, Inspect: w.CleanupInspect, Remove: w.CleanupRemove}),
 		AgeSec:   derefInt(w.AgeS),
 		Action:   w.action(key),
 	}
@@ -206,7 +210,11 @@ func buildAttention(in Inputs, rows []WorkerRow) []AttentionItem {
 			if w.Origin == OriginLocal {
 				keep = in.reapKeep(w)
 			}
-			it := attentionOf(w, kind, sev, key, message(w, w.State), keep)
+			msg := message(w, w.State)
+			if kind == KindStale {
+				msg = "stale: needs human cleanup — " + w.CleanupReason
+			}
+			it := attentionOf(w, kind, sev, key, msg, keep)
 			if kind == KindBlocked && w.BlockedSince != nil {
 				it.AgeSec = max(now-*w.BlockedSince/1000, 0)
 			}
