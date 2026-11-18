@@ -44,7 +44,9 @@ quiesce in time. After a failed remote step a re-run retries only that step;
 dispatch resume <target> abandons the migration and resumes the worker here.
 
 DISPATCH_MIGRATE_MAX_BYTES (for tests) lowers the one-request budget the
-bundle must fit (default 31 MiB).
+bundle must fit (default 31 MiB). DISPATCH_MIGRATE_CANCEL_GRACE (for tests)
+sets the seconds a late migrated gets to land after the directive is
+withdrawn (default 3).
 
   dispatch migrate '#42' --host studio
   dispatch migrate feat/42-fix-the-roster-column --host studio --now
@@ -124,6 +126,8 @@ _host_re='^[A-Za-z0-9][A-Za-z0-9._-]*$'
 # Under crew remote-run's 32 MiB migrate request limit.
 max_bytes="${DISPATCH_MIGRATE_MAX_BYTES:-$((31 << 20))}"
 [[ $max_bytes =~ ^[1-9][0-9]{0,10}$ ]] || _die 2 "DISPATCH_MIGRATE_MAX_BYTES takes a whole number of bytes (got '$max_bytes')"
+cancel_grace="${DISPATCH_MIGRATE_CANCEL_GRACE:-3}"
+[[ $cancel_grace =~ ^[0-9]{1,4}$ ]] || _die 2 "DISPATCH_MIGRATE_CANCEL_GRACE takes a whole number of seconds (got '$cancel_grace')"
 
 # The pane check mirrors dispatch's _refuse_chrome_from_worker.
 if [ -n "${CREW_WORKER_ID:-}" ] || [ -n "${CREW_ROLE_ID:-}" ] ||
@@ -431,11 +435,13 @@ else
     [ -n "$outcome" ] || outcome="$(_coop_outcome)"
     withdrawn=""
     if [ -z "$outcome" ]; then
-      # crew status refuses migrated once the cancel lands, so a migrated row
-      # read after it was posted before it, and still stands.
+      # crew status checks the directive and appends its row without a lock, so
+      # a migrated that read the directive before the cancel can still land
+      # after it; the grace window catches such a row, but cannot guarantee it.
       withdrawn="the migrate directive was withdrawn"
       crew reply --crew "$crew_id" -- "$worker" "$(jq -nc --arg h "$host" '{directive: "migrate-cancel", to_host: $h}')" >/dev/null ||
         withdrawn="withdrawing the migrate directive failed, so it may still be pending"
+      sleep "$cancel_grace"
       outcome="$(_coop_outcome)"
     fi
     o_state="$(cut -f1 <<<"$outcome")"
@@ -462,10 +468,15 @@ else
   if [ "$mode" = now ]; then
     _wt_cfg_guard "$common" "$admin" || _die 1 "$stopped_hint"
     _wt_gitlink_ok "$admin" "$wt" || _die 1 "$wt/.git no longer points at $admin — $stopped_hint"
+    # A standalone git dir would run its own hooks/, not the repo's.
+    [ -f "$admin/commondir" ] || _die 1 "$admin is not a linked worktree's git dir — $stopped_hint"
+    main_wt="$(_wt_git_common "$common" worktree list --porcelain | sed -n '1s/^worktree //p')"
+    [ -n "$main_wt" ] || _die 1 "$common lists no main checkout to push from — $stopped_hint"
     push_rc=0
     # Hooks run here on purpose (owner requirement: a hook's refusal surfaces
     # verbatim, never bypassed); the one dispatcher-side git call that runs them.
-    push_out="$(env -u CREW_ID -u CREW_WORKER_ID -u CREW_ROLE_ID -u TMUX -u TMUX_PANE \
+    # Git resolves a relative core.hooksPath against the cwd, hence the main checkout.
+    push_out="$(cd -- "$main_wt" && env -u CREW_ID -u CREW_WORKER_ID -u CREW_ROLE_ID -u TMUX -u TMUX_PANE \
       git --git-dir="$admin" --work-tree="$wt" push origin "refs/heads/$branch:refs/heads/$branch" 2>&1)" || push_rc=$?
     if [ "$push_rc" -ne 0 ]; then
       printf '%s\n' "$push_out" >&2

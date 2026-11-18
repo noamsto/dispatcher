@@ -162,10 +162,12 @@ seed_pushed_branch() {
   [ -s "$PATCH" ]
 }
 
-scratch_tree() { # <worktree> <tip> — read-tree <tip> + add -A in a private index
-  local idx
+scratch_tree() { # <worktree> <tip> [ignored path...] — read-tree <tip> + add -A (+ add -f of the ignored paths) in a private index
+  local idx wt="$1" tip="$2"
+  shift 2
   idx="$(mktemp -u "$BATS_TEST_TMPDIR/idx.XXXXXX")"
-  (cd "$1" && GIT_INDEX_FILE="$idx" git read-tree "$2" && GIT_INDEX_FILE="$idx" git add -A && GIT_INDEX_FILE="$idx" git write-tree)
+  (cd "$wt" && GIT_INDEX_FILE="$idx" git read-tree "$tip" && GIT_INDEX_FILE="$idx" git add -A &&
+    { [ $# -eq 0 ] || GIT_INDEX_FILE="$idx" git add -f -- "$@"; } && GIT_INDEX_FILE="$idx" git write-tree)
 }
 
 # make_bundle [--no-transcript] [--tip <oid>] — BUNDLE under the local crew dir's
@@ -377,6 +379,12 @@ EOF
 
 @test "a migrate-in that died after building its worktree retries: migrate-check passes and the re-run applies nothing twice" {
   seed_pushed_branch
+  # A gitignored scaffold doc rides the patch force-added, as crew migrate snapshot builds it.
+  printf 'PLAN.md\n' >>"$TEST_REPO/.git/info/exclude"
+  printf 'plan\n' >"$LWT/PLAN.md"
+  TREE="$(scratch_tree "$LWT" "$TIP" PLAN.md)"
+  git -C "$LWT" diff --binary "$TIP" "$TREE" >"$PATCH"
+  printf 'PLAN.md\n' >>"$REMOTE_CLONE/.git/info/exclude"
   make_bundle
   fail_remote_window_once
 
@@ -385,7 +393,7 @@ EOF
   [ -e "$BATS_TEST_TMPDIR/window-failed" ]
   wt="$(remote_wt "$BRANCH")"
   [ -d "$wt" ]
-  [ "$(scratch_tree "$wt" "$TIP")" = "$TREE" ]
+  [ "$(scratch_tree "$wt" "$TIP" PLAN.md)" = "$TREE" ]
   [ -z "$(local_dispatch_rows)" ]
 
   run --separate-stderr on_remote "$REMOTE_CLONE" dispatch --migrate-check "$BRANCH"
@@ -402,8 +410,9 @@ EOF
   }
   [ "$(remote_wt "$BRANCH")" = "$wt" ]
   [ "$(git -C "$REMOTE_CLONE" rev-parse "refs/heads/$BRANCH")" = "$TIP" ]
-  [ "$(scratch_tree "$wt" "$TIP")" = "$TREE" ]
+  [ "$(scratch_tree "$wt" "$TIP" PLAN.md)" = "$TREE" ]
   [ "$(cat "$wt/tracked.txt")" = $'one\ntwo' ]
+  [ "$(cat "$wt/PLAN.md")" = plan ]
   [ "$(local_dispatch_rows | wc -l)" -eq 1 ]
 }
 
@@ -541,6 +550,24 @@ coop_worker() {
 }
 
 migrate() { run --separate-stderr dispatch migrate "$@"; }
+
+# crew_intercept <pattern> <body> — crew runs <body> (with $real, the crew it
+# wraps) when its argv joined by spaces matches the case <pattern> (spaces
+# quoted), else the crew it wraps.
+crew_intercept() {
+  local real
+  real="$(mktemp "$STUB_DIR/crew.XXXXXX")"
+  mv -f "$STUB_DIR/crew" "$real"
+  cat >"$STUB_DIR/crew" <<EOF
+#!/usr/bin/env bash
+real='$real'
+case "\$*" in
+$1) $2 ;;
+esac
+exec "\$real" "\$@"
+EOF
+  chmod +x "$STUB_DIR/crew"
+}
 
 migrated_ok() {
   [ "$status" -eq 0 ] || {
@@ -701,6 +728,35 @@ EOF
   [ "$(cat "$LWT/untracked.txt")" = untracked ]
 }
 
+@test "a relative core.hooksPath pre-push hook runs for a --now push started from a subdirectory of the main checkout" {
+  git -C "$TEST_REPO" config core.hooksPath .husky
+  mkdir -p "$TEST_REPO/.husky" "$TEST_REPO/sub"
+  printf '#!/bin/sh\necho "HUSKY SAYS NO" >&2\nexit 1\n' >"$TEST_REPO/.husky/pre-push"
+  chmod +x "$TEST_REPO/.husky/pre-push"
+  start_local_worker
+  commit_unpushed_and_dirty
+
+  cd "$TEST_REPO/sub"
+  migrate 7 --host mini --now
+  [ "$status" -eq 1 ]
+  [[ $stderr == *"HUSKY SAYS NO"* ]]
+  [[ $stderr == *"the worker is stopped; nothing was marked — resume it here with: dispatch resume $BRANCH"* ]]
+  [ -z "$(mark_rows)" ]
+  [ "$(git -C "$TEST_REPO" ls-remote origin "refs/heads/$BRANCH" | cut -f1)" != "$(git -C "$LWT" rev-parse HEAD)" ]
+}
+
+@test "dispatch migrate --now refuses a worktree whose .git no longer points at its admin dir; nothing is marked" {
+  start_local_worker
+  # Past the snapshot, which refuses a swapped .git itself.
+  crew_intercept "'migrate snapshot '*" "\"\$real\" \"\$@\" || exit; printf 'gitdir: %s\n' '$TEST_REPO/.git' >'$LWT/.git'; exit 0"
+
+  migrate 7 --host mini --now
+  [ "$status" -eq 1 ]
+  [[ $stderr == *"$LWT/.git no longer points at "*" — the worker is stopped; nothing was marked — resume it here with: dispatch resume $BRANCH"* ]]
+  [ -z "$(mark_rows)" ]
+  [ -z "$(remote_rows)" ]
+}
+
 @test "a cooperative worker whose push failed blocks with migrate:, surfaced verbatim; the worker stays live and blocked" {
   start_local_worker
   coop_worker blocked
@@ -786,7 +842,7 @@ EOF
 @test "a cooperative worker that does not quiesce in time exits 3 with the human escalation, untouched, its directive withdrawn" {
   start_local_worker
 
-  migrate 7 --host mini --wait 2
+  DISPATCH_MIGRATE_CANCEL_GRACE=1 migrate 7 --host mini --wait 2
   [ "$status" -eq 3 ]
   [[ $stderr == *"worker did not quiesce within 2s; the migrate directive was withdrawn — ask the human; dispatch migrate --now only if they are leaving now"* ]]
   jq -e --arg w "$WID" 'select(.kind == "msg" and .to == $w and .from == "dispatcher:c1") | .body | fromjson
@@ -799,16 +855,40 @@ EOF
   run --separate-stderr worker_says migrated --to-host mini "checkpoint pushed"
   [ "$status" -ne 0 ]
   [[ $stderr == *"migrated needs a dispatcher migrate directive naming --to-host mini"* ]]
+
+  # A withdrawal that could not be sent is said to be possibly still pending.
+  crew_intercept "'reply '*migrate-cancel*" "exit 1"
+  DISPATCH_MIGRATE_CANCEL_GRACE=0 migrate 7 --host mini --wait 1
+  [ "$status" -eq 3 ]
+  [[ $stderr == *"worker did not quiesce within 1s; withdrawing the migrate directive failed, so it may still be pending — ask the human"* ]]
+  [ -z "$(mark_rows)" ]
 }
 
-@test "a cooperative worker's symlinked handoff note is not carried" {
+@test "a migrated that lands just after the directive is withdrawn, within the cancel grace, still moves the worker" {
+  start_local_worker
+  # Mimics crew status having read the directive before the cancel and
+  # appended its row after it.
+  local late
+  late="$(jq -nc --arg w "$WID" '{crew_id: "c1", kind: "status", from: $w, body: {state: "migrated", to_host: "mini", detail: "checkpoint pushed"}}')"
+  crew_intercept "'reply '*migrate-cancel*" "\"\$real\" \"\$@\" || exit; (sleep 1; jq -c '.ts = (now * 1000 | floor)' <<<'$late' >>'$LBUS') >/dev/null 2>&1 </dev/null & exit 0"
+
+  DISPATCH_MIGRATE_CANCEL_GRACE=3 migrate 7 --host mini --wait 1
+  migrated_ok
+  [ "$(mark_rows | jq -r .body.to_host)" = mini ]
+  [ "$(remote_rows | wc -l)" -eq 1 ]
+}
+
+@test "a cooperative worker's symlinked handoff note is not carried; unreadable messages are said so" {
   start_local_worker
   coop_worker symlinked
+  crew_intercept "'inbox '*--undelivered*" "exit 1"
 
   migrate 7 --host mini --wait 60
   migrated_ok
+  [[ $stderr == *"could not read the messages $WID never pulled"* ]]
   handoff="$(remote_crew_dir)/artifacts/$BRANCH/migrated.md"
   grep -qx -- '- mode: coop' "$handoff"
+  grep -qx 'messages could not be read' "$handoff"
   run ! grep -qF 'NOT THE WORKER NOTE' "$handoff"
   run ! grep -qF "The worker's handoff note" "$handoff"
 }
