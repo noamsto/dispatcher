@@ -7,13 +7,13 @@ layers: default <BASE>
   freshSeams                          unset                                                                      default
   dispatcherChrome                    unset                                                                      default
   dashTailscale                       unset                                                                      default
+  dashAutoOpen                        unset                                                                      default
   rosterDiagram.autoOpen              unset                                                                      default
   overseer.autoRelaunch               unset                                                                      default
   openrouter.monthlyUsd               20                                                                         default
   orchestratorDefaults.claude.effort  high                                                                       default
   orchestratorDefaults.codex.effort   high                                                                       default
   orchestratorDefaults.pi.effort      high                                                                       default
-
 
 
 

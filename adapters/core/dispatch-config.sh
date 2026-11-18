@@ -44,6 +44,8 @@
 # dashTailscale (boolean, default false) lets crew dash read `tailscale status
 # --json` for host reachability; hosts.<name>.tailscale names the host's Tailscale
 # machine name (its HostName or first MagicDNS label; default: the host name).
+# dashAutoOpen (boolean, default true) lets dispatch and dispatch resume open the
+# crew dash in a float beside the dispatcher pane (tmux-crew-dash --detached).
 # dispatcherMcp maps an owner/repo or org key to the MCP opt-ins (claudeai:
 # every claude.ai connector; analytics: the generated --mcp profile; or any
 # mcpServers name) that the dispatcher launch restores for that repo; the
@@ -667,6 +669,7 @@ printf '%s\n' "$base" "$user" "$locked" "$env_layer" | jq -n --argjson show_orig
   | need(["dispatcherChrome"]; "a boolean"; type == "boolean")
   | need(["freshSeams"]; "a boolean"; type == "boolean")
   | need(["dashTailscale"]; "a boolean"; type == "boolean")
+  | need(["dashAutoOpen"]; "a boolean"; type == "boolean")
   | need(["dispatcherMcp"]; "an object keyed owner/repo or org, each an array of claudeai, analytics or an mcpServers name";
       type == "object"
       and all(keys[]; test("^[a-z0-9][a-z0-9._-]*(/[a-z0-9._-]+)?$"))

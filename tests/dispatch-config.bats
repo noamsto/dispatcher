@@ -1314,3 +1314,13 @@ ROWS
   jq -e '.taskProfiles.ui == {"tier":"standard","effort":"medium"}' <<<"$output"
   jq -e '.taskProfiles | has("eval") | not' <<<"$output"
 }
+
+@test "dashAutoOpen defaults to true and must be a boolean" {
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 0 ]
+  jq -e '.dashAutoOpen == true' <<<"$output"
+  user_settings '{"dashAutoOpen":"no"}'
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"dashAutoOpen must be a boolean"* ]]
+}

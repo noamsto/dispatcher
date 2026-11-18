@@ -4198,3 +4198,19 @@ STUB
   done
   run ! grep -qE 'remain-on-exit|send-keys|^engine: ' "$STUB_LOG"
 }
+
+@test "crew dash: resume opens it once, detached, beside its own pane" {
+  setup_worker_wt
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  cat >"$STUB_DIR/tmux-crew-dash" <<'STUB'
+#!/usr/bin/env bash
+printf 'tmux-crew-dash %s\n' "$*" >>"$STUB_LOG"
+exit 1
+STUB
+  chmod +x "$STUB_DIR/tmux-crew-dash"
+  cd "$WT"
+  TMUX=/tmp/x,1,0 TMUX_PANE=%5 run run_resume
+  [ "$status" -eq 0 ]
+  [ "$(grep -c '^tmux-crew-dash ' "$STUB_LOG")" -eq 1 ]
+  grep -qx 'tmux-crew-dash --detached %5' "$STUB_LOG"
+}

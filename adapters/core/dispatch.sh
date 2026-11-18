@@ -5408,3 +5408,4 @@ if _recorded_pid_live "$rr_pid" "$crew_dir/crews/$crew_id/pid" &&
 fi
 # A remote-mode worker's roster diagram belongs to its dispatcher's host.
 [ "$wire_side" = remote ] || _ensure_roster_render "$crew_id" "$rr_pane"
+[ "$wire_side" = remote ] || _ensure_crew_dash "$rr_pane"
