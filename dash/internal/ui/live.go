@@ -873,8 +873,12 @@ func tmuxColorStyle(w vm.WorkerRow) lipgloss.Style {
 	if n == s {
 		return lipgloss.NewStyle()
 	}
-	if _, err := strconv.Atoi(n); err != nil {
+	idx, err := strconv.Atoi(n)
+	if err != nil {
 		return lipgloss.NewStyle()
+	}
+	if lightActive {
+		return lipgloss.NewStyle().Foreground(lipgloss.Color(darkenForLight(idx)))
 	}
 	return lipgloss.NewStyle().Foreground(lipgloss.Color(n))
 }

@@ -411,6 +411,10 @@ func (m Model) fleetTick() tea.Cmd {
 }
 
 func (m Model) update(msg tea.Msg) (Model, tea.Cmd) {
+	if t, ok := themeReport(msg); ok {
+		applyPalette(t)
+		return m, nil
+	}
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height

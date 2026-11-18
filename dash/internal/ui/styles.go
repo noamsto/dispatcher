@@ -34,9 +34,9 @@ var (
 
 	staleStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("3")).Bold(true)
 
-	gaugeNormalColor  = "#2ecc71"
-	gaugeWarningColor = "#e6b800"
-	gaugeDangerColor  = "#e63939"
+	gaugeNormalColor  string
+	gaugeWarningColor string
+	gaugeDangerColor  string
 )
 
 // badgeText is the origin's label, exactly as the --once renderer's badgeOf
@@ -85,9 +85,9 @@ func gaugeColor(usedPct float64) string {
 
 // State colours of the Board's cards, the same hues the SVG roster uses.
 var (
-	stateWorkingColor = lipgloss.Color("#a6e3a1")
-	stateBlockedColor = lipgloss.Color("#f38ba8")
-	statePROpenColor  = lipgloss.Color("#89b4fa")
-	stateDoneColor    = lipgloss.Color("#6c7086")
-	stateFailedColor  = lipgloss.Color("#d36a82")
+	stateWorkingColor lipgloss.Color
+	stateBlockedColor lipgloss.Color
+	statePROpenColor  lipgloss.Color
+	stateDoneColor    lipgloss.Color
+	stateFailedColor  lipgloss.Color
 )

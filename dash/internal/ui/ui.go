@@ -5,6 +5,7 @@ package ui
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"time"
 
@@ -68,8 +69,17 @@ func Run(deps Deps) error {
 	if deps.FleetWatchPaths != nil {
 		live.fleetWatcher = buswatch.NewPoll(deps.FleetWatchPaths, time.Second)
 	}
+	applyPalette(resolveTheme(os.Getenv, tmuxFlavorFunc(deps.Ctx, deps.Runner, deps.InTmux), lipgloss.HasDarkBackground))
 	m := NewModel(deps, time.Now, live)
-	_, err := tea.NewProgram(m, tea.WithAltScreen()).Run()
+	p := tea.NewProgram(m, tea.WithAltScreen())
+	notify := !colorForcedAscii(os.Getenv)
+	if notify {
+		_, _ = fmt.Fprint(os.Stdout, "\x1b[?2031h")
+	}
+	_, err := p.Run()
+	if notify {
+		_, _ = fmt.Fprint(os.Stdout, "\x1b[?2031l")
+	}
 	deps.Map.deleteImages(deps.InTmux)
 	if watcher != nil {
 		_ = watcher.Close()
