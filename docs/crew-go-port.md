@@ -348,8 +348,8 @@ output contract below), with each edit justified.
   mark has not advanced, so it may still read it), because a second Enter would
   submit whatever the lead is holding. `accepted` needs the mark to advance:
   `Deps.Delivered` is polled after the pane looks accepted, nil for the
-  watchdog. Only `send-keys -l` and one `send-keys Enter` touch the pane, and `Enter` is never sent when the box never
-  showed the line.
+  watchdog. Only `send-keys -l` and one `send-keys Enter` touch the pane, and
+  `Enter` is never sent when the box never showed the line.
   The clock split is the row contract: the `nudge` row's `ts` is jq's
   `now*1000|floor` (`Clock.RealMS`), the `nudge_wait` rows' is `_clock_now_ms`
   (`Clock.NowMS`, so `$CREW_CLOCK` moves them and the loop's waits), and `rc`

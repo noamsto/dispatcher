@@ -183,8 +183,7 @@ func Pane(ctx context.Context, req PaneRequest, d Deps) (string, int) {
 }
 
 // delivered polls d.Delivered, the first check immediate: a lead that took the line
-// still has to run `crew inbox` before its mark moves. The bound is a try count, not a
-// clock deadline, because the fakes' sleeps do not advance the clock.
+// still has to run `crew inbox` before its mark moves. The bound is a try count.
 func delivered(ctx context.Context, d Deps, req PaneRequest) bool {
 	if d.Delivered == nil {
 		return true
