@@ -13,7 +13,7 @@ setup() {
   export HOME="$TEST_REPO"
   # A pi session exports PI_CODING_AGENT_DIR; dispatch seeds its worker pi dir
   # from it and records it, so a pi worker's own dir leaks into both (#816).
-  unset CREW_WORKER_ID DISPATCH_PROFILE CREW_ID DISPATCH_SKIP_MODEL_CHECK DISPATCH_IGNORE_RUNG DISPATCH_SPEC DISPATCH_SHAPE TMUX_PANE DISPATCH_DRAFT_PR DISPATCH_REPO_TRACKERS DISPATCH_ORG_TRACKERS PI_CODING_AGENT_DIR
+  unset DISPATCH_DASH_PLACEMENT CREW_WORKER_ID DISPATCH_PROFILE CREW_ID DISPATCH_SKIP_MODEL_CHECK DISPATCH_IGNORE_RUNG DISPATCH_SPEC DISPATCH_SHAPE TMUX_PANE DISPATCH_DRAFT_PR DISPATCH_REPO_TRACKERS DISPATCH_ORG_TRACKERS PI_CODING_AGENT_DIR
   # The pane a tmux stub's display-message answers `#{pane_pid}` with, for
   # dispatch's ancestry gate (_pane_is_ancestor): the bats test process is a
   # genuine ancestor of any dispatch run under `run`.
@@ -17666,7 +17666,36 @@ STUB
   TMUX=/tmp/x,1,0 TMUX_PANE=%5 DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
   [ "$status" -eq 0 ]
   [ "$(grep -c '^tmux-crew-dash ' "$STUB_LOG")" -eq 1 ]
+  grep -qx 'tmux-crew-dash --side --detached %5' "$STUB_LOG"
+}
+
+@test "crew dash: dashPlacement float opens it as a float, without --side" {
+  stub_launch_bins
+  _grid_tmux_stub
+  _crew_dash_stub
+  TMUX=/tmp/x,1,0 TMUX_PANE=%5 DISPATCH_DASH_PLACEMENT=float DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  [ "$status" -eq 0 ]
+  [ "$(grep -c '^tmux-crew-dash ' "$STUB_LOG")" -eq 1 ]
   grep -qx 'tmux-crew-dash --detached %5' "$STUB_LOG"
+}
+
+@test "crew dash: side placement renders the roster with --no-open, float and an explicit autoOpen keep it opening" {
+  stub_launch_bins
+  _grid_tmux_stub
+  _crew_dash_stub
+  TMUX=/tmp/x,1,0 TMUX_PANE=%5 DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  [ "$status" -eq 0 ]
+  wait_for_log 'roster-render --crew c1 --pane %5 --no-open --detach$'
+  : >"$STUB_LOG"
+  TMUX=/tmp/x,1,0 TMUX_PANE=%5 DISPATCH_DASH_PLACEMENT=float DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c2 43 "Another thing"
+  [ "$status" -eq 0 ]
+  wait_for_log 'roster-render --crew c2 --pane %5 --detach$'
+  : >"$STUB_LOG"
+  mkdir -p "$XDG_CONFIG_HOME/dispatcher"
+  printf '{"rosterDiagram":{"autoOpen":true}}\n' >"$XDG_CONFIG_HOME/dispatcher/settings.json"
+  TMUX=/tmp/x,1,0 TMUX_PANE=%5 DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c3 44 "Third thing"
+  [ "$status" -eq 0 ]
+  wait_for_log 'roster-render --crew c3 --pane %5 --detach$'
 }
 
 @test "crew dash: dashAutoOpen false, a missing stub or a failing stub leave dispatch unchanged" {
@@ -17682,7 +17711,7 @@ STUB
   rm "$XDG_CONFIG_HOME/dispatcher/settings.json"
   STUB_DASH_EXIT=1 TMUX=/tmp/x,1,0 TMUX_PANE=%5 DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c2 43 "Another thing"
   [ "$status" -eq 0 ]
-  grep -qx 'tmux-crew-dash --detached %5' "$STUB_LOG"
+  grep -qx 'tmux-crew-dash --side --detached %5' "$STUB_LOG"
   [[ "$output" != *crew-dash* ]]
   rm "$STUB_DIR/tmux-crew-dash"
   PATH="$(path_without_real tmux-crew-dash)" TMUX=/tmp/x,1,0 TMUX_PANE=%5 DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c3 44 "Third thing"

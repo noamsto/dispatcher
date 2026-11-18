@@ -473,6 +473,7 @@
   "freshSeams": false,
   "dashTailscale": false,
   "dashAutoOpen": true,
+  "dashPlacement": "side",
   "dispatcherMcp": {},
   "mcpServers": {
     "sentry": {"url": "https://mcp.sentry.dev/mcp", "description": "Sentry issues, events and releases"},

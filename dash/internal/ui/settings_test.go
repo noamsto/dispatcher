@@ -21,9 +21,9 @@ const (
 	rowFleetBudget = 0
 	rowProfile     = 1 // locked in the fixture
 	rowFreshSeams  = 2
-	rowAutoOpen    = 6
-	rowMonthlyUsd  = 8
-	rowClaudeEff   = 9
+	rowAutoOpen    = 7
+	rowMonthlyUsd  = 9
+	rowClaudeEff   = 10
 )
 
 type knobHarness struct {

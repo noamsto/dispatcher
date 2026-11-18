@@ -700,29 +700,55 @@ grid_lead_format() {
   printf ' %s #[bold]#{@crew_name}#[nobold] lead · #{@crew_state}#{?#{==:#{@crew_source},watchdog}, (watchdog),}#{?#{@crew_detail}, · #{@crew_detail},}#{?#{@crew_dispatcher_host}, · ⇄ #{@crew_dispatcher_host},} ' "$(state_glyph '#{@crew_color}')"
 }
 
+# _dash_side_wanted <pane or empty> — true when the crew dash should open as the
+# dispatcher's side panel: auto-open is on, placement is not float, and the side
+# dash can actually open (a tmux pane and tmux-crew-dash). Without that the
+# roster diagram keeps its own auto-open, so no session is left with neither.
+_dash_side_wanted() {
+  [ "$(jq -r '.dashAutoOpen | if . == false then "false" else "true" end' <<<"$settings")" = true ] || return 1
+  [ "$(jq -r '.dashPlacement // "side"' <<<"$settings")" = side ] || return 1
+  [ -n "${TMUX:-}" ] && [ -n "${1:-}" ] || return 1
+  command -v tmux-crew-dash >/dev/null 2>&1
+}
+
+# _roster_auto_open_explicit — true when rosterDiagram.autoOpen came from a
+# layer or env var, not the shipped default. A failed probe reads as the default.
+_roster_auto_open_explicit() {
+  local origin
+  origin="$("${DISPATCH_CONFIG_BIN:-$dispatch_config_default}" --show-origin 2>/dev/null |
+    jq -r '.rosterDiagram.autoOpen.origin // "base"' 2>/dev/null)" || origin=base
+  [ -n "$origin" ] && [ "$origin" != base ]
+}
+
 # _ensure_roster_render <crew_id> <pane or empty> — start the crew's roster
 # renderer, or retarget a running one. crew accepts the pane only when its shell
 # is an ancestor of the crew process, so the call is synchronous (--detach
 # returns at once): a nohup'd child can be reparented after this script exits,
 # which would defeat that check. `if . == false` because `// true` would turn
-# an explicit false into true.
+# an explicit false into true. Under a side dash the diagram still renders (the
+# aeye filmstrip has it) but does not open, unless autoOpen was set explicitly.
 _ensure_roster_render() {
   local flags=()
   [ -z "$2" ] || flags+=(--pane "$2")
   if [ "$(jq -r '.rosterDiagram.autoOpen | if . == false then "false" else "true" end' <<<"$settings")" = false ]; then
     flags+=(--no-open)
+  elif _dash_side_wanted "$2" && ! _roster_auto_open_explicit; then
+    flags+=(--no-open)
   fi
   CREW_ID="$1" crew roster-render --crew "$1" ${flags[@]+"${flags[@]}"} --detach >/dev/null 2>&1 || true
 }
 
-# _ensure_crew_dash <pane or empty> — open (or focus) the crew dash float beside
-# the dispatcher pane. Never fails the dispatch: tmux-crew-dash de-duplicates,
-# and --detached keeps focus where it is.
+# _ensure_crew_dash <pane or empty> — open (or focus) the crew dash beside the
+# dispatcher pane: its side panel under dashPlacement side, else a float. Never
+# fails the dispatch: tmux-crew-dash de-duplicates, and --detached keeps focus
+# where it is.
 _ensure_crew_dash() {
   [ "$(jq -r '.dashAutoOpen | if . == false then "false" else "true" end' <<<"$settings")" = true ] || return 0
   [ -n "${TMUX:-}" ] && [ -n "${1:-}" ] || return 0
   command -v tmux-crew-dash >/dev/null 2>&1 || return 0
-  tmux-crew-dash --detached "$1" >/dev/null 2>&1 || true
+  local flags=(--detached)
+  _dash_side_wanted "$1" && flags=(--side --detached)
+  tmux-crew-dash "${flags[@]}" "$1" >/dev/null 2>&1 || true
 }
 
 # shell_quote <var> <text> — set <var> to <text> as ONE single-quoted shell word,
@@ -906,7 +932,7 @@ _settings_env_names() {
   printf '%s\n' XDG_CONFIG_HOME DISPATCH_LOCKED_SETTINGS DISPATCH_ENGINES \
     DISPATCH_GRANT_ROOTS DISPATCH_OPENROUTER_MONTHLY_USD DISPATCH_OPENROUTER_KEY_FILE \
     DISPATCH_PROFILE DISPATCH_REPO_TRACKERS DISPATCH_ORG_TRACKERS \
-    DISPATCH_ROSTER_AUTO_OPEN PI_CODING_AGENT_DIR DISPATCH_CONFIG_BIN LOCAL_MODELS_LIB
+    DISPATCH_ROSTER_AUTO_OPEN DISPATCH_DASH_PLACEMENT PI_CODING_AGENT_DIR DISPATCH_CONFIG_BIN LOCAL_MODELS_LIB
 }
 
 # _settings_env_json — those vars as one JSON object, null when unset, except

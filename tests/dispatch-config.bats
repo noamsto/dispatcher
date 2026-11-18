@@ -6,6 +6,7 @@ setup() {
   DEFAULTS="$BATS_TEST_DIRNAME/../adapters/core/defaults.json"
   unset DISPATCH_ENGINES DISPATCH_GRANT_ROOTS DISPATCH_OPENROUTER_MONTHLY_USD DISPATCH_OPENROUTER_KEY_FILE
   unset DISPATCH_PROFILE DISPATCH_REPO_TRACKERS DISPATCH_ORG_TRACKERS DISPATCH_ROSTER_AUTO_OPEN DISPATCH_DISPATCHER_MCP
+  unset DISPATCH_DASH_PLACEMENT
   export XDG_CONFIG_HOME="$BATS_TEST_TMPDIR/config"
   USER_FILE="$XDG_CONFIG_HOME/dispatcher/settings.json"
   LOCKED_FILE="$BATS_TEST_TMPDIR/locked.json"
@@ -1323,4 +1324,31 @@ ROWS
   run --separate-stderr "$CONFIG"
   [ "$status" -eq 1 ]
   [[ "$stderr" == *"dashAutoOpen must be a boolean"* ]]
+}
+
+@test "dashPlacement defaults to side, accepts side and float, rejects other values" {
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 0 ]
+  jq -e '.dashPlacement == "side"' <<<"$output"
+  local v
+  for v in side float; do
+    user_settings "{\"dashPlacement\":\"$v\"}"
+    run --separate-stderr "$CONFIG"
+    [ "$status" -eq 0 ]
+    jq -e --arg v "$v" '.dashPlacement == $v' <<<"$output"
+  done
+  user_settings '{"dashPlacement":"left"}'
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"dashPlacement must be"* ]]
+}
+
+@test "DISPATCH_DASH_PLACEMENT overrides the user layer, and a bad value is rejected" {
+  user_settings '{"dashPlacement":"side"}'
+  DISPATCH_DASH_PLACEMENT=float run --separate-stderr "$CONFIG"
+  [ "$status" -eq 0 ]
+  jq -e '.dashPlacement == "float"' <<<"$output"
+  DISPATCH_DASH_PLACEMENT=left run --separate-stderr "$CONFIG"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"dashPlacement must be"* ]]
 }
