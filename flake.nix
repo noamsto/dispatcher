@@ -432,6 +432,37 @@
             src = ./adapters/pi/extensions/subagent;
           };
 
+          # The child-exit logic of the same extension (outcome.ts), run offline by
+          # node's test runner against real child processes: the SIGTERM→SIGKILL
+          # escalation and a signal exit being a failed result. The contract check
+          # byte-checks the spawn lines and the typecheck only runs tsc, so nothing
+          # else ever executes that code.
+          # Runs the .ts test file as-is, so it needs node with unflagged type
+          # stripping and --test-force-exit (node ≥ 22.18 / 23.6); the assert names
+          # that requirement if a nixpkgs bump ever drops it.
+          pi-subagent-behaviour = assert pkgs.lib.versionAtLeast pkgs.nodejs.version "22.18";
+            pkgs.runCommand "pi-subagent-behaviour" {
+              nativeBuildInputs = [pkgs.nodejs pkgs.gnugrep];
+            } ''
+              work=$(mktemp -d)
+              # Every .ts in the dir, so a test added next to outcome.test.ts is run
+              # rather than silently skipped — same reason as the typecheck's cp glob.
+              cp ${./adapters/pi/extensions/subagent}/*.ts "$work/"
+              printf '{"type":"module"}\n' >"$work/package.json"
+              cd "$work"
+              # --test-force-exit: a leaked child holds its stdio pipe open, which would
+              # otherwise keep node alive until the timeout even though every test
+              # awaited its own child's close.
+              # The tap reporter is pinned so the guard below has one format to read,
+              # and pipefail so a red run cannot hide behind tee.
+              set -o pipefail
+              timeout 300 node --test --test-force-exit --test-reporter=tap | tee test.log
+              # Discovery is by filename, and node exits 0 when it matches nothing: a
+              # renamed test would leave this check green with zero tests run.
+              grep -Eq '^# pass [1-9]' test.log
+              touch $out
+            '';
+
           # `nix flake check` only evaluates packages, not builds them — these
           # make it build, which runs buildGoModule's `go test ./...` (doCheck).
           inherit (config.packages) crew-dash crew-go;
