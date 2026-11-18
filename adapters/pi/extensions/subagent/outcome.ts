@@ -1,6 +1,6 @@
-// The subagent child's exit handling, split out of index.ts so a test can run it
-// against real child processes without pi: the SIGTERM-then-SIGKILL escalation and
-// how an exit code/signal pair classifies as a failure. Import nothing but Node.
+// The subagent child's exit handling: the SIGTERM-then-SIGKILL escalation and how an
+// exit code/signal pair classifies as a failure. index.ts imports it; keep this free of
+// pi imports so the pi-subagent-behaviour check can run it against real child processes.
 
 import type { ChildProcess } from "node:child_process";
 
@@ -27,7 +27,7 @@ export function terminateChild(proc: ChildProcess, graceMs: number = KILL_GRACE_
 	return () => clearTimeout(timer);
 }
 
-/** Result fields `recordOutcome` and `isFailedResult` read; `SingleResult` satisfies it. */
+/** Exit-status fields of a result; `SingleResult` satisfies it, so a test needs no pi types. */
 export interface ResultStatus {
 	exitCode: number;
 	stopReason?: string;
