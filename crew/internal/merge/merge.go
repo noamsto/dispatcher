@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -343,7 +344,7 @@ func checkUnread(lines []string, events []bus.Event, req Request, url string, pa
 	// Every crew: a re-dispatch of the branch may carry another crew id.
 	folded, err := sessions.Fold(docs, branch, "", float64(time.Now().Unix()))
 	if err != nil {
-		return refuse("could not fold the sessions of %s: %v", branch, err)
+		return refuse("could not fold the sessions of %s: %v", plain(branch), err)
 	}
 	// The pr_open session may have been replaced since; its successor is who a
 	// directive now reaches.
@@ -354,15 +355,18 @@ func checkUnread(lines []string, events []bus.Event, req Request, url string, pa
 	}
 	session, _ := newest["worker_id"].(string)
 	if session == "" || !bus.IsSessionID(session) {
-		return refuse("the newest session of %s (%s) has no session id, so no msg can be checked for it; re-dispatch the branch (dispatch --pr %s) to clear this", branch, session, req.PR)
+		return refuse("the newest session of %s (%s) has no session id, so no msg can be checked for it; re-dispatch the branch (dispatch --pr %s) to clear this", plain(branch), plain(session), req.PR)
 	}
-	crew := sessionCrew(events, session, row.CrewID)
-	undelivered, err := unread.Directives(events, crew, session, marks.Read(paths.Dir, crew, session))
-	if err != nil {
-		return refuse("could not check %s for undelivered msgs: %v", session, err)
+	var undelivered []map[string]any
+	for _, crew := range sessionCrews(events, session, row.CrewID) {
+		found, err := unread.Directives(events, crew, session, marks.Read(paths.Dir, crew, session))
+		if err != nil {
+			return refuse("could not check %s for undelivered msgs: %v", plain(session), err)
+		}
+		undelivered = append(undelivered, found...)
 	}
 	if len(undelivered) == 0 {
-		pass("unread: none for %s", session)
+		pass("unread: none for %s", plain(session))
 		return 0
 	}
 	list := make([]string, len(undelivered))
@@ -372,22 +376,27 @@ func checkUnread(lines []string, events []bus.Event, req Request, url string, pa
 	}
 	if terminal, _ := newest["terminal"].(bool); terminal {
 		state, _ := newest["state"].(string)
-		return refuse("dispatcher msg(s) to %s not yet delivered: %s; the session ended (%s) and a stopped session never reads its inbox; re-dispatch the branch (dispatch --pr %s)", session, strings.Join(list, "; "), plain(state), req.PR)
+		return refuse("dispatcher msg(s) to %s not yet delivered: %s; the session ended (%s) and a stopped session never reads its inbox; re-dispatch the branch (dispatch --pr %s)", plain(session), strings.Join(list, "; "), plain(state), req.PR)
 	}
-	return refuse("dispatcher msg(s) to %s not yet delivered: %s; let the worker read it (crew nudge %s), or re-dispatch the branch if its session ended", session, strings.Join(list, "; "), branch)
+	return refuse("dispatcher msg(s) to %s not yet delivered: %s; let the worker read it (crew nudge %s), or re-dispatch the branch if its session ended", plain(session), strings.Join(list, "; "), plain(branch))
 }
 
-// sessionCrew is the crew the newest bus row of session (its status `from`, or
-// a dispatch/resume `worker_id`) carries, else fallback.
-func sessionCrew(events []bus.Event, session, fallback string) string {
-	crew := fallback
+// sessionCrews are the crews a directive to session may sit under: the crew of
+// its pr_open row, and the crew of each dispatch/resume row that started the
+// session (a re-dispatch can carry another crew id). A plain status row never
+// names one: a worker can post a status under any crew id.
+func sessionCrews(events []bus.Event, session, prOpenCrew string) []string {
+	crews := []string{prOpenCrew}
 	for _, ev := range events {
+		if ev.Kind != bus.KindDispatch && ev.Kind != bus.KindResume {
+			continue
+		}
 		doc, _ := ev.Doc.(map[string]any)
-		if id, _ := doc["worker_id"].(string); ev.From == session || id == session {
-			crew = ev.CrewID
+		if id, _ := doc["worker_id"].(string); id == session && !slices.Contains(crews, ev.CrewID) {
+			crews = append(crews, ev.CrewID)
 		}
 	}
-	return crew
+	return crews
 }
 
 // plain makes a bus-supplied string safe to print: invisible code points and

@@ -190,12 +190,12 @@ func delivered(ctx context.Context, d Deps, req PaneRequest) bool {
 		return true
 	}
 	tries, err := strconv.Atoi(envOr(d, "CREW_NUDGE_DELIVER", "20"))
-	if err != nil {
+	if err != nil || tries < 1 {
 		tries = 20
 	}
 	for i := 0; i < tries; i++ {
-		if i > 0 {
-			_ = d.Sleep(ctx, "1")
+		if i > 0 && d.Sleep(ctx, "1") != nil {
+			break
 		}
 		if d.Delivered(ctx, req) {
 			return true

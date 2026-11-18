@@ -597,6 +597,9 @@ func TestPaneTypedButNotAccepted(t *testing.T) {
 		delivered func(poll int) bool
 		env       map[string]string
 		polls     int
+		// sleepFail is the 1-based poll sleep that errors, as a cancelled context's
+		// does; 0 never fails. Its poll is then the last.
+		sleepFail int
 	}{
 		{
 			name: "held: the line is still in the box after one Enter",
@@ -660,6 +663,36 @@ func TestPaneTypedButNotAccepted(t *testing.T) {
 			polls:     3,
 		},
 		{
+			name:      "not delivered: CREW_NUDGE_DELIVER=0 is the default, not no polls",
+			frames:    acceptedFrames(t),
+			keys:      typedArgv,
+			want:      "typed, not delivered",
+			detail:    notDeliveredDetail,
+			delivered: func(int) bool { return false },
+			env:       map[string]string{"CREW_NUDGE_DELIVER": "0"},
+			polls:     20,
+		},
+		{
+			name:      "not delivered: a negative CREW_NUDGE_DELIVER is the default",
+			frames:    acceptedFrames(t),
+			keys:      typedArgv,
+			want:      "typed, not delivered",
+			detail:    notDeliveredDetail,
+			delivered: func(int) bool { return false },
+			env:       map[string]string{"CREW_NUDGE_DELIVER": "-2"},
+			polls:     20,
+		},
+		{
+			name:      "not delivered: a failing sleep stops the polling",
+			frames:    acceptedFrames(t),
+			keys:      typedArgv,
+			want:      "typed, not delivered",
+			detail:    notDeliveredDetail,
+			delivered: func(int) bool { return false },
+			sleepFail: 2,
+			polls:     2,
+		},
+		{
 			name:      "accepted: the mark advances on the third poll",
 			frames:    acceptedFrames(t),
 			keys:      typedArgv,
@@ -693,6 +726,16 @@ func TestPaneTypedButNotAccepted(t *testing.T) {
 			b := &fakeBus{rows: sessionRows(t, idleReq, "working")}
 			d := newDeps(p, b, tc.env)
 			polls := 0
+			if tc.sleepFail > 0 {
+				// The settle and the gap sleep come before the poll sleeps.
+				n := 0
+				d.Sleep = func(context.Context, string) error {
+					if n++; n == tc.sleepFail+2 {
+						return context.Canceled
+					}
+					return nil
+				}
+			}
 			if tc.delivered != nil {
 				d.Delivered = func(context.Context, PaneRequest) bool {
 					polls++

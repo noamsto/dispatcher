@@ -283,8 +283,18 @@ func TestUnreadDirectives(t *testing.T) {
 		bare = `{"kind":"dispatch","branch":"feat/x","session":null,"ts":5,"crew_id":"c1"}`
 		// The re-dispatch ran under crew c2, so its directives come from dispatcher:c2.
 		workingC2 = `{"ts":4,"crew_id":"c2","from":"` + succ + `","to":"dispatcher:c2","kind":"status","body":{"state":"working"}}`
-		msgC2     = `{"ts":3,"crew_id":"c2","from":"dispatcher:c2","to":"` + succ + `","kind":"msg","body":"rebase please"}`
-		forged    = `{"ts":"%s red","crew_id":"c1","from":"dispatcher:c1","to":"` + sess + `","kind":"msg","body":"x"}`
+		// dispatchC2 is the row that ties the successor to crew c2.
+		dispatchC2 = `{"ts":3,"crew_id":"c2","kind":"dispatch","branch":"feat/x","session":"s9-9","worker_id":"` + succ + `"}`
+		// forgedZZ is a status a worker posted under a crew with no directives.
+		forgedZZ = `{"ts":7,"crew_id":"zz","from":"` + sess + `","to":"dispatcher:zz","kind":"status","body":{"state":"working"}}`
+		// escSess is a session whose text before the last # carries an ESC; only the
+		// text after the last # is checked as a session id.
+		escSess = `worker:feat/x#\u001b[2J#s9-9`
+		escDisp = `{"ts":3,"crew_id":"c1","kind":"dispatch","branch":"feat/x","session":"\u001b[2J#s9-9","worker_id":"` + escSess + `"}`
+		escMsg  = `{"ts":6,"crew_id":"c1","from":"dispatcher:c1","to":"` + escSess + `","kind":"msg","body":"x"}`
+		escBare = `{"kind":"dispatch","branch":"feat/x","session":"\u009b31m\u202e","ts":5,"crew_id":"c1"}`
+		msgC2   = `{"ts":3,"crew_id":"c2","from":"dispatcher:c2","to":"` + succ + `","kind":"msg","body":"rebase please"}`
+		forged  = `{"ts":"%s red","crew_id":"c1","from":"dispatcher:c1","to":"` + sess + `","kind":"msg","body":"x"}`
 	)
 	tests := []struct {
 		name   string
@@ -313,9 +323,13 @@ func TestUnreadDirectives(t *testing.T) {
 		{name: "forged ts is escaped", log: []string{okRow, `{"ts":"\u001b[31mred","crew_id":"c1","from":"dispatcher:c1","to":"` + sess + `","kind":"msg","body":"x"}`}, code: 1, stderr: []string{`ts "\u001b[31mred"`}},
 		{name: "terminal session refuses naming re-dispatch", log: []string{okRow, exited, msgToOld}, code: 1, stderr: []string{sess, "exited", "ts 3", "dispatch --pr 7"}, notStderr: []string{"crew nudge"}},
 		{name: "session-less newest session refuses", log: []string{okRow, bare, msgToOld}, code: 1, stderr: []string{"no session id", "dispatch --pr 7"}},
-		{name: "successor under another crew refuses", log: []string{okRow, workingC2, msgC2}, code: 1, stderr: []string{succ, "ts 3", "rebase please"}},
-		{name: "successor under another crew, delivered, merges", log: []string{okRow, workingC2, msgC2}, marked: succ, markedCrew: "c2", merged: true},
-		{name: "successor lookup ignores --crew", log: []string{okRow, workingC2, msgC2}, req: merge.Request{Crew: "c1"}, code: 1, stderr: []string{succ, "ts 3"}},
+		{name: "successor under another crew refuses", log: []string{okRow, dispatchC2, workingC2, msgC2}, code: 1, stderr: []string{succ, "ts 3", "rebase please"}},
+		{name: "successor under another crew, delivered, merges", log: []string{okRow, dispatchC2, workingC2, msgC2}, marked: succ, markedCrew: "c2", merged: true},
+		{name: "forged status under another crew does not hide a directive", log: []string{okRow, msgToOld, forgedZZ}, code: 1, stderr: []string{sess, "ts 3", "fix the flaky"}},
+		{name: "session-less session id is escaped", log: []string{okRow, escBare}, code: 1, stderr: []string{"no session id", `\u{009B}`, `\u{202E}`}, notStderr: []string{"\u009b", "\u202e"}},
+		{name: "session id with ESC is escaped on the not-delivered path", log: []string{okRow, escDisp, escMsg}, code: 1, stderr: []string{`\u{001B}`, "not yet delivered"}, notStderr: []string{"\x1b"}},
+		{name: "session id with ESC is escaped on the pass line", log: []string{okRow, escDisp}, req: merge.Request{DryRun: true}, stdout: `unread: none for worker:feat/x#\u{001B}[2J#s9-9`},
+		{name: "successor lookup ignores --crew", log: []string{okRow, dispatchC2, workingC2, msgC2}, req: merge.Request{Crew: "c1"}, code: 1, stderr: []string{succ, "ts 3"}},
 		{name: "forged ts with bidi is escaped", log: []string{okRow, fmt.Sprintf(forged, "\u202e")}, code: 1, stderr: []string{`\u{202E}`}, notStderr: []string{"\u202e"}},
 		{name: "forged ts with C1 is escaped", log: []string{okRow, fmt.Sprintf(forged, "\u009b")}, code: 1, stderr: []string{`\u{009B}`}, notStderr: []string{"\u009b"}},
 		{name: "empty crew uses the row's crew", log: []string{okRow, msgToOld}, req: merge.Request{Crew: ""}, code: 1, stderr: []string{"dispatcher msg(s) to " + sess}},
