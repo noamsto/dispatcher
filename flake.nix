@@ -442,7 +442,7 @@
           # that requirement if a nixpkgs bump ever drops it.
           pi-subagent-behaviour = assert pkgs.lib.versionAtLeast pkgs.nodejs.version "22.18";
             pkgs.runCommand "pi-subagent-behaviour" {
-              nativeBuildInputs = [pkgs.nodejs];
+              nativeBuildInputs = [pkgs.nodejs pkgs.gnugrep];
             } ''
               work=$(mktemp -d)
               # Every .ts in the dir, so a test added next to outcome.test.ts is run
@@ -453,7 +453,13 @@
               # --test-force-exit: a leaked child holds its stdio pipe open, which would
               # otherwise keep node alive until the timeout even though every test
               # awaited its own child's close.
-              timeout 300 node --test --test-force-exit
+              # The tap reporter is pinned so the guard below has one format to read,
+              # and pipefail so a red run cannot hide behind tee.
+              set -o pipefail
+              timeout 300 node --test --test-force-exit --test-reporter=tap | tee test.log
+              # Discovery is by filename, and node exits 0 when it matches nothing: a
+              # renamed test would leave this check green with zero tests run.
+              grep -Eq '^# pass [1-9]' test.log
               touch $out
             '';
 
