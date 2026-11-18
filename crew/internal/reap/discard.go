@@ -179,9 +179,8 @@ type SnapshotRequest struct {
 	// The patch lands at Root/Dir/Name. Dir is worker-writable, so a symlink on
 	// any of its components is refused; Root is trusted.
 	Root, Dir, Name string
-	// FreshDir makes Root/Dir here, a clean tree included, and refuses with
-	// ErrDirExists when it is already there: only its parents are made with
-	// MkdirAll, the leaf with one 0700 Mkdir.
+	// FreshDir makes Root/Dir here (0700), a clean tree included, and refuses
+	// with ErrDirExists when it is already there.
 	FreshDir bool
 	// IgnoredScaffold is ScratchTree's ignoredScaffold.
 	IgnoredScaffold bool

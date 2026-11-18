@@ -4,11 +4,8 @@
 # session transcript, release this machine's claim to that host only, and
 # resume it there through `dispatch --host`. Reached as `dispatch migrate`,
 # which execs this binary (dispatch.sh intercepts the subcommand). The shebang
-# and `set -euo pipefail` are prepended by writeShellApplication.
-#
-# Exit 0 moved (or already moved there), 1 failed (the message names the way
-# on), 2 refused before anything stopped, 3 a cooperative worker did not
-# quiesce in time.
+# and `set -euo pipefail` are prepended by writeShellApplication. Exit codes:
+# see _migrate_help.
 
 # Its own binary on PATH, so dispatch.sh's guard never sees a direct call.
 if [ -n "${CREW_OVERSEER:-}" ]; then

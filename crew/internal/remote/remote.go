@@ -137,9 +137,8 @@ var (
 	uuidRe      = regexp.MustCompile(`\A[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\z`)
 )
 
-// checkKeys refuses a key of the JSON object raw outside keys. encoding/json
-// matches field names case-insensitively, so DisallowUnknownFields alone would
-// let `"Repo"` through.
+// checkKeys refuses a key of the JSON object raw outside keys, for the reason
+// requestKeys gives.
 func checkKeys(raw []byte, keys []string, what string) error {
 	var obj map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &obj); err != nil {
