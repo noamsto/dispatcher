@@ -15200,7 +15200,7 @@ setup_bundle_resume() {
   seed_claim_row '{"ts":1,"crew_id":"c0","kind":"dispatch","branch":"feat/42-do-a-thing","also_closes":[43]}'
   seed_claim_row '{"ts":1,"crew_id":"c0","kind":"claim-issue","issue":"43","branch":"feat/42-do-a-thing","pid":1}'
   seed_claim_row '{"ts":2,"crew_id":"c0","kind":"dispatch","branch":"feat/42-do-a-thing","task_kind":"review"}'
-  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c2 43 "Another thing"
   [ "$status" -eq 0 ]
   grep -qx 'Closes #43' "$TEST_REPO/.dispatch-wt/feat-42-do-a-thing/WORKER_TASK.md"
 }
@@ -17678,13 +17678,16 @@ STUB
   TMUX=/tmp/x,1,0 TMUX_PANE=%5 DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
   [ "$status" -eq 0 ]
   run ! grep -q '^tmux-crew-dash ' "$STUB_LOG"
+  [[ "$output" != *crew-dash* ]]
   rm "$XDG_CONFIG_HOME/dispatcher/settings.json"
   STUB_DASH_EXIT=1 TMUX=/tmp/x,1,0 TMUX_PANE=%5 DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c2 43 "Another thing"
   [ "$status" -eq 0 ]
   grep -qx 'tmux-crew-dash --detached %5' "$STUB_LOG"
+  [[ "$output" != *crew-dash* ]]
   rm "$STUB_DIR/tmux-crew-dash"
-  TMUX=/tmp/x,1,0 TMUX_PANE=%5 DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c3 44 "Third thing"
+  PATH="$(path_without_real tmux-crew-dash)" TMUX=/tmp/x,1,0 TMUX_PANE=%5 DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c3 44 "Third thing"
   [ "$status" -eq 0 ]
+  [[ "$output" != *crew-dash* ]]
 }
 
 @test "crew dash: a remote-host dispatch does not open it" {
