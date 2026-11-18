@@ -35,16 +35,16 @@ type workerKey struct{ crew, branch string }
 // resolve turns it into what is drawn and acted on, so nothing has to keep the
 // two in step.
 type overviewState struct {
-	focus    ovPanel
-	ret      ovPanel   // the body panel k last left for the strip; anything but agents or monitors means checklists
+	focus ovPanel
+	ret   ovPanel // the body panel k last left for the strip; anything but agents or monitors means checklists
 	// retWorker is the row k left from: the strip cursor's own worker is shown
 	// there, so j needs it kept to land back on that row.
 	retWorker workerKey
-	cursor   string    // the strip cursor's attention item ID
-	cursorAt int       // the cursor's index when set: the tie-break, and the fallback once its item leaves
-	worker   workerKey // the worker chosen outside the strip
-	stripOff int
-	filter   string
+	cursor    string    // the strip cursor's attention item ID
+	cursorAt  int       // the cursor's index when set: the tie-break, and the fallback once its item leaves
+	worker    workerKey // the worker chosen outside the strip
+	stripOff  int
+	filter    string
 }
 
 // ovSel is the resolved selection: the worker every panel highlights and

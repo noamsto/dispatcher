@@ -216,7 +216,7 @@ func (v *overviewView) setFocus(p ovPanel) {
 	}
 	v.st.focus = p
 	if p == panelAttention {
-		v.st.ret, v.st.retWorker, v.st.worker = 0, workerKey{}, workerKey{}
+		v.st.ret, v.st.retWorker = 0, workerKey{}
 	}
 }
 
@@ -338,8 +338,12 @@ func (v *overviewView) move(d int) {
 	if v.st.focus == panelAttention {
 		c := clamp(r.sel.cursor+d, 0, len(v.model.Attention)-1)
 		if c == r.sel.cursor {
-			if d > 0 {
+			if d > 0 && v.mode == ovNormal {
+				rw := v.st.retWorker
 				v.setFocus(v.retPanel())
+				if i := newOvIndex(v.model, v.st).pick(rw.crew, rw.branch); i >= 0 {
+					v.setWorker(i)
+				}
 			}
 			return
 		}
