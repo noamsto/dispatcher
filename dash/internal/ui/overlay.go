@@ -99,7 +99,7 @@ type helpKey struct{ keys, text string }
 
 var overviewHelp = []helpKey{
 	{"tab / shift+tab", "cycle focus: attention, checklists, agents, monitors"},
-	{"j k / up down", "move in the focused panel (the attention strip scrolls)"},
+	{"h j k l / arrows", "move: h l between panels, j k within; at a panel edge j k cross to the strip / back"},
 	{"1-9", "act on the attention row with that number"},
 	{"enter", "attention: select its worker, or inspect a crew item; else the detail overlay, esc closes"},
 	{"p", "peek (crew where; switches to the pane inside tmux)"},

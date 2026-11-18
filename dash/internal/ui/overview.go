@@ -150,6 +150,7 @@ func (v overviewView) Keys() []key.Binding {
 		return ks
 	}
 	return []key.Binding{
+		key.NewBinding(key.WithKeys("h", "j", "k", "l", "left", "down", "up", "right"), key.WithHelp("hjkl", "move")),
 		key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "focus")),
 		key.NewBinding(key.WithKeys("1"), key.WithHelp("1-9", "attention")),
 		key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "detail")),
@@ -262,6 +263,10 @@ func (v *overviewView) handleKey(msg tea.KeyMsg) tea.Cmd {
 		v.cycle(1)
 	case "shift+tab":
 		v.cycle(-1)
+	case "h", "left":
+		v.hop(-1)
+	case "l", "right":
+		v.hop(1)
 	case "j", "down":
 		v.move(1)
 	case "k", "up":
@@ -304,6 +309,25 @@ func (v *overviewView) cycle(d int) {
 	v.setFocus(order[(i+d+len(order))%len(order)])
 }
 
+// hop moves focus one panel across the row, without wrapping; the strip spans
+// the row, so it has no neighbour.
+func (v *overviewView) hop(d int) {
+	if v.st.focus == panelAttention {
+		return
+	}
+	order := []ovPanel{panelChecklists, panelAgents, panelMonitors}
+	i := slices.Index(order, v.st.focus)
+	v.setFocus(order[clamp(i+d, 0, len(order)-1)])
+}
+
+// retPanel is the body panel j returns to from the strip.
+func (v *overviewView) retPanel() ovPanel {
+	if v.st.ret == panelAgents || v.st.ret == panelMonitors {
+		return v.st.ret
+	}
+	return panelChecklists
+}
+
 // move steps the strip cursor, or the selected worker over the focused panel's
 // rows, from what is drawn.
 func (v *overviewView) move(d int) {
@@ -311,6 +335,9 @@ func (v *overviewView) move(d int) {
 	if v.st.focus == panelAttention {
 		c := clamp(r.sel.cursor+d, 0, len(v.model.Attention)-1)
 		if c == r.sel.cursor {
+			if d > 0 {
+				v.setFocus(v.retPanel())
+			}
 			return
 		}
 		// The window scrolls one row with the cursor until it reaches an end;
@@ -322,10 +349,17 @@ func (v *overviewView) move(d int) {
 		return
 	}
 	ws := panelWorkers(v.st.focus, v.model, newOvIndex(v.model, v.st))
+	pos := slices.Index(ws, r.sel.worker)
+	if d < 0 && pos <= 0 && len(v.model.Attention) > 0 && (pos == 0 || len(ws) == 0) {
+		v.st.ret = v.st.focus
+		v.setFocus(panelAttention)
+		v.setCursor(len(v.model.Attention) - 1)
+		v.st.stripOff = v.layout().stripOff
+		return
+	}
 	if len(ws) == 0 {
 		return
 	}
-	pos := slices.Index(ws, r.sel.worker)
 	switch {
 	case pos < 0 && d < 0:
 		pos = len(ws) - 1

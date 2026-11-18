@@ -36,6 +36,7 @@ type workerKey struct{ crew, branch string }
 // two in step.
 type overviewState struct {
 	focus    ovPanel
+	ret      ovPanel   // the body panel k last left for the strip; anything but agents or monitors means checklists
 	cursor   string    // the strip cursor's attention item ID
 	cursorAt int       // the cursor's index when set: the tie-break, and the fallback once its item leaves
 	worker   workerKey // the worker chosen outside the strip
