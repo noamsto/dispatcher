@@ -1099,15 +1099,25 @@ func TestOverviewHjklStripEdgeWithStale(t *testing.T) {
 	}
 	v := newOverviewView(in, overviewNow)
 	v.View(150, 40)
-	if slices.IndexFunc(v.model.Attention, func(a vm.AttentionItem) bool { return a.Kind == vm.KindStale }) < 0 {
+	stale := slices.IndexFunc(v.model.Attention, func(a vm.AttentionItem) bool { return a.Kind == vm.KindStale })
+	if stale < 0 {
 		t.Fatal("stale worker is not an attention item")
 	}
 	last := len(v.model.Attention) - 1
-	if w, _ := ovKeys(ovStripAt(v, last), "k"); w.st.focus != panelAttention || w.sel().cursor != last-1 {
-		t.Errorf("k from stale: focus=%v cursor=%d", w.st.focus, w.sel().cursor)
+	if stale > 0 {
+		if w, _ := ovKeys(ovStripAt(v, stale), "k"); w.st.focus != panelAttention || w.sel().cursor != stale-1 {
+			t.Errorf("k from stale: focus=%v cursor=%d", w.st.focus, w.sel().cursor)
+		}
 	}
-	if w, _ := ovKeys(ovStripAt(v, last), "j"); w.st.focus != panelChecklists {
+	if stale < last {
+		if w, _ := ovKeys(ovStripAt(v, stale), "j"); w.st.focus != panelAttention || w.sel().cursor != stale+1 {
+			t.Errorf("j from stale: focus=%v cursor=%d", w.st.focus, w.sel().cursor)
+		}
+	} else if w, _ := ovKeys(ovStripAt(v, stale), "j"); w.st.focus != panelChecklists {
 		t.Errorf("j past stale: focus=%v", w.st.focus)
+	}
+	if w, _ := ovKeys(ovStripAt(v, last), "k"); w.st.focus != panelAttention || w.sel().cursor != last-1 {
+		t.Errorf("k from last with stale present: focus=%v cursor=%d", w.st.focus, w.sel().cursor)
 	}
 }
 
