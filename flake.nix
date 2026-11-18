@@ -263,13 +263,21 @@
               text = ghFallback + launcherPath rt (withConfig (sub (builtins.readFile ./adapters/core/dispatch-resume.sh)));
             };
 
+          dispatcher-setup = pkgs.writeShellApplication {
+            name = "dispatcher-setup";
+            runtimeInputs = with pkgs; [jq coreutils diffutils openssh gnugrep gawk];
+            text = withConfig (sub (builtins.readFile ./adapters/core/dispatcher-setup.sh));
+          };
+
           dispatcher = let
             rt = (with pkgs; [git jq coreutils diffutils tmux]) ++ [crew];
           in
             pkgs.writeShellApplication {
               name = "dispatcher";
               runtimeInputs = rt;
-              text = launcherPath rt (withConfig (sub (builtins.readFile ./adapters/core/dispatcher.sh)));
+              text =
+                builtins.replaceStrings ["@dispatcherSetup@"] ["${dispatcher-setup}/bin/dispatcher-setup"]
+                (launcherPath rt (withConfig (sub (builtins.readFile ./adapters/core/dispatcher.sh))));
             };
 
           lead-launcher = let
@@ -341,7 +349,7 @@
 
           default = pkgs.symlinkJoin {
             name = "dispatcher-all";
-            paths = [crew crew-dash dispatch dispatch-resume dispatch-config dispatcher lead-launcher overseer refresh-scores refresh-budget refresh-models refresh-harness pr-watch reviewer-roster permission-check completions];
+            paths = [crew crew-dash dispatch dispatch-resume dispatch-config dispatcher dispatcher-setup lead-launcher overseer refresh-scores refresh-budget refresh-models refresh-harness pr-watch reviewer-roster permission-check completions];
           };
         };
       in {

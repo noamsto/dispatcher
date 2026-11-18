@@ -4,6 +4,18 @@
 # One behaviour change is unavoidable: a script cannot export CREW_ID back into
 # the caller's interactive shell the way `set -gx` did, so the id is printed.
 
+# `dispatcher setup` is its own script: this launcher's arg loop reads every bare
+# word as task text, and setup needs none of the protocol or crew machinery
+# sourced below. Exec before anything is sourced. The baked path (or a raw run's
+# sibling file) is the default for the env-overridable DISPATCHER_SETUP_BIN.
+if [ "${1:-}" = setup ]; then
+  setup_bin="${DISPATCHER_SETUP_BIN:-@dispatcherSetup@}"
+  if [ -x "$setup_bin" ]; then
+    exec "$setup_bin" "${@:2}"
+  fi
+  exec bash "$(dirname -- "${BASH_SOURCE[0]}")/dispatcher-setup.sh" "${@:2}"
+fi
+
 # Helpers every launcher shares (launcher-common.sh). A run from a checkout, or a
 # copy of this script, finds it through LAUNCHER_COMMON_LIB or beside the script.
 launcher_common_lib="${LAUNCHER_COMMON_LIB:-@launcherCommonLib@}"
@@ -554,6 +566,13 @@ fi
 # unset in the environment — see dispatch-config.sh for the layer order.
 settings="$("${DISPATCH_CONFIG_BIN:-@dispatchConfig@}")"
 [ -n "${DISPATCH_ENGINES:-}" ] || DISPATCH_ENGINES="$(jq -r '.engines // [] | join(" ")' <<<"$settings")"
+
+# First launch is never gated, and never prompts (overseer launches are
+# unattended): one stderr line, then carry on.
+if [ "$overseer" = 0 ] && [ "$fresh" = 0 ] && [ -z "$relaunch_id" ] &&
+  "${DISPATCH_CONFIG_BIN:-@dispatchConfig@}" --layers | jq -e '.user.present == false' >/dev/null; then
+  echo "no user settings — run 'dispatcher setup'" >&2
+fi
 
 # Worker-only Claude settings (disabled plugins, denied MCP servers), shared
 # with dispatch and dispatch-resume: the claude dispatcher launch profile below

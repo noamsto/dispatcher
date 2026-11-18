@@ -378,6 +378,25 @@ lifted.
 
 ### Settings
 
+`dispatcher setup` detects what this machine offers and writes the user layer
+for you: installed engines, a `fleetBudget` from the core count, `~/.ssh/config`
+hosts to offer (each one you pick is checked with a bounded
+`ssh -o BatchMode=yes` before it is added), and whether an OpenRouter key is
+found (its source is reported, never the key). Interactively it also asks for
+`openrouter.monthlyUsd`, `anthropicCredits`, `dashAutoOpen` and, when `overseer`
+is installed, `overseer.autoRelaunch`. It merges into the existing file (your
+keys and unknown keys are kept), shows a diff and asks before writing;
+`--yes` takes the detected proposals without asking, and without a terminal or
+`--yes` it writes nothing and exits 2. It never writes `grantRoots` or
+`openrouter.keyFile` (use the home-manager option or `DISPATCH_GRANT_ROOTS` /
+`DISPATCH_OPENROUTER_KEY_FILE`), and when the user file is a symlink
+(`programs.dispatcher.userSettings`) it writes nothing and prints the JSON for
+your nix config. `dispatcher setup --check [--json]` prints one line per key
+(current value and origin, detected value, gap note) and exits 1 on a gap;
+the launcher prints `no user settings — run 'dispatcher setup'` on stderr when
+the file is missing and carries on. `setup` is a subcommand, so `dispatcher
+setup ...` no longer starts a session with the task text "setup ...".
+
 `dispatch-config` resolves the module's settings as one JSON tree from four
 layers, each overriding the last: **base** (`adapters/core/defaults.json`,
 baked in at build), **user**
