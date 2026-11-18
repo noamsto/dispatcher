@@ -37,6 +37,9 @@ func clearsText(kind Kind, c clearsCtx) string {
 	case KindDead, KindFailed:
 		return reapClears(c)
 	case KindStale:
+		if c.Inspect == "" || c.Remove == "" {
+			return "run `crew reap --dry-run` on the worker's host for the inspect and remove commands"
+		}
 		return "inspect: " + c.Inspect + "; remove: " + c.Remove
 	case KindRoleFailed:
 		return "restart the role pane or `crew nudge` the worker"

@@ -212,7 +212,10 @@ func buildAttention(in Inputs, rows []WorkerRow) []AttentionItem {
 			}
 			msg := message(w, w.State)
 			if kind == KindStale {
-				msg = "stale: needs human cleanup — " + w.CleanupReason
+				msg = "stale: needs human cleanup"
+				if w.CleanupReason != "" {
+					msg += " — " + w.CleanupReason
+				}
 			}
 			it := attentionOf(w, kind, sev, key, msg, keep)
 			if kind == KindBlocked && w.BlockedSince != nil {

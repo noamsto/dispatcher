@@ -889,7 +889,8 @@ func TestFoldNeedsCleanup(t *testing.T) {
 		want   bool
 	}{
 		{"stale row after terminal status", []string{failed, stale(t0+2000, true)}, true},
-		{"done and exited count", []string{status(t0+1000, from, state("done")), stale(t0+2000, true)}, true},
+		{"done counts", []string{status(t0+1000, from, state("done")), stale(t0+2000, true)}, true},
+		{"exited counts", []string{status(t0+1000, from, state("exited")), stale(t0+2000, true)}, true},
 		{"no stale row", []string{failed}, false},
 		{"stale:false row is newest", []string{failed, stale(t0+2000, true), stale(t0+3000, false)}, false},
 		{"stale:true row is newest again", []string{failed, stale(t0+2000, false), stale(t0+3000, true)}, true},

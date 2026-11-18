@@ -221,10 +221,10 @@ func TestPortEIssueModeKeeps(t *testing.T) {
 		{"closed issue with commits on no remote", "CLOSED", true, func(f *fx) []string {
 			return []string{unpushed,
 				"crew reap:   stale: needs human cleanup — " + strings.TrimPrefix(unpushed, "crew reap: keeping feat/r — ") + "; issue closed",
-				"crew reap:   inspect: " + f.inspectCmd() + "; git -C '" + f.wt + "' log --oneline 'feat/r' --not --remotes",
+				"crew reap:   inspect: " + f.inspectCmd(),
 				"crew reap:   remove:  " + f.removeCmd()}
 		}},
-		{"no claim-issue row", "CLOSED", false, func(*fx) []string {
+		{"no claim-issue row, fresh", "CLOSED", false, func(*fx) []string {
 			return []string{"crew reap: keeping feat/r — done but no PR on the bus or GitHub; no claim-issue row"}
 		}},
 	}

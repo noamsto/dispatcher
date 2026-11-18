@@ -205,7 +205,7 @@ func TestPortFClosedIssueNeedsCommitsOnARemoteRef(t *testing.T) {
 	const unpushed = "done but no PR on the bus or GitHub; 1 commit(s) not on any remote and not patch-equivalent to origin/main"
 	f.wantOut("crew reap: keeping feat/r — "+unpushed,
 		"crew reap:   stale: needs human cleanup — "+unpushed+"; issue closed",
-		"crew reap:   inspect: "+f.inspectCmd()+"; git -C '"+f.wt+"' log --oneline 'feat/r' --not --remotes",
+		"crew reap:   inspect: "+f.inspectCmd(),
 		"crew reap:   remove:  "+f.removeCmd(),
 		"crew reap: nothing reclaimed")
 	f.portBWantPresent(f.wt)

@@ -2,12 +2,12 @@ package reap
 
 import (
 	"context"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
 
 	"github.com/noamsto/dispatcher/crew/internal/filekind"
-	"github.com/noamsto/dispatcher/crew/internal/roster"
 )
 
 // keepClass is why a kept branch could need a human, for the stale classifier;
@@ -90,15 +90,12 @@ func (r *run) classifyStale(ctx context.Context, c *candidate, why string) (stal
 	default:
 		return staleInfo{}, false
 	}
-	inspect := "git -C " + shq(c.wtpath) + " status --short"
-	if c.class == classUnpushed {
-		inspect += "; git -C " + shq(c.wtpath) + " log --oneline " + shq(c.branch) + " --not --remotes"
-	}
+	common := shq(r.paths.Common)
 	return staleInfo{
 		reason:   why + "; " + cause,
 		worktree: c.wtpath,
-		inspect:  inspect,
-		remove:   "git worktree remove --force " + shq(c.wtpath) + " && git branch -D " + shq(c.branch),
+		inspect:  "git -C " + shq(c.wtpath) + " status --short; git -C " + shq(c.wtpath) + " log --oneline " + shq(c.branch) + " --not --remotes",
+		remove:   "git -C " + common + " worktree remove --force " + shq(c.wtpath) + " && git -C " + common + " branch -D " + shq(c.branch),
 	}, true
 }
 
@@ -244,8 +241,7 @@ func (r *run) retireGhost(ctx context.Context, row latestRow) (bool, int) {
 		r.gitStderr(err)
 		return false, shellStatus(err)
 	}
-	wt := roster.WorktreePath(out, row.branch)
-	if strings.Contains(wt, "\n") || (wt != "" && filekind.IsDir(wt)) || detachedPresent(out) {
+	if worktreeAlive(out, row.branch) || detachedPresent(out) {
 		return false, 0
 	}
 	if r.windowStamped(ctx, row.branch) || r.remoteDispatch(row) {
@@ -259,6 +255,32 @@ func (r *run) retireGhost(ctx context.Context, row latestRow) (bool, int) {
 	r.forget(row.branch)
 	r.note("retired " + row.branch + " (worktree already gone)")
 	return true, 0
+}
+
+// worktreeAlive reports a listed worktree that may still be this branch's: one
+// on the branch, or a non-main one in the dispatcher's slug-named directory
+// (a worker that switched its tree to another branch). Paths are whole lines,
+// so spaces survive.
+func worktreeAlive(porcelain, branch string) bool {
+	slug := strings.ReplaceAll(branch, "/", "-")
+	for i, block := range strings.Split(porcelain, "\n\n") {
+		var dir, onBranch string
+		for line := range strings.SplitSeq(block, "\n") {
+			switch {
+			case strings.HasPrefix(line, "worktree "):
+				dir = strings.TrimPrefix(line, "worktree ")
+			case strings.HasPrefix(line, "branch "):
+				onBranch = strings.TrimPrefix(strings.TrimPrefix(line, "branch "), "refs/heads/")
+			}
+		}
+		if dir == "" || !filekind.IsDir(dir) {
+			continue
+		}
+		if onBranch == branch || (i > 0 && filepath.Base(dir) == slug) {
+			return true
+		}
+	}
+	return false
 }
 
 // detachedPresent reports a listed detached worktree whose directory exists:

@@ -50,9 +50,13 @@ func (f *fx) staleRows() []map[string]any {
 	return rows
 }
 
-func (f *fx) inspectCmd() string { return "git -C '" + f.wt + "' status --short" }
+func (f *fx) inspectCmd() string {
+	return "git -C '" + f.wt + "' status --short; git -C '" + f.wt + "' log --oneline '" + rb + "' --not --remotes"
+}
+
 func (f *fx) removeCmd() string {
-	return "git worktree remove --force '" + f.wt + "' && git branch -D '" + rb + "'"
+	common := f.paths.Common
+	return "git -C '" + common + "' worktree remove --force '" + f.wt + "' && git -C '" + common + "' branch -D '" + rb + "'"
 }
 
 func TestStaleDirtyClosedIssue(t *testing.T) {
@@ -171,14 +175,13 @@ func TestStaleIssueModeKeeps(t *testing.T) {
 		t.Fatalf("rows %v\nstdout %s", f.appended, f.stdout.String())
 	}
 
-	// With a default ref, an unpushed commit is the keep and inspect also lists it.
+	// With a default ref, an unpushed commit is the keep and inspect is unchanged.
 	runGit(t, f.main, "update-ref", "refs/remotes/origin/main", "main")
 	f.portBCommit("a.txt", "a")
 	f.appended = nil
 	f.reap(f.main, Request{})
 	rows = f.staleRows()
-	want := f.inspectCmd() + "; git -C '" + f.wt + "' log --oneline '" + rb + "' --not --remotes"
-	if len(rows) != 1 || rows[0]["inspect"] != want {
+	if len(rows) != 1 || rows[0]["inspect"] != f.inspectCmd() {
 		t.Fatalf("rows %v\nstdout %s", f.appended, f.stdout.String())
 	}
 	if _, err := os.Stat(f.wt); err != nil {
@@ -327,6 +330,82 @@ func TestGhostSkipped(t *testing.T) {
 			if tc.setup != nil {
 				tc.setup(f)
 			}
+			f.reap(f.main, Request{})
+			if len(f.reapedRows()) != 0 || strings.Contains(f.stdout.String(), "retire") {
+				t.Fatalf("retired: %v\n%s", f.appended, f.stdout.String())
+			}
+		})
+	}
+}
+
+// noPRFx is a worker with no PR anywhere: portEIssue's commit is replaced by
+// the bus rows the case names, and the tree is clean with no default ref, so
+// the keep is the unpushed-work one only when an age or closed issue allows it.
+func noPRFx(t *testing.T, state string, ageSec int64, extra ...string) *fx {
+	t.Helper()
+	f := newFx(t)
+	f.bus(append([]string{statusFor(rb, "s1", state, "", ageSec)}, extra...)...)
+	f.gh[portEListKey] = "[]"
+	return f
+}
+
+func TestStaleNoPRDefiniteStates(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		state string
+		age   int64
+		extra []string
+		want  string
+	}{
+		{"done no claim row old", "done", threeDays, nil, "no claim-issue row; older than 72h"},
+		{"done no claim row fresh", "done", 0, nil, ""},
+		{"exited no PR old", "exited", threeDays, nil, "only done/failed reclaim on a closed issue; older than 72h"},
+		{"exited no PR fresh", "exited", 0, nil, ""},
+		{"non-numeric claim old", "done", threeDays, []string{`{"ts":1,"kind":"claim-issue","branch":"` + rb + `","issue":"x1"}`}, "non-numeric issue; older than 72h"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := noPRFx(t, tc.state, tc.age, tc.extra...)
+			f.reap(f.main, Request{})
+			rows := f.staleRows()
+			if tc.want == "" {
+				if len(rows) != 0 {
+					t.Fatalf("went stale: %v", f.appended)
+				}
+				return
+			}
+			if len(rows) != 1 || !strings.HasSuffix(rows[0]["reason"].(string), tc.want) {
+				t.Fatalf("rows %v\nstdout %s", f.appended, f.stdout.String())
+			}
+		})
+	}
+}
+
+func TestStaleNoPRUnreadableFailsClosed(t *testing.T) {
+	f := noPRFx(t, "done", threeDays, claim5())
+	f.reap(f.main, Request{})
+	if len(f.staleRows()) != 0 {
+		t.Fatalf("unreadable issue went stale: %v", f.appended)
+	}
+}
+
+func TestGhostLiveWorktreeNotRetired(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		move func(t *testing.T, f *fx)
+	}{
+		{"space in path", func(t *testing.T, f *fx) {
+			runGit(t, f.main, "worktree", "move", f.wt, filepath.Join(f.root, "my wt"))
+		}},
+		{"tree switched to another branch", func(t *testing.T, f *fx) {
+			slug := filepath.Join(f.root, "feat-r")
+			runGit(t, f.main, "worktree", "move", f.wt, slug)
+			runGit(t, slug, "switch", "-q", "-c", "other")
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFx(t)
+			f.bus(status("done", prURL, 0))
+			tc.move(t, f)
 			f.reap(f.main, Request{})
 			if len(f.reapedRows()) != 0 || strings.Contains(f.stdout.String(), "retire") {
 				t.Fatalf("retired: %v\n%s", f.appended, f.stdout.String())

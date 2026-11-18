@@ -3,6 +3,7 @@ package view_test
 import (
 	"maps"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/noamsto/dispatcher/dash/internal/data"
@@ -240,5 +241,24 @@ func TestAttentionReapedStaleRowYieldsNoItem(t *testing.T) {
 		if w.Branch == "feat/h" {
 			t.Error("reaped row listed")
 		}
+	}
+}
+
+func TestAttentionStaleFarHostPointsAtReapDryRun(t *testing.T) {
+	in := viewtest.Inputs()
+	setWorker(in, "feat/h", map[string]any{
+		"host": "halo", "needs_cleanup": true, "cleanup_reason": "uncommitted changes; issue closed",
+	})
+	a := item(t, view.BuildOverview(in), "stale:halo/c1:feat/h")
+	if strings.Contains(a.Clears, "inspect: ;") || !strings.Contains(a.Clears, "crew reap --dry-run") {
+		t.Errorf("clears = %q", a.Clears)
+	}
+}
+
+func TestAttentionStaleWithoutReasonHasNoDash(t *testing.T) {
+	in := viewtest.Inputs()
+	setWorker(in, "feat/h", map[string]any{"needs_cleanup": true})
+	if a := item(t, view.BuildOverview(in), "stale:c1:feat/h"); a.Message != "stale: needs human cleanup" {
+		t.Errorf("message = %q", a.Message)
 	}
 }
