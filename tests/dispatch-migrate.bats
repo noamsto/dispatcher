@@ -704,22 +704,26 @@ commit_unpushed_and_dirty() {
   [ -n "$(git -C "$TEST_REPO" ls-remote origin "refs/heads/$BRANCH")" ]
 }
 
-@test "a pre-push hook refusing the --now push surfaces verbatim, without the dispatcher's identity; nothing is marked and the worktree is intact" {
+@test "a pre-push hook refusing the --now push surfaces verbatim, seeing only allowlisted env; nothing is marked and the worktree is intact" {
   start_local_worker
   commit_unpushed_and_dirty
+  # The hook records variable names only, never values.
   cat >"$TEST_REPO/.git/hooks/pre-push" <<EOF
 #!/bin/sh
-echo "\${CREW_ID-unset} \${TMUX_PANE-unset}" >"$BATS_TEST_TMPDIR/hook.env"
+env | cut -d= -f1 | sort >"$BATS_TEST_TMPDIR/hook.env"
 echo "HOOK SAYS NO" >&2
 exit 1
 EOF
   chmod +x "$TEST_REPO/.git/hooks/pre-push"
   dispatcher_pane="$(tmux new-session -d -s main -P -F '#{pane_id}')"
 
-  CREW_ID=c1 TMUX_PANE="$dispatcher_pane" migrate 7 --host mini --now
+  GH_TOKEN=fake-token-for-test DISPATCHER_ONLY_SECRET=fake CREW_ID=c1 TMUX_PANE="$dispatcher_pane" \
+    migrate 7 --host mini --now
   [ "$status" -eq 1 ]
   [[ $stderr == *"HOOK SAYS NO"* ]]
-  [ "$(cat "$BATS_TEST_TMPDIR/hook.env")" = "unset unset" ]
+  [ -z "$(grep -xE 'GH_TOKEN|DISPATCHER_ONLY_SECRET|CREW_ID|CREW_WORKER_ID|TMUX|TMUX_PANE' "$BATS_TEST_TMPDIR/hook.env")" ]
+  grep -qx PATH "$BATS_TEST_TMPDIR/hook.env"
+  grep -qx HOME "$BATS_TEST_TMPDIR/hook.env"
   [[ $stderr == *"the worker is stopped; nothing was marked — resume it here with: dispatch resume $BRANCH"* ]]
   [ -z "$(jq -c 'select(.kind == "status" and .body.state == "migrated")' "$LBUS")" ]
   [ -z "$(remote_rows)" ]

@@ -487,7 +487,10 @@ else
     # Hooks run here on purpose (owner requirement: a hook's refusal surfaces
     # verbatim, never bypassed); the one dispatcher-side git call that runs them.
     # Git resolves a relative core.hooksPath against the cwd, hence the main checkout.
-    push_out="$(cd -- "$main_wt" && env -u CREW_ID -u CREW_WORKER_ID -u CREW_ROLE_ID -u TMUX -u TMUX_PANE \
+    # The hook is code the worker's tree controls, so it runs with an allowlisted
+    # env: dispatcher-only variables and credentials never reach it.
+    push_out="$(cd -- "$main_wt" && env -i PATH="$PATH" HOME="$HOME" USER="${USER:-$(id -un)}" LANG="${LANG:-C.UTF-8}" \
+      ${SSH_AUTH_SOCK:+SSH_AUTH_SOCK="$SSH_AUTH_SOCK"} \
       git --git-dir="$admin" --work-tree="$wt" push origin "refs/heads/$branch:refs/heads/$branch" 2>&1)" || push_rc=$?
     if [ "$push_rc" -ne 0 ]; then
       printf '%s\n' "$push_out" >&2
