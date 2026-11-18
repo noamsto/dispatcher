@@ -120,19 +120,20 @@ emit_deny() { # <reason>
 # The tokenizer below is quadratic in the command's length: past the hook's
 # timeout the guard would fail open. A command over this many bytes gets a
 # linear awk pass over its command words instead of the analysis: a delete or
-# tmux verb is only read at command position, so prose in a here-doc body, a
-# commit message or an echo argument names nothing.
+# tmux verb is only read at command position, so prose in a commit message or
+# an echo argument names nothing. A here-doc body is read as commands only when
+# a shell consumes it (bash, sh, eval, source …); `cat > f <<EOF` is data.
 max_bytes=8192
 if (($(printf '%s' "$command" | wc -c) > max_bytes)); then
   # shellcheck disable=SC2016
   gate_awk='
-function reset_seg() { phase = 0; wrapper = ""; wval = 0; edur = 0; risky = 0; fdel = 0; isfind = 0; nt = 0 }
+function reset_seg() { verb = ""; phase = 0; wrapper = ""; wval = 0; edur = 0; risky = 0; fdel = 0; isfind = 0; nt = 0 }
 function deny() { print "deny"; denied = 1; exit }
 function risky_word(w,   x) {
   x = w
   while (index(x, "/./")) gsub(/\/\.\//, "/", x)
   sub(/\/\.$/, "/", x)
-  if (x ~ /^\/+$/ || x ~ /[$`*?[]/ || x ~ /user\/|\/proc\/|XDG_RUNTIME_DIR|TMUX_TMPDIR/ || x ~ /(^|[^[:alnum:]_-])\/run(\/+user|\/*$)/) risky = 1
+  if (x ~ /^\/+$/ || x ~ /[$`*?[]/ || x ~ /user\/|\/proc\/|XDG_RUNTIME_DIR|TMUX_TMPDIR/ || x ~ /(^|[^[:alnum:]_-])\/run(\/+user|\/*$)/ || (x ~ /[.][.]/ && x ~ /(^|[^[:alnum:]_-])\/run\//)) risky = 1
 }
 function classify(   i, w, sock, sub_, skip, dw, rest, c) {
   sock = 0; sub_ = ""; skip = 0; dw = 0
@@ -170,7 +171,7 @@ function seg_word(w,   base, rest, c) {
       return
     }
     if (edur && w ~ /^[0-9]+([.][0-9]+)?[smhd]?$/) { edur = 0; return }
-    base = w; sub(/^.*\//, "", base)
+    base = w; sub(/^.*\//, "", base); verb = base
     if (base ~ /^(env|command|exec|nohup|time|nice|sudo|xargs|do|then|if|elif|else|while|until|!|[{])$/) { wrapper = base; return }
     if (base == "timeout") { wrapper = base; edur = 1; return }
     if (base == "cd" || base == "pushd") { seen_cd = 1; phase = 3; return }
@@ -199,59 +200,88 @@ function end_seg() {
   if (phase == 2) classify()
   reset_seg()
 }
-function parse_heredoc(s, i,   n, dash, e, c, d) {
-  n = length(s); dash = 0; d = ""
-  if (substr(s, i, 1) == "-") { dash = 1; i++ }
-  while (substr(s, i, 1) == " " || substr(s, i, 1) == "\t") i++
-  c = substr(s, i, 1)
-  if (c == "\047" || c == "\"") {
-    e = c; i++
-    while (i <= n && substr(s, i, 1) != e) { d = d substr(s, i, 1); i++ }
+function parse_heredoc(i,   dash, e, c, d, qq) {
+  dash = 0; d = ""; qq = ""
+  if (ch[i] == "-") { dash = 1; i++ }
+  while (ch[i] == " " || ch[i] == "\t") i++
+  while (i <= n) {
+    c = ch[i]
+    if (qq != "") { if (c == qq) qq = ""; else d = d c }
+    else if (c == "\047" || c == "\"") qq = c
+    else if (c == "\\") { i++; d = d ch[i] }
+    else if (c ~ /[ \t;|&()<>]/) break
+    else d = d c
     i++
-  } else {
-    while (i <= n) {
-      c = substr(s, i, 1)
-      if (c ~ /[ \t;|&()<>]/) break
-      if (c == "\\") { i++; c = substr(s, i, 1) }
-      d = d c; i++
-    }
   }
-  if (d != "") { hd_n++; hd_d[hd_n] = d; hd_s[hd_n] = dash }
+  if (d != "") { hd_n++; hd_d[hd_n] = d; hd_s[hd_n] = dash; hd_scan[hd_n] = (verb ~ /^(bash|sh|zsh|dash|ksh|eval|source|[.])$/) }
   return i
 }
-function scan_line(s, body,   n, i, c, d) {
-  n = length(s); i = 1
-  if (body) { q = ""; inword = 0; word = "" }
+# Past a redirection operator: the spaces and the target word, quotes included.
+function skip_target(i,   c, qq) {
+  while (ch[i] == " " || ch[i] == "\t") i++
+  qq = ""
   while (i <= n) {
-    c = substr(s, i, 1)
+    c = ch[i]
+    if (qq != "") { if (c == qq) qq = "" }
+    else if (c == "\047" || c == "\"") qq = c
+    else if (c == "\\") i++
+    else if (c ~ /[ \t;|&()<>]/) break
+    i++
+  }
+  return i
+}
+function scan_line(s,   i, c, d) {
+  n = split(s, ch, "")
+  i = 1; dollar_end = 0
+  while (i <= n) {
+    c = ch[i]
+    pd = dollar_end; dollar_end = 0
     if (q == "\047") {
       if (c == "\047") q = ""; else word = word c
     } else if (q == "A") {
       if (c == "\047") q = ""
-      else if (c == "\\") { i++; word = word substr(s, i, 1) }
+      else if (c == "\\") { i++; word = word ch[i] }
       else word = word c
     } else if (q == "\"") {
       if (c == "\"") q = ""
       else if (c == "\\") {
-        d = substr(s, i + 1, 1)
+        d = ch[i + 1]
         if (d == "\"" || d == "\\" || d == "$" || d == "`") { word = word d; i++ }
         else if (d == "") cont = 1
         else word = word c
       } else word = word c
     } else if (c == "\047") {
-      if (word ~ /[$]$/) q = "A"; else q = "\047"
+      if (pd) q = "A"; else q = "\047"
       inword = 1
     } else if (c == "\"") { q = "\""; inword = 1 }
     else if (c == " " || c == "\t") flush_word()
     else if (c == "\\") {
-      d = substr(s, i + 1, 1)
+      d = ch[i + 1]
       if (d == "") cont = 1
       else { word = word d; inword = 1; i++ }
     }
+    else if (c == "(" && ch[i + 1] == "(") {
+      # Arithmetic: its `<<` is a shift, not a here-doc.
+      if (!pd) end_seg()
+      depth = 0
+      while (i <= n) {
+        if (ch[i] == "(") depth++
+        else if (ch[i] == ")" && --depth == 0) break
+        i++
+      }
+    }
     else if (c == ";" || c == "|" || c == "&" || c == "(" || c == ")" || c == "`") end_seg()
     else if (c == "#" && !inword) break
-    else if (c == "<" && !body && substr(s, i + 1, 1) == "<" && substr(s, i + 2, 1) != "<") { i = parse_heredoc(s, i + 2) - 1 }
-    else { word = word c; inword = 1 }
+    else if (c == "<" || c == ">") {
+      if (ch[i + 1] == "(") { flush_word() }
+      else if (c == "<" && ch[i + 1] == "<" && ch[i + 2] != "<" && !hd_active) { i = parse_heredoc(i + 2) - 1 }
+      else {
+        if (inword && word ~ /^[0-9]+$/) { word = ""; inword = 0 } else flush_word()
+        while (ch[i + 1] == "<" || ch[i + 1] == ">" || ch[i + 1] == "&" || ch[i + 1] == "|") i++
+        i = skip_target(i + 1) - 1
+      }
+    }
+    else { word = word c; inword = 1; dollar_end = (c == "$") }
     i++
   }
 }
@@ -264,13 +294,17 @@ BEGIN {
   if (hd_n > 0 && hd_active) {
     t = $0
     if (hd_s[hd_cur]) sub(/^\t+/, "", t)
-    if (t == hd_d[hd_cur]) { hd_cur++; if (hd_cur > hd_n) { hd_active = 0; hd_n = 0 } }
-    else { scan_line($0, 1); q = ""; cont = 0; end_seg() }
-    next
+    if (t == hd_d[hd_cur]) {
+      q = ""; cont = 0; end_seg(); inword = 0; word = ""
+      hd_cur++
+      if (hd_cur > hd_n) { hd_active = 0; hd_n = 0 }
+      next
+    }
+    if (!hd_scan[hd_cur]) next
   }
-  scan_line($0, 0)
+  scan_line($0)
   if (q != "") { if (!cont) word = word "\n"; inword = 1 }
-  else if (!cont) { end_seg(); if (hd_n > 0) { hd_cur = 1; hd_active = 1 } }
+  else if (!cont) { end_seg(); if (hd_n > 0 && !hd_active) { hd_cur = 1; hd_active = 1 } }
   cont = 0
 }
 END { if (!denied) end_seg() }

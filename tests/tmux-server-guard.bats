@@ -666,9 +666,37 @@ long_command() { # <tail>: filler over the limit, then <tail>
     'tmux -LS kill-server' 'rm -f build/out.o' 'rm -rf /tmp/x /tmp/y' \
     'echo rm -rf "$XDG_RUNTIME_DIR" tmux kill-server' 'grep -n "rm -rf" notes.txt' \
     'tmux display-message "tmux kill-server"' $'cat <<EOF\nit\'s prose\nEOF\necho done' \
-    "echo \"it's\" # tmux kill-server" 'tmux set -t main status off; rm -f a.o'; do
+    "echo \"it's\" # tmux kill-server" 'tmux set -t main status off; rm -f a.o' 'tmux -L s kill-server 2>&1' \
+    $'jq -r .x <<<"$json"\ngit commit -m "fix(guard): stop deletes\ntmux kill-server is what it stops"' \
+    $'cat > /tmp/s.sh <<\'XEOF\'\nd=$(mktemp -d)\nrm -rf "$d"\nXEOF\necho written'; do
     run run_guard <<<"$(claude_bash "$(long_command "$tail")")"
     echo "claude: $tail"
     assert_allow
   done
+}
+
+@test "tmux-server-guard: the size gate reads here-strings, redirections, shell here-docs and quoting like the analyzer" {
+  runtime_env
+  local tail
+  for tail in $'jq -r . <<<"$json"\nrm -rf /tmp/build \\\n  "$XDG_RUNTIME_DIR/tmux-1000"' \
+    $'echo $((1<<2))\nrm -rf /tmp/build \\\n  /run/user/1000' $'wc -l <<< "$out"\nrm -rf \\\n  "$TMUX_TMPDIR"' \
+    $'jq -r .id <<<"$json"\ntmux -f /dev/null \\\n  kill-server' \
+    '2>/dev/null rm -rf "$XDG_RUNTIME_DIR/tmux-1000"' '</dev/null rm -rf /run/user/1000/tmux-1000' \
+    'sudo 2>/dev/null rm -rf /run/user/1000' '>/dev/null tmux kill-server' 'tmux 2>/dev/null kill-server' \
+    'tmux -f /dev/null >/dev/null set -g mouse on' 'rm -rf 2>&1 /run/user/1000' 'rm -rf /run/x/../user' \
+    $'bash <<EOF\nrm -rf /tmp/a \\\n  /run/user/1000\nEOF' $'cat <<E"OF"\nbody\nEOF\nrm -rf /tmp/a \\\n  /run/user/1000' \
+    $'echo "$"\'\\\'; rm -rf /run/user/1000'; do
+    run run_guard <<<"$(claude_bash "$(long_command "$tail")")"
+    echo "claude: $tail"
+    assert_block 'split the command'
+  done
+}
+
+# bats test_tags=timing
+@test "tmux-server-guard: one very long line is judged within the hook timeout" {
+  runtime_env
+  assert_within long-quoted 2000 "echo \"$(printf 'a%.0s' $(seq 65536))\""
+  assert_allow
+  assert_within long-words 2000 "echo $(printf 'a %.0s' $(seq 32768))"
+  assert_allow
 }
