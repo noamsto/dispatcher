@@ -44,7 +44,7 @@ func TestAttentionKinds(t *testing.T) {
 		{"role_failed:c1:feat/a", "role_failed", "critical", "peek", "p", []string{"crew", "where", "--crew", "c1", "--", "feat/a"}},
 		{"merge_ready:c1:feat/b", "merge_ready", "ready", "merge", "m", []string{"crew", "merge", "12", "--crew", "c1"}},
 		{"lane_dead:c2:", "lane_dead", "critical", "inspect", "", []string{"crew", "stream", "--crew", "c2", "--status"}},
-		{"hold_matured:c1:h-due", "hold_matured", "warning", "inspect", "", []string{"crew", "hold", "due", "--crew", "c1"}},
+		{"hold_matured:c1:h-due", "hold_matured", "warning", "inspect", "", []string{"crew", "hold", "list", "--crew", "c1"}},
 		{"blocked:halo/c1:feat/r", "blocked", "warning", "reply", "r", nil},
 	}
 	for _, c := range cases {

@@ -313,11 +313,11 @@
         "key": "",
         "verb": "inspect",
         "label": "inspect",
-        "command": "crew hold due --crew c1",
+        "command": "crew hold list --crew c1",
         "argv": [
           "crew",
           "hold",
-          "due",
+          "list",
           "--crew",
           "c1"
         ],

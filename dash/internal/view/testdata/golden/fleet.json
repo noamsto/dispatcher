@@ -189,11 +189,11 @@
         "key": "",
         "verb": "inspect",
         "label": "inspect",
-        "command": "cd /r/a && crew hold due --crew c1",
+        "command": "cd /r/a && crew hold list --crew c1",
         "argv": [
           "crew",
           "hold",
-          "due",
+          "list",
           "--crew",
           "c1"
         ],

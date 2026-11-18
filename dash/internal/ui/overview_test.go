@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"errors"
 	"slices"
 	"strconv"
 	"strings"
@@ -216,14 +217,133 @@ func TestDigitNoItem(t *testing.T) {
 	noCalls(t, fr)
 }
 
-func TestInspectShowsCommand(t *testing.T) {
-	v, fr := ovFixture(t, 100, 30, false, nil)
-	_, cmd := ovKeys(v, "4") // lane_dead on c2
-	got := status(t, cmd)
-	if !strings.Contains(got, "crew stream --crew c2 --status") || !strings.HasPrefix(got, "run: ") {
-		t.Errorf("status = %q", got)
+const laneStatusJSON = `{"lane":"dead","pid":42,"lag_sec":120}`
+
+func laneFixture(t *testing.T) (overviewView, *data.FakeRunner) {
+	t.Helper()
+	return ovFixture(t, 150, 40, false, map[string]data.FakeResponse{
+		"crew stream --crew c2 --status": {Stdout: []byte(laneStatusJSON)},
+	})
+}
+
+// settle runs cmd and feeds its inspectMsg back to v.
+func settle(t *testing.T, v overviewView, cmd tea.Cmd) overviewView {
+	t.Helper()
+	if cmd == nil {
+		t.Fatal("no command")
+	}
+	msg, ok := cmd().(inspectMsg)
+	if !ok {
+		t.Fatalf("command did not produce an inspectMsg")
+	}
+	nv, _ := v.Update(msg)
+	return nv.(overviewView)
+}
+
+func assertLaneOverlay(t *testing.T, v overviewView, fr *data.FakeRunner) {
+	t.Helper()
+	got := stripped(v.View(150, 40))
+	for _, w := range []string{"DETAIL", "lane: dead", "pid: 42", "lag_sec: 120", "crew stream --crew c2 --status"} {
+		if !strings.Contains(got, w) {
+			t.Errorf("overlay lacks %q:\n%s", w, got)
+		}
+	}
+	if strings.Contains(got, `{"lane"`) {
+		t.Errorf("overlay shows raw JSON:\n%s", got)
+	}
+	calls := fr.CallsSnapshot()
+	if len(calls) != 1 || calls[0].Name != "crew" || !slices.Equal(calls[0].Args, []string{"stream", "--crew", "c2", "--status"}) {
+		t.Errorf("calls = %v", calls)
+	}
+}
+
+func TestInspectDigitOpensOverlay(t *testing.T) {
+	v, fr := laneFixture(t) // item 4 is lane_dead on c2
+	v, cmd := ovKeys(v, "4")
+	if got := stripped(v.View(150, 40)); !strings.Contains(got, "running") {
+		t.Errorf("no running placeholder:\n%s", got)
+	}
+	v = settle(t, v, cmd)
+	assertLaneOverlay(t, v, fr)
+	v, _ = ovKeys(v, "esc")
+	if v.mode != ovNormal || strings.Contains(stripped(v.View(150, 40)), "pid: 42") {
+		t.Errorf("esc did not close the overlay")
+	}
+}
+
+func TestInspectEnterOpensOverlay(t *testing.T) {
+	v, fr := laneFixture(t)
+	v, _ = ovKeys(v, "j", "j", "j")
+	v, cmd := ovKeys(v, "enter")
+	v = settle(t, v, cmd)
+	assertLaneOverlay(t, v, fr)
+	if got := stripped(v.View(150, 40)); strings.Contains(got, "run: crew stream") {
+		t.Errorf("status still echoes the command:\n%s", got)
+	}
+	v, _ = ovKeys(v, "enter")
+	if v.mode != ovNormal {
+		t.Errorf("enter did not close the overlay")
+	}
+}
+
+func TestInspectStaleResultIgnored(t *testing.T) {
+	v, _ := laneFixture(t)
+	v, cmd := ovKeys(v, "4")
+	v, _ = ovKeys(v, "esc") // closed before the result arrives
+	v = settle(t, v, cmd)
+	if v.mode != ovNormal || v.insp.open || strings.Contains(stripped(v.View(150, 40)), "pid: 42") {
+		t.Errorf("a late result reopened the overlay")
+	}
+
+	// A result for another item does not touch the open overlay.
+	v, _ = ovKeys(v, "4")
+	before := v.insp
+	nv, _ := v.Update(inspectMsg{id: "other", out: `{"x":1}`})
+	if nv.(overviewView).insp != before {
+		t.Errorf("a result for another item changed the overlay: %+v", nv.(overviewView).insp)
+	}
+}
+
+func TestInspectRunsInItemDir(t *testing.T) {
+	asciiProfile(t)
+	dir := "/r/x"
+	in := viewtest.Inputs()
+	in.Dir = &dir
+	fr := &data.FakeRunner{}
+	v := newOverviewView(in, overviewNow)
+	v.acts = actionDeps{ctx: context.Background(), runner: fr, crew: []string{"crew"}}
+	v.View(150, 40)
+	_, cmd := ovKeys(v, "4")
+	cmd()
+	if calls := fr.CallsSnapshot(); len(calls) != 1 || calls[0].Dir != dir {
+		t.Errorf("calls = %+v, want one in %q", calls, dir)
+	}
+}
+
+func TestInspectControlRunsNothing(t *testing.T) {
+	v, fr := ovFixture(t, 150, 40, false, nil)
+	v = poisonActions(v, false, true)
+	for _, k := range []string{"4", "enter"} {
+		nv, cmd := ovKeys(v, k)
+		if cmd != nil {
+			cmd()
+		}
+		if nv.insp.open {
+			t.Errorf("%s opened an inspect overlay for a control-byte argv", k)
+		}
 	}
 	noCalls(t, fr)
+}
+
+func TestInspectErrorShown(t *testing.T) {
+	v, _ := ovFixture(t, 150, 40, false, map[string]data.FakeResponse{
+		"crew stream --crew c2 --status": {Stderr: []byte("boom\n"), Err: errors.New("exit 1")},
+	})
+	v, cmd := ovKeys(v, "4")
+	v = settle(t, v, cmd)
+	if got := stripped(v.View(150, 40)); !strings.Contains(got, "error:") {
+		t.Errorf("no error shown:\n%s", got)
+	}
 }
 
 func TestMergeConfirm(t *testing.T) {
@@ -714,9 +834,9 @@ func TestStripCursorDrawn(t *testing.T) {
 			t.Errorf("%s opened mode %v", k, nv.mode)
 		}
 	}
-	_, cmd := ovKeys(v, "enter")
-	if got := status(t, cmd); got != "run: crew stream --crew c2 --status" {
-		t.Errorf("enter on a lane item: status = %q", got)
+	nv, cmd := ovKeys(v, "enter")
+	if nv.mode != ovDetail || cmd == nil {
+		t.Errorf("enter on a lane item: mode %v", nv.mode)
 	}
 	noCalls(t, fr)
 
@@ -847,13 +967,12 @@ func TestCleanCommandShownVerbatim(t *testing.T) {
 		t.Fatalf("fixture has no clean inspect command (%q)", cmd)
 	}
 	for range v.model.Attention {
-		var c tea.Cmd
-		if _, c = ovKeys(v, "enter"); statusText(c) == "run: "+cmd {
+		if nv, _ := ovKeys(v, "enter"); nv.mode == ovDetail && strings.Contains(stripped(nv.View(150, 40)), cmd) {
 			return
 		}
 		v, _ = ovKeys(v, "j")
 	}
-	t.Errorf("no attention item reported run: %s", cmd)
+	t.Errorf("no attention item opened an overlay showing %s", cmd)
 }
 
 // statusText is the text of cmd's actionMsg, or "" for any other result.

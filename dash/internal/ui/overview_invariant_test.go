@@ -270,6 +270,9 @@ const narrowDetail = 40
 
 // detailInvariant checks that the detail overlay names the worker p acts on.
 func detailInvariant(ov overviewView, lines []string) string {
+	if ov.insp.open {
+		return "" // an inspect overlay acts on no worker
+	}
 	got, text := probePeek(ov)
 	if got == nil {
 		if text == "peer worker: read-only" || text == "peek: no worker selected" {
