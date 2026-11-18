@@ -119,10 +119,12 @@ emit_deny() { # <reason>
 # cheap raw-text check instead of the analysis.
 max_bytes=8192
 if (($(printf '%s' "$command" | wc -c) > max_bytes)); then
-  # Quotes stripped, so `/run/"user"/1000` reads as the path it is.
-  raw=${command//[\"\']/}
+  # Quotes and backslashes stripped and `/./` folded, so `/run/"user"/./1000`
+  # reads as the path it is.
+  raw=${command//[\"\'\\]/}
+  while [[ $raw == */./* ]]; do raw=${raw//\/.\//\/}; done
   re_verb='(^|[^[:alnum:]_.-])(rm|rmdir|unlink|trash|trash-put|gtrash)($|[^[:alnum:]_.-])|(^|[[:space:]])-delete($|[^[:alnum:]_-])'
-  re_rt='XDG_RUNTIME_DIR|TMUX_TMPDIR|(^|[^[:alnum:]_.-])/run(/+user|/*([[:space:];&|)]|$))'
+  re_rt='XDG_RUNTIME_DIR|TMUX_TMPDIR|(^|[^[:alnum:]_-])/run(/+user|/*([[:space:];&|)]|$))'
   re_server='(^|[^[:alnum:]_.-])tmux($|[^[:alnum:]_.-]).*(kill-server|kill-session|source-file|set-hook|set-option|set-window-option)'
   re_server+='|(^|[^[:alnum:]_.-])tmux[^;&|]*[[:space:]](source|setw?[[:space:]]([^;&|]*[[:space:]])?-[A-Za-z]*[gs])([[:space:];&|]|$)'
   if { grep -Eq "$re_verb" <<<"$raw" && grep -Eq "$re_rt" <<<"$raw"; } || grep -Eq "$re_server" <<<"$raw"; then
@@ -652,7 +654,16 @@ dedupe() { # <limit> <value>...
   done
 }
 
-# True when the line runs top to bottom (re_flow).
+# Charge $1 candidate values to the step budget: a step handles up to
+# $max_list of them, so counting lookups alone no longer bounds the run time.
+charge() { # <count>
+  steps=$((steps + $1))
+  if ((steps > max_steps && !budget)); then budget=1; fi
+}
+
+# True when the line runs top to bottom (re_flow). A quote, backslash or `#`
+# before the last `=` may hide a binding from the shell (`echo ";d=/tmp/;"`) that
+# the text still shows, so it ends the replay too.
 is_straight() {
   local t
   if ((straight < 0)); then
@@ -661,7 +672,7 @@ is_straight() {
     t=${t//&>/>}
     t=${t//\$\{/\$}
     t=${t//\}/}
-    if [[ $t =~ $re_flow ]]; then straight=0; else straight=1; fi
+    if [[ $t =~ $re_flow || ${t%=*} == *[\\#\"\']* ]]; then straight=0; else straight=1; fi
   fi
   ((straight))
 }
@@ -762,11 +773,14 @@ lookup_var() { # <name>
         if ((dd_over)); then over=1; fi
         cur=("${dd[@]}")
         for c in "${cur[@]}"; do out+=("${c:-$unk}"); done
-        dedupe "$max_list" "${out[@]}"
-        out=("${dd[@]}")
-        if ((dd_over)); then
-          over=1
-          break
+        charge $((${#cur[@]} + ${#exs[@]}))
+        if ((${#out[@]} > max_list)); then
+          dedupe "$max_list" "${out[@]}"
+          out=("${dd[@]}")
+          if ((dd_over)); then
+            over=1
+            break
+          fi
         fi
       done
     else
@@ -774,9 +788,12 @@ lookup_var() { # <name>
         if ((budget || over)); then break; fi
         expand_word "${bv[i]}"
         for e in "${exs[@]}"; do out+=("${e:-$unk}"); done
-        dedupe "$max_list" ${out[@]+"${out[@]}"}
-        out=(${dd[@]+"${dd[@]}"})
-        if ((dd_over)); then over=1; fi
+        charge ${#exs[@]}
+        if ((${#out[@]} > max_list)); then
+          dedupe "$max_list" "${out[@]}"
+          out=("${dd[@]}")
+          if ((dd_over)); then over=1; fi
+        fi
       done
       for i in ${aidx[@]+"${aidx[@]}"}; do
         if ((budget || over)); then break; fi
@@ -794,14 +811,22 @@ lookup_var() { # <name>
           done
         done
         out+=("${gen[@]}")
-        dedupe "$max_list" "${out[@]}"
-        out=("${dd[@]}")
-        if ((dd_over)); then over=1; fi
+        charge ${#gen[@]}
+        if ((${#out[@]} > max_list)); then
+          dedupe "$max_list" "${out[@]}"
+          out=("${dd[@]}")
+          if ((dd_over)); then over=1; fi
+        fi
       done
     fi
     visiting=${visiting%"$1 "}
     ;;
   esac
+  if ((${#out[@]})); then
+    dedupe "$max_list" "${out[@]}"
+    out=("${dd[@]}")
+    if ((dd_over)); then over=1; fi
+  fi
   ((${#out[@]})) || out=("$unk")
   lv=("${out[@]}")
   # Cached only when no cycle cut it short: a name read while an ancestor was
@@ -914,6 +939,7 @@ expand_word() { # <word>
     dedupe "$max_list" "${vals[@]}"
     if ((dd_over)); then over=1; fi
     vals=("${dd[@]}")
+    charge ${#vals[@]}
     # A product of two lists is bounded tighter than a list alone. The product is
     # sized before it is built, so a big one costs nothing.
     cap=$max_list
@@ -983,6 +1009,7 @@ judge_target() { # <operand>
   local c
   [[ -z $del_target ]] || return 0
   expand_word "$1"
+  charge ${#exs[@]}
   if ((budget)); then
     del_target=$1
     if ((budget == 2)); then del_why=len; else del_why=budget; fi

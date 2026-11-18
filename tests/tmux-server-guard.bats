@@ -594,3 +594,47 @@ long_command() { # <tail>: filler over the limit, then <tail>
   assert_within append-product 2000 "${cmd}d=\$a; d+=\$b; rm -rf \"\$d\" /run/user/1000"
   assert_block 'candidate values'
 }
+
+@test "tmux-server-guard: a quoted, escaped or commented decoy binding never replaces the base of an append" {
+  runtime_env
+  local cmd
+  for cmd in 'd=/run/us; echo \; d=/tmp/; d+=er/1000; rm -rf "$d"' $'d=/run/us; echo \\\nd=/tmp/; d+=er/1000; rm -rf "$d"' \
+    $'d=/run/us; echo "\nd=/tmp/\n"; d+=er/1000; rm -rf "$d"' $'d=/run/us\n#;d=/tmp/\nd+=er/1000; rm -rf "$d"' \
+    'd=/run/us; echo ";d=/tmp/;"; d+=er/1000; rm -rf "$d"' 'echo \; d=/tmp/; d+=$XDG_RUNTIME_DIR; rm -rf "${d#/tmp/}"'; do
+    run run_guard <<<"$(claude_bash "$cmd")"
+    echo "claude: $cmd"
+    assert_block 'runtime dir'
+  done
+}
+
+@test "tmux-server-guard: the size gate folds dot segments and backslashes" {
+  runtime_env
+  local tail
+  for tail in 'rm -rf /./run/user/1000' 'rm -rf /tmp/../run/user/1000' 'rm -rf /run/./user/1000' \
+    'r\m -rf /run/user/1000' 'rm -rf /run/us\er/1000' 't\mux kill-server' 'rm -rf /run/./'; do
+    run run_guard <<<"$(claude_bash "$(long_command "$tail")")"
+    echo "claude: $tail"
+    assert_block 'split the command'
+  done
+}
+
+# Each value a step handles is charged to the step budget: 64 values of 500
+# characters per step otherwise outran the hook timeout.
+# bats test_tags=timing
+@test "tmux-server-guard: many appends or operands over 64-value names are refused within the hook timeout" {
+  runtime_env
+  local cmd='' i p q
+  p=$(printf 'a%.0s' $(seq 490))
+  cmd="p=/$p;"
+  for ((i = 10; i < 74; i++)); do cmd+="q=/$i;"; done
+  cmd+='d=$p$q;'
+  for ((i = 0; i < 1000; i++)); do cmd+='d+=;'; done
+  assert_within empty-appends 2000 "$cmd rm -rf \"\$d\" /run/user/1000"
+  assert_block 'rm -rf'
+  cmd=''
+  q=$(printf '/s%.0s' $(seq 120))
+  for ((i = 0; i < 64; i++)); do cmd+="a=$q$i;"; done
+  assert_within many-operands 2000 "${cmd}rm -rf$(printf ' "$a"%.0s' $(seq 30)) /run/user/1000"
+  [ "$status" -eq 0 ]
+  jq -e '.hookSpecificOutput.permissionDecision == "deny"' <<<"$output" >/dev/null
+}
