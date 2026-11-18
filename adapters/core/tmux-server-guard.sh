@@ -35,9 +35,9 @@
 # is a scalar statement of its own, the bindings replay in order: a `NAME+=value`
 # extends the value the name holds at that point, and every earlier value stays
 # a candidate, so an append chain grows linearly. Otherwise the append may be
-# skipped and doubles the candidates. An operand that is a product of more than 16 candidate values, or a name with
-# more than 64, a candidate over 512 characters, or a lookup chain past 1500
-# steps is refused, each with its own reason: past the hook's timeout the guard
+# skipped and doubles the candidates. An operand that is a product of more than
+# 16 candidate values, or a name with more than 64, a candidate over 512
+# characters, or a lookup chain past 1500 steps is refused, each with its own reason: past the hook's timeout the guard
 # would fail open. For the same reason a command over 8 KiB skips the
 # analysis: it is refused when it has both a delete verb and a runtime-dir
 # reference (or a tmux server word), and allowed otherwise.
@@ -654,8 +654,8 @@ dedupe() { # <limit> <value>...
   done
 }
 
-# Charge $1 candidate values to the step budget: a step handles up to
-# $max_list of them, so counting lookups alone no longer bounds the run time.
+# Charge $1 candidate values to the step budget: a step handles up to $max_list
+# of them, so counting lookups alone would not bound the run time.
 charge() { # <count>
   steps=$((steps + $1))
   if ((steps > max_steps && !budget)); then budget=1; fi
@@ -843,7 +843,8 @@ lookup_var() { # <name>
 # Expand the parameters in one word into $exs, the list of values it may take
 # (the cross product of its parameters' candidates); whatever the guard cannot
 # know (positional and special parameters, other ${…} forms, command
-# substitutions) becomes $unk. A product of more than $max_cands values or a list of more than $max_list sets $over.
+# substitutions) becomes $unk. A product of more than $max_cands values or a
+# list of more than $max_list sets $over.
 #   ${X:-w} ${X-w} ${X:=w} ${X=w}   candidates of X and of w
 #   ${X:+w} ${X+w}                  candidates of w, or unknown
 #   ${X:?w} ${X?w} ${X%w} ${X%%w}   candidates of X (a `%` strip leaves a
