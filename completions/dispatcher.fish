@@ -25,3 +25,8 @@ complete -c dispatcher -l no-note -d 'A --fresh after a crash, with no note'
 complete -c dispatcher -l relaunch -r -f -a '(__dispatcher_crew_ids)' -d 'Restart a dead crew from its launch record'
 complete -c dispatcher -l overseer -d 'Start the one-per-host fleet session'
 complete -c dispatcher -l repo -r -f -a '(__fish_complete_directories)' -d "The crew's repo path, with --relaunch"
+
+complete -c dispatcher -n '__fish_use_subcommand' -a setup -d 'Detect this machine and write the user settings file'
+complete -c dispatcher -n '__fish_seen_subcommand_from setup' -l yes -d 'Take the detected proposals without prompting'
+complete -c dispatcher -n '__fish_seen_subcommand_from setup' -l check -d 'Report settings gaps without writing (exit 1 on a gap)'
+complete -c dispatcher -n '__fish_seen_subcommand_from setup' -l json -d 'With --check, print JSON'

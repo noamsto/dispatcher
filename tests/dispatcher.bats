@@ -33,6 +33,9 @@ STUB
   export CLAUDE_WORKER_SETTINGS_LIB="$BATS_TEST_DIRNAME/../adapters/core/claude-worker-settings.sh"
   unset TMUX CREW_ID DISPATCH_DISPATCHER_MCP ENABLE_CLAUDEAI_MCP_SERVERS CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION
   unset DISPATCHER_LAUNCHER_PID DISPATCHER_HANDOFF_DIR DISPATCHER_HANDOFF_CREW
+  # A user settings file keeps the first-launch hint quiet; its tests remove it.
+  mkdir -p "$XDG_CONFIG_HOME/dispatcher"
+  echo '{}' >"$XDG_CONFIG_HOME/dispatcher/settings.json"
 }
 
 teardown() {
@@ -2779,4 +2782,34 @@ STUB
   CREW_ID=c1 run run_launcher --fresh --no-note --agent claude --model opus --effort high --autocompact 300000
   [ "$status" -eq 0 ]
   [ "$(_launches)" = 1 ]
+}
+
+@test "a launch with no user settings file hints at setup on stderr and does not prompt" {
+  rm "$XDG_CONFIG_HOME/dispatcher/settings.json"
+  CREW_ID=c1 run --separate-stderr run_launcher --agent pi </dev/null
+  [ "$status" -eq 0 ]
+  [[ "$stderr" == *"no user settings — run 'dispatcher setup'"* ]]
+  [[ "$output" != *"no user settings"* ]]
+}
+
+@test "a launch with a user settings file prints no setup hint" {
+  CREW_ID=c1 run --separate-stderr run_launcher --agent pi
+  [ "$status" -eq 0 ]
+  [[ "$stderr" != *"dispatcher setup"* ]]
+}
+
+@test "an overseer launch prints no setup hint" {
+  rm "$XDG_CONFIG_HOME/dispatcher/settings.json"
+  printf 'overseer\n' >"$DISPATCHER_PROTOCOL_DIR/OVERSEER_PROTOCOL.pi.md"
+  run --separate-stderr run_launcher --overseer --agent pi
+  [[ "$stderr" != *"dispatcher setup"* ]]
+}
+
+@test "dispatcher setup hands off to the setup script, not a session" {
+  printf '#!/usr/bin/env bash\nprintf "setup-stub %%s\\n" "$*"\n' >"$BATS_TEST_TMPDIR/setup-stub"
+  chmod +x "$BATS_TEST_TMPDIR/setup-stub"
+  DISPATCHER_SETUP_BIN="$BATS_TEST_TMPDIR/setup-stub" run run_launcher setup --yes
+  [ "$status" -eq 0 ]
+  [ "$output" = "setup-stub --yes" ]
+  [ ! -s "$STUB_LOG" ]
 }
