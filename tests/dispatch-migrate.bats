@@ -717,11 +717,20 @@ EOF
   chmod +x "$TEST_REPO/.git/hooks/pre-push"
   dispatcher_pane="$(tmux new-session -d -s main -P -F '#{pane_id}')"
 
-  GH_TOKEN=fake-token-for-test DISPATCHER_ONLY_SECRET=fake CREW_ID=c1 TMUX_PANE="$dispatcher_pane" \
+  : >"$BATS_TEST_TMPDIR/gitconfig-global"
+  : >"$BATS_TEST_TMPDIR/gitconfig-system"
+
+  GIT_CONFIG_GLOBAL="$BATS_TEST_TMPDIR/gitconfig-global" \
+    GIT_CONFIG_SYSTEM="$BATS_TEST_TMPDIR/gitconfig-system" GIT_CONFIG_NOSYSTEM=1 \
+    GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.fake GIT_CONFIG_VALUE_0=fake \
+    GH_TOKEN=fake-token-for-test DISPATCHER_ONLY_SECRET=fake CREW_ID=c1 TMUX_PANE="$dispatcher_pane" \
     migrate 7 --host mini --now
   [ "$status" -eq 1 ]
   [[ $stderr == *"HOOK SAYS NO"* ]]
   [ -z "$(grep -xE 'GH_TOKEN|DISPATCHER_ONLY_SECRET|CREW_ID|CREW_WORKER_ID|TMUX|TMUX_PANE' "$BATS_TEST_TMPDIR/hook.env")" ]
+  # The harness exports XDG_CONFIG_HOME. Git's config locators survive so a global pre-push guard still runs; token-capable config vars do not.
+  [ "$(grep -xcE 'XDG_CONFIG_HOME|GIT_CONFIG_GLOBAL|GIT_CONFIG_SYSTEM|GIT_CONFIG_NOSYSTEM' "$BATS_TEST_TMPDIR/hook.env")" -eq 4 ]
+  [ -z "$(grep -xE 'GIT_CONFIG_COUNT|GIT_CONFIG_KEY_0|GIT_CONFIG_VALUE_0' "$BATS_TEST_TMPDIR/hook.env")" ]
   grep -qx PATH "$BATS_TEST_TMPDIR/hook.env"
   grep -qx HOME "$BATS_TEST_TMPDIR/hook.env"
   [[ $stderr == *"the worker is stopped; nothing was marked — resume it here with: dispatch resume $BRANCH"* ]]
