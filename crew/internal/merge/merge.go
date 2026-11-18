@@ -11,13 +11,16 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/gh"
 	"github.com/noamsto/dispatcher/crew/internal/git"
+	"github.com/noamsto/dispatcher/crew/internal/invisible"
 	"github.com/noamsto/dispatcher/crew/internal/ledger"
 	"github.com/noamsto/dispatcher/crew/internal/marks"
 	"github.com/noamsto/dispatcher/crew/internal/reply"
@@ -330,7 +333,6 @@ func checkUnread(lines []string, events []bus.Event, req Request, url string, pa
 		pass("unread: skipped (no worker pr_open for this PR)")
 		return 0
 	}
-	crew := row.CrewID
 	branch := strings.TrimPrefix(row.From, "worker:")
 	if i := strings.LastIndex(branch, "#s"); i >= 0 {
 		branch = branch[:i]
@@ -339,34 +341,78 @@ func checkUnread(lines []string, events []bus.Event, req Request, url string, pa
 	for i, ev := range events {
 		docs[i] = ev.Doc
 	}
-	folded, err := sessions.Fold(docs, branch, crew, float64(time.Now().Unix()))
+	// Every crew: a re-dispatch of the branch may carry another crew id.
+	folded, err := sessions.Fold(docs, branch, "", float64(time.Now().Unix()))
 	if err != nil {
-		return refuse("could not fold the sessions of %s: %v", branch, err)
+		return refuse("could not fold the sessions of %s: %s", plain(branch), plain(err.Error()))
 	}
 	// The pr_open session may have been replaced since; its successor is who a
 	// directive now reaches.
-	session := row.From
-	if rows, _ := folded.([]any); len(rows) > 0 {
-		if last, _ := rows[len(rows)-1].(map[string]any); last != nil {
-			if id, _ := last["worker_id"].(string); id != "" {
-				session = id
-			}
-		}
+	rows, _ := folded.([]any)
+	var newest map[string]any
+	if len(rows) > 0 {
+		newest, _ = rows[len(rows)-1].(map[string]any)
 	}
-	undelivered, err := unread.Directives(events, crew, session, marks.Read(paths.Dir, crew, session))
-	if err != nil {
-		return refuse("could not check %s for undelivered msgs: %v", session, err)
+	session, _ := newest["worker_id"].(string)
+	if session == "" || !bus.IsSessionID(session) {
+		return refuse("the newest session of %s (%s) has no session id, so no msg can be checked for it; re-dispatch the branch (dispatch --pr %s) to clear this", plain(branch), plain(session), req.PR)
+	}
+	var undelivered []map[string]any
+	for _, crew := range sessionCrews(events, session, row.CrewID) {
+		found, err := unread.Directives(events, crew, session, marks.Read(paths.Dir, crew, session))
+		if err != nil {
+			return refuse("could not check %s for undelivered msgs: %s", plain(session), plain(err.Error()))
+		}
+		undelivered = append(undelivered, found...)
 	}
 	if len(undelivered) == 0 {
-		pass("unread: none for %s", session)
+		pass("unread: none for %s", plain(session))
 		return 0
 	}
 	list := make([]string, len(undelivered))
 	for i, m := range undelivered {
 		ts, _ := json.Marshal(m["ts"])
-		list[i] = fmt.Sprintf("ts %s %q", ts, excerpt(m["body"]))
+		list[i] = fmt.Sprintf("ts %s %s", plain(string(ts)), plain(fmt.Sprintf("%q", excerpt(m["body"]))))
 	}
-	return refuse("dispatcher msg(s) to %s not yet delivered: %s; let the worker read it (crew nudge %s), or re-dispatch the branch if its session ended", session, strings.Join(list, "; "), branch)
+	if terminal, _ := newest["terminal"].(bool); terminal {
+		state, _ := newest["state"].(string)
+		return refuse("dispatcher msg(s) to %s not yet delivered: %s; the session ended (%s) and a stopped session never reads its inbox; re-dispatch the branch (dispatch --pr %s)", plain(session), strings.Join(list, "; "), plain(state), req.PR)
+	}
+	return refuse("dispatcher msg(s) to %s not yet delivered: %s; let the worker read it (crew nudge %s), or re-dispatch the branch if its session ended", plain(session), strings.Join(list, "; "), plain(branch))
+}
+
+// sessionCrews are the crews a directive to session may sit under: the crew of
+// its pr_open row, and the crew of each dispatch/resume row that started the
+// session (a re-dispatch can carry another crew id). A plain status row never
+// names one: a worker can post a status under any crew id.
+func sessionCrews(events []bus.Event, session, prOpenCrew string) []string {
+	crews := []string{prOpenCrew}
+	for _, ev := range events {
+		if ev.Kind != bus.KindDispatch && ev.Kind != bus.KindResume {
+			continue
+		}
+		doc, _ := ev.Doc.(map[string]any)
+		if id, _ := doc["worker_id"].(string); id == session && !slices.Contains(crews, ev.CrewID) {
+			crews = append(crews, ev.CrewID)
+		}
+	}
+	return crews
+}
+
+// plain makes a bus-supplied string safe to print: invisible code points and
+// control characters (C1 included, which json.Marshal leaves raw) become
+// \u{XXXX}. json.Marshal has already escaped C0 as \u00XX, so that text is not
+// escaped twice.
+func plain(s string) string {
+	var b strings.Builder
+	for _, r := range invisible.Escape(s) {
+		if unicode.IsControl(r) {
+			fmt.Fprintf(&b, `\u{%04X}`, r)
+			continue
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
 }
 
 // excerpt is a msg body as one line of text, cut to 80 runes.

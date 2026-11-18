@@ -2,6 +2,7 @@ package merge_test
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"fmt"
 	"os"
@@ -277,16 +278,38 @@ func TestUnreadDirectives(t *testing.T) {
 		msgToOld = `{"ts":3,"crew_id":"c1","from":"dispatcher:c1","to":"` + sess + `","kind":"msg","body":"fix the flaky\ntest too"}`
 		msgToNew = `{"ts":6,"crew_id":"c1","from":"dispatcher:c1","to":"` + succ + `","kind":"msg","body":"rebase please"}`
 		working  = `{"ts":5,"crew_id":"c1","from":"` + succ + `","to":"dispatcher:c1","kind":"status","body":{"state":"working"}}`
+		exited   = `{"ts":2,"crew_id":"c1","from":"` + sess + `","to":"dispatcher:c1","kind":"status","body":{"state":"exited"}}`
+		// bare is a re-dispatch whose session id was never recorded.
+		bare = `{"kind":"dispatch","branch":"feat/x","session":null,"ts":5,"crew_id":"c1"}`
+		// The re-dispatch ran under crew c2, so its directives come from dispatcher:c2.
+		workingC2 = `{"ts":4,"crew_id":"c2","from":"` + succ + `","to":"dispatcher:c2","kind":"status","body":{"state":"working"}}`
+		// dispatchC2 is the row that ties the successor to crew c2.
+		dispatchC2 = `{"ts":3,"crew_id":"c2","kind":"dispatch","branch":"feat/x","session":"s9-9","worker_id":"` + succ + `"}`
+		// forgedZZ is a status a worker posted under a crew with no directives.
+		forgedZZ = `{"ts":7,"crew_id":"zz","from":"` + sess + `","to":"dispatcher:zz","kind":"status","body":{"state":"working"}}`
+		// escSess is a session whose text before the last # carries an ESC; only the
+		// text after the last # is checked as a session id.
+		escSess = `worker:feat/x#\u001b[2J#s9-9`
+		escDisp = `{"ts":3,"crew_id":"c1","kind":"dispatch","branch":"feat/x","session":"\u001b[2J#s9-9","worker_id":"` + escSess + `"}`
+		escMsg  = `{"ts":6,"crew_id":"c1","from":"dispatcher:c1","to":"` + escSess + `","kind":"msg","body":"x"}`
+		escBare = `{"kind":"dispatch","branch":"feat/x","session":"\u009b31m\u202e","ts":5,"crew_id":"c1"}`
+		msgC2   = `{"ts":3,"crew_id":"c2","from":"dispatcher:c2","to":"` + succ + `","kind":"msg","body":"rebase please"}`
+		// badTS is a status whose string ts makes the sessions fold fail.
+		badTS  = `{"ts":"\u202e","crew_id":"c1","from":"` + sess + `","to":"dispatcher:c1","kind":"status","body":{"state":"working"}}`
+		forged = `{"ts":"%s red","crew_id":"c1","from":"dispatcher:c1","to":"` + sess + `","kind":"msg","body":"x"}`
 	)
 	tests := []struct {
 		name   string
 		log    []string
 		req    merge.Request
 		marked string // a session whose msg ts 3 is already delivered
-		code   int
-		stderr []string
-		stdout string
-		merged bool
+		// markedCrew is the crew that mark is recorded under; "" is c1.
+		markedCrew string
+		code       int
+		stderr     []string
+		notStderr  []string
+		stdout     string
+		merged     bool
 	}{
 		{name: "undelivered refuses", log: []string{okRow, msgToOld}, code: 1, stderr: []string{sess, "ts 3", `"fix the flaky test too"`, "crew nudge feat/x"}},
 		{name: "delivered merges", log: []string{okRow, msgToOld}, marked: sess, merged: true},
@@ -300,6 +323,20 @@ func TestUnreadDirectives(t *testing.T) {
 		{name: "torn line before the directive refuses on dry run", log: []string{okRow, `{torn`, msgToOld}, req: merge.Request{DryRun: true}, code: 1, stderr: []string{sess, "ts 3"}},
 		{name: "torn line before the pr_open row, directive after", log: []string{`{torn`, okRow, msgToOld}, code: 1, stderr: []string{sess, "ts 3"}},
 		{name: "forged ts is escaped", log: []string{okRow, `{"ts":"\u001b[31mred","crew_id":"c1","from":"dispatcher:c1","to":"` + sess + `","kind":"msg","body":"x"}`}, code: 1, stderr: []string{`ts "\u001b[31mred"`}},
+		{name: "terminal session refuses naming re-dispatch", log: []string{okRow, exited, msgToOld}, code: 1, stderr: []string{sess, "exited", "ts 3", "dispatch --pr 7"}, notStderr: []string{"crew nudge"}},
+		{name: "session-less newest session refuses", log: []string{okRow, bare, msgToOld}, code: 1, stderr: []string{"no session id", "dispatch --pr 7"}},
+		{name: "successor under another crew refuses", log: []string{okRow, dispatchC2, workingC2, msgC2}, code: 1, stderr: []string{succ, "ts 3", "rebase please"}},
+		{name: "successor under another crew, delivered, merges", log: []string{okRow, dispatchC2, workingC2, msgC2}, marked: succ, markedCrew: "c2", merged: true},
+		{name: "directives under the pr_open crew and the dispatch crew are both checked", log: []string{okRow, dispatchC2, workingC2, msgC2, msgToNew}, marked: succ, markedCrew: "c2", code: 1, stderr: []string{succ, "ts 6", "rebase please"}},
+		{name: "fold error is escaped", log: []string{okRow, badTS}, code: 1, stderr: []string{"could not fold", `\u{202E}`}, notStderr: []string{"\u202e"}},
+		{name: "forged status under another crew does not hide a directive", log: []string{okRow, msgToOld, forgedZZ}, code: 1, stderr: []string{sess, "ts 3", "fix the flaky"}},
+		{name: "session-less session id is escaped", log: []string{okRow, escBare}, code: 1, stderr: []string{"no session id", `\u{009B}`, `\u{202E}`}, notStderr: []string{"\u009b", "\u202e"}},
+		{name: "session id with ESC is escaped on the not-delivered path", log: []string{okRow, escDisp, escMsg}, code: 1, stderr: []string{`\u{001B}`, "not yet delivered"}, notStderr: []string{"\x1b"}},
+		{name: "session id with ESC is escaped on the pass line", log: []string{okRow, escDisp}, req: merge.Request{DryRun: true}, stdout: `unread: none for worker:feat/x#\u{001B}[2J#s9-9`},
+		{name: "invisible code points in the undelivered excerpt are escaped", log: []string{okRow, `{"ts":3,"crew_id":"c1","from":"dispatcher:c1","to":"` + sess + `","kind":"msg","body":"a` + string([]rune{0xFE0F, 0xE0100, 0x034F}) + `b"}`}, code: 1, stderr: []string{`\u{FE0F}`, `\u{E0100}`, `\u{034F}`}, notStderr: []string{string(rune(0xFE0F)), string(rune(0xE0100)), string(rune(0x034F))}},
+		{name: "successor lookup ignores --crew", log: []string{okRow, dispatchC2, workingC2, msgC2}, req: merge.Request{Crew: "c1"}, code: 1, stderr: []string{succ, "ts 3"}},
+		{name: "forged ts with bidi is escaped", log: []string{okRow, fmt.Sprintf(forged, "\u202e")}, code: 1, stderr: []string{`\u{202E}`}, notStderr: []string{"\u202e"}},
+		{name: "forged ts with C1 is escaped", log: []string{okRow, fmt.Sprintf(forged, "\u009b")}, code: 1, stderr: []string{`\u{009B}`}, notStderr: []string{"\u009b"}},
 		{name: "empty crew uses the row's crew", log: []string{okRow, msgToOld}, req: merge.Request{Crew: ""}, code: 1, stderr: []string{"dispatcher msg(s) to " + sess}},
 	}
 	for _, tt := range tests {
@@ -310,7 +347,8 @@ func TestUnreadDirectives(t *testing.T) {
 				t.Fatal(err)
 			}
 			if tt.marked != "" {
-				if !marks.RecordHeld(dir, "c1", tt.marked, []any{map[string]any{"from": "dispatcher:c1", "ts": 3}}) {
+				crew := cmp.Or(tt.markedCrew, "c1")
+				if !marks.RecordHeld(dir, crew, tt.marked, []any{map[string]any{"from": "dispatcher:" + crew, "ts": 3}}) {
 					t.Fatal("could not record the delivered mark")
 				}
 			}
@@ -326,6 +364,11 @@ func TestUnreadDirectives(t *testing.T) {
 			for _, w := range tt.stderr {
 				if !strings.Contains(stderr.String(), w) {
 					t.Errorf("stderr = %q, want it to contain %q", stderr.String(), w)
+				}
+			}
+			for _, w := range tt.notStderr {
+				if strings.Contains(stderr.String(), w) {
+					t.Errorf("stderr = %q, want it free of %q", stderr.String(), w)
 				}
 			}
 			if !strings.Contains(stdout.String(), tt.stdout) {

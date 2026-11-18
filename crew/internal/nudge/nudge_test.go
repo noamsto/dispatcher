@@ -581,6 +581,8 @@ func TestPanePiEmptiedBox(t *testing.T) {
 	}
 }
 
+const notDeliveredDetail = "the lead took the line but its read mark has not advanced past the msg; it may still read it (crew where, or re-check later), never re-typed"
+
 func TestPaneTypedButNotAccepted(t *testing.T) {
 	wins, panes := anchored()
 	for _, tc := range []struct {
@@ -590,6 +592,14 @@ func TestPaneTypedButNotAccepted(t *testing.T) {
 		keys   []string
 		want   string
 		detail string
+		// delivered is Deps.Delivered, handed the 1-based poll number; nil leaves the
+		// check off. polls is how many times Pane is expected to have asked.
+		delivered func(poll int) bool
+		env       map[string]string
+		polls     int
+		// sleepFail is the 1-based poll sleep that errors, as a cancelled context's
+		// does; 0 never fails. Its poll is then the last.
+		sleepFail int
 	}{
 		{
 			name: "held: the line is still in the box after one Enter",
@@ -631,13 +641,117 @@ func TestPaneTypedButNotAccepted(t *testing.T) {
 			detail: "the pane after Enter is neither a live turn nor the held line; verify it (crew where), never re-typed",
 			//
 		},
+		{
+			// The pane looks accepted, but the lead's mark never covers the msg: one
+			// typed row that says so, and the line is not typed again.
+			name:      "not delivered: accepted by the pane, the lead's mark never advances",
+			frames:    acceptedFrames(t),
+			keys:      typedArgv,
+			want:      "typed, not delivered",
+			detail:    notDeliveredDetail,
+			delivered: func(int) bool { return false },
+			polls:     20,
+		},
+		{
+			name:      "not delivered: CREW_NUDGE_DELIVER bounds the polls",
+			frames:    acceptedFrames(t),
+			keys:      typedArgv,
+			want:      "typed, not delivered",
+			detail:    notDeliveredDetail,
+			delivered: func(int) bool { return false },
+			env:       map[string]string{"CREW_NUDGE_DELIVER": "3"},
+			polls:     3,
+		},
+		{
+			name:      "not delivered: CREW_NUDGE_DELIVER=0 is the default, not no polls",
+			frames:    acceptedFrames(t),
+			keys:      typedArgv,
+			want:      "typed, not delivered",
+			detail:    notDeliveredDetail,
+			delivered: func(int) bool { return false },
+			env:       map[string]string{"CREW_NUDGE_DELIVER": "0"},
+			polls:     20,
+		},
+		{
+			name:      "not delivered: a negative CREW_NUDGE_DELIVER is the default",
+			frames:    acceptedFrames(t),
+			keys:      typedArgv,
+			want:      "typed, not delivered",
+			detail:    notDeliveredDetail,
+			delivered: func(int) bool { return false },
+			env:       map[string]string{"CREW_NUDGE_DELIVER": "-2"},
+			polls:     20,
+		},
+		{
+			name:      "not delivered: a failing sleep stops the polling",
+			frames:    acceptedFrames(t),
+			keys:      typedArgv,
+			want:      "typed, not delivered",
+			detail:    notDeliveredDetail,
+			delivered: func(int) bool { return false },
+			sleepFail: 2,
+			polls:     2,
+		},
+		{
+			name:      "accepted: the mark advances on the third poll",
+			frames:    acceptedFrames(t),
+			keys:      typedArgv,
+			want:      "accepted",
+			detail:    "the lead took the line (live turn or emptied input box)",
+			delivered: func(poll int) bool { return poll >= 3 },
+			polls:     3,
+		},
+		{
+			name:   "accepted: no Delivered check leaves accepted alone",
+			frames: acceptedFrames(t),
+			keys:   typedArgv,
+			want:   "accepted",
+			detail: "the lead took the line (live turn or emptied input box)",
+		},
+		{
+			// held is already not accepted, so the mark is never asked about.
+			name: "held: Delivered is not polled",
+			frames: []string{
+				fixture(t, "done_idle.txt"), fixture(t, "done_idle.txt"),
+				fixture(t, "nudge_typed.txt"), fixture(t, "nudge_typed.txt"),
+			},
+			keys:      typedArgv,
+			want:      "held",
+			detail:    "the line still sits in the input box after one Enter; not re-sent — a human must submit or clear it (crew where)",
+			delivered: func(int) bool { return true },
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			p := &fakePane{frames: tc.frames, windows: wins, panes: panes, enterFails: tc.enter}
 			b := &fakeBus{rows: sessionRows(t, idleReq, "working")}
-			out, rc := Pane(context.Background(), req("claude"), newDeps(p, b, nil))
-			if rc != exitTyped {
-				t.Errorf("rc = %d, want 3 (%q)", rc, out)
+			d := newDeps(p, b, tc.env)
+			polls := 0
+			if tc.sleepFail > 0 {
+				// The settle and the gap sleep come before the poll sleeps.
+				n := 0
+				d.Sleep = func(context.Context, string) error {
+					if n++; n == tc.sleepFail+2 {
+						return context.Canceled
+					}
+					return nil
+				}
+			}
+			if tc.delivered != nil {
+				d.Delivered = func(context.Context, PaneRequest) bool {
+					polls++
+					return tc.delivered(polls)
+				}
+			}
+			out, rc := Pane(context.Background(), req("claude"), d)
+			wantRC := exitTyped
+			if tc.want == "accepted" {
+				wantRC = 0
+			}
+			if rc != wantRC {
+				t.Errorf("rc = %d, want %d (%q)", rc, wantRC, out)
+			}
+			if polls != tc.polls {
+				t.Errorf("Delivered polled %d times, want %d", polls, tc.polls)
 			}
 			if want := "nudge " + tc.want + ": %9 " + idleReq + " — " + tc.detail; out != want {
 				t.Errorf("out = %q, want %q", out, want)
@@ -648,7 +762,11 @@ func TestPaneTypedButNotAccepted(t *testing.T) {
 				t.Errorf("keys = %q, want %q", got, tc.keys)
 			}
 			if len(b.appended) != 1 {
-				t.Errorf("%d rows, want 1", len(b.appended))
+				t.Fatalf("%d rows, want 1", len(b.appended))
+			}
+			if got := rowJSON(t, b.appended[0]); !strings.Contains(got, `"kind":"nudge"`) ||
+				!strings.Contains(got, `"result":"`+tc.want+`"`) {
+				t.Errorf("row %s, want a nudge row with result %q", got, tc.want)
 			}
 		})
 	}

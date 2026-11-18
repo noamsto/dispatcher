@@ -210,7 +210,7 @@ func Run(ctx context.Context, r Request, paths bus.Paths, stdout, stderr io.Writ
 	}
 
 	if wait == "" {
-		out, rc := Pane(ctx, a.request("dispatcher:"+a.crew), a.o.Deps)
+		out, rc := Pane(ctx, a.request("dispatcher:"+a.crew), a.paneDeps())
 		if rc == exitRefused {
 			return refuse(stderr, "refused — "+out)
 		}
@@ -242,6 +242,17 @@ func (a *arm) request(actor string) PaneRequest {
 	return PaneRequest{
 		Pane: a.pane, Engine: a.engine, Session: a.sid, Crew: a.crew, Actor: actor, MsgTS: a.ts,
 	}
+}
+
+// paneDeps is the arm's Deps plus the delivery check: the msg is delivered once the
+// lead's scan no longer lists it, the same test the wait loop uses for "the lead read it".
+func (a *arm) paneDeps() Deps {
+	d := a.o.Deps
+	d.Delivered = func(context.Context, PaneRequest) bool {
+		oldest := a.unread()
+		return oldest == "" || num(oldest) > num(a.ts)
+	}
+	return d
 }
 
 // route sends the nudge to the host its target was dispatched on, when the bus
@@ -416,7 +427,7 @@ func (a *arm) wait(ctx context.Context, wait string) int {
 				"nudge not needed: "+a.pane+" "+a.sid+" — the lead read the msg during the wait; nothing typed")
 		}
 
-		out, rc := Pane(ctx, a.request("dispatcher:"+a.crew), a.o.Deps)
+		out, rc := Pane(ctx, a.request("dispatcher:"+a.crew), a.paneDeps())
 		if rc != exitRefused {
 			res := strings.TrimPrefix(out, "nudge ")
 			_, detail, _ := strings.Cut(out, " — ")
