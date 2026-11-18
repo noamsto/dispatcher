@@ -33,6 +33,7 @@ type Deps struct {
 	Now            int64 // collection clock (data.Config.Now) stamped into the snapshot
 	Map            MapDeps
 	DispatchConfig string // dispatch-config binary the Settings tab writes through
+	Narrow         bool   // force the stacked narrow Overview layout at any width
 
 	// FleetWatchPaths is the glob list the Fleet tab's change poll watches,
 	// re-read every tick; nil disables it.

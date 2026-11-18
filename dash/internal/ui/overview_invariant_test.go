@@ -347,3 +347,28 @@ func probePeek(ov overviewView) (*workerKey, string) {
 	}
 	return &workerKey{args[i+2], args[i+4]}, text
 }
+
+func TestOverviewNarrowClosedBorders(t *testing.T) {
+	asciiProfile(t)
+	for w := 40; w < wideWidth; w += 3 {
+		for _, h := range []int{14, 20, 30, 40} {
+			v := newOverviewView(sweepInputs(), overviewNow)
+			assertClosedBorders(t, fmt.Sprintf("%dx%d", w, h), stripped(v.View(w, h)))
+		}
+	}
+}
+
+// assertClosedBorders fails when a line has a rounded corner or side border
+// without its partner: every panel row opens and closes with the same family
+// of glyph, so a clipped or bled frame shows up as an odd count.
+func assertClosedBorders(t *testing.T, name, frame string) {
+	t.Helper()
+	for i, l := range strings.Split(frame, "\n") {
+		if strings.Count(l, "╭") != strings.Count(l, "╮") || strings.Count(l, "╰") != strings.Count(l, "╯") {
+			t.Errorf("%s: line %d has unbalanced corners: %q", name, i, l)
+		}
+		if n := strings.Count(l, "│"); n%2 != 0 && !strings.HasPrefix(strings.TrimSpace(l), "▸") {
+			t.Errorf("%s: line %d has an unclosed side border: %q", name, i, l)
+		}
+	}
+}

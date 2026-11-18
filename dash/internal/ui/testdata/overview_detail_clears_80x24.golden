@@ -5,20 +5,20 @@
 │ ╭ ▸ DETAIL ─────────────────────────────────────────────────────── feat/h ─╮ │
 ╰─│ ✗ feat/h  feat/h  standard  claude/sonnet  failed                        │─╯
 ╭ │   exit 1 after test failure                                              │─╮
-│ │ PHASE                                                                    │—│
+│ │ PHASE                                                                    │ │
 │ │   ○ spec ○ plan ○ execute ○ gate ○ review ○ ship                         │ │
-│ │ ACCEPTANCE —                                                             │5│
-│ │ AGENTS                                                                   │ │
-│ │   lead sonnet standard failed                                            │—│
-│ │   execute subagents: not reported                                        │ │
+│▌│ ACCEPTANCE —                                                             │ │
+│▌│ AGENTS                                                                   │ │
+╰─│   lead sonnet standard failed                                            │─╯
+╭ │   execute subagents: not reported                                        │─╮
 │ │ ATTENTION                                                                │—│
 │ │   ✗ exit 1 after test failure → crew where --crew c1 -- feat/h           │ │
-│ │     To clear: reaped once its PR merges/closes or its issue closes (crew │—│
-│ │               reap), or re-dispatch                                      │ │
-│ │ RECENT EVENTS                                                            │—│
-│ │   none                                                                   │ │
-│ ╰──────────────────────────────────────────────────────────────────────────╯—│
-│   ○─○─○─○─○─○ failed                                                         │
-│▌✗ feat/h standard                                                        AC —│
-│▌  ○─○─○─○─○─○ failed                                                         │
+│▌│     To clear: reaped once its PR merges/closes or its issue closes (crew │—│
+│▌│               reap), or re-dispatch                                      │ │
+╰─│ RECENT EVENTS                                                            │─╯
+╭ │   none                                                                   │─╮
+│ ╰──────────────────────────────────────────────────────────────────────────╯─│
+│ otter      ▁▁▁▁▁▁█▁█▁▁█▁▁▁▁▁▁▁▁▁█▁▁▁▁▁▁█▁ ok 45s                             │
+│ heron      ▁▁▁▁▁▁▁█▁█▁▁█▁▁▁█▁█▁▁▁▁▁▁▁▁▁▁▁ ok 10m                             │
+│ feat/c     ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁ ok 5m                              │
 ╰──────────────────────────────────────────────────────────────────────────────╯

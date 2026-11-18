@@ -33,6 +33,7 @@ type fleetView struct {
 	drillCrew string // the drilled crew's row key
 	crumb     string
 	drill     overviewView
+	narrow    bool // forced narrow layout, applied to each drilled Overview
 }
 
 func newFleetView(msg snapshotMsg, now func() time.Time) fleetView {
@@ -403,6 +404,7 @@ func (v *fleetView) openDrill(crewKey string) tea.Cmd {
 	}
 	v.drill = newOverviewView(in, v.now)
 	v.drill.acts = v.acts
+	v.drill.st.narrow = v.narrow
 	v.drilled, v.drillCrew, v.st.crew = true, crewKey, crewKey
 	return nil
 }

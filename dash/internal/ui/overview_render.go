@@ -41,7 +41,12 @@ type overviewState struct {
 	worker   workerKey // the worker chosen outside the strip
 	stripOff int
 	filter   string
+	narrow   bool // stack the panels whatever the width
 }
+
+// isNarrow is whether the Overview stacks its panels: forced, or too narrow
+// for three columns.
+func isNarrow(w int, st overviewState) bool { return st.narrow || w < wideWidth }
 
 // ovSel is the resolved selection: the worker every panel highlights and
 // actions act on, and the strip cursor. Either is -1 for none.
@@ -91,6 +96,8 @@ type overviewRects struct {
 	stripRows int
 	stripOff  int
 	cardLines int
+	narrow    bool
+	stack     []ovPanel // narrow only: the body panels and events, top to bottom
 	sel       ovSel
 	panels    [numOvPanels]panelLayout
 }
@@ -195,18 +202,6 @@ func resolve(ov vm.OverviewView, st overviewState, ix ovIndex, shown []ovPanel) 
 	return sel
 }
 
-// shownPanels is the body panels drawn at width w: all three when wide, else
-// the focused agents or monitors panel, else the checklists.
-func shownPanels(w int, focus ovPanel) []ovPanel {
-	switch {
-	case w >= wideWidth:
-		return []ovPanel{panelChecklists, panelAgents, panelMonitors}
-	case focus == panelAgents || focus == panelMonitors:
-		return []ovPanel{focus}
-	}
-	return []ovPanel{panelChecklists}
-}
-
 func panelWorkers(p ovPanel, ov vm.OverviewView, ix ovIndex) []int {
 	var es []entry
 	switch p {
@@ -232,7 +227,7 @@ func (ix ovIndex) matches(hay string) bool {
 
 // effectiveFocus is the panel that holds focus as drawn: the strip hands it to
 // the checklists while it has no items. The narrow layout always draws the
-// focused agents or monitors panel, so the strip is the only one that hides.
+// focused panel, so the strip is the only one that hides.
 func effectiveFocus(ov vm.OverviewView, f ovPanel) ovPanel {
 	if f == panelAttention && len(ov.Attention) == 0 {
 		return panelChecklists
@@ -385,7 +380,8 @@ func panelRect(r rect) (outer, inner rect) {
 // window computed.
 func overviewLayout(w, h int, ov vm.OverviewView, st overviewState) overviewRects {
 	ix := newOvIndex(ov, st)
-	r := overviewRects{w: w, h: h}
+	narrow := isNarrow(w, st)
+	r := overviewRects{w: w, h: h, narrow: narrow}
 	n := len(ov.Attention)
 	y := 0
 	if n == 0 {
@@ -394,6 +390,15 @@ func overviewLayout(w, h int, ov vm.OverviewView, st overviewState) overviewRect
 	} else {
 		var stripH int
 		stripH, r.stripRows, r.stripOff = stripWindow(n, h, st.stripOff, cursorIndex(ov, st))
+		if cap := max(3, h/3); narrow && stripH > cap {
+			stripH = cap
+			r.stripRows = min(r.stripRows, max0(stripH-2))
+			r.stripOff = clamp(r.stripOff, 0, n-r.stripRows)
+			if r.stripRows > 0 {
+				c := cursorIndex(ov, st)
+				r.stripOff = clamp(r.stripOff, c-r.stripRows+1, c)
+			}
+		}
 		outer, inner := panelRect(rect{0, 0, w, stripH})
 		pl := panelLayout{shown: true, rect: outer, inner: inner}
 		for i := range r.stripRows {
@@ -407,25 +412,24 @@ func overviewLayout(w, h int, ov vm.OverviewView, st overviewState) overviewRect
 		r.panels[panelAttention] = pl
 		y = stripH
 	}
-	var shown []ovPanel
 	bodyH := max0(h - y)
+	if narrow {
+		r.stackBody(ov, st, ix, y, bodyH)
+		return r
+	}
+	var shown []ovPanel
 	if bodyH >= 4 { // 2-row frame plus the smallest, 2-line entry
-		shown = shownPanels(w, st.focus)
+		shown = []ovPanel{panelChecklists, panelAgents, panelMonitors}
 	}
 	r.sel = resolve(ov, st, ix, shown)
 	if len(shown) == 0 {
 		return r
 	}
 
-	wide := w >= wideWidth
 	widths := map[ovPanel]int{}
-	if wide {
-		widths[panelChecklists] = w * 40 / 100
-		widths[panelAgents] = w * 30 / 100
-		widths[panelMonitors] = w - widths[panelChecklists] - widths[panelAgents]
-	} else {
-		widths[shown[0]] = w
-	}
+	widths[panelChecklists] = w * 40 / 100
+	widths[panelAgents] = w * 30 / 100
+	widths[panelMonitors] = w - widths[panelChecklists] - widths[panelAgents]
 
 	contentH := 0
 	for _, p := range shown {
@@ -473,6 +477,71 @@ func overviewLayout(w, h int, ov vm.OverviewView, st overviewState) overviewRect
 	return r
 }
 
+func panelEntries(p ovPanel, ov vm.OverviewView, ix ovIndex, cardLines int) []entry {
+	switch p {
+	case panelChecklists:
+		return checklistEntries(ov, ix, cardLines)
+	case panelAgents:
+		return agentEntries(ov, ix)
+	}
+	return monitorEntries(ov, ix)
+}
+
+// stackBody lays the body panels out one above another from row y in bodyH
+// rows. The focused panel is drawn before any other is dropped, then agents,
+// checklists and monitors; each takes what its rows need up to a share of what
+// is left, and events fill the rest.
+func (r *overviewRects) stackBody(ov vm.OverviewView, st overviewState, ix ovIndex, y, bodyH int) {
+	const minH = 4 // 2-row frame plus the smallest, 2-line entry
+	var shown []ovPanel
+	if bodyH >= minH {
+		prio := []ovPanel{panelAgents, panelChecklists, panelMonitors}
+		if f := effectiveFocus(ov, st.focus); f != panelAttention {
+			prio = slices.Insert(slices.DeleteFunc(prio, func(p ovPanel) bool { return p == f }), 0, f)
+		}
+		keep := prio[:min(len(prio), bodyH/minH)]
+		for _, p := range []ovPanel{panelAgents, panelChecklists, panelMonitors} {
+			if slices.Contains(keep, p) {
+				shown = append(shown, p)
+			}
+		}
+	}
+	r.sel = resolve(ov, st, ix, shown)
+
+	r.cardLines = 3
+	left := bodyH
+	for i, p := range shown {
+		want := max(1, totalLines(panelEntries(p, ov, ix, 3))) + 2
+		share := left - minH*(len(shown)-1-i)
+		switch {
+		case i == len(shown)-1:
+			share = max(left*2/3, min(want, left-minH)) // events get what is left when it is enough
+		case p == panelAgents:
+			share = min(share, bodyH/3)
+		case p == panelChecklists:
+			share = min(share, left/2)
+		}
+		ph := clamp(want, minH, max(minH, share))
+		if left-ph < minH && (i == len(shown)-1 || left-ph < 0) {
+			ph = left // no room for another panel: absorb the slack
+		}
+		if p == panelChecklists && len(checklistEntries(ov, ix, 1))*3 > max0(ph-2) {
+			r.cardLines = 2
+		}
+		outer, inner := panelRect(rect{0, y, r.w, ph})
+		es := panelEntries(p, ov, ix, r.cardLines)
+		r.panels[p] = panelLayout{shown: true, rect: outer, inner: inner, items: place(es, inner, r.sel.worker)}
+		r.stack = append(r.stack, p)
+		y += ph
+		left -= ph
+	}
+	if left >= minH {
+		outer, inner := panelRect(rect{0, y, r.w, left})
+		r.panels[panelEvents] = panelLayout{shown: true, rect: outer, inner: inner, items: place(eventEntries(ov), inner, -1)}
+		r.stack = append(r.stack, panelEvents)
+	}
+}
+
 func renderOverview(w, h int, ov vm.OverviewView, st overviewState, mode pillMode) string {
 	if w <= 0 || h <= 0 {
 		return ""
@@ -507,9 +576,14 @@ func renderOverview(w, h int, ov vm.OverviewView, st overviewState, mode pillMod
 	if r.panels[panelAttention].shown {
 		lines = append(lines, body(panelAttention)...)
 	}
+	if r.narrow {
+		for _, p := range r.stack {
+			lines = append(lines, body(p)...)
+		}
+	}
 	var cols [][]string
 	for _, p := range []ovPanel{panelChecklists, panelAgents, panelMonitors} {
-		if r.panels[p].shown {
+		if !r.narrow && r.panels[p].shown {
 			cols = append(cols, body(p))
 		}
 	}
@@ -522,7 +596,7 @@ func renderOverview(w, h int, ov vm.OverviewView, st overviewState, mode pillMod
 			lines = append(lines, sb.String())
 		}
 	}
-	if r.panels[panelEvents].shown {
+	if !r.narrow && r.panels[panelEvents].shown {
 		lines = append(lines, body(panelEvents)...)
 	}
 	for len(lines) < h {
@@ -612,7 +686,7 @@ func rowLines(ov vm.OverviewView, r overviewRects, st overviewState, it placed, 
 	case eCard:
 		return cardLines(ov, r.cardLines, it, line, iw)
 	case eAgent:
-		return agentLines(ov, it, line)
+		return agentLines(ov, it, line, r.narrow)
 	case eHeader:
 		return []string{headerLine(it.idx, iw)}
 	case eWatch:
@@ -622,7 +696,7 @@ func rowLines(ov vm.OverviewView, r overviewRects, st overviewState, it placed, 
 	case eBudget:
 		return []string{budgetLine(ov, it, line(), iw)}
 	}
-	return []string{ovEventLine(ov, it, line(), iw)}
+	return []string{ovEventLine(ov, it, line(), iw, r.narrow)}
 }
 
 func attnLine(ov vm.OverviewView, r overviewRects, it placed, s *spans) string {
@@ -725,7 +799,7 @@ func phaseLabel(w vm.OverviewWorker) string {
 	return w.State
 }
 
-func agentLines(ov vm.OverviewView, it placed, line func() *spans) []string {
+func agentLines(ov vm.OverviewView, it placed, line func() *spans, narrow bool) []string {
 	a := ov.Agents[it.idx]
 	label := rowLabel(a.Branch, a.Host)
 	if it.worker >= 0 {
@@ -735,8 +809,10 @@ func agentLines(ov vm.OverviewView, it placed, line func() *spans) []string {
 		add(stateGlyph(a.Lead.State), fg(glyphColor(a.Lead.State))).
 		add(" ", lipgloss.NewStyle()).
 		add(label, fg(colText).Bold(true)).
-		add(" "+ovStr(a.Lead.Model, ovStr(a.Lead.Engine, "?")), fg(colPurple)).
-		add(" "+ovStr(a.Lead.Tier, "?"), fg(colDim))
+		add(" "+ovStr(a.Lead.Model, ovStr(a.Lead.Engine, "?")), fg(colPurple))
+	if !narrow {
+		l1.add(" "+ovStr(a.Lead.Tier, "?"), fg(colDim))
+	}
 	l2 := line().add("  roles ", fg(colDim))
 	switch {
 	case a.Roles == nil:
@@ -824,8 +900,17 @@ func budgetBar(b vm.BudgetRow, s *spans, iw int) string {
 		add(pace, fg(colDim)).String()
 }
 
-func ovEventLine(ov vm.OverviewView, it placed, s *spans, iw int) string {
+func ovEventLine(ov vm.OverviewView, it placed, s *spans, iw int, narrow bool) string {
 	e := ov.Events[it.idx]
+	if narrow {
+		age, from := ovAge(ov.GeneratedAt-e.TS), eventFrom(ov, e.Worker)
+		fromW := min(ansi.StringWidth(from), iw/3)
+		return s.add(age, fg(colDim)).
+			add(" ", lipgloss.NewStyle()).
+			col(from, fromW, fg(colText).Bold(true), false).
+			add(" ", lipgloss.NewStyle()).
+			col(e.Text, iw-1-ansi.StringWidth(age)-1-fromW-1, fg(colText), false).String()
+	}
 	fromW := clamp(iw/4, 12, 24)
 	return s.col(ovAge(ov.GeneratedAt-e.TS), 4, fg(colDim), true).
 		add(" ", lipgloss.NewStyle()).
