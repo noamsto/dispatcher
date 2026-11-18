@@ -15200,7 +15200,7 @@ setup_bundle_resume() {
   seed_claim_row '{"ts":1,"crew_id":"c0","kind":"dispatch","branch":"feat/42-do-a-thing","also_closes":[43]}'
   seed_claim_row '{"ts":1,"crew_id":"c0","kind":"claim-issue","issue":"43","branch":"feat/42-do-a-thing","pid":1}'
   seed_claim_row '{"ts":2,"crew_id":"c0","kind":"dispatch","branch":"feat/42-do-a-thing","task_kind":"review"}'
-  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c2 43 "Another thing"
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
   [ "$status" -eq 0 ]
   grep -qx 'Closes #43' "$TEST_REPO/.dispatch-wt/feat-42-do-a-thing/WORKER_TASK.md"
 }
