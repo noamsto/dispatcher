@@ -330,7 +330,10 @@ worker_env() {
     'export "D=$XDG_RUNTIME_DIR"; rm -rf "$D"' "export 'D=/run/user/1000'; echo 'x'; rm -rf \"\$D\"" \
     'd=; d+=/run/user/1000; rm -rf "$d"' 'd=/run/user; d+=/1000; rm -rf "$d"' \
     'a=("$XDG_RUNTIME_DIR"); rm -rf "${a[@]}"' 'a=(x "$XDG_RUNTIME_DIR"); rm -rf "${a[1]}"' \
-    'a=(); a+=(/run/user/1000); rm -rf "$a"' \
+    'a=(); a+=(/run/user/1000); rm -rf "$a"' 'dirs[0]="$XDG_RUNTIME_DIR/tmux-1000"; rm -rf "${dirs[0]}"' \
+    'a[0]=/run/user/1000; rm -rf "$a"' 'export "D"=/run/user/1000; rm -rf "$D"' 'export D"=$XDG_RUNTIME_DIR"; rm -rf "$D"' \
+    'a=(x /run/user/1000); rm -rf "${a[@]:1}"' 'd=$XDG_RUNTIME_DIR; rm -rf "${d:0}"' 'd=$XDG_RUNTIME_DIR; rm -rf "${d//x/y}"' \
+    $'x="a\nb"; x=$XDG_RUNTIME_DIR; rm -rf ./"$x" "$x"' \
     'for d in "$XDG_RUNTIME_DIR"/tmux-*; do rm -rf "$d"; done' \
     $'for d in a /run/user/1000\ndo rm -rf "$d"; done' \
     'git commit -m "fix \"x\""; rm -rf /run/user/1000' 'echo "a \\" ; rm -rf /run/user/1000'; do
@@ -348,7 +351,9 @@ worker_env() {
   local cmd
   for cmd in 'for d in a b; do rm -rf "$d/"; done' 'a=(x y); rm -rf "${a[@]}"' \
     'export "D=/tmp/x"; rm -rf "$D"' 'd=${D:-"/tmp/x"}; rm -rf "$d"' 'd=/tmp; d+=/x; rm -rf "$d"' \
-    'git commit -m "fix \"x\""; rm -rf /tmp/x' 'for d in $(ls "$XDG_RUNTIME_DIR"); do rm -rf "$d"; done'; do
+    'git commit -m "fix \"x\""; rm -rf /tmp/x' 'for d in $(ls "$XDG_RUNTIME_DIR"); do rm -rf "$d"; done' \
+    'p=/tmp/build; p+=/a; p+=/b; p+=/c; p+=/d; rm -rf "$p"' 'files=(a b c d e f g h i j k l m n o p q); rm -f "${files[@]}"' \
+    'for f in a.o b.o c.o d.o e.o f.o g.o h.o i.o j.o k.o l.o m.o n.o o.o p.o q.o; do rm -f "$f"; done'; do
     run run_guard <<<"$(claude_bash "$cmd")"
     echo "claude: $cmd"
     assert_allow
@@ -383,14 +388,41 @@ assert_within() { # <name> <ms> <command>
 @test "tmux-server-guard: a doubling variable chain is refused within the hook timeout" {
   runtime_env
   assert_within acyclic 3000 "$(doubling_chain 12 /tmp)"
-  assert_block 'expansion budget'
+  assert_block 'characters'
   assert_within runtime 3000 "$(doubling_chain 12 '$XDG_RUNTIME_DIR')"
-  assert_block 'expansion budget'
+  assert_block 'characters'
 }
 
 # bats test_tags=timing
 @test "tmux-server-guard: a cyclic doubling chain exhausts the step budget and is refused" {
   runtime_env
   assert_within cyclic 3000 "$(doubling_chain 25 '$a0')"
+  assert_block 'expansion budget'
+}
+
+@test "tmux-server-guard: a candidate over the length cap has its own reason" {
+  runtime_env
+  run run_guard <<<"$(claude_bash "rm -rf /tmp/$(printf 'a%.0s' $(seq 600))")"
+  assert_block 'characters'
+  [[ $output != *'resolves to the per-user'* ]]
+}
+
+# bats test_tags=timing
+@test "tmux-server-guard: a long run of += appends is refused within the hook timeout" {
+  runtime_env
+  local appends='' i
+  for ((i = 0; i < 20; i++)); do appends+=' d+=/x;'; done
+  assert_within appends-runtime 3000 "d=\$XDG_RUNTIME_DIR;${appends} rm -rf \"\$d\""
+  assert_block 'candidate values'
+  assert_within appends-tmp 3000 "d=x;${appends} rm -rf \"/tmp/\$d\""
+  assert_block 'candidate values'
+}
+
+# bats test_tags=timing
+@test "tmux-server-guard: a cyclic chain among many bindings is refused within the hook timeout" {
+  runtime_env
+  local pad='' i
+  for ((i = 0; i < 1500; i++)); do pad+="z$i=1; "; done
+  assert_within padded-cycle 3000 "${pad}$(doubling_chain 25 '$a0')"
   assert_block 'expansion budget'
 }

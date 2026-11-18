@@ -331,7 +331,7 @@ unk=$'\002'
 # Most candidates one operand may expand to; past it the delete is refused.
 max_cands=16
 # Why the delete is refused: '' the runtime dir, `cap` too many candidates,
-# `budget` the expansion budget ran out.
+# `budget` the step budget ran out, `len` a candidate grew too long.
 del_why=''
 # Every NAME=value, NAME+=value, ${NAME:=value}, array element and `for NAME in`
 # word on the line: names in $bn, raw values (quotes stripped, substitutions
@@ -339,7 +339,7 @@ del_why=''
 bn=()
 bv=()
 bk=()
-re_bind_word='(^|[[:space:];&|()`])(["'"'"']?)([A-Za-z_][A-Za-z0-9_]*)([+]?)=$'
+re_bind_word='(^|[[:space:];&|()`])(["'"'"']?)([A-Za-z_][A-Za-z0-9_]*)(\[[^]]*\])?([+]?)=$'
 re_bind_brace='[$][{]([A-Za-z_][A-Za-z0-9_]*):?=$'
 re_for='(^|[[:space:];&|()`])for[[:space:]]+([A-Za-z_][A-Za-z0-9_]*)[[:space:]]+in([[:space:]]|$)'
 collected=0
@@ -350,7 +350,9 @@ over=0
 # past either the delete is refused, because running past the hook's timeout would
 # fail open.
 memo_n=()
-memo_v=()
+memo_off=()
+memo_cnt=()
+memo_flat=()
 cyc=0
 steps=0
 max_steps=1500
@@ -483,9 +485,15 @@ bind_words() { # <name> <text> <list: 1 for a for-list, 0 for an array>
     ((ri > i)) || break
     i=$ri
     if [[ $rv =~ ^\[[^]]*\]=(.*)$ ]]; then rv=${BASH_REMATCH[1]}; fi
-    bn+=("$1")
-    bv+=("$rv")
-    bk+=('')
+    # A literal relative word can never reach the runtime dir, and a long list
+    # of them would only run into the candidate cap.
+    case $rv in
+    /* | *'$'* | *"$unk"* | *'`'*)
+      bn+=("$1")
+      bv+=("$rv")
+      bk+=('')
+      ;;
+    esac
   done
 }
 
@@ -519,12 +527,16 @@ collect_bindings() {
       continue
     fi
     if [[ ! $pre =~ $re_bind_word ]]; then
-      pre='='
-      continue
+      # `export "D"=v` and `export D"=v"` hand the shell the word D=v.
+      strip_quotes "$pre"
+      if [[ ! $sq =~ $re_bind_word ]]; then
+        pre='='
+        continue
+      fi
     fi
     oq=${BASH_REMATCH[2]}
     name=${BASH_REMATCH[3]}
-    app=${BASH_REMATCH[4]}
+    app=${BASH_REMATCH[5]}
     pre='='
     if [[ ${rest:0:1} == '(' ]]; then
       # An array: every element is a plain binding of the name, `+=` or not.
@@ -554,11 +566,12 @@ collect_bindings() {
 # variable says nothing about the worker's shell. An unset or empty value, or
 # a name with no candidates, is unknown, never empty, so `rm -rf "$dir/"` is
 # not `rm -rf /`. A binding that refers back to its own name (`d=$d/x`) reads
-# that name as unknown. An append (`d+=v`) holds v alone and v after every other
-# candidate, whatever its order on the line.
+# that name as unknown. Each append (`d+=v`), in line order, extends the
+# previous generation of values (the others, and the empty value): the list
+# grows by one generation per append, not by doubling.
 lookup_var() { # <name>
-  local i e c cyc0 pass joined
-  local -a out=() add
+  local i e c v cyc0
+  local -a out=() last gen pidx=() aidx=()
   case $1 in
   UID)
     lv=("$UID")
@@ -569,15 +582,16 @@ lookup_var() { # <name>
     return 0
     ;;
   esac
-  steps=$((steps + 1))
-  if ((steps > max_steps)); then budget=1; fi
+  # A lookup scans every binding, so a long line charges for that.
+  steps=$((steps + 1 + ${#bn[@]} / 16))
+  if ((steps > max_steps && !budget)); then budget=1; fi
   if ((budget)); then
     lv=("$unk")
     return 0
   fi
   for ((i = 0; i < ${#memo_n[@]}; i++)); do
     [[ ${memo_n[i]} == "$1" ]] || continue
-    IFS=$'\003' read -r -a lv <<<"${memo_v[i]}"
+    lv=("${memo_flat[@]:${memo_off[i]}:${memo_cnt[i]}}")
     return 0
   done
   # export -p, not compgen -e: nixpkgs' non-interactive bash has no compgen.
@@ -595,39 +609,49 @@ lookup_var() { # <name>
     ;;
   *)
     visiting+="$1 "
-    for pass in '' a; do
-      for ((i = 0; i < ${#bn[@]}; i++)); do
-        if ((budget)); then break 2; fi
-        [[ ${bn[i]} == "$1" && ${bk[i]} == "$pass" ]] || continue
-        expand_word "${bv[i]}"
-        if [[ -z $pass ]]; then
-          for e in "${exs[@]}"; do out+=("${e:-$unk}"); done
-          continue
-        fi
-        add=()
+    for ((i = 0; i < ${#bn[@]}; i++)); do
+      [[ ${bn[i]} == "$1" ]] || continue
+      if [[ -n ${bk[i]} ]]; then aidx+=("$i"); else pidx+=("$i"); fi
+    done
+    for i in ${pidx[@]+"${pidx[@]}"}; do
+      if ((budget || ${#out[@]} > max_cands)); then break; fi
+      expand_word "${bv[i]}"
+      for e in "${exs[@]}"; do out+=("${e:-$unk}"); done
+    done
+    last=()
+    for c in ${out[@]+"${out[@]}"}; do last+=("$c"); done
+    last+=('')
+    for i in ${aidx[@]+"${aidx[@]}"}; do
+      if ((budget || ${#out[@]} > max_cands)); then break; fi
+      expand_word "${bv[i]}"
+      gen=()
+      for c in "${last[@]}"; do
         for e in "${exs[@]}"; do
-          add+=("${e:-$unk}")
-          for c in ${out[@]+"${out[@]}"}; do
-            add+=("$c$e")
-            if ((${#c} + ${#e} > max_len)); then budget=1; fi
-          done
+          v=$c$e
+          if ((${#v} > max_len && !budget)); then budget=2; fi
+          gen+=("${v:-$unk}")
         done
-        out+=("${add[@]}")
       done
+      out+=("${gen[@]}")
+      last=("${gen[@]}")
     done
     visiting=${visiting%"$1 "}
     ;;
   esac
-  if ((${#out[@]} > max_cands)); then over=1; fi
+  if ((${#out[@]} > max_cands)); then
+    over=1
+    out=("${out[@]:0:max_cands+1}")
+  fi
   ((${#out[@]})) || out=("$unk")
   lv=("${out[@]}")
   # Cached only when no cycle cut it short: a name read while an ancestor was
-  # being visited may be missing that ancestor's values.
+  # being visited may be missing that ancestor's values. Kept as offsets into
+  # one flat array, since a value may hold any character, newline included.
   if ((cyc == cyc0 && !budget)); then
-    joined=''
-    for c in "${out[@]}"; do joined+=$c$'\003'; done
     memo_n+=("$1")
-    memo_v+=("${joined%$'\003'}")
+    memo_off+=("${#memo_flat[@]}")
+    memo_cnt+=("${#out[@]}")
+    memo_flat+=("${out[@]}")
   fi
 }
 
@@ -643,7 +667,7 @@ expand_word() { # <word>
   local s=$1 i=0 n=${#1} c inner name op lit='' a l
   local -a acc=('') vals next
   steps=$((steps + 1))
-  if ((steps > max_steps)); then budget=1; fi
+  if ((steps > max_steps && !budget)); then budget=1; fi
   if ((budget)); then
     exs=("$unk")
     return 0
@@ -695,6 +719,12 @@ expand_word() { # <word>
               expand_word "${op:1}"
               vals=("${exs[@]}" "$unk")
               ;;
+            :[0-9]* | :\ * | \#* | /* | ^* | ,* | @*)
+              # A slice or a rewrite of the value: whatever it leaves is a
+              # piece of it, so lean to deny like `%`.
+              lookup_var "$name"
+              vals=("${lv[@]}" "$unk")
+              ;;
             esac
           fi
         fi
@@ -725,7 +755,7 @@ expand_word() { # <word>
     for a in "${acc[@]}"; do
       for l in "${vals[@]}"; do
         next+=("$a$lit$l")
-        if ((${#a} + ${#lit} + ${#l} > max_len)); then budget=1; fi
+        if ((${#a} + ${#lit} + ${#l} > max_len && !budget)); then budget=2; fi
       done
     done
     lit=''
@@ -785,7 +815,7 @@ judge_target() { # <operand>
   expand_word "$1"
   if ((budget)); then
     del_target=$1
-    del_why=budget
+    if ((budget == 2)); then del_why=len; else del_why=budget; fi
     return 0
   fi
   if ((over)); then
@@ -954,6 +984,9 @@ Fix: delete one concrete path per command, or a private dir you created ('d=\$(m
 elif [[ $del_why == budget ]]; then
   reason="This deletes '$del_target', whose variables chain too deeply for the guard to resolve within its expansion budget, so it cannot rule out the per-user runtime dir. The guard refuses what it cannot check.
 Fix: delete a concrete path or a private dir you created ('d=\$(mktemp -d); rm -rf \"\$d\"'), without a long chain of variables."
+elif [[ $del_why == len ]]; then
+  reason="This deletes '$del_target', which expands to a path of more than $max_len characters, too long for the guard to check against the per-user runtime dir. The guard refuses what it cannot check.
+Fix: delete a shorter path, or a private dir you created ('d=\$(mktemp -d); rm -rf \"\$d\"')."
 elif [[ -n $del_target ]]; then
   reason="This deletes '$del_target', which resolves to the per-user runtime dir (\$XDG_RUNTIME_DIR, /run/user/<uid>) or one of its parents or children: it holds the D-Bus, systemd and tmux sockets, and deleting it breaks the owner's session until reboot.
 Fix: make scratch dirs with 'mktemp -d' and delete them through a name you created, e.g. 'd=\$(mktemp -d); rm -rf \"\$d\"' (for a nested session: 'rt=\$(mktemp -d); XDG_RUNTIME_DIR=\$rt Hyprland; rm -rf \"\$rt\"'). Never delete through an inherited variable such as TMUX_TMPDIR or XDG_RUNTIME_DIR, even after rebinding it: the guard counts every value the name may hold."
