@@ -16,6 +16,7 @@ setup() {
   setup_repo
   stub_bin tmux
   stub_bin crew
+  stub_bin tmux-crew-dash
   # The standalone wrapper resolves a root then execs `dispatcher`; this stub
   # records the cwd it chose and the argv it forwarded.
   cat >"$STUB_DIR/dispatcher" <<'STUB'
@@ -32,7 +33,7 @@ STUB
   # (_store_launcher) have no sibling file and an unsubstituted placeholder.
   export CLAUDE_WORKER_SETTINGS_LIB="$BATS_TEST_DIRNAME/../adapters/core/claude-worker-settings.sh"
   unset TMUX CREW_ID DISPATCH_DISPATCHER_MCP ENABLE_CLAUDEAI_MCP_SERVERS CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION
-  unset DISPATCHER_LAUNCHER_PID DISPATCHER_HANDOFF_DIR DISPATCHER_HANDOFF_CREW
+  unset DISPATCHER_LAUNCHER_PID DISPATCHER_HANDOFF_DIR DISPATCHER_HANDOFF_CREW DISPATCH_DASH_PLACEMENT
   # A user settings file keeps the first-launch hint quiet; its tests remove it.
   mkdir -p "$XDG_CONFIG_HOME/dispatcher"
   echo '{}' >"$XDG_CONFIG_HOME/dispatcher/settings.json"
@@ -707,6 +708,34 @@ _ext_servers() { sed -n 's/^const servers = \(.*\);$/\1/p' "$1"; }
   # Exactly 5 set-window-option calls total — none untargeted.
   run grep -c 'set-window-option' "$STUB_LOG"
   [ "$output" = "5" ]
+}
+
+@test "side dash: launch opens it beside the pane and renders the roster without opening it" {
+  TMUX=/tmp/fake,1,0 TMUX_PANE=%1 CREW_ID=c1 run_launcher
+  grep -qx -e '--side --detached %1' "$STUB_LOG"
+  grep -qx 'roster-render --crew c1 --pane %1 --no-open --detach' "$STUB_LOG"
+}
+
+@test "side dash: dashPlacement float keeps today's launch, neither dash nor roster render" {
+  TMUX=/tmp/fake,1,0 TMUX_PANE=%1 CREW_ID=c1 DISPATCH_DASH_PLACEMENT=float run_launcher
+  run ! grep -q -e '--detached' "$STUB_LOG"
+  run ! grep -q '^roster-render ' "$STUB_LOG"
+}
+
+@test "side dash: dashAutoOpen false opens nothing at launch" {
+  mkdir -p "$XDG_CONFIG_HOME/dispatcher"
+  printf '{"dashAutoOpen":false}\n' >"$XDG_CONFIG_HOME/dispatcher/settings.json"
+  TMUX=/tmp/fake,1,0 TMUX_PANE=%1 CREW_ID=c1 run_launcher
+  run ! grep -q -e '--detached' "$STUB_LOG"
+  run ! grep -q '^roster-render ' "$STUB_LOG"
+}
+
+@test "side dash: an explicit rosterDiagram.autoOpen true still opens the roster" {
+  mkdir -p "$XDG_CONFIG_HOME/dispatcher"
+  printf '{"rosterDiagram":{"autoOpen":true}}\n' >"$XDG_CONFIG_HOME/dispatcher/settings.json"
+  TMUX=/tmp/fake,1,0 TMUX_PANE=%1 CREW_ID=c1 run_launcher
+  grep -qx -e '--side --detached %1' "$STUB_LOG"
+  grep -qx 'roster-render --crew c1 --pane %1 --detach' "$STUB_LOG"
 }
 
 @test "registers and deregisters around the agent launch" {

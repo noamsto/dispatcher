@@ -564,7 +564,8 @@ fi
 
 # DISPATCH_ENGINES may come from the settings resolver (dispatch-config) when
 # unset in the environment — see dispatch-config.sh for the layer order.
-settings="$("${DISPATCH_CONFIG_BIN:-@dispatchConfig@}")"
+dispatch_config_default="@dispatchConfig@"
+settings="$("${DISPATCH_CONFIG_BIN:-$dispatch_config_default}")"
 [ -n "${DISPATCH_ENGINES:-}" ] || DISPATCH_ENGINES="$(jq -r '.engines // [] | join(" ")' <<<"$settings")"
 
 # First launch is never gated, and never prompts (overseer launches are
@@ -1058,6 +1059,13 @@ if [ -n "${TMUX:-}" ] && [ -n "${TMUX_PANE:-}" ] && [ "$overseer" = 0 ]; then
     remux_pin_clear "$TMUX_PANE"
   fi
   trap '[ -n "${remux_keep:-}" ] || remux_clear "$TMUX_PANE"' EXIT
+fi
+
+# A side dash replaces the roster diagram beside the dispatcher pane from the
+# first prompt, not only after the first dispatch. Both helpers swallow failure.
+if [ "$overseer" = 0 ] && [ "$registered" = 1 ] && _dash_side_wanted "${TMUX_PANE:-}"; then
+  _ensure_roster_render "$CREW_ID" "$TMUX_PANE"
+  _ensure_crew_dash "$TMUX_PANE"
 fi
 
 # Relaunch loop: an engine that ran `dispatcher --fresh` exits with a fresh

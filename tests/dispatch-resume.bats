@@ -4212,5 +4212,5 @@ STUB
   TMUX=/tmp/x,1,0 TMUX_PANE=%5 run run_resume
   [ "$status" -eq 0 ]
   [ "$(grep -c '^tmux-crew-dash ' "$STUB_LOG")" -eq 1 ]
-  grep -qx 'tmux-crew-dash --detached %5' "$STUB_LOG"
+  grep -qx 'tmux-crew-dash --side --detached %5' "$STUB_LOG"
 }

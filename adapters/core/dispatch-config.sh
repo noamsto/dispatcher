@@ -21,8 +21,8 @@
 #            last-wins), DISPATCH_DISPATCHER_MCP (the same pairs, each value
 #            a comma-separated opt-in list: key=claudeai,analytics; key= is an
 #            empty list), DISPATCH_ROSTER_AUTO_OPEN (0/false/no/off, any case,
-#            is false; any other value is true); an empty var contributes
-#            nothing.
+#            is false; any other value is true), DISPATCH_DASH_PLACEMENT
+#            (side or float); an empty var contributes nothing.
 #
 # Security: grantRoots and openrouter.keyFile widen what a worker can read, so
 # they are honoured only from the locked layer or the environment — a copy in
@@ -45,7 +45,14 @@
 # --json` for host reachability; hosts.<name>.tailscale names the host's Tailscale
 # machine name (its HostName or first MagicDNS label; default: the host name).
 # dashAutoOpen (boolean, default true) lets dispatch and dispatch resume open the
-# crew dash in a float beside the dispatcher pane (tmux-crew-dash --detached).
+# crew dash beside the dispatcher pane (tmux-crew-dash --detached).
+# dashPlacement ("side", default, or "float") picks where: side opens it as the
+# dispatcher's side panel (tmux-crew-dash --side), at dispatcher launch and after
+# each dispatch, and renders the roster diagram without opening it in aeye
+# (prefix + I still shows it); float opens the dash as a float and leaves the
+# roster diagram as before. A rosterDiagram.autoOpen set in any layer or by
+# DISPATCH_ROSTER_AUTO_OPEN (origin not "base") is explicit and still opens the
+# roster under side. dashAutoOpen false turns all of it off.
 # dispatcherMcp maps an owner/repo or org key to the MCP opt-ins (claudeai:
 # every claude.ai connector; analytics: the generated --mcp profile; or any
 # mcpServers name) that the dispatcher launch restores for that repo; the
@@ -452,7 +459,8 @@ env_layer=$(jq -cn '
   | from_env_nonempty("DISPATCH_REPO_TRACKERS"; ["repoTrackers"]; trackers)
   | from_env_nonempty("DISPATCH_ORG_TRACKERS"; ["orgTrackers"]; trackers)
   | from_env_nonempty("DISPATCH_DISPATCHER_MCP"; ["dispatcherMcp"]; mcp_optins)
-  | from_env("DISPATCH_ROSTER_AUTO_OPEN"; ["rosterDiagram", "autoOpen"]; test("^(0|false|no|off)$"; "i") | not)')
+  | from_env("DISPATCH_ROSTER_AUTO_OPEN"; ["rosterDiagram", "autoOpen"]; test("^(0|false|no|off)$"; "i") | not)
+  | from_env("DISPATCH_DASH_PLACEMENT"; ["dashPlacement"]; .)')
 
 printf '%s\n' "$base" "$user" "$locked" "$env_layer" | jq -n --argjson show_origin "$show_origin" "$jq_defs"'
   def string_array: type == "array" and all(.[]; type == "string");
@@ -670,6 +678,7 @@ printf '%s\n' "$base" "$user" "$locked" "$env_layer" | jq -n --argjson show_orig
   | need(["freshSeams"]; "a boolean"; type == "boolean")
   | need(["dashTailscale"]; "a boolean"; type == "boolean")
   | need(["dashAutoOpen"]; "a boolean"; type == "boolean")
+  | need(["dashPlacement"]; "\"side\" or \"float\""; . == "side" or . == "float")
   | need(["dispatcherMcp"]; "an object keyed owner/repo or org, each an array of claudeai, analytics or an mcpServers name";
       type == "object"
       and all(keys[]; test("^[a-z0-9][a-z0-9._-]*(/[a-z0-9._-]+)?$"))
