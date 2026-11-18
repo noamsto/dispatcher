@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/noamsto/dispatcher/crew/internal/lock"
@@ -50,7 +51,7 @@ func importPriors(store string, o Options, stdout, stderr io.Writer) {
 
 	now := o.Probes.Clock.Now()
 	stampPath := store + "/" + priorsStampFile
-	if last, ok := readStamp(stampPath); ok && now.Sub(last) < priorsImportEvery {
+	if last, ok := readStamp(stampPath); ok && now.Sub(last) >= 0 && now.Sub(last) < priorsImportEvery {
 		return
 	}
 	_ = os.WriteFile(stampPath, []byte(strconv.FormatInt(now.Unix(), 10)+"\n"), 0o666)
@@ -60,6 +61,10 @@ func importPriors(store string, o Options, stdout, stderr io.Writer) {
 	defer cancel()
 	cmd := exec.CommandContext(ctx, bin, "import")
 	cmd.Stdout, cmd.Stderr = stdout, stderr
+	// Own process group, so the timeout also kills what the import spawned
+	// (a hung git or ssh), not just the direct child.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
 	cmd.WaitDelay = 5 * time.Second
 	rc := 0
 	if err := cmd.Run(); err != nil {

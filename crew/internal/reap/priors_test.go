@@ -118,7 +118,7 @@ func TestImportPriorsTimeoutKillsAHungImport(t *testing.T) {
 	var out, errb bytes.Buffer
 	start := time.Now()
 	importPriors(t.TempDir(), priorsOpts(&now), &out, &errb)
-	if time.Since(start) > 10*time.Second || strings.Contains(out.String(), "done rc=0") {
+	if time.Since(start) > 10*time.Second || !strings.Contains(out.String(), "priors import done rc=-1") {
 		t.Errorf("hung import not bounded: %v, log %q", time.Since(start), out.String())
 	}
 }
