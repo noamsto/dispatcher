@@ -340,6 +340,21 @@ if [ -z "$recovery" ] && [ -z "$now" ]; then
   _engine_live || _die 2 "$branch has no live engine pane to ask — dispatch migrate --now moves a stopped worker"
 fi
 
+# _main_checkout — the main checkout's path, else fail. Bare and separate-git-dir
+# layouts have none (as _wt_trusted_cwd): there worktree list names the git dir,
+# and a push from it finds no relative core.hooksPath hook.
+_main_checkout() {
+  local first_rec main_wt=""
+  first_rec="$(_wt_git_common "$common" worktree list --porcelain | sed -n '1,/^$/p')" || return 1
+  grep -qx bare <<<"$first_rec" && return 1
+  main_wt="$(sed -n '1s/^worktree //p' <<<"$first_rec")" || return 1
+  [ -n "$main_wt" ] || return 1
+  [ "$(realpath -m -- "$main_wt")" != "$(realpath -m -- "$common")" ] || return 1
+  printf '%s\n' "$main_wt"
+}
+[ -z "$now" ] || _main_checkout >/dev/null ||
+  _die 2 "$common has no main checkout (bare or separate git dir) — --now needs one to push from; use cooperative mode (without --now) instead — nothing was stopped"
+
 # Preflight, before the worker is touched: the host, its clone and the lead's
 # engine, then whether its dispatch knows the remote half at all.
 engines="$(crew remote-run --host "$host" --env "CREW_ID=$crew_id" -- dispatch --engines)" ||
@@ -467,8 +482,7 @@ else
     _wt_gitlink_ok "$admin" "$wt" || _die 1 "$wt/.git no longer points at $admin — $stopped_hint"
     # A standalone git dir would run its own hooks/, not the repo's.
     [ -f "$admin/commondir" ] || _die 1 "$admin is not a linked worktree's git dir — $stopped_hint"
-    main_wt="$(_wt_git_common "$common" worktree list --porcelain | sed -n '1s/^worktree //p')"
-    [ -n "$main_wt" ] || _die 1 "$common lists no main checkout to push from — $stopped_hint"
+    main_wt="$(_main_checkout)" || _die 1 "$common has no main checkout to push from (bare or separate git dir) — $stopped_hint"
     push_rc=0
     # Hooks run here on purpose (owner requirement: a hook's refusal surfaces
     # verbatim, never bypassed); the one dispatcher-side git call that runs them.
