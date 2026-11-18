@@ -709,3 +709,12 @@ long_command() { # <tail>: filler over the limit, then <tail>
   assert_within long-words 2000 "echo $(printf 'a %.0s' $(seq 32768))"
   assert_allow
 }
+
+# bats test_tags=timing
+@test "tmux-server-guard: a long run of unclosed (( is judged within the hook timeout" {
+  runtime_env
+  assert_within parens 1000 "$(printf '(%.0s' $(seq 20000))"
+  assert_allow
+  assert_within parens-delete 1000 "$(printf '(%.0s' $(seq 12000))"$'\n'"rm -rf /run/user/1000/tmux-1000"
+  assert_block 'split the command'
+}
