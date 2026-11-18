@@ -383,7 +383,7 @@ func (r *run) treeGates(ctx context.Context, c *candidate) bool {
 	// add -A runs the tree's filters: the config must be the baseline first.
 	if !r.guardOK(gitguard.Check(r.paths.Common, c.admin, r.stderr)) ||
 		!r.guardOK(gitguard.CheckCwd(r.paths.Common, r.trusted, r.stderr)) {
-		r.keep(c, "git config drift")
+		r.keep(c, "git config drift (run `crew git-baseline`)")
 		return false
 	}
 	if !r.holdsMarkTree(ctx, c) {

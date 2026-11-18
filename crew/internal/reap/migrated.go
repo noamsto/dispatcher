@@ -41,7 +41,7 @@ func (r *run) migratedGate(ctx context.Context, c *candidate) bool {
 		return false
 	}
 	if !r.guardOK(gitguard.Check(r.paths.Common, r.paths.Common, r.stderr)) {
-		r.keep(c, "git config drift")
+		r.keep(c, "git config drift (run `crew git-baseline`)")
 		return false
 	}
 	if tip, _ := r.commonOutput(ctx, "rev-parse", "--verify", "--quiet", "refs/heads/"+c.branch); tip != rel.Tip {
