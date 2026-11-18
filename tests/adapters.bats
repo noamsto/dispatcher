@@ -2929,6 +2929,17 @@ _phase_stems() {
   [[ "$output" == *'missing in index.ts: const args: string[] = ["--mode", "json", "-p", "--no-session", "--no-approve"];'* ]]
 }
 
+@test "pi subagent contract: our copy's spawn and final-message lines stay contract-checked" {
+  cp "$ROOT"/adapters/pi/extensions/subagent/{index,agents}.ts "$BATS_TEST_TMPDIR/"
+  sed -i.bak -e 's/const proc = spawn(invocation/proc = spawn(invocation/' \
+    -e 's/if (event.type === "message_end" \&\& event.message) {/if (event.type !== "message_end") return;/' \
+    "$BATS_TEST_TMPDIR/index.ts"
+  run bash "$ROOT/scripts/pi-subagent-contract.sh" --pinned "$BATS_TEST_TMPDIR"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *'missing in index.ts: const proc = spawn(invocation.command, invocation.args, {'* ]]
+  [[ "$output" == *'missing in index.ts: if (event.type === "message_end" && event.message) {'* ]]
+}
+
 @test "pi subagent contract: an unlisted spawn argument fails and is named" {
   cp "$ROOT"/adapters/pi/extensions/subagent/{index,agents}.ts "$BATS_TEST_TMPDIR/"
   printf '\targs.push("--foo");\n' >>"$BATS_TEST_TMPDIR/index.ts"

@@ -1,7 +1,12 @@
-// Pinned from pi 1.4.0 examples/extensions/subagent. Dispatcher patches (each marked
+// Derived from pi 1.4.0 examples/extensions/subagent. Dispatcher patches (each marked
 // `dispatcher patch:` in the code): agents dir relative to this file, no project-scope
-// agents, --no-approve and CREW_SUBAGENT=1 for the child, fixed-roster tool text. To re-pin:
-// copy the new upstream index.ts and agents.ts, re-apply the `dispatcher patch:` hunks, then run
+// agents, --no-approve and CREW_SUBAGENT=1 for the child, fixed-roster tool text. The
+// child-spawn contract (contract.txt `version`) is verified against pi 1.5.2, where
+// upstream restructured the spawn into `let proc` + `proc = spawn(...)` and turned the
+// `message_end` guard into an early return; neither changes the argv shape, the JSON
+// event mode or which event carries the final message, so we keep the 1.4.0 shape here
+// and tag both lines `pinned`/`upstream` in contract.txt. To re-pin: copy the new
+// upstream index.ts and agents.ts, re-apply the `dispatcher patch:` hunks, then run
 // `bash scripts/pi-subagent-contract.sh --installed`.
 /**
  * Subagent Tool - Delegate tasks to specialized agents
