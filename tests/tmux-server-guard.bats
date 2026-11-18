@@ -311,10 +311,10 @@ worker_env() {
 }
 
 # bats test_tags=timing
-@test "tmux-server-guard: a delete after a 20 KB here-doc is judged in under 5 s" {
+@test "tmux-server-guard: a delete after a 6 KB here-doc is judged in under 5 s" {
   runtime_env
   local body='' i start elapsed
-  for ((i = 0; i < 400; i++)); do body+="line $i of the here-doc body, plain prose text"$'\n'; done
+  for ((i = 0; i < 140; i++)); do body+="line $i of the here-doc body, plain prose text"$'\n'; done
   start=$(date +%s%N)
   run run_guard <<<"$(claude_bash "cat <<'EOF' >/dev/null"$'\n'"${body}EOF"$'\n''rm -rf "$XDG_RUNTIME_DIR"')"
   elapsed=$((($(date +%s%N) - start) / 1000000))
@@ -418,18 +418,294 @@ assert_within() { # <name> <ms> <command>
 @test "tmux-server-guard: a long run of += appends is refused within the hook timeout" {
   runtime_env
   local appends='' i
-  for ((i = 0; i < 20; i++)); do appends+=' d+=/x;'; done
-  assert_within appends-runtime 3000 "d=\$XDG_RUNTIME_DIR;${appends} rm -rf \"\$d\""
+  for ((i = 0; i < 20; i++)); do appends+=" d+=/x$i;"; done
+  assert_within appends-runtime 3000 "if :; then d=\$XDG_RUNTIME_DIR;${appends} fi; rm -rf \"\$d\""
   assert_block 'candidate values'
-  assert_within appends-tmp 3000 "d=x;${appends} rm -rf \"/tmp/\$d\""
+  assert_within appends-tmp 3000 "if :; then d=x;${appends} fi; rm -rf \"/tmp/\$d\""
   assert_block 'candidate values'
+  assert_within appends-plain 3000 "d=\$XDG_RUNTIME_DIR;${appends} rm -rf \"\$d\""
+  assert_block 'runtime dir'
+  assert_within appends-plain-tmp 3000 "d=/tmp;${appends} rm -rf \"\$d\""
+  assert_allow
 }
 
 # bats test_tags=timing
 @test "tmux-server-guard: a cyclic chain among many bindings is refused within the hook timeout" {
   runtime_env
   local pad='' i
-  for ((i = 0; i < 1500; i++)); do pad+="z$i=1; "; done
+  for ((i = 0; i < 1400; i++)); do pad+="z=1;"; done
   assert_within padded-cycle 3000 "${pad}$(doubling_chain 25 '$a0')"
   assert_block 'expansion budget'
+}
+
+# A command past the size limit skips the quadratic analysis: a delete or tmux
+# verb at command position is refused when its words hold a variable, glob,
+# runtime-dir path or a cd came before it, or when it is a tmux server call
+# with no -L/-S; prose and other commands' arguments are allowed.
+long_command() { # <tail>: filler over the limit, then <tail>
+  local filler
+  filler=$(printf 'echo plain filler text, not a command of interest\n%.0s' $(seq 200))
+  printf '%s\n%s' "$filler" "$1"
+}
+
+@test "tmux-server-guard: a command over the size limit with a runtime-dir delete is refused with the size reason" {
+  runtime_env
+  local tail
+  for tail in 'rm -rf "$XDG_RUNTIME_DIR"' 'rm -rf /run/user/1000/tmux-1000' 'gtrash put "$TMUX_TMPDIR"' \
+    'find /run/user -delete' 'tmux kill-server' 'tmux set -g base-index 0'; do
+    run run_guard <<<"$(claude_bash "$(long_command "$tail")")"
+    echo "claude: $tail"
+    assert_block 'split the command'
+    [[ $output == *'bytes'* ]]
+    run run_guard <<<"$(pi_bash "$(long_command "$tail")")"
+    echo "pi: $tail"
+    assert_block 'split the command'
+    run run_guard <<<"$(cursor_shell_exec "$(long_command "$tail")")"
+    echo "cursor: $tail"
+    [ "$status" -eq 0 ]
+    jq -e '.permission == "deny"' <<<"$output" >/dev/null
+  done
+}
+
+@test "tmux-server-guard: a command over the size limit that deletes nothing at the runtime dir is allowed" {
+  runtime_env
+  local tail
+  for tail in 'echo done' 'rm -rf /tmp/x' 'echo "$XDG_RUNTIME_DIR" firmware format' 'tmux -L s list-sessions' \
+    'tmux list-sessions; echo source'; do
+    run run_guard <<<"$(claude_bash "$(long_command "$tail")")"
+    echo "claude: $tail"
+    assert_allow
+  done
+}
+
+# bats test_tags=timing
+@test "tmux-server-guard: the worst case at the size limit is judged in under 2 s" {
+  runtime_env
+  local unit='echo a > /dev/null 2>&1;' cmd='' tail=$'\n''rm -rf "$XDG_RUNTIME_DIR"'
+  while ((${#cmd} + ${#unit} + ${#tail} <= 8192)); do cmd+=$unit; done
+  cmd+=$tail
+  assert_within at-limit 2000 "$cmd"
+  assert_block 'runtime dir'
+  cmd=''
+  while ((${#cmd} + ${#unit} + ${#tail} <= 8192 + 4096)); do cmd+=$unit; done
+  assert_within over-limit 2000 "$cmd$tail"
+  assert_block 'split the command'
+}
+
+@test "tmux-server-guard: a += chain concatenates instead of fanning out" {
+  runtime_env
+  local cmd i chain='' rebinds='' paths='' rt_paths=''
+  for ((i = 1; i <= 30; i++)); do chain+=" p+=/s$i;"; done
+  for ((i = 1; i <= 17; i++)); do rebinds+=" p=/tmp/r$i;"; done
+  for ((i = 1; i <= 20; i++)); do paths+=" /tmp/d$i"; done
+  for ((i = 1; i <= 19; i++)); do rt_paths+=" /tmp/d$i"; done
+  for cmd in 'p=/tmp; p+=/s1; p+=/s2; p+=/s3; p+=/s4; rm -rf "$p"' "p=/tmp;${chain} rm -rf \"\$p\"" \
+    "${rebinds} rm -rf \"\$p\"" "for d in${paths}; do rm -rf \"\$d\"; done" \
+    'p=/tmp; p+=/s1; p+=/s1; p=/tmp; p+=/s1; rm -rf "$p"' 'for d in /tmp/a /tmp/a /tmp/a; do rm -rf "$d"; done'; do
+    run run_guard <<<"$(claude_bash "$cmd")"
+    echo "claude: ${cmd:0:80}"
+    assert_allow
+    run run_guard <<<"$(pi_bash "$cmd")"
+    assert_allow
+  done
+  for cmd in 'p=/tmp; p+=/s1; p+=/s2; p+=/s3; p+=/s4; p=/run/user/1000; rm -rf "$p"' \
+    'p=/run; p+=/user; p+=/1000; rm -rf "$p"' 'p=$XDG_RUNTIME_DIR; p+=/s1; p+=/s2; p+=/s3; p+=/s4; rm -rf "$p"' \
+    'p=/tmp; p+=/s1; p+=/s2; p=/ru; p+=n/user/1000; rm -rf "$p"' 'p+=/run/user/1000; p+=/x; rm -rf "$p"' \
+    "${rebinds} p=/run/user/1000; rm -rf \"\$p\"" "for d in${rt_paths} /run/user/1000; do rm -rf \"\$d\"; done"; do
+    run run_guard <<<"$(claude_bash "$cmd")"
+    echo "claude: ${cmd:0:80}"
+    assert_block 'runtime dir'
+    run run_guard <<<"$(pi_bash "$cmd")"
+    assert_block 'runtime dir'
+  done
+}
+
+@test "tmux-server-guard: a name past the list cap keeps its own reason" {
+  runtime_env
+  local rebinds='' i
+  for ((i = 1; i <= 70; i++)); do rebinds+=" p=/tmp/r$i;"; done
+  run run_guard <<<"$(claude_bash "${rebinds} rm -rf \"\$p\"")"
+  assert_block 'candidate values'
+}
+
+# Candidates dropped by a cap or hidden by a binding that does not run in order
+# must still be refused: each reached the runtime dir before the dedupe and the
+# in-order replay existed.
+@test "tmux-server-guard: a deduped overflow, a prefix, an argument or an unset never hides a runtime-dir value" {
+  runtime_env
+  local cmd i dup='' rebinds='' same='' appends=''
+  for ((i = 0; i < 65; i++)); do dup+=' /tmp/a'; done
+  for ((i = 0; i < 70; i++)); do rebinds+=' p=/tmp/a;'; done
+  for ((i = 0; i < 33; i++)); do same+=' p+=/a; p=/tmp;'; done
+  for ((i = 0; i < 6; i++)); do appends+=' d+=/x;'; done
+  for cmd in "for d in${dup} /run/user/1000; do rm -rf \"\$d\"; done" "${rebinds} p=/run/user/1000; rm -rf \"\$p\"" \
+    "p=/tmp;${same} p=/run/user/1000; p+=/x; rm -rf \"\$p\"" "if c; then d=/tmp/a;${appends} else d+=/run/user/1000; fi; rm -rf \"\$d\"" \
+    'echo d=/tmp; d+=/run/user/1000; rm -rf "$d"' 'd=/tmp/x; unset d; d+=/run/user/1000; rm -rf "$d"' \
+    'd=/tmp/x true; d+=/run/user/1000; rm -rf "$d"' 'p=/ru; echo p=/tmp; p+=n/user/1000; rm -rf "$p"' \
+    $'cat <<EOF >/dev/null\nd=/tmp\nEOF\nd+=/run/user/1000\nrm -rf "$d"'; do
+    run run_guard <<<"$(claude_bash "$cmd")"
+    echo "claude: ${cmd:0:90}"
+    [ "$status" -eq 0 ]
+    jq -e '.hookSpecificOutput.permissionDecision == "deny"' <<<"$output" >/dev/null
+  done
+}
+
+@test "tmux-server-guard: a += chain stays a chain beside redirections and braces" {
+  runtime_env
+  local cmd
+  for cmd in 'p=/tmp; p+=/s1; p+=/s2; p+=/s3; p+=/s4; p+=/s5; p+=/s6; p+=/s7; rm -rf "$p" 2>&1' \
+    'p=/tmp; p+=/s1; p+=/s2; p+=/s3; p+=/s4; p+=/s5; p+=/s6; p+=/s7; rm -rf "${p}" &>/dev/null'; do
+    run run_guard <<<"$(claude_bash "$cmd")"
+    echo "claude: $cmd"
+    assert_allow
+  done
+}
+
+@test "tmux-server-guard: the size gate reads quotes, ancestors and every delete and tmux form" {
+  runtime_env
+  local tail
+  for tail in 'find "$XDG_RUNTIME_DIR" -name x -delete; echo ok' 'find /run/user/1000 -delete&& echo ok' \
+    'tmux source ~/.tmux.conf' 'tmux set -t main -g status off' 'tmux setw -t main:1 -g mode-keys vi' \
+    'rm -rf /run//user/1000' 'rm -rf "/run"/user/1000' 'rm -rf /run' 'rm -rf "/run/"'; do
+    run run_guard <<<"$(claude_bash "$(long_command "$tail")")"
+    echo "claude: $tail"
+    assert_block 'split the command'
+  done
+  for tail in 'source ~/.bashrc; tmux list-sessions' 'rm -rf /tmp/run/x' 'tmux set -t main status off'; do
+    run run_guard <<<"$(claude_bash "$(long_command "$tail")")"
+    echo "claude: $tail"
+    assert_allow
+  done
+}
+
+# Products and lists are sized before they are built: these ran past 4 s, which
+# fails open, when they were built and then deduped.
+# bats test_tags=timing
+@test "tmux-server-guard: a product of two 64-value names is refused within the hook timeout" {
+  runtime_env
+  local cmd='' i q
+  q=$(printf 'q%.0s' $(seq 100))
+  for ((i = 0; i < 63; i++)); do cmd+="a=/tmp/$q$i;"; done
+  assert_within product-a-a 2000 "${cmd}a=/run/user/1000; rm -rf \"\$a\$a\""
+  assert_block 'candidate values'
+  cmd=''
+  for ((i = 0; i < 64; i++)); do cmd+="a=/tmp/${q:0:30}$i;b=/tmp/${q:0:30}$i;"; done
+  assert_within product-a-b 2000 "${cmd}x=\$a/\$b; rm -rf \"\$x\" /run/user/1000"
+  assert_block 'candidate values'
+  assert_within append-product 2000 "${cmd}d=\$a; d+=\$b; rm -rf \"\$d\" /run/user/1000"
+  assert_block 'candidate values'
+}
+
+@test "tmux-server-guard: a quoted, escaped or commented decoy binding never replaces the base of an append" {
+  runtime_env
+  local cmd
+  for cmd in 'd=/run/us; echo \; d=/tmp/; d+=er/1000; rm -rf "$d"' $'d=/run/us; echo \\\nd=/tmp/; d+=er/1000; rm -rf "$d"' \
+    $'d=/run/us; echo "\nd=/tmp/\n"; d+=er/1000; rm -rf "$d"' $'d=/run/us\n#;d=/tmp/\nd+=er/1000; rm -rf "$d"' \
+    'd=/run/us; echo ";d=/tmp/;"; d+=er/1000; rm -rf "$d"' 'echo \; d=/tmp/; d+=$XDG_RUNTIME_DIR; rm -rf "${d#/tmp/}"'; do
+    run run_guard <<<"$(claude_bash "$cmd")"
+    echo "claude: $cmd"
+    assert_block 'runtime dir'
+  done
+}
+
+@test "tmux-server-guard: the size gate folds dot segments and backslashes" {
+  runtime_env
+  local tail
+  for tail in 'rm -rf /./run/user/1000' 'rm -rf /tmp/../run/user/1000' 'rm -rf /run/./user/1000' \
+    'r\m -rf /run/user/1000' 'rm -rf /run/us\er/1000' 't\mux kill-server' 'rm -rf /run/./'; do
+    run run_guard <<<"$(claude_bash "$(long_command "$tail")")"
+    echo "claude: $tail"
+    assert_block 'split the command'
+  done
+}
+
+# Each value a step handles is charged to the step budget: 64 values of 500
+# characters per step otherwise outran the hook timeout.
+# bats test_tags=timing
+@test "tmux-server-guard: many appends or operands over 64-value names are refused within the hook timeout" {
+  runtime_env
+  local cmd='' i p q
+  p=$(printf 'a%.0s' $(seq 490))
+  cmd="p=/$p;"
+  for ((i = 10; i < 74; i++)); do cmd+="q=/$i;"; done
+  cmd+='d=$p$q;'
+  for ((i = 0; i < 1000; i++)); do cmd+='d+=;'; done
+  assert_within empty-appends 2000 "$cmd rm -rf \"\$d\" /run/user/1000"
+  assert_block 'rm -rf'
+  cmd=''
+  q=$(printf '/s%.0s' $(seq 120))
+  for ((i = 0; i < 64; i++)); do cmd+="a=$q$i;"; done
+  assert_within many-operands 2000 "${cmd}rm -rf$(printf ' "$a"%.0s' $(seq 30)) /run/user/1000"
+  [ "$status" -eq 0 ]
+  jq -e '.hookSpecificOutput.permissionDecision == "deny"' <<<"$output" >/dev/null
+}
+
+@test "tmux-server-guard: the size gate refuses globbed, split, relative and rebound runtime-dir deletes" {
+  runtime_env
+  local tail
+  for tail in 'rm -rf ru?/user/1000' 'rm -rf */user/1000' 'rm -rf ru*/*/1000' 'd=/ru; rm -rf "$d"n/user/1000' \
+    'rm -rf var/run/user/1000' 'rm -rf proc/self/root/run/user/1000' $'cd /\nrm -rf run/user/1000' \
+    'cd /; rm -rf run' 'tmp=$(mktemp -d); rm -rf "$tmp"' 'sudo rm -rf /run/user/1000' 'env -u TMUX tmux kill-server' \
+    'x=1 command rm -rf "${XDG_RUNTIME_DIR}"' 'find / -delete' 'rm -rf /' 'echo ok && rm -rf /run/user/1000' \
+    'for d in a b; do rm -rf "$d"; done' $'rm -rf /run/user/1000 \\\n  /tmp/x' \
+    $'cat <<EOF\nbody\nEOF\nrm -rf /run/user/1000' $'cat <<\'EOF\'\nit\'s prose\nEOF\nrm -rf /run/user/1000' \
+    $'echo "it\'s"; rm -rf /run/user/1000' $'rm -rf $\'a\\\'b\' /run/user/1000'; do
+    run run_guard <<<"$(claude_bash "$(long_command "$tail")")"
+    echo "claude: $tail"
+    assert_block 'split the command'
+  done
+}
+
+@test "tmux-server-guard: the size gate reads prose, other commands' arguments and private servers as allowed" {
+  runtime_env
+  local tail prose
+  prose=$(printf 'The guard denies a tmux call such as kill-session, and rm of XDG_RUNTIME_DIR.\n%.0s' 1 2 3)
+  for tail in $'cat <<EOF\n'"$prose"$'\nEOF\necho done' \
+    "git commit -m \"fix(guard): $prose"$'\nrm -rf /run/user/1000 is what it stops"' \
+    'tmux -L scratch kill-server' 'tmux -S /tmp/sock kill-server' 'tmux -f /dev/null -L s kill-server' \
+    'tmux -LS kill-server' 'rm -f build/out.o' 'rm -rf /tmp/x /tmp/y' \
+    'echo rm -rf "$XDG_RUNTIME_DIR" tmux kill-server' 'grep -n "rm -rf" notes.txt' \
+    'tmux display-message "tmux kill-server"' $'cat <<EOF\nit\'s prose\nEOF\necho done' \
+    "echo \"it's\" # tmux kill-server" 'tmux set -t main status off; rm -f a.o' 'tmux -L s kill-server 2>&1' \
+    $'jq -r .x <<<"$json"\ngit commit -m "fix(guard): stop deletes\ntmux kill-server is what it stops"' \
+    '((n < 3)); echo done' 'echo $((1<<2)) > /dev/null; echo ok'; do
+    run run_guard <<<"$(claude_bash "$(long_command "$tail")")"
+    echo "claude: $tail"
+    assert_allow
+  done
+}
+
+@test "tmux-server-guard: the size gate reads here-strings, redirections, shell here-docs and quoting like the analyzer" {
+  runtime_env
+  local tail
+  for tail in $'jq -r . <<<"$json"\nrm -rf /tmp/build \\\n  "$XDG_RUNTIME_DIR/tmux-1000"' \
+    $'echo $((1<<2))\nrm -rf /tmp/build \\\n  /run/user/1000' $'wc -l <<< "$out"\nrm -rf \\\n  "$TMUX_TMPDIR"' \
+    $'jq -r .id <<<"$json"\ntmux -f /dev/null \\\n  kill-server' \
+    '2>/dev/null rm -rf "$XDG_RUNTIME_DIR/tmux-1000"' '</dev/null rm -rf /run/user/1000/tmux-1000' \
+    'sudo 2>/dev/null rm -rf /run/user/1000' '>/dev/null tmux kill-server' 'tmux 2>/dev/null kill-server' \
+    'tmux -f /dev/null >/dev/null set -g mouse on' 'rm -rf 2>&1 /run/user/1000' 'rm -rf /run/x/../user' \
+    $'bash <<EOF\nrm -rf /tmp/a \\\n  /run/user/1000\nEOF' $'cat <<E"OF"\nbody\nEOF\nrm -rf /tmp/a \\\n  /run/user/1000' \
+    $'echo "$"\'\\\'; rm -rf /run/user/1000' $'echo $$\'\\\'; rm -rf /run/user/1000' \
+    $'cat <<\'EOF\' | bash\nrm -rf "$XDG_RUNTIME_DIR/tmux-1000"\nEOF' $'bash<<\'EOF\'\nrm -rf "$XDG_RUNTIME_DIR/tmux-1000"\nEOF' \
+    $'sh<<EOF\ntmux kill-server\nEOF' $'nix develop -c bash <<\'EOF\'\nrm -rf /run/user/1000\nEOF' \
+    $'cat > /tmp/s.sh <<\'EOF\'\nrm -rf "$XDG_RUNTIME_DIR/tmux-1000"\nEOF' \
+    '((cd /tmp && rm -rf "$XDG_RUNTIME_DIR/tmux-1000") || true)' '((rm -rf "$XDG_RUNTIME_DIR/tmux-1000") 2>&1)' \
+    '((tmux kill-server) || true)' 'x=$((rm -rf /run/user/1000) )' \
+    $'printf \'%s\\n\' x >"/tmp/\\"q\\".txt" && rm -rf "$XDG_RUNTIME_DIR/tmux-1000"' \
+    $'jq -r .a <<<"{\\"a\\":1}"; rm -rf /run/user/1000' $'echo x > "a\nb"; rm -rf /run/user/1000' \
+    $'echo `cat <<EOF`\nrm -rf /run/user/1000' $'cat <<$\'EOF\'\nx\nEOF\nrm -rf /run/user/1000' \
+    $'echo ${x:1<<1}\nrm -rf /run/user/1000'; do
+    run run_guard <<<"$(claude_bash "$(long_command "$tail")")"
+    echo "claude: $tail"
+    assert_block 'split the command'
+  done
+}
+
+# bats test_tags=timing
+@test "tmux-server-guard: one very long line is judged within the hook timeout" {
+  runtime_env
+  assert_within long-quoted 2000 "echo \"$(printf 'a%.0s' $(seq 65536))\""
+  assert_allow
+  assert_within long-words 2000 "echo $(printf 'a %.0s' $(seq 32768))"
+  assert_allow
 }

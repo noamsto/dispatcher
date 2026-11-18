@@ -30,9 +30,20 @@
 # (an unset or read variable, `$1`, a glob, a command substitution)
 # matches any one segment, but a relative path or one whose first part is
 # unknown is allowed, since that is how a private scratch dir from `mktemp -d`
-# looks. An operand with more than 16 candidate values, a candidate over 512
-# characters, or a lookup chain past 1500 steps is refused, each with its own
-# reason: past the hook's timeout the guard would fail open.
+# looks. When the line has no `&& || | & ( ) { } <<`, backtick or control or
+# variable keyword (`if`, `for`, `unset`, `read` …) and every binding of a name
+# is a scalar statement of its own, the bindings replay in order: a `NAME+=value`
+# extends the value the name holds at that point, and every earlier value stays
+# a candidate, so an append chain grows linearly. Otherwise the append may be
+# skipped and doubles the candidates. An operand that is a product of more than
+# 16 candidate values, or a name with more than 64, a candidate over 512
+# characters, or a lookup chain past 1500 steps is refused, each with its own reason: past the hook's timeout the guard
+# would fail open. For the same reason a command over 8 KiB skips the
+# analysis for a linear pass over its command words: a delete verb at command
+# position is refused when its words hold a `$`, backtick, glob, `/run/user`,
+# `user/`, `/proc/`, XDG_RUNTIME_DIR or TMUX_TMPDIR, or a `cd` came earlier; a
+# tmux server call with no -L/-S is refused. Anything else, prose included, is
+# allowed.
 #
 #   engine        event                  command at             verdict shape
 #   claude        PreToolUse Bash        tool_input.command     hookSpecificOutput deny
@@ -98,6 +109,218 @@ parsed=$(jq -c "$normalise" <<<"$input" 2>/dev/null) || {
 [[ -n $parsed ]] || exit 0
 shape=$(jq -r '.[0]' <<<"$parsed")
 command=$(jq -r '.[1]' <<<"$parsed")
+
+emit_deny() { # <reason>
+  case $shape in
+  cursor) jq -cn --arg r "$1" '{permission: "deny", user_message: $r, agent_message: $r}' ;;
+  *) jq -cn --arg r "$1" '{hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: $r}}' ;;
+  esac
+}
+
+# The tokenizer below is quadratic in the command's length: past the hook's
+# timeout the guard would fail open. A command over this many bytes gets a
+# linear awk pass over its command words instead of the analysis: a delete or
+# tmux verb is only read at command position, so prose in a commit message or
+# an echo argument names nothing. Here-doc bodies are read as commands, as the
+# analyzer does: any shell may run them.
+max_bytes=8192
+if (($(printf '%s' "$command" | wc -c) > max_bytes)); then
+  # shellcheck disable=SC2016
+  gate_awk='
+function reset_seg() { phase = 0; wrapper = ""; wval = 0; edur = 0; risky = 0; fdel = 0; isfind = 0; nt = 0 }
+function deny() { print "deny"; denied = 1; exit }
+function risky_word(w,   x) {
+  x = w
+  while (index(x, "/./")) gsub(/\/\.\//, "/", x)
+  sub(/\/\.$/, "/", x)
+  if (x ~ /^\/+$/ || x ~ /[$`*?[]/ || x ~ /user\/|\/proc\/|XDG_RUNTIME_DIR|TMUX_TMPDIR/ || x ~ /(^|[^[:alnum:]_-])\/run(\/+user|\/*$)/ || (x ~ /[.][.]/ && x ~ /(^|[^[:alnum:]_-])\/run\//)) risky = 1
+}
+function classify(   i, w, sock, sub_, skip, dw, rest, c) {
+  sock = 0; sub_ = ""; skip = 0; dw = 0
+  for (i = 1; i <= nt; i++) {
+    w = targs[i]
+    if (skip) { skip = 0; continue }
+    if (sub_ != "") {
+      if (sub_ ~ /^(set-option|set|set-window-option|setw|set-hook)$/ && w ~ /^-[A-Za-z]*g[A-Za-z]*$/) dw = 1
+      if (sub_ ~ /^(set-option|set)$/ && w ~ /^-[A-Za-z]*s[A-Za-z]*$/) dw = 1
+      continue
+    }
+    if (w !~ /^-/) { sub_ = w; continue }
+    rest = substr(w, 2)
+    while (rest != "") {
+      c = substr(rest, 1, 1); rest = substr(rest, 2)
+      if (c == "L" || c == "S") sock = 1
+      if (index("LSfcT", c)) { if (rest == "") skip = 1; break }
+    }
+  }
+  if (sock) return
+  if (dw || sub_ ~ /^(kill-server|kill-session|source-file|source)$/) deny()
+}
+function seg_word(w,   base, rest, c) {
+  if (phase == 0) {
+    if (wval) { wval = 0; return }
+    if (w ~ /^[A-Za-z_][A-Za-z0-9_]*[+]?=/) return
+    if (wrapper != "" && w ~ /^-/) {
+      if (w !~ /^--/) {
+        rest = substr(w, 2)
+        while (rest != "") {
+          c = substr(rest, 1, 1); rest = substr(rest, 2)
+          if (index(wtab, " " wrapper ":" c " ")) { if (rest == "") wval = 1; break }
+        }
+      }
+      return
+    }
+    if (edur && w ~ /^[0-9]+([.][0-9]+)?[smhd]?$/) { edur = 0; return }
+    base = w; sub(/^.*\//, "", base)
+    if (base ~ /^(env|command|exec|nohup|time|nice|sudo|xargs|do|then|if|elif|else|while|until|!|[{])$/) { wrapper = base; return }
+    if (base == "timeout") { wrapper = base; edur = 1; return }
+    if (base == "cd" || base == "pushd") { seen_cd = 1; phase = 3; return }
+    if (base == "tmux") { phase = 2; return }
+    if (base ~ /^(rm|rmdir|unlink|trash|trash-put|gtrash|shred)$/) { phase = 1; return }
+    if (base == "find") { phase = 1; isfind = 1; return }
+    phase = 3
+    return
+  }
+  if (phase == 1) {
+    if (isfind && w ~ /^-(delete|exec|execdir|ok|okdir)$/) fdel = 1
+    risky_word(w)
+    return
+  }
+  if (phase == 2) targs[++nt] = w
+}
+function flush_word() {
+  if (!inword) return
+  inword = 0
+  seg_word(word)
+  word = ""
+}
+function end_seg() {
+  flush_word()
+  if (phase == 1 && (!isfind || fdel) && (risky || seen_cd)) deny()
+  if (phase == 2) classify()
+  reset_seg()
+}
+function parse_heredoc(i,   dash, e, c, d, qq) {
+  dash = 0; d = ""; qq = ""
+  if (ch[i] == "-") { dash = 1; i++ }
+  while (ch[i] == " " || ch[i] == "\t") i++
+  while (i <= n) {
+    c = ch[i]
+    if (qq != "") { if (c == qq) qq = ""; else d = d c }
+    else if (c == "\047" || c == "\"") qq = c
+    else if (c == "\\") { i++; d = d ch[i] }
+    else if (c ~ /[ \t;|&()<>]/) break
+    else d = d c
+    i++
+  }
+  if (d != "") { hd_n++; hd_d[hd_n] = d; hd_s[hd_n] = dash }
+  return i
+}
+# Past a redirection operator: the spaces and the target word, quotes included.
+function skip_target(i,   c, qq) {
+  while (ch[i] == " " || ch[i] == "\t") i++
+  qq = ""
+  while (i <= n) {
+    c = ch[i]
+    if (qq != "") { if (qq == "\"" && c == "\\") i++; else if (c == qq) qq = "" }
+    else if (c == "\047" || c == "\"") qq = c
+    else if (c == "\\") i++
+    else if (c ~ /[ \t;|&()<>]/) break
+    i++
+  }
+  if (qq != "") { q = qq; inword = 1 }
+  return i
+}
+# Where the `((` at i closes, or 0 when it is nested subshells (`((a) )`), whose
+# commands run, or never closes on this line.
+function arith_end(i,   k, depth) {
+  depth = 0
+  for (k = i; k <= n; k++) {
+    if (ch[k] == "(") depth++
+    else if (ch[k] == ")" && --depth == 0) return (ch[k - 1] == ")" ? k : 0)
+  }
+  return 0
+}
+function scan_line(s,   i, j, c, d) {
+  n = split(s, ch, "")
+  i = 1; dollar_end = 0
+  while (i <= n) {
+    c = ch[i]
+    pd = dollar_end; dollar_end = 0
+    if (q == "\047") {
+      if (c == "\047") q = ""; else word = word c
+    } else if (q == "A") {
+      if (c == "\047") q = ""
+      else if (c == "\\") { i++; word = word ch[i] }
+      else word = word c
+    } else if (q == "\"") {
+      if (c == "\"") q = ""
+      else if (c == "\\") {
+        d = ch[i + 1]
+        if (d == "\"" || d == "\\" || d == "$" || d == "`") { word = word d; i++ }
+        else if (d == "") cont = 1
+        else word = word c
+      } else word = word c
+    } else if (c == "\047") {
+      if (pd) q = "A"; else q = "\047"
+      inword = 1
+    } else if (c == "\"") { q = "\""; inword = 1 }
+    else if (c == " " || c == "\t") flush_word()
+    else if (c == "\\") {
+      d = ch[i + 1]
+      if (d == "") cont = 1
+      else { word = word d; inword = 1; i++ }
+    }
+    else if (c == "(" && ch[i + 1] == "(" && (j = arith_end(i)) > 0) {
+      # Arithmetic: its `<<` is a shift, not a here-doc.
+      if (!pd) end_seg()
+      i = j
+    }
+    else if (c == ";" || c == "|" || c == "&" || c == "(" || c == ")" || c == "`") end_seg()
+    else if (c == "#" && !inword) break
+    else if (c == "<" || c == ">") {
+      if (ch[i + 1] == "(") { flush_word() }
+      else if (c == "<" && ch[i + 1] == "<" && ch[i + 2] != "<" && !hd_active) { i = parse_heredoc(i + 2) - 1 }
+      else {
+        if (inword && word ~ /^[0-9]+$/) { word = ""; inword = 0 } else flush_word()
+        while (ch[i + 1] == "<" || ch[i + 1] == ">" || ch[i + 1] == "&" || ch[i + 1] == "|") i++
+        i = skip_target(i + 1) - 1
+      }
+    }
+    else { word = word c; inword = 1; dollar_end = (c == "$" && !pd) }
+    i++
+  }
+}
+BEGIN {
+  wtab = " env:a exec:a env:C env:u nice:n timeout:k timeout:s xargs:n xargs:I xargs:L xargs:P xargs:s xargs:d xargs:E xargs:a xargs:l "
+  wtab = wtab "sudo:C sudo:g sudo:h sudo:p sudo:r sudo:t sudo:T sudo:U sudo:u "
+  reset_seg()
+}
+{
+  if (hd_n > 0 && hd_active) {
+    t = $0
+    if (hd_s[hd_cur]) sub(/^\t+/, "", t)
+    if (t == hd_d[hd_cur]) {
+      q = ""; cont = 0; end_seg(); inword = 0; word = ""
+      hd_cur++
+      if (hd_cur > hd_n) { hd_active = 0; hd_n = 0 }
+      next
+    }
+  }
+  scan_line($0)
+  if (q != "") { if (!cont) word = word "\n"; inword = 1 }
+  else if (!cont) { end_seg(); if (hd_n > 0 && !hd_active) { hd_cur = 1; hd_active = 1 } }
+  cont = 0
+}
+END { if (!denied) end_seg() }
+'
+  verdict=$(printf '%s\n' "$command" | LC_ALL=C awk "$gate_awk") || verdict=deny
+  if [[ $verdict == deny ]]; then
+    emit_deny "This command is over $max_bytes bytes, too long for the guard to analyse within the hook's timeout, and it has a delete that may reach the per-user runtime dir (a \$ variable, a glob, a /run/user or /proc path, XDG_RUNTIME_DIR, TMUX_TMPDIR, or a cd earlier in the command) or a tmux server command with no -L/-S (kill-server, set -g, source-file). The guard refuses what it cannot check.
+Fix: split the command into smaller ones, or write the long part to a script file and run that, keeping any delete and any tmux server call out of it ('d=\$(mktemp -d); rm -rf \"\$d\"' for scratch dirs, 'tmux -L <name>' for a private server)."
+  fi
+  exit 0
+fi
 
 # The uid substitutions become their digits before the split, so the quoted and
 # the unquoted `/run/user/$(id -u)` reach the delete check as one plain word.
@@ -328,20 +551,31 @@ xdg_done=0
 del_target=''
 # A path segment the guard cannot know; it matches any segment.
 unk=$'\002'
-# Most candidates one operand may expand to; past it the delete is refused.
+# Most candidates one operand may expand to as a product of several values, and
+# the most one name or a single-value operand may hold; past either the delete is
+# refused. A list of paths is cheap, a product of lists is not.
 max_cands=16
+max_list=64
 # Why the delete is refused: '' the runtime dir, `cap` too many candidates,
 # `budget` the step budget ran out, `len` a candidate grew too long.
 del_why=''
 # Every NAME=value, NAME+=value, ${NAME:=value}, array element and `for NAME in`
 # word on the line: names in $bn, raw values (quotes stripped, substitutions
-# made $unk) in $bv, `a` in $bk for an append.
+# made $unk) in $bv, in $bk `a` for a scalar append and empty for a scalar
+# assignment that is a statement of its own, `A` and `x` for those that may not
+# run in order (a prefix, an argument), `x` also for an array element, a `for`
+# word or a `:=` default.
 bn=()
 bv=()
 bk=()
 re_bind_word='(^|[[:space:];&|()`])(["'"'"']?)([A-Za-z_][A-Za-z0-9_]*)(\[([^][]|\[[^][]*\])*\])?([+]?)=$'
 re_bind_brace='[$][{]([A-Za-z_][A-Za-z0-9_]*):?=$'
 re_for='(^|[[:space:];&|()`])for[[:space:]]+([A-Za-z_][A-Za-z0-9_]*)[[:space:]]+in([[:space:]]|$)'
+# A line with none of these runs top to bottom: every binding on it executes, in
+# order. (Bindings that are not a statement of their own are told apart in
+# collect_bindings.)
+re_flow='[(){}&|`]|<<|(^|[[:space:];])(if|then|elif|else|fi|for|while|until|do|done|case|esac|select|function|unset|read|eval|declare|local|typeset|readonly|export|mapfile|readarray)([[:space:];]|$)'
+straight=-1
 collected=0
 visiting=' '
 over=0
@@ -492,7 +726,7 @@ bind_words() { # <name> <text> <list: 1 for a for-list, 0 for an array>
     /* | *'$'* | *"$unk"* | *'`'*)
       bn+=("$1")
       bv+=("$rv")
-      bk+=('')
+      bk+=(x)
       ;;
     *) skipped=1 ;;
     esac
@@ -500,7 +734,7 @@ bind_words() { # <name> <text> <list: 1 for a for-list, 0 for an array>
   if ((skipped)); then
     bn+=("$1")
     bv+=("$unk")
-    bk+=('')
+    bk+=(x)
   fi
 }
 
@@ -508,7 +742,7 @@ bind_words() { # <name> <text> <list: 1 for a for-list, 0 for an array>
 # prefix, subshell, pipe element, branch, inside a substitution — so a name's
 # candidates are a superset of what the shell could hold.
 collect_bindings() {
-  local rest=$command pre='' name oq app m len
+  local rest=$command pre='' name oq app m len ctx direct lead tail kind nl=$'\n'
   collected=1
   while [[ $rest =~ $re_for ]]; do
     name=${BASH_REMATCH[2]}
@@ -529,12 +763,15 @@ collect_bindings() {
       strip_quotes "${rest:0:mb}"
       bn+=("$name")
       bv+=("$sq")
-      bk+=('')
+      bk+=(x)
       pre='='
       continue
     fi
+    ctx=$pre
+    direct=1
     if [[ ! $pre =~ $re_bind_word ]]; then
       # `export "D"=v` and `export D"=v"` hand the shell the word D=v.
+      direct=0
       strip_quotes "$pre"
       if [[ ! $sq =~ $re_bind_word ]]; then
         pre='='
@@ -561,10 +798,71 @@ collect_bindings() {
     else
       read_value "$rest" 0 0
     fi
+    # A binding that is a statement of its own (after `;` or a newline, before
+    # `;`, a newline or the end) always runs and persists. `echo d=x`, `d=x cmd`
+    # and a here-doc line do not, so the in-order replay must not trust them.
+    kind=''
+    lead=${ctx%"$name$app="}
+    if ((direct)) && [[ -z $oq && $lead != "$ctx" ]]; then
+      while [[ $lead == *' ' || $lead == *$'\t' ]]; do lead=${lead%?}; done
+      tail=${rest:ri}
+      if [[ ($lead == '' || $lead == *';' || $lead == *"$nl") && $tail =~ ^[[:blank:]]*(\;|$nl|$) ]]; then kind=ok; fi
+    fi
+    if [[ $kind == ok ]]; then kind=''; else kind=x; fi
+    if [[ -n $app ]]; then
+      if [[ -n $kind ]]; then kind=A; else kind=a; fi
+    fi
     bn+=("$name")
     bv+=("$rv")
-    bk+=("${app:+a}")
+    bk+=("$kind")
   done
+}
+
+# $dd = the values of $2.. without repeats, first occurrence kept, and $dd_over
+# set when more than $1 are left: it stops there, since the scan is quadratic. A
+# value holding the separator is never dropped.
+dedupe() { # <limit> <value>...
+  local v sep=$'\003' seen=$'\003' lim=$1
+  dd=()
+  dd_over=0
+  shift
+  for v in "$@"; do
+    case $v in
+    *"$sep"*) ;;
+    *)
+      case $seen in *"$sep$v$sep"*) continue ;; esac
+      seen+=$v$sep
+      ;;
+    esac
+    if ((${#dd[@]} >= lim)); then
+      dd_over=1
+      break
+    fi
+    dd+=("$v")
+  done
+}
+
+# Charge $1 candidate values to the step budget: a step handles up to $max_list
+# of them, so counting lookups alone would not bound the run time.
+charge() { # <count>
+  steps=$((steps + $1))
+  if ((steps > max_steps && !budget)); then budget=1; fi
+}
+
+# True when the line runs top to bottom (re_flow). A quote, backslash or `#`
+# before the last `=` may hide a binding from the shell (`echo ";d=/tmp/;"`) that
+# the text still shows, so it ends the replay too.
+is_straight() {
+  local t
+  if ((straight < 0)); then
+    # `2>&1`, `&>` and `${p}` are not control flow.
+    t=${command//[0-9]>&[0-9]/}
+    t=${t//&>/>}
+    t=${t//\$\{/\$}
+    t=${t//\}/}
+    if [[ $t =~ $re_flow || ${t%=*} == *[\\#\"\']* ]]; then straight=0; else straight=1; fi
+  fi
+  ((straight))
 }
 
 # Sets $lv to NAME's candidate values: its exported value from the guard's
@@ -573,12 +871,16 @@ collect_bindings() {
 # variable says nothing about the worker's shell. An unset or empty value, or
 # a name with no candidates, is unknown, never empty, so `rm -rf "$dir/"` is
 # not `rm -rf /`. A binding that refers back to its own name (`d=$d/x`) reads
-# that name as unknown. An append (`d+=v`) extends every value collected so far
-# and the empty value, whatever its order on the line: it may be skipped, or an
-# earlier binding may run after it.
+# that name as unknown. In a line that runs top to bottom, where every binding
+# of NAME is a scalar, the bindings replay in order: an append extends the value
+# the name holds at that point, and each value it held stays a candidate (a use
+# may come at any point), so a chain of appends adds one candidate per append.
+# Elsewhere an append (`d+=v`) extends every value collected so far and the empty
+# value, whatever its order on the line: it may be skipped, or an earlier binding
+# may run after it.
 lookup_var() { # <name>
-  local i e c v cyc0
-  local -a out=() gen pidx=() aidx=()
+  local i e c v cyc0 mixed=0
+  local -a out=() gen cur nxt pidx=() aidx=() allidx=()
   case $1 in
   UID)
     lv=("$UID")
@@ -618,32 +920,100 @@ lookup_var() { # <name>
     visiting+="$1 "
     for ((i = 0; i < ${#bn[@]}; i++)); do
       [[ ${bn[i]} == "$1" ]] || continue
-      if [[ -n ${bk[i]} ]]; then aidx+=("$i"); else pidx+=("$i"); fi
+      allidx+=("$i")
+      case ${bk[i]} in
+      a) aidx+=("$i") ;;
+      A)
+        mixed=1
+        aidx+=("$i")
+        ;;
+      x)
+        mixed=1
+        pidx+=("$i")
+        ;;
+      *) pidx+=("$i") ;;
+      esac
     done
-    for i in ${pidx[@]+"${pidx[@]}"}; do
-      if ((budget || ${#out[@]} > max_cands)); then break; fi
-      expand_word "${bv[i]}"
-      for e in "${exs[@]}"; do out+=("${e:-$unk}"); done
-    done
-    for i in ${aidx[@]+"${aidx[@]}"}; do
-      if ((budget || ${#out[@]} > max_cands)); then break; fi
-      expand_word "${bv[i]}"
-      gen=()
-      for c in ${out[@]+"${out[@]}"} ""; do
-        for e in "${exs[@]}"; do
-          v=$c$e
-          if ((${#v} > max_len && !budget)); then budget=2; fi
-          gen+=("${v:-$unk}")
-        done
+    if ((${#aidx[@]} && !mixed)) && is_straight; then
+      # The base is the exported value, else the empty string an append starts
+      # from; only the exported value is a candidate before the first binding.
+      cur=("${out[0]-}")
+      for i in "${allidx[@]}"; do
+        if ((budget)); then break; fi
+        expand_word "${bv[i]}"
+        if [[ ${bk[i]} == a ]]; then
+          if ((${#cur[@]} * ${#exs[@]} > 2 * max_list)); then
+            over=1
+            break
+          fi
+          nxt=()
+          for c in "${cur[@]}"; do
+            for e in "${exs[@]}"; do
+              v=$c$e
+              if ((${#v} > max_len && !budget)); then budget=2; fi
+              nxt+=("$v")
+            done
+          done
+          dedupe "$max_list" "${nxt[@]}"
+        else
+          dedupe "$max_list" "${exs[@]}"
+        fi
+        if ((dd_over)); then over=1; fi
+        cur=("${dd[@]}")
+        for c in "${cur[@]}"; do out+=("${c:-$unk}"); done
+        charge $((${#cur[@]} + ${#exs[@]}))
+        if ((${#out[@]} > max_list)); then
+          dedupe "$max_list" "${out[@]}"
+          out=("${dd[@]}")
+          if ((dd_over)); then
+            over=1
+            break
+          fi
+        fi
       done
-      out+=("${gen[@]}")
-    done
+    else
+      for i in ${pidx[@]+"${pidx[@]}"}; do
+        if ((budget || over)); then break; fi
+        expand_word "${bv[i]}"
+        for e in "${exs[@]}"; do out+=("${e:-$unk}"); done
+        charge ${#exs[@]}
+        if ((${#out[@]} > max_list)); then
+          dedupe "$max_list" "${out[@]}"
+          out=("${dd[@]}")
+          if ((dd_over)); then over=1; fi
+        fi
+      done
+      for i in ${aidx[@]+"${aidx[@]}"}; do
+        if ((budget || over)); then break; fi
+        expand_word "${bv[i]}"
+        if (((${#out[@]} + 1) * ${#exs[@]} > 2 * max_list)); then
+          over=1
+          break
+        fi
+        gen=()
+        for c in ${out[@]+"${out[@]}"} ""; do
+          for e in "${exs[@]}"; do
+            v=$c$e
+            if ((${#v} > max_len && !budget)); then budget=2; fi
+            gen+=("${v:-$unk}")
+          done
+        done
+        out+=("${gen[@]}")
+        charge ${#gen[@]}
+        if ((${#out[@]} > max_list)); then
+          dedupe "$max_list" "${out[@]}"
+          out=("${dd[@]}")
+          if ((dd_over)); then over=1; fi
+        fi
+      done
+    fi
     visiting=${visiting%"$1 "}
     ;;
   esac
-  if ((${#out[@]} > max_cands)); then
-    over=1
-    out=("${out[@]:0:max_cands+1}")
+  if ((${#out[@]})); then
+    dedupe "$max_list" "${out[@]}"
+    out=("${dd[@]}")
+    if ((dd_over)); then over=1; fi
   fi
   ((${#out[@]})) || out=("$unk")
   lv=("${out[@]}")
@@ -661,13 +1031,14 @@ lookup_var() { # <name>
 # Expand the parameters in one word into $exs, the list of values it may take
 # (the cross product of its parameters' candidates); whatever the guard cannot
 # know (positional and special parameters, other ${…} forms, command
-# substitutions) becomes $unk. More than $max_cands sets $over.
+# substitutions) becomes $unk. A product of more than $max_cands values or a
+# list of more than $max_list sets $over.
 #   ${X:-w} ${X-w} ${X:=w} ${X=w}   candidates of X and of w
 #   ${X:+w} ${X+w}                  candidates of w, or unknown
 #   ${X:?w} ${X?w} ${X%w} ${X%%w}   candidates of X (a `%` strip leaves a
 #                                   prefix, so the whole value leans to deny)
 expand_word() { # <word>
-  local s=$1 i=0 n=${#1} c inner name op lit='' a l
+  local s=$1 i=0 n=${#1} c inner name op lit='' a l cap
   local -a acc=('') vals next
   steps=$((steps + 1))
   if ((steps > max_steps && !budget)); then budget=1; fi
@@ -754,19 +1125,30 @@ expand_word() { # <word>
         ;;
       esac
     fi
+    dedupe "$max_list" "${vals[@]}"
+    if ((dd_over)); then over=1; fi
+    vals=("${dd[@]}")
+    charge ${#vals[@]}
+    # A product of two lists is bounded tighter than a list alone. The product is
+    # sized before it is built, so a big one costs nothing.
+    cap=$max_list
+    if ((${#acc[@]} > 1 && ${#vals[@]} > 1)); then cap=$max_cands; fi
     next=()
+    if ((${#acc[@]} * ${#vals[@]} > cap)); then
+      over=1
+      acc=("${acc[@]:0:cap}")
+      vals=("${vals[@]:0:cap}")
+    fi
     for a in "${acc[@]}"; do
       for l in "${vals[@]}"; do
+        ((${#next[@]} < cap)) || break 2
         next+=("$a$lit$l")
         if ((${#a} + ${#lit} + ${#l} > max_len && !budget)); then budget=2; fi
       done
     done
     lit=''
-    if ((${#next[@]} > max_cands)); then
-      over=1
-      next=("${next[@]:0:max_cands}")
-    fi
-    acc=("${next[@]}")
+    dedupe "$cap" "${next[@]}"
+    acc=("${dd[@]}")
   done
   exs=("${acc[@]}")
 }
@@ -816,6 +1198,7 @@ judge_target() { # <operand>
   local c
   [[ -z $del_target ]] || return 0
   expand_word "$1"
+  charge ${#exs[@]}
   if ((budget)); then
     del_target=$1
     if ((budget == 2)); then del_why=len; else del_why=budget; fi
@@ -982,7 +1365,7 @@ if [[ -n $deny_what ]]; then
   reason="This tmux command reaches the live tmux server: '$deny_what' with no -L/-S. A worker's panes inherit \$TMUX, which tmux resolves before TMUX_TMPDIR, so a scratch server built with TMUX_TMPDIR alone does not isolate it.
 Fix: run 'unset TMUX', point a private 'export TMUX_TMPDIR=\$(mktemp -d)', and pass '-L <name>' on every tmux call, including kill-server."
 elif [[ $del_why == cap ]]; then
-  reason="This deletes '$del_target', which expands to more than $max_cands candidate values, too many for the guard to check against the per-user runtime dir. The guard refuses what it cannot check.
+  reason="This deletes '$del_target', which expands to too many candidate values (a product of more than $max_cands, or a list of more than $max_list) for the guard to check against the per-user runtime dir. The guard refuses what it cannot check.
 Fix: delete one concrete path per command, or a private dir you created ('d=\$(mktemp -d); rm -rf \"\$d\"')."
 elif [[ $del_why == budget ]]; then
   reason="This deletes '$del_target', whose variables chain too deeply for the guard to resolve within its expansion budget, so it cannot rule out the per-user runtime dir. The guard refuses what it cannot check.
@@ -997,7 +1380,4 @@ else
   exit 0
 fi
 
-case $shape in
-cursor) jq -cn --arg r "$reason" '{permission: "deny", user_message: $r, agent_message: $r}' ;;
-*) jq -cn --arg r "$reason" '{hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: $r}}' ;;
-esac
+emit_deny "$reason"
