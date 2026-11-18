@@ -52,7 +52,30 @@ func newAutosweepCLI(t *testing.T) *autosweepCLI {
 	a.repoDir = c.repo(filepath.Join(filepath.Dir(c.root), "widgets"), "acme/widgets")
 	// reap chdirs the process to the repo; t.Chdir restores it afterwards.
 	t.Chdir(a.repoDir)
+	// A real priors on the developer's PATH must never run from these tests.
+	a.fakePriors("exit 0")
 	return a
+}
+
+// fakePriors puts a `priors` on PATH whose body is script; each call appends
+// its arguments to priors.calls beside the store.
+func (a *autosweepCLI) fakePriors(script string) {
+	a.t.Helper()
+	bin := a.t.TempDir()
+	body := "#!/bin/sh\necho \"$*\" >> " + a.priorsCalls() + "\n" + script + "\n"
+	if err := os.WriteFile(filepath.Join(bin, "priors"), []byte(body), 0o755); err != nil {
+		a.t.Fatal(err)
+	}
+	a.t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+func (a *autosweepCLI) priorsCalls() string {
+	return filepath.Join(filepath.Dir(a.root), "priors.calls")
+}
+
+func (a *autosweepCLI) importCount() int {
+	data, _ := os.ReadFile(a.priorsCalls())
+	return strings.Count(string(data), "import\n")
 }
 
 func (a *autosweepCLI) reap(args ...string) (string, string, int) {
@@ -285,7 +308,7 @@ func TestAutosweepAsyncModeLeavesStdoutAndExitStatusUnchanged(t *testing.T) {
 	if disabled != async {
 		t.Errorf("async output differs:\ndisabled %q\nasync    %q", disabled, async)
 	}
-	a.awaitLog(`done rc=`, 1)
+	a.awaitLog(`Z done rc=`, 1)
 }
 
 func TestAutosweepDefaultIsOnWhenTheVariableIsUnset(t *testing.T) {
@@ -300,7 +323,7 @@ func TestAutosweepDefaultIsOnWhenTheVariableIsUnset(t *testing.T) {
 func TestAutosweepFlagAndTheForkCompose(t *testing.T) {
 	a := newAutosweepCLI(t)
 	a.reapOK("1")
-	a.awaitLog(`done rc=0`, 1)
+	a.awaitLog(`Z done rc=0`, 1)
 	if n := a.storeLines(); n != 1 {
 		t.Errorf("store has %d rows, want 1", n)
 	}
@@ -360,14 +383,14 @@ func TestAutosweepTheThreeDocumentedValuesProduceNoWarning(t *testing.T) {
 func TestAutosweepTwoAsyncSweepsEachComplete(t *testing.T) {
 	a := newAutosweepCLI(t)
 	a.reapOK("1")
-	a.awaitLog(`done rc=`, 1)
+	a.awaitLog(`Z done rc=`, 1)
 	if n := a.storeLines(); n != 1 {
 		t.Fatalf("store has %d rows after the first sweep, want 1", n)
 	}
 	// The second wait is the point: the store now exists, so waiting on it alone
 	// would return having waited for nothing.
 	a.reapOK("1")
-	a.awaitLog(`done rc=`, 2)
+	a.awaitLog(`Z done rc=`, 2)
 	// Still one row: the sweep is idempotent, so this pass appends nothing.
 	if n := a.storeLines(); n != 1 {
 		t.Errorf("store has %d rows after the second sweep, want 1", n)
@@ -383,13 +406,13 @@ func TestAutosweepFailingAsyncSweepIsLoggedWithItsExitCode(t *testing.T) {
 		t.Fatal(err)
 	}
 	a.reapOK("1")
-	a.awaitLog(`done rc=`, 1)
+	a.awaitLog(`Z done rc=`, 1)
 	a.awaitLog(`start pid=[0-9]+ repo=`, 1)
 	data, err := os.ReadFile(a.autosweepLog())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(data), "done rc=0") {
+	if strings.Contains(string(data), "Z done rc=0") {
 		t.Errorf("a failing sweep logged rc=0:\n%s", data)
 	}
 }
@@ -427,7 +450,7 @@ func TestAutosweepAsyncLogIsTrimmedToItsLast200Lines(t *testing.T) {
 		t.Fatal(err)
 	}
 	a.reapOK("1")
-	a.awaitLog(`done rc=0`, 1)
+	a.awaitLog(`Z done rc=0`, 1)
 	// The trim is the child's last write; give it a beat to land.
 	deadline := time.Now().Add(asyncLimit)
 	var lines []string
@@ -475,4 +498,45 @@ func TestAutosweepTrimmingTheLogKeepsAConcurrentSweepsLaterLines(t *testing.T) {
 	if !strings.Contains(string(data), "HOLDER-LATE-LINE") {
 		t.Errorf("the holder's late line is gone from the log:\n%s", data)
 	}
+}
+
+func TestAutosweepPriorsImportRunsOnceAndIsLogged(t *testing.T) {
+	a := newAutosweepCLI(t)
+	a.reapOK("1")
+	a.awaitLog(`priors import done rc=0`, 1)
+	if n := a.importCount(); n != 1 {
+		t.Errorf("priors import ran %d times, want 1", n)
+	}
+	a.awaitLog(`priors import start`, 1)
+}
+
+func TestAutosweepPriorsImportIsRateLimitedAcrossReaps(t *testing.T) {
+	a := newAutosweepCLI(t)
+	a.reapOK("1")
+	a.awaitLog(`priors import done rc=0`, 1)
+	a.reapOK("1")
+	a.awaitLog(`Z done rc=`, 2)
+	a.settle()
+	if n := a.importCount(); n != 1 {
+		t.Errorf("priors import ran %d times inside the window, want 1", n)
+	}
+}
+
+func TestAutosweepPriorsImportSkippedWhenDisabledOrDryRun(t *testing.T) {
+	a := newAutosweepCLI(t)
+	a.reapOK("0")
+	a.reapOK("sync", "--dry-run")
+	a.reapOK("1", "--dry-run")
+	if n := a.importCount(); n != 0 {
+		t.Errorf("priors import ran %d times, want 0", n)
+	}
+}
+
+func TestAutosweepFailingPriorsImportDoesNotChangeReapsExitStatus(t *testing.T) {
+	a := newAutosweepCLI(t)
+	a.fakePriors("echo boom >&2; exit 3")
+	a.reapOK("1")
+	a.awaitLog(`priors import done rc=3`, 1)
+	data, _ := os.ReadFile(a.autosweepLog())
+	wantContains(t, "autosweep.log", string(data), "boom")
 }

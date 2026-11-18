@@ -525,7 +525,9 @@ pr_open` for an implement task: the ledger's form, the empty-detail rule, the
   `sync` (take `ratings.sweep.lock.d`, run `rate` in process) or the default async: a hidden
   `crew-go reap-autosweep` child (not on the public usage, like `git-guard`) with stdin
   `/dev/null`, output appended to `autosweep.log`, SIGHUP ignored, and the log trimmed in
-  place to its last 200 lines. `reap` takes `reap.lock.d` through `internal/lock`. SIGTERM,
+  place to its last 200 lines. After the sweep the child runs `priors import` when `priors`
+  is on `PATH`, rate-limited to once an hour by `priors-import.stamp` under
+  `priors-import.lock.d` in the store dir, with a 5-minute timeout (`internal/reap/priors.go`). `reap` takes `reap.lock.d` through `internal/lock`. SIGTERM,
   SIGINT and SIGHUP, each only when not inherited ignored, remove the `--discard` temp dir
   and release the locks, then exit 128+signo, as the arm's EXIT trap did.
 - `crew/internal/stack`: `crew stack cut` and `crew stack align` (#1004). One argv
