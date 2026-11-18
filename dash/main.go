@@ -128,11 +128,16 @@ func resolveMap(runner data.Runner) (ui.MapDeps, func()) {
 	if err != nil {
 		return notCapable("no controlling tty"), func() {}
 	}
+	// Fd switches the handle back to blocking: a non-blocking write of a large
+	// inline image returns partial writes, letting bubbletea's output land
+	// inside the escape sequence.
+	_ = tty.Fd()
 	run := func(ctx context.Context, name string, args ...string) ([]byte, error) {
 		out, _, err := runner.Run(ctx, name, args...)
 		return out, err
 	}
-	if ok, why := kitty.Capable(os.Getenv, run); !ok {
+	mode, why := kitty.Detect(os.Getenv, run)
+	if mode == kitty.ModeNone {
 		_ = tty.Close()
 		return notCapable(why), func() {}
 	}
@@ -152,6 +157,7 @@ func resolveMap(runner data.Runner) (ui.MapDeps, func()) {
 			TTY:     tty,
 			CellPx:  func() (int, int) { return cellW, cellH },
 			Capable: func() (bool, string) { return true, "" },
+			Direct:  mode == kitty.ModeDirect,
 			OutPath: png.Name(),
 			IDBase:  kitty.ID(host, os.Getenv("TMUX_PANE")),
 		}, func() {

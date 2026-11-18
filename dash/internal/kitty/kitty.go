@@ -53,6 +53,33 @@ func Store(id int, path string, cols, rows int, inTmux bool) string {
 		id, cols, rows, enc), inTmux)
 }
 
+// chunkSize is the largest base64 payload kitty accepts in one direct-transfer
+// escape.
+const chunkSize = 4096
+
+// StoreDirect is Store for a terminal that cannot read this host's files (ssh,
+// or a mirrored remote-bridge session): t=d carries the PNG itself, base64 in
+// chunkSize pieces with m=1 on every piece but the last. Each piece is its own
+// escape and its own tmux passthrough, so none outgrows tmux's DCS limit.
+func StoreDirect(id int, png []byte, cols, rows int, inTmux bool) string {
+	enc := base64.StdEncoding.EncodeToString(png)
+	var b strings.Builder
+	for first := true; first || enc != ""; first = false {
+		chunk := enc[:min(len(enc), chunkSize)]
+		enc = enc[len(chunk):]
+		more := 0
+		if enc != "" {
+			more = 1
+		}
+		keys := fmt.Sprintf("m=%d,q=2", more)
+		if first {
+			keys = fmt.Sprintf("i=%d,a=T,U=1,q=2,f=100,c=%d,r=%d,t=d,m=%d", id, cols, rows, more)
+		}
+		b.WriteString(passthrough("\x1b_G"+keys+";"+chunk+"\x1b\\", inTmux))
+	}
+	return b.String()
+}
+
 // Delete returns the sequence that removes image id and its placements. It is
 // scoped by id so it never clears another program's images in a shared kitty
 // store.
@@ -154,48 +181,60 @@ func QueryCellPx(tty *os.File) (w, h int) {
 
 type Runner func(ctx context.Context, name string, args ...string) (stdout []byte, err error)
 
-// Capable reports whether this terminal can show unicode-placeholder images.
-// There is no capability query for placeholders, so it is a TERM allowlist
-// (kitty and ghostty). Under tmux the outer terminal's name comes from the
-// attached client, and tmux must also pass the graphics escapes through. An ssh
-// session is never capable because Store has the terminal read the image file;
-// under tmux that is the most recent client's session, asked of tmux.
-// When not ok, why is a short human reason fit to show as is.
-func Capable(getenv func(string) string, run Runner) (ok bool, why string) {
-	const sshWhy = "the terminal must run on this host: over ssh it cannot read the image file"
+// Mode is how a capable terminal receives the image.
+type Mode int
+
+const (
+	// ModeNone: the terminal cannot show the image.
+	ModeNone Mode = iota
+	// ModeFile: the terminal runs on this host and reads the PNG by path.
+	ModeFile
+	// ModeDirect: the terminal is remote (ssh, or a remote-bridge mirror), so
+	// the PNG bytes travel inline.
+	ModeDirect
+)
+
+// Detect reports how this terminal can show unicode-placeholder images. There
+// is no capability query for placeholders, so it is a TERM allowlist (kitty
+// and ghostty). Under tmux the outer terminal's name comes from the attached
+// client, and tmux must also pass the graphics escapes through. A remote
+// terminal (an ssh session, or under tmux the most recent client's session,
+// asked of tmux) gets ModeDirect: it cannot read this host's image file, but a
+// kitty-capable one decodes inline data, and a remote bridge relays it.
+// When mode is ModeNone, why is a short human reason fit to show as is.
+func Detect(getenv func(string) string, run Runner) (mode Mode, why string) {
 	termName := getenv("TERM")
 	if getenv("TMUX") == "" {
-		if getenv("SSH_CONNECTION") != "" || getenv("SSH_TTY") != "" {
-			return false, sshWhy
-		}
-	} else {
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		defer cancel()
-		out, err := run(ctx, "tmux", "display-message", "-p", "#{client_termname}")
-		if err != nil {
-			return false, "cannot read the tmux client terminal: " + err.Error()
-		}
-		termName = strings.TrimSpace(string(out))
 		if !kittyTerm(termName) {
-			return false, fmt.Sprintf("tmux client terminal is %s, not kitty", termName)
+			return ModeNone, "needs kitty or ghostty"
 		}
-		out, err = run(ctx, "tmux", "show-options", "-gv", "allow-passthrough")
-		if v := strings.TrimSpace(string(out)); err != nil || (v != "on" && v != "all") {
-			return false, "tmux allow-passthrough is off — run: tmux set -g allow-passthrough on"
+		if getenv("SSH_CONNECTION") != "" || getenv("SSH_TTY") != "" {
+			return ModeDirect, ""
 		}
-		// A pane keeps the SSH_CONNECTION it was created with, so ask tmux for
-		// the most recent client's. Any error, including "unknown variable",
-		// means the variable is unset and the client is local.
-		out, err = run(ctx, "tmux", "show-environment", "SSH_CONNECTION")
-		if err == nil && strings.HasPrefix(string(out), "SSH_CONNECTION=") {
-			return false, sshWhy
-		}
-		return true, ""
+		return ModeFile, ""
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	out, err := run(ctx, "tmux", "display-message", "-p", "#{client_termname}")
+	if err != nil {
+		return ModeNone, "cannot read the tmux client terminal: " + err.Error()
+	}
+	termName = strings.TrimSpace(string(out))
 	if !kittyTerm(termName) {
-		return false, "needs kitty or ghostty"
+		return ModeNone, fmt.Sprintf("tmux client terminal is %s, not kitty", termName)
 	}
-	return true, ""
+	out, err = run(ctx, "tmux", "show-options", "-gv", "allow-passthrough")
+	if v := strings.TrimSpace(string(out)); err != nil || (v != "on" && v != "all") {
+		return ModeNone, "tmux allow-passthrough is off — run: tmux set -g allow-passthrough on"
+	}
+	// A pane keeps the SSH_CONNECTION it was created with, so ask tmux for
+	// the most recent client's. Any error, including "unknown variable",
+	// means the variable is unset and the client is local.
+	out, err = run(ctx, "tmux", "show-environment", "SSH_CONNECTION")
+	if err == nil && strings.HasPrefix(string(out), "SSH_CONNECTION=") {
+		return ModeDirect, ""
+	}
+	return ModeFile, ""
 }
 
 func kittyTerm(name string) bool {
