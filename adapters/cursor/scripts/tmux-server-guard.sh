@@ -121,13 +121,13 @@ emit_deny() { # <reason>
 # timeout the guard would fail open. A command over this many bytes gets a
 # linear awk pass over its command words instead of the analysis: a delete or
 # tmux verb is only read at command position, so prose in a commit message or
-# an echo argument names nothing. A here-doc body is read as commands only when
-# a shell consumes it (bash, sh, eval, source …); `cat > f <<EOF` is data.
+# an echo argument names nothing. Here-doc bodies are read as commands, as the
+# analyzer does: any shell may run them.
 max_bytes=8192
 if (($(printf '%s' "$command" | wc -c) > max_bytes)); then
   # shellcheck disable=SC2016
   gate_awk='
-function reset_seg() { verb = ""; phase = 0; wrapper = ""; wval = 0; edur = 0; risky = 0; fdel = 0; isfind = 0; nt = 0 }
+function reset_seg() { phase = 0; wrapper = ""; wval = 0; edur = 0; risky = 0; fdel = 0; isfind = 0; nt = 0 }
 function deny() { print "deny"; denied = 1; exit }
 function risky_word(w,   x) {
   x = w
@@ -171,7 +171,7 @@ function seg_word(w,   base, rest, c) {
       return
     }
     if (edur && w ~ /^[0-9]+([.][0-9]+)?[smhd]?$/) { edur = 0; return }
-    base = w; sub(/^.*\//, "", base); verb = base
+    base = w; sub(/^.*\//, "", base)
     if (base ~ /^(env|command|exec|nohup|time|nice|sudo|xargs|do|then|if|elif|else|while|until|!|[{])$/) { wrapper = base; return }
     if (base == "timeout") { wrapper = base; edur = 1; return }
     if (base == "cd" || base == "pushd") { seen_cd = 1; phase = 3; return }
@@ -213,7 +213,7 @@ function parse_heredoc(i,   dash, e, c, d, qq) {
     else d = d c
     i++
   }
-  if (d != "") { hd_n++; hd_d[hd_n] = d; hd_s[hd_n] = dash; hd_scan[hd_n] = (verb ~ /^(bash|sh|zsh|dash|ksh|eval|source|[.])$/) }
+  if (d != "") { hd_n++; hd_d[hd_n] = d; hd_s[hd_n] = dash }
   return i
 }
 # Past a redirection operator: the spaces and the target word, quotes included.
@@ -222,15 +222,26 @@ function skip_target(i,   c, qq) {
   qq = ""
   while (i <= n) {
     c = ch[i]
-    if (qq != "") { if (c == qq) qq = "" }
+    if (qq != "") { if (qq == "\"" && c == "\\") i++; else if (c == qq) qq = "" }
     else if (c == "\047" || c == "\"") qq = c
     else if (c == "\\") i++
     else if (c ~ /[ \t;|&()<>]/) break
     i++
   }
+  if (qq != "") { q = qq; inword = 1 }
   return i
 }
-function scan_line(s,   i, c, d) {
+# Where the `((` at i closes, or 0 when it is nested subshells (`((a) )`), whose
+# commands run, or never closes on this line.
+function arith_end(i,   k, depth) {
+  depth = 0
+  for (k = i; k <= n; k++) {
+    if (ch[k] == "(") depth++
+    else if (ch[k] == ")" && --depth == 0) return (ch[k - 1] == ")" ? k : 0)
+  }
+  return 0
+}
+function scan_line(s,   i, j, c, d) {
   n = split(s, ch, "")
   i = 1; dollar_end = 0
   while (i <= n) {
@@ -260,15 +271,10 @@ function scan_line(s,   i, c, d) {
       if (d == "") cont = 1
       else { word = word d; inword = 1; i++ }
     }
-    else if (c == "(" && ch[i + 1] == "(") {
+    else if (c == "(" && ch[i + 1] == "(" && (j = arith_end(i)) > 0) {
       # Arithmetic: its `<<` is a shift, not a here-doc.
       if (!pd) end_seg()
-      depth = 0
-      while (i <= n) {
-        if (ch[i] == "(") depth++
-        else if (ch[i] == ")" && --depth == 0) break
-        i++
-      }
+      i = j
     }
     else if (c == ";" || c == "|" || c == "&" || c == "(" || c == ")" || c == "`") end_seg()
     else if (c == "#" && !inword) break
@@ -281,7 +287,7 @@ function scan_line(s,   i, c, d) {
         i = skip_target(i + 1) - 1
       }
     }
-    else { word = word c; inword = 1; dollar_end = (c == "$") }
+    else { word = word c; inword = 1; dollar_end = (c == "$" && !pd) }
     i++
   }
 }
@@ -300,7 +306,6 @@ BEGIN {
       if (hd_cur > hd_n) { hd_active = 0; hd_n = 0 }
       next
     }
-    if (!hd_scan[hd_cur]) next
   }
   scan_line($0)
   if (q != "") { if (!cont) word = word "\n"; inword = 1 }
