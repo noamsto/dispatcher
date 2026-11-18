@@ -134,3 +134,41 @@ write_user() {
   [ "$status" -eq 0 ]
   jq -e 'has("hosts") | not' "$USER_FILE"
 }
+
+@test "--yes keeps a user-set engines and fleetBudget and reports up to date" {
+  write_user '{"engines":["claude"],"fleetBudget":3}'
+  run run_setup --yes
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"already up to date"* ]]
+  [ "$(jq -cS . "$USER_FILE")" = '{"engines":["claude"],"fleetBudget":3}' ]
+}
+
+@test "--check does not flag an installed engine the owner left disabled" {
+  write_user '{"engines":["claude"],"fleetBudget":4}'
+  run run_setup --check
+  [ "$status" -eq 0 ]
+}
+
+@test "a pre-existing user-layer warning does not block --yes" {
+  write_user '{"taskProfiles":5}'
+  run --separate-stderr bash "$DISPATCH_CONFIG_BIN"
+  [[ "$stderr" == *"$USER_FILE"* ]]
+  run run_setup --yes
+  [ "$status" -eq 0 ]
+  [ "$(jq -c .engines "$USER_FILE")" = '["claude","pi"]' ]
+}
+
+@test "interactive: an answered prompt is written and an invalid answer falls back" {
+  run bash -c 'printf "%s\n" "" "abc" "" "n" "y" | DISPATCHER_SETUP_INTERACTIVE=1 bash "$0"' "$SETUP"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"ignoring invalid answer 'abc'"* ]]
+  [ "$(jq -c .dashAutoOpen "$USER_FILE")" = false ]
+  jq -e 'has("fleetBudget") | not' "$USER_FILE"
+}
+
+@test "interactive: declining the write confirmation writes nothing" {
+  run bash -c 'printf "%s\n" "" "" "" "y" "n" | DISPATCHER_SETUP_INTERACTIVE=1 bash "$0"' "$SETUP"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"nothing written"* ]]
+  [ ! -e "$USER_FILE" ]
+}

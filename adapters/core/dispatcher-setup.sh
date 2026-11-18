@@ -56,7 +56,8 @@ cfg_bin="${DISPATCH_CONFIG_BIN:-@dispatchConfig@}"
 ENGINES_ALL="claude codex cursor pi"
 
 interactive=0
-if [ "$check" = 0 ] && [ "$yes" = 0 ] && [ -t 0 ]; then interactive=1; fi
+# DISPATCHER_SETUP_INTERACTIVE=1 overrides only the [ -t 0 ] check (test seam for piped stdin).
+if [ "$check" = 0 ] && [ "$yes" = 0 ] && { [ -t 0 ] || [ "${DISPATCHER_SETUP_INTERACTIVE:-}" = 1 ]; }; then interactive=1; fi
 
 merged="$("$cfg_bin")"
 origins="$("$cfg_bin" --show-origin)"
@@ -90,7 +91,7 @@ if [ -r "$ssh_config" ]; then
   while IFS= read -r h; do
     [[ $h =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || continue
     jq -e --arg h "$h" 'index($h) | not' <<<"$configured_hosts" >/dev/null || continue
-    ssh -G -- "$h" >/dev/null 2>&1 || continue
+    timeout 3 ssh -G -- "$h" >/dev/null 2>&1 || continue
     host_candidates+=("$h")
   done < <(awk 'tolower($1) == "host" { for (i = 2; i <= NF; i++) if ($i !~ /[*?!]/) print $i }' "$ssh_config" | sort -u)
 fi
@@ -145,7 +146,7 @@ report() {
     [ "${#installed[@]}" -eq 0 ] || gap="engines unset: every engine is enabled, installed here: ${installed[*]}"
   elif ! jq -e --argjson i "$installed_json" '. as $e | all($e[]; . as $x | $i | index($x))' <<<"$enabled" >/dev/null; then
     gap="enabled engines not installed here"
-  elif ! jq -e --argjson i "$installed_json" '. as $e | all($i[]; . as $x | $e | index($x))' <<<"$enabled" >/dev/null; then
+  elif [ "$(jq -r .origin <<<"$c")" = base ] && ! jq -e --argjson i "$installed_json" '. as $e | all($i[]; . as $x | $e | index($x))' <<<"$enabled" >/dev/null; then
     gap="installed engines not enabled"
   fi
   entry_for engines '["engines"]' "$installed_json" "$gap"
@@ -252,7 +253,7 @@ parse_engines() {
   jq -cn '$ARGS.positional' --args "${words[@]}"
 }
 parse_nonneg_int() { [[ $1 =~ ^[0-9]+$ ]] && printf '%s' "$((10#$1))"; }
-parse_positive_number() { [[ $1 =~ ^[0-9]+(\.[0-9]+)?$ ]] && jq -ce '. as $n | select($n > 0)' <<<"$1"; }
+parse_positive_number() { [[ $1 =~ ^[0-9]+(\.[0-9]+)?$ ]] && jq -cse 'if length == 1 and (.[0] | type == "number") and .[0] > 0 then .[0] else empty end' <<<"$1"; }
 parse_bool() {
   case "$1" in
   y | Y | yes | true) printf true ;;
@@ -260,7 +261,7 @@ parse_bool() {
   *) return 1 ;;
   esac
 }
-parse_credits() { jq -ce 'select(type == "object")' <<<"$1"; }
+parse_credits() { jq -cse 'if length == 1 and (.[0] | type == "object") then .[0] else empty end' <<<"$1"; }
 
 if [ "${#installed[@]}" -gt 0 ]; then
   decide engines '["engines"]' "$installed_json" parse_engines
@@ -326,6 +327,7 @@ if ! new_warnings="$(XDG_CONFIG_HOME="$scratch" "$cfg_bin" 2>&1 >/dev/null)"; th
   echo "$new_warnings" >&2
   exit 1
 fi
+new_warnings="${new_warnings//"$scratch/dispatcher/settings.json"/$user_file}"
 new_warnings="$(grep -vxF -f <(printf '%s\n' "$baseline_warnings") <<<"$new_warnings" || true)"
 if [ -n "$new_warnings" ]; then
   echo "dispatcher setup: the proposed settings add warnings; nothing written:" >&2
