@@ -159,15 +159,16 @@ write_user() {
 }
 
 @test "interactive: an answered prompt is written and an invalid answer falls back" {
-  run bash -c 'printf "%s\n" "" "abc" "" "n" "y" | DISPATCHER_SETUP_INTERACTIVE=1 bash "$0"' "$SETUP"
+  run bash -c 'printf "%s\n" "" "abc" "" "n" "float" "y" | DISPATCHER_SETUP_INTERACTIVE=1 bash "$0"' "$SETUP"
   [ "$status" -eq 0 ]
   [[ "$output" == *"ignoring invalid answer 'abc'"* ]]
   [ "$(jq -c .dashAutoOpen "$USER_FILE")" = false ]
+  [ "$(jq -c .dashPlacement "$USER_FILE")" = '"float"' ]
   jq -e 'has("fleetBudget") | not' "$USER_FILE"
 }
 
 @test "interactive: declining the write confirmation writes nothing" {
-  run bash -c 'printf "%s\n" "" "" "" "y" "n" | DISPATCHER_SETUP_INTERACTIVE=1 bash "$0"' "$SETUP"
+  run bash -c 'printf "%s\n" "" "" "" "" "y" "n" | DISPATCHER_SETUP_INTERACTIVE=1 bash "$0"' "$SETUP"
   [ "$status" -eq 0 ]
   [[ "$output" == *"nothing written"* ]]
   [ ! -e "$USER_FILE" ]

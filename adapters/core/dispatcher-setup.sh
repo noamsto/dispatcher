@@ -168,6 +168,7 @@ report() {
 
   entry_for anthropicCredits '["anthropicCredits"]' null ""
   entry_for dashAutoOpen '["dashAutoOpen"]' null ""
+  entry_for dashPlacement '["dashPlacement"]' null ""
   entry_for overseer.autoRelaunch '["overseer","autoRelaunch"]' "$has_overseer" ""
   entry_for localModels '["localModels"]' null ""
   entry_for grantRoots '["grantRoots"]' null ""
@@ -261,6 +262,12 @@ parse_bool() {
   *) return 1 ;;
   esac
 }
+parse_placement() {
+  case "$1" in
+  side | float) jq -cn --arg v "$1" '$v' ;;
+  *) return 1 ;;
+  esac
+}
 parse_credits() { jq -cse 'if length == 1 and (.[0] | type == "object") then .[0] else empty end' <<<"$1"; }
 
 if [ "${#installed[@]}" -gt 0 ]; then
@@ -284,6 +291,7 @@ if [ "$interactive" = 1 ]; then
   echo 'anthropicCredits schema: {"balance_usd": 50, "expires": "2027-01-01", "as_of": "2026-11-01"}'
   decide anthropicCredits '["anthropicCredits"]' "" parse_credits
   decide dashAutoOpen '["dashAutoOpen"]' "" parse_bool
+  decide dashPlacement '["dashPlacement"]' '"side"' parse_placement
   if [ "$has_overseer" = true ]; then
     decide overseer.autoRelaunch '["overseer","autoRelaunch"]' "" parse_bool
   fi
