@@ -134,3 +134,42 @@ func TestNarrowClickHitTest(t *testing.T) {
 		}
 	}
 }
+
+func TestNarrowTabReachesEveryPanel(t *testing.T) {
+	m := sized(overviewModel(narrowInputs(t)), 64, 14)
+	ov := m.views[overviewTab].(overviewView)
+	if !ov.layout().narrow {
+		t.Fatalf("64x14 is not narrow")
+	}
+	seen := map[ovPanel]bool{}
+	for range 6 {
+		m = sweepKeys(m, keyType(tea.KeyTab))
+		seen[m.views[overviewTab].(overviewView).st.focus] = true
+	}
+	for _, p := range []ovPanel{panelAttention, panelAgents, panelChecklists, panelMonitors} {
+		if !seen[p] {
+			t.Errorf("tab never focused panel %v at 64x14", p)
+		}
+	}
+}
+
+func TestTabOrderFollowsLayout(t *testing.T) {
+	for _, tc := range []struct {
+		w, h int
+		want []ovPanel
+	}{
+		{64, 30, []ovPanel{panelAgents, panelChecklists, panelMonitors, panelAttention}},
+		{120, 40, []ovPanel{panelChecklists, panelAgents, panelMonitors, panelAttention}},
+	} {
+		m := sized(overviewModel(narrowInputs(t)), tc.w, tc.h)
+		ov := m.views[overviewTab].(overviewView)
+		ov.st.focus = panelAttention
+		m.views[overviewTab] = ov
+		for i, want := range tc.want {
+			m = sweepKeys(m, keyType(tea.KeyTab))
+			if got := m.views[overviewTab].(overviewView).st.focus; got != want {
+				t.Errorf("%dx%d tab %d: focus %v, want %v", tc.w, tc.h, i+1, got, want)
+			}
+		}
+	}
+}

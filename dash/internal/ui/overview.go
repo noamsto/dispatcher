@@ -293,14 +293,17 @@ func newOvInput(prompt, value string) textinput.Model {
 	return in
 }
 
-// cycle moves focus through the focusable panels, skipping any the layout does
-// not draw.
+// cycle moves focus through the body panels in the order the layout shows
+// them, whether or not they are drawn (focusing one draws it), plus the strip
+// while it is drawn.
 func (v *overviewView) cycle(d int) {
-	order := []ovPanel{panelAttention, panelChecklists, panelAgents, panelMonitors}
 	r := v.layout()
-	order = slices.DeleteFunc(order, func(p ovPanel) bool { return !r.panels[p].shown })
-	if len(order) == 0 {
-		return
+	order := []ovPanel{panelChecklists, panelAgents, panelMonitors}
+	if r.narrow {
+		order = []ovPanel{panelAgents, panelChecklists, panelMonitors}
+	}
+	if r.panels[panelAttention].shown {
+		order = slices.Insert(order, 0, panelAttention)
 	}
 	i := slices.Index(order, v.st.focus)
 	v.setFocus(order[(i+d+len(order))%len(order)])
