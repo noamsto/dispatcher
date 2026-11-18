@@ -78,10 +78,17 @@ func applyPalette(t theme) (restore func()) {
 	gaugeNormalColor, gaugeWarningColor, gaugeDangerColor = p.gaugeOK, p.gaugeWarn, p.gaugeDanger
 	lightActive = t == themeLight
 	return func() {
-		if prev != t {
-			applyPalette(prev)
-		}
+		applyPalette(prev)
 	}
+}
+
+// themePinned reports whether CREW_DASH_THEME explicitly fixes the theme.
+func themePinned(getenv func(string) string) bool {
+	switch strings.ToLower(getenv("CREW_DASH_THEME")) {
+	case "light", "dark":
+		return true
+	}
+	return false
 }
 
 // resolveTheme picks the startup theme: CREW_DASH_THEME, then tmux's

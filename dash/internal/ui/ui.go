@@ -71,8 +71,9 @@ func Run(deps Deps) error {
 	}
 	applyPalette(resolveTheme(os.Getenv, tmuxFlavorFunc(deps.Ctx, deps.Runner, deps.InTmux), lipgloss.HasDarkBackground))
 	m := NewModel(deps, time.Now, live)
+	m.themePinned = themePinned(os.Getenv)
 	p := tea.NewProgram(m, tea.WithAltScreen())
-	notify := !colorForcedAscii(os.Getenv)
+	notify := !colorForcedAscii(os.Getenv) && !m.themePinned
 	if notify {
 		_, _ = fmt.Fprint(os.Stdout, "\x1b[?2031h")
 	}

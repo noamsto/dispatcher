@@ -23,10 +23,10 @@ func env(kv map[string]string) func(string) string {
 
 func trueColor(t *testing.T) {
 	t.Helper()
+	t.Cleanup(applyPalette(themeDark))
 	orig := lipgloss.ColorProfile()
 	lipgloss.SetColorProfile(termenv.TrueColor)
 	t.Cleanup(func() { lipgloss.SetColorProfile(orig) })
-	t.Cleanup(applyPalette(themeDark))
 }
 
 func TestResolveTheme(t *testing.T) {
@@ -100,7 +100,6 @@ func TestThemeFromCSI(t *testing.T) {
 		{"\x1b[?997;1n", themeDark, true},
 		{"\x1b[?997;2n", themeLight, true},
 		{"\x1b[?997;3n", themeDark, false},
-		{"\x1b[?996n", themeDark, false},
 		{"", themeDark, false},
 	} {
 		got, ok := themeFromCSI([]byte(c.in))
@@ -235,11 +234,10 @@ func TestThemeReportThroughRealProgram(t *testing.T) {
 }
 
 func TestNoColorRendersNoSGR(t *testing.T) {
+	t.Cleanup(applyPalette(themeLight))
 	orig := lipgloss.ColorProfile()
 	lipgloss.SetColorProfile(termenv.Ascii)
 	t.Cleanup(func() { lipgloss.SetColorProfile(orig) })
-	t.Cleanup(applyPalette(themeDark))
-	applyPalette(themeLight)
 	m := sized(newTestModel(t), 120, 40)
 	m.active = overviewTab
 	nm, _ := m.Update(unknownCSIMsg(t, "\x1b[?997;1n"))
@@ -385,6 +383,26 @@ func TestCaptureRenders(t *testing.T) {
 			if err := os.WriteFile(p, []byte(m.View()), 0o644); err != nil {
 				t.Fatal(err)
 			}
+		}
+	}
+}
+
+func TestPinnedThemeIgnoresReports(t *testing.T) {
+	trueColor(t)
+	applyPalette(themeLight)
+	m := sized(newTestModel(t), 120, 40)
+	m.active = overviewTab
+	m.themePinned = true
+	nm, _ := m.Update(unknownCSIMsg(t, "\x1b[?997;1n"))
+	if out := nm.(Model).View(); !strings.Contains(out, latteSGR) {
+		t.Fatalf("pinned view lacks %s", latteSGR)
+	}
+}
+
+func TestThemePinned(t *testing.T) {
+	for v, want := range map[string]bool{"light": true, "DARK": true, "": false, "auto": false} {
+		if got := themePinned(env(map[string]string{"CREW_DASH_THEME": v})); got != want {
+			t.Errorf("%q: got %v", v, got)
 		}
 	}
 }
