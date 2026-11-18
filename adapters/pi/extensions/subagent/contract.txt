@@ -20,6 +20,8 @@ index.ts	upstream	proc = spawn(invocation.command, invocation.args, {
 index.ts	pinned	if (event.type === "message_end" && event.message) {
 index.ts	upstream	if (event.type !== "message_end") return;
 index.ts	pinned	env: { ...process.env, CREW_SUBAGENT: "1" },
+index.ts	pinned	const cancel = terminateChild(proc, KILL_GRACE_MS);
+index.ts	pinned	recordOutcome(currentResult, outcome);
 agents.ts	both	model: typeof frontmatter.model === "string" ? frontmatter.model : undefined,
 agents.ts	both	tools: parseToolList(frontmatter.tools),
 agents.ts	both	if (typeof frontmatter.name !== "string" || typeof frontmatter.description !== "string") {

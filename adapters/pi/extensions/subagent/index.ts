@@ -40,6 +40,7 @@ import {
 import { Container, Markdown, Spacer, Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { type AgentConfig, type AgentScope, discoverAgents } from "./agents.ts";
+import { type ProcessOutcome, KILL_GRACE_MS, isFailedResult, recordOutcome, terminateChild } from "./outcome.ts";
 
 const MAX_PARALLEL_TASKS = 8;
 const MAX_CONCURRENCY = 4;
@@ -154,11 +155,6 @@ interface UsageStats {
 	turns: number;
 }
 
-interface ProcessOutcome {
-	code: number | null;
-	signal: NodeJS.Signals | null;
-}
-
 interface SingleResult {
 	agent: string;
 	agentSource: "user" | "project" | "unknown";
@@ -191,15 +187,6 @@ function getFinalOutput(messages: Message[]): string {
 		}
 	}
 	return "";
-}
-
-function isFailedResult(result: SingleResult): boolean {
-	return (
-		result.exitCode !== 0 ||
-		result.stopReason === "error" ||
-		result.stopReason === "aborted" ||
-		result.terminationSignal !== undefined
-	);
 }
 
 function getResultOutput(result: SingleResult): string {
@@ -373,7 +360,7 @@ async function runSingleAgent(
 			let buffer = "";
 			let settled = false;
 			let exited = false;
-			let killTimer: ReturnType<typeof setTimeout> | undefined;
+			let cancelKill: (() => void) | null = null;
 
 			const processLine = (line: string) => {
 				if (!line.trim()) return;
@@ -413,19 +400,17 @@ async function runSingleAgent(
 			};
 
 			const abortProcess = () => {
-				// proc.killed is set as soon as SIGTERM is sent, so it cannot gate the escalation
-				if (exited || proc.exitCode !== null || proc.signalCode !== null) return;
-				if (!proc.kill("SIGTERM")) return;
+				if (exited) return;
+				const cancel = terminateChild(proc, KILL_GRACE_MS);
+				if (!cancel) return;
 				wasAborted = true;
-				killTimer = setTimeout(() => {
-					if (!exited && proc.exitCode === null && proc.signalCode === null) proc.kill("SIGKILL");
-				}, 5000);
+				cancelKill = cancel;
 			};
 
 			const finish = (result: ProcessOutcome) => {
 				if (settled) return;
 				settled = true;
-				if (killTimer) clearTimeout(killTimer);
+				cancelKill?.();
 				if (signal) signal.removeEventListener("abort", abortProcess);
 				resolve(result);
 			};
@@ -460,9 +445,7 @@ async function runSingleAgent(
 			}
 		});
 
-		currentResult.exitCode = outcome.code ?? 1;
-		currentResult.terminationSignal = outcome.signal ?? undefined;
-		if (outcome.signal) currentResult.errorMessage ||= `Subagent terminated by signal ${outcome.signal}`;
+		recordOutcome(currentResult, outcome);
 		if (wasAborted) throw new Error("Subagent was aborted");
 		return currentResult;
 	} finally {

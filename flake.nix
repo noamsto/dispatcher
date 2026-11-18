@@ -432,6 +432,27 @@
             src = ./adapters/pi/extensions/subagent;
           };
 
+          # The child-exit logic of the same extension (outcome.ts), run offline by
+          # node's test runner against real child processes: the SIGTERM→SIGKILL
+          # escalation and a signal exit being a failed result. The contract check
+          # byte-checks the spawn lines and the typecheck only runs tsc, so nothing
+          # else ever executes that code.
+          pi-subagent-behaviour =
+            pkgs.runCommand "pi-subagent-behaviour" {
+              nativeBuildInputs = [pkgs.nodejs];
+            } ''
+              work=$(mktemp -d)
+              cp ${./adapters/pi/extensions/subagent}/outcome.ts "$work/"
+              cp ${./adapters/pi/extensions/subagent}/outcome.test.ts "$work/"
+              printf '{"type":"module"}\n' >"$work/package.json"
+              cd "$work"
+              # --test-force-exit: a leaked child holds its stdio pipe open, which would
+              # otherwise keep node alive until the timeout even though every test
+              # awaited its own child's close.
+              timeout 300 node --test --test-force-exit outcome.test.ts
+              touch $out
+            '';
+
           # `nix flake check` only evaluates packages, not builds them — these
           # make it build, which runs buildGoModule's `go test ./...` (doCheck).
           inherit (config.packages) crew-dash crew-go;
