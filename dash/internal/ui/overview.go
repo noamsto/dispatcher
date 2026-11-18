@@ -215,6 +215,9 @@ func (v *overviewView) setFocus(p ovPanel) {
 		v.setWorker(s.worker)
 	}
 	v.st.focus = p
+	if p == panelAttention {
+		v.st.ret, v.st.retWorker, v.st.worker = 0, workerKey{}, workerKey{}
+	}
 }
 
 // settleFocus makes the drawn focus the stored one before the operator acts: a
@@ -350,9 +353,14 @@ func (v *overviewView) move(d int) {
 	}
 	ws := panelWorkers(v.st.focus, v.model, newOvIndex(v.model, v.st))
 	pos := slices.Index(ws, r.sel.worker)
-	if d < 0 && pos <= 0 && len(v.model.Attention) > 0 && (pos == 0 || len(ws) == 0) {
-		v.st.ret = v.st.focus
+	if d < 0 && pos <= 0 && v.mode == ovNormal && len(v.model.Attention) > 0 && (pos == 0 || len(ws) == 0) {
+		from, rw := v.st.focus, workerKey{}
+		if r.sel.worker >= 0 {
+			w := v.model.Workers[r.sel.worker]
+			rw = workerKey{w.Crew, w.Branch}
+		}
 		v.setFocus(panelAttention)
+		v.st.ret, v.st.retWorker = from, rw
 		v.setCursor(len(v.model.Attention) - 1)
 		v.st.stripOff = v.layout().stripOff
 		return

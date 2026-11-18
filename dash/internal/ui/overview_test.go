@@ -1141,30 +1141,31 @@ func TestOverviewHjklStrip(t *testing.T) {
 func TestOverviewHjklPanels(t *testing.T) {
 	v, _ := ovFixture(t, 150, 40, false, nil)
 	last := len(v.model.Attention) - 1
-	for _, p := range []ovPanel{panelChecklists, panelAgents, panelMonitors} {
+	for i, p := range []ovPanel{panelChecklists, panelAgents, panelMonitors} {
+		name := []string{"checklists", "agents", "monitors"}[i]
 		ws := panelWorkers(p, v.model, newOvIndex(v.model, v.st))
 		if len(ws) < 2 {
 			t.Fatalf("panel %v needs two workers, has %d", p, len(ws))
 		}
-		t.Run("first k goes to the strip last item", func(t *testing.T) {
+		t.Run(name+" first k goes to the strip last item", func(t *testing.T) {
 			w, _ := ovKeys(ovAt(t, v, p, 0), "k")
 			if w.st.focus != panelAttention || w.sel().cursor != last {
 				t.Errorf("focus=%v cursor=%d", w.st.focus, w.sel().cursor)
 			}
 		})
-		t.Run("first j next", func(t *testing.T) {
+		t.Run(name+" first j next", func(t *testing.T) {
 			w, _ := ovKeys(ovAt(t, v, p, 0), "j")
 			if w.st.focus != p || w.sel().worker != ws[1] {
 				t.Errorf("focus=%v worker=%d, want %d", w.st.focus, w.sel().worker, ws[1])
 			}
 		})
-		t.Run("last j stays", func(t *testing.T) {
+		t.Run(name+" last j stays", func(t *testing.T) {
 			w, _ := ovKeys(ovAt(t, v, p, -1), "j")
 			if w.st.focus != p || w.sel().worker != ws[len(ws)-1] {
 				t.Errorf("focus=%v worker=%d", w.st.focus, w.sel().worker)
 			}
 		})
-		t.Run("last k previous", func(t *testing.T) {
+		t.Run(name+" last k previous", func(t *testing.T) {
 			w, _ := ovKeys(ovAt(t, v, p, -1), "k")
 			if w.st.focus != p || w.sel().worker != ws[len(ws)-2] {
 				t.Errorf("focus=%v worker=%d", w.st.focus, w.sel().worker)
