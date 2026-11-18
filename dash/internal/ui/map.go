@@ -426,7 +426,7 @@ func (v *mapView) accept(msg mapRenderedMsg) tea.Cmd {
 	if v.deps.Direct {
 		png, err := os.ReadFile(v.deps.OutPath)
 		if err != nil {
-			v.err = cleanText(err.Error())
+			v.err, v.sig = cleanText(err.Error()), ""
 			v.drop()
 			return nil
 		}
@@ -438,7 +438,14 @@ func (v *mapView) accept(msg mapRenderedMsg) tea.Cmd {
 		} else {
 			inTmux := v.acts.inTmux
 			_, _ = io.WriteString(v.deps.TTY, kitty.Delete(id, inTmux))
-			_, _ = io.WriteString(v.deps.TTY, kitty.StoreDirect(id, png, msg.place.Cols, msg.place.Rows, inTmux))
+			// A failed write leaves the terminal mid-transfer; forget the sum so
+			// the next render resends instead of skipping a broken image.
+			if _, err := io.WriteString(v.deps.TTY, kitty.StoreDirect(id, png, msg.place.Cols, msg.place.Rows, inTmux)); err != nil {
+				v.sum = [sha256.Size]byte{}
+				v.err, v.sig = cleanText(err.Error()), ""
+				v.drop()
+				return nil
+			}
 			v.sum = sum
 		}
 	} else {

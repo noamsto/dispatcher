@@ -1368,7 +1368,22 @@ func TestMapUnreadableImageShowsMessage(t *testing.T) {
 		t.Fatal(err)
 	}
 	m := r.open()
-	if frame := m.views[mapTab].View(100, 24); !strings.Contains(frame, "Map unavailable: ") {
+	frame := m.views[mapTab].View(100, 24)
+	if !strings.Contains(frame, "Map unavailable: ") || !strings.Contains(frame, "render failed: open") {
 		t.Fatalf("missing image not reported:\n%s", frame)
+	}
+	if strings.Contains(r.tty.String(), "t=d") {
+		t.Fatalf("an unreadable image was transmitted")
+	}
+}
+
+func TestMapSameImageAtNewSizeIsRetransmitted(t *testing.T) {
+	r, _ := newDirectMapRig(t, false)
+	m := r.open()
+	before := strings.Count(r.tty.String(), "t=d")
+	nm, cmd := m.Update(tea.WindowSizeMsg{Width: 160, Height: 41})
+	r.run(nm.(Model), cmd)
+	if got := strings.Count(r.tty.String(), "t=d"); got != before+1 {
+		t.Fatalf("a resized block kept the old placement: %d stores, want %d", got, before+1)
 	}
 }

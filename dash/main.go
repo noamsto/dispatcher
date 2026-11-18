@@ -128,6 +128,10 @@ func resolveMap(runner data.Runner) (ui.MapDeps, func()) {
 	if err != nil {
 		return notCapable("no controlling tty"), func() {}
 	}
+	// Fd switches the handle back to blocking: a non-blocking write of a large
+	// inline image returns partial writes, letting bubbletea's output land
+	// inside the escape sequence.
+	_ = tty.Fd()
 	run := func(ctx context.Context, name string, args ...string) ([]byte, error) {
 		out, _, err := runner.Run(ctx, name, args...)
 		return out, err
