@@ -58,7 +58,6 @@ func (v overviewView) overlay(base []string, w, h int) string {
 			spec := panelSpec{title: "DETAIL", color: colTeal, focused: true}
 			var content []string
 			if v.insp.open {
-				spec.title = "DETAIL"
 				return spec, v.insp.lines(iw)
 			}
 			if s := v.sel(); s.worker >= 0 {
