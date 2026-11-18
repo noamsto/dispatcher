@@ -231,18 +231,24 @@ function skip_target(i,   c, qq) {
   if (qq != "") { q = qq; inword = 1 }
   return i
 }
+# Pairs every `(` with its `)` in one pass, so a run of unclosed `((` costs a
+# lookup each instead of a rescan to the end of the line.
+function match_parens(   k, sp) {
+  sp = 0
+  for (k = 1; k <= n; k++) {
+    if (ch[k] == "(") { stk[++sp] = k; mate[k] = 0 }
+    else if (ch[k] == ")" && sp > 0) { mate[stk[sp]] = k; sp-- }
+  }
+}
 # Where the `((` at i closes, or 0 when it is nested subshells (`((a) )`), whose
 # commands run, or never closes on this line.
-function arith_end(i,   k, depth) {
-  depth = 0
-  for (k = i; k <= n; k++) {
-    if (ch[k] == "(") depth++
-    else if (ch[k] == ")" && --depth == 0) return (ch[k - 1] == ")" ? k : 0)
-  }
-  return 0
+function arith_end(i,   k) {
+  k = mate[i]
+  return (k && ch[k - 1] == ")") ? k : 0
 }
 function scan_line(s,   i, j, c, d) {
   n = split(s, ch, "")
+  match_parens()
   i = 1; dollar_end = 0
   while (i <= n) {
     c = ch[i]
