@@ -715,6 +715,16 @@ _ensure_roster_render() {
   CREW_ID="$1" crew roster-render --crew "$1" ${flags[@]+"${flags[@]}"} --detach >/dev/null 2>&1 || true
 }
 
+# _ensure_crew_dash <pane or empty> — open (or focus) the crew dash float beside
+# the dispatcher pane. Never fails the dispatch: tmux-crew-dash de-duplicates,
+# and --detached keeps focus where it is.
+_ensure_crew_dash() {
+  [ "$(jq -r '.dashAutoOpen | if . == false then "false" else "true" end' <<<"$settings")" = true ] || return 0
+  [ -n "${TMUX:-}" ] && [ -n "${1:-}" ] || return 0
+  command -v tmux-crew-dash >/dev/null 2>&1 || return 0
+  tmux-crew-dash --detached "$1" >/dev/null 2>&1 || true
+}
+
 # shell_quote <var> <text> — set <var> to <text> as ONE single-quoted shell word,
 # for splicing into a tmux send-keys command line the pane's own shell re-parses.
 # ' and \ are closed out of the quotes and escaped outside them, the one form

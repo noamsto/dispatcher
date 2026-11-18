@@ -17648,3 +17648,51 @@ assert_no_code_mode_scaffold() {
   # let the 1s watch finish so no process outlives the test
   sleep 3
 }
+
+# _crew_dash_stub — a tmux-crew-dash on PATH that logs its argv; STUB_DASH_EXIT picks its exit code.
+_crew_dash_stub() {
+  cat >"$STUB_DIR/tmux-crew-dash" <<'STUB'
+#!/usr/bin/env bash
+printf 'tmux-crew-dash %s\n' "$*" >>"$STUB_LOG"
+exit "${STUB_DASH_EXIT:-0}"
+STUB
+  chmod +x "$STUB_DIR/tmux-crew-dash"
+}
+
+@test "crew dash: dispatch opens it once, detached, beside the dispatcher pane" {
+  stub_launch_bins
+  _grid_tmux_stub
+  _crew_dash_stub
+  TMUX=/tmp/x,1,0 TMUX_PANE=%5 DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  [ "$status" -eq 0 ]
+  [ "$(grep -c '^tmux-crew-dash ' "$STUB_LOG")" -eq 1 ]
+  grep -qx 'tmux-crew-dash --detached %5' "$STUB_LOG"
+}
+
+@test "crew dash: dashAutoOpen false, a missing stub or a failing stub leave dispatch unchanged" {
+  stub_launch_bins
+  _grid_tmux_stub
+  _crew_dash_stub
+  mkdir -p "$XDG_CONFIG_HOME/dispatcher"
+  printf '{"dashAutoOpen":false}\n' >"$XDG_CONFIG_HOME/dispatcher/settings.json"
+  TMUX=/tmp/x,1,0 TMUX_PANE=%5 DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  [ "$status" -eq 0 ]
+  run ! grep -q '^tmux-crew-dash ' "$STUB_LOG"
+  rm "$XDG_CONFIG_HOME/dispatcher/settings.json"
+  STUB_DASH_EXIT=1 TMUX=/tmp/x,1,0 TMUX_PANE=%5 DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c2 43 "Another thing"
+  [ "$status" -eq 0 ]
+  grep -qx 'tmux-crew-dash --detached %5' "$STUB_LOG"
+  rm "$STUB_DIR/tmux-crew-dash"
+  TMUX=/tmp/x,1,0 TMUX_PANE=%5 DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c3 44 "Third thing"
+  [ "$status" -eq 0 ]
+}
+
+@test "crew dash: a remote-host dispatch does not open it" {
+  stub_launch_bins
+  _remote_mode_tmux
+  _crew_dash_stub
+  TMUX=/tmp/x,1,0 TMUX_PANE=%7 DISPATCH_TMUX_SESSION=crew-c1 \
+    run run_dispatch standard sonnet --effort medium --crew-id c1 42 "remote worker"
+  [ "$status" -eq 0 ]
+  run ! grep -q '^tmux-crew-dash ' "$STUB_LOG"
+}

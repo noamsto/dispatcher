@@ -1368,6 +1368,7 @@ _post_launch() {
   [ -z "$code_mode_dropped" ] || spawn_code_mode_post "$worker_id" "$crew_id" off "$code_mode_dropped"
   # A remote-mode worker's roster diagram belongs to its dispatcher's host.
   [ "$wire_side" = remote ] || _ensure_roster_render "$crew_id" "$rr_pane"
+  [ "$wire_side" = remote ] || _ensure_crew_dash "$rr_pane"
 
   # Resume re-stamps @crew_branch on whatever window it lands in, so only a window
   # that was already this worker's (stamped for the branch, or restored with its

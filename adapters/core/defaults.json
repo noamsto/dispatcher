@@ -472,6 +472,7 @@
   "dispatcherChrome": false,
   "freshSeams": false,
   "dashTailscale": false,
+  "dashAutoOpen": true,
   "dispatcherMcp": {},
   "mcpServers": {
     "sentry": {"url": "https://mcp.sentry.dev/mcp", "description": "Sentry issues, events and releases"},
