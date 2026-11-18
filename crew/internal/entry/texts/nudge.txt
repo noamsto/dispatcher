@@ -14,6 +14,9 @@ A worker dispatched to a remote host is nudged there, by that host's own checks;
 a target that names a local and a remote worker is refused.
 
 Exit 0 typed and accepted, 1 usage or resolution error, 2 refused before typing,
-3 typed but not accepted.
+3 typed but not accepted: held, unconfirmed, unknown, or `typed, not delivered`.
+`accepted` means the lead's read mark advanced past the msg; `typed, not delivered`
+means the lead took the line but its mark has not moved yet, so it may still read it
+(crew where, or re-check later). Typed lines are never re-typed.
 
   crew nudge feat/x --crew <crew-id>

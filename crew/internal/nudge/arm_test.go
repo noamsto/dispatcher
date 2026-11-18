@@ -44,6 +44,9 @@ type armFixture struct {
 	// one being read, mid-wait.
 	unreadSeq   []string
 	unreadCalls int
+	// keepUnread keeps the scan answering the configured triple after the line is typed:
+	// the lead's mark never advances.
+	keepUnread bool
 
 	// rows are the log lines the arm reads; toplevel/workerTask drive the
 	// dispatcher-only gate.
@@ -126,17 +129,7 @@ func (f *armFixture) run(req Request) int {
 		Exists: func(path string) bool {
 			return f.workerTask && strings.HasSuffix(path, "/WORKER_TASK.md")
 		},
-		Unread: func(context.Context, string, string, string) string {
-			f.unreadCalls++
-			if n := len(f.unreadSeq); n > 0 {
-				i := f.unreadCalls - 1
-				if i >= n {
-					i = n - 1
-				}
-				return f.unreadSeq[i]
-			}
-			return f.unread
-		},
+		Unread: f.scan,
 		Rows:   func(int) ([]any, bool) { return f.rows, true },
 		PID:    4242,
 		Remote: f.remote,
@@ -158,12 +151,23 @@ func (f *armFixture) runWith(deps Deps, req Request) int {
 		Deps: deps, CrewID: func() string { return f.crewID },
 		Git:    &gittest.Fake{Out: map[string]string{"rev-parse --show-toplevel": f.toplevel}},
 		Exists: func(string) bool { return false },
-		Unread: func(context.Context, string, string, string) string {
-			return f.unread
-		},
-		Rows: func(int) ([]any, bool) { return f.rows, true },
-		PID:  4242,
+		Unread: f.scan,
+		Rows:   func(int) ([]any, bool) { return f.rows, true },
+		PID:    4242,
 	})
+}
+
+// scan is the unread scan: the configured triple until the fake pane has been typed
+// into, then "" because the typed line made the lead read its inbox, unless keepUnread.
+func (f *armFixture) scan(context.Context, string, string, string) string {
+	f.unreadCalls++
+	if !f.keepUnread && len(keys(f.pane)) > 0 {
+		return ""
+	}
+	if n := len(f.unreadSeq); n > 0 {
+		return f.unreadSeq[min(f.unreadCalls, n)-1]
+	}
+	return f.unread
 }
 
 // ticks are the --wait loop's sleeps: the pane's own settle and gap are shorter, and
@@ -637,6 +641,88 @@ func TestRunReportsPaneOutcome(t *testing.T) {
 	}
 }
 
+// A pane that looks accepted is not delivered until the lead's mark covers the msg: the
+// outcome is its own result at 3, one row says so, and the line is typed once.
+func TestRunReportsAnUndeliveredNudge(t *testing.T) {
+	f := newArm(t)
+	f.keepUnread = true
+	if rc := f.run(Request{Target: featX}); rc != 3 {
+		t.Fatalf("rc = %d, want 3 (typed, not delivered), out = %q", rc, f.out())
+	}
+	if want := "nudge typed, not delivered: " + leadID + " " + idleReq + " — "; !strings.HasPrefix(f.out(), want) {
+		t.Errorf("out = %q, want prefix %q", f.out(), want)
+	}
+	if got := keys(f.pane); !slices.Equal(got, typedArgv) {
+		t.Errorf("keys = %q, want the line typed once with one Enter", got)
+	}
+	if rows := nudgeRows(t, f); len(rows) != 1 || !strings.Contains(rows[0], `"result":"typed, not delivered"`) {
+		t.Errorf("rows = %q, want one nudge row with the undelivered result", rows)
+	}
+
+	// The same call where typing makes the lead read its inbox is accepted.
+	f = newArm(t)
+	if rc := f.run(Request{Target: featX}); rc != 0 || !strings.HasPrefix(f.out(), "nudge accepted: ") {
+		t.Errorf("rc = %d, out = %q, want accepted at 0", rc, f.out())
+	}
+}
+
+func TestRunWaitReportsAnUndeliveredNudge(t *testing.T) {
+	parkedFrames := func() []string {
+		return []string{
+			fixture(t, "meter.2s.1.2k.txt"),
+			fixture(t, "done_idle.txt"), fixture(t, "done_idle.txt"),
+			fixture(t, "nudge_typed.txt"), fixture(t, "meter.2s.1.2k.txt"),
+		}
+	}
+
+	f := newArm(t)
+	f.keepUnread = true
+	f.pane.frames = parkedFrames()
+	f.env = map[string]string{"CREW_NUDGE_WAIT_INTERVAL": "5"}
+	if rc := f.run(Request{Wait: "30", Target: idleReq}); rc != 3 {
+		t.Fatalf("rc = %d, want 3, out = %q", rc, f.out())
+	}
+	if want := "nudge typed, not delivered: " + leadID + " " + idleReq + " — "; !strings.Contains(f.out(), want) {
+		t.Errorf("out = %q, want %q", f.out(), want)
+	}
+	if rows := nudgeRows(t, f); len(rows) != 1 || !strings.Contains(rows[0], `"result":"typed, not delivered"`) {
+		t.Errorf("rows = %q, want one nudge row with the undelivered result", rows)
+	}
+	if len(f.bus.appended) != 3 {
+		t.Fatalf("%s, want waiting, nudge and resolved rows", f.rowsText())
+	}
+	for _, want := range []string{`"state":"resolved"`, `"result":"typed, not delivered"`, `"rc":3`} {
+		if !strings.Contains(f.rowAt(2), want) {
+			t.Errorf("resolved row %s lacks %s", f.rowAt(2), want)
+		}
+	}
+
+	// Typing that makes the lead read its inbox resolves as accepted, as before.
+	f = newArm(t)
+	f.pane.frames = parkedFrames()
+	f.env = map[string]string{"CREW_NUDGE_WAIT_INTERVAL": "5"}
+	if rc := f.run(Request{Wait: "30", Target: idleReq}); rc != 0 {
+		t.Fatalf("rc = %d, want 0, out = %q", rc, f.out())
+	}
+	if !strings.Contains(f.rowAt(2), `"result":"accepted"`) {
+		t.Errorf("resolved row %s, want accepted", f.rowAt(2))
+	}
+
+	// A second --wait for the same msg reports the undelivered row and types nothing.
+	f = newArm(t)
+	f.rows = append(dispatchRows(t, "claude"), anyRows(t,
+		`{"ts":2,"crew_id":"c1","kind":"nudge","to":"`+idleReq+`","result":"typed, not delivered","detail":"mark not advanced","msg_ts":`+idleTS+`}`)...)
+	if rc := f.run(Request{Wait: "30", Target: idleReq}); rc != 3 {
+		t.Fatalf("rc = %d, want 3, out = %q", rc, f.out())
+	}
+	if want := "nudge already typed: " + leadID + " " + idleReq + " — typed, not delivered: mark not advanced"; !strings.Contains(f.out(), want) {
+		t.Errorf("out = %q, want %q", f.out(), want)
+	}
+	if got := keys(f.pane); len(got) != 0 {
+		t.Errorf("a second --wait typed again: %q", got)
+	}
+}
+
 func TestRunWaitJoining(t *testing.T) {
 	f := newArm(t)
 	f.holdLock = strconv.Itoa(os.Getpid())
@@ -998,11 +1084,9 @@ func TestRunWaitRowFollowsCrewClock(t *testing.T) {
 		Deps: deps, CrewID: func() string { return f.crewID },
 		Git:    &gittest.Fake{Out: map[string]string{"rev-parse --show-toplevel": ""}},
 		Exists: func(string) bool { return false },
-		Unread: func(context.Context, string, string, string) string {
-			return f.unread
-		},
-		Rows: func(int) ([]any, bool) { return f.rows, true },
-		PID:  4242,
+		Unread: f.scan,
+		Rows:   func(int) ([]any, bool) { return f.rows, true },
+		PID:    4242,
 	}); rc != 0 {
 		t.Fatalf("rc = %d, stderr = %q", rc, f.errOut())
 	}

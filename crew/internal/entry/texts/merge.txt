@@ -8,8 +8,12 @@ with exit 1 and one line naming it:
   3. the base branch's tip has no failing check run
   4. the worker's newest pr_open ledger for this PR still validates
   5. no dispatcher:<crew> message to the PR's worker session is undelivered
-     (that session is the newest on the pr_open row's branch; no pr_open
-     row: skipped). It names each; merge never marks any delivered
+     (that session is the newest on the pr_open row's branch, found across
+     every crew whatever --crew says, and <crew> is its own; no pr_open row:
+     skipped). It names each; merge never marks any delivered. A session that
+     has ended refuses naming `dispatch --pr <N>`, since a stopped session
+     never reads its inbox; a newest session with no session id refuses too,
+     and only a re-dispatch clears it
 
   <N>            Pull request number
   --dry-run      Run the checks and print each result; do not merge

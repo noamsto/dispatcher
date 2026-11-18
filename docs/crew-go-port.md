@@ -341,11 +341,14 @@ output contract below), with each edit justified.
   are gone with the port. Nothing about the target is ever typed: the text is a
   constant, and the pane comes only from the window's `@crew_*` stamps.
   The outcome is four answers, not a boolean — accepted (0), refused before
-  typing (2), typed-but-not-accepted (3, in three flavours: `held`,
-  `unconfirmed`, `unknown`) and a failure (1) — and the three typed flavours all
-  say _never re-typed, a human must clear it (crew where)_, because a second
-  Enter would submit whatever the lead is holding. Only `send-keys -l` and one
-  `send-keys Enter` touch the pane, and `Enter` is never sent when the box never
+  typing (2), typed-but-not-accepted (3, in four flavours: `held`,
+  `unconfirmed`, `unknown`, `typed, not delivered`) and a failure (1) — and the
+  typed flavours all say _never re-typed_ (a human clears the first three with
+  `crew where`; for `typed, not delivered` the lead took the line but its read
+  mark has not advanced, so it may still read it), because a second Enter would
+  submit whatever the lead is holding. `accepted` needs the mark to advance:
+  `Deps.Delivered` is polled after the pane looks accepted, nil for the
+  watchdog. Only `send-keys -l` and one `send-keys Enter` touch the pane, and `Enter` is never sent when the box never
   showed the line.
   The clock split is the row contract: the `nudge` row's `ts` is jq's
   `now*1000|floor` (`Clock.RealMS`), the `nudge_wait` rows' is `_clock_now_ms`

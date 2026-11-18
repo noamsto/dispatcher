@@ -18,6 +18,7 @@ package nudge
 import (
 	"context"
 	"encoding/json"
+	"strconv"
 	"strings"
 
 	"github.com/noamsto/dispatcher/crew/internal/ascii"
@@ -85,12 +86,16 @@ type Deps struct {
 	// one outcome line, so a bus row that could not be written would otherwise be
 	// invisible.
 	Warn func(string)
+	// Delivered reports whether the lead's read mark has advanced past req's msg; nil
+	// skips the check, as the watchdog's callers do.
+	Delivered func(ctx context.Context, req PaneRequest) bool
 }
 
 // Pane types one line into a provably idle, empty input box and submits it. It prints
 // one line and returns 0 accepted, 2 refused before typing (nothing typed, no bus row;
 // an anchor-gate refusal starts with `anchor:`), or 3 typed but not accepted (held,
-// unknown, unconfirmed). Every typed attempt appends exactly one `kind:"nudge"` row; a
+// unknown, unconfirmed, or `typed, not delivered`: the pane took the line but the
+// lead's read mark never advanced). Every typed attempt appends exactly one `kind:"nudge"` row; a
 // bus that will not take it is warned about, never returned. It never retries the text
 // or the Enter: whatever the pane shows instead may be a human's.
 func Pane(ctx context.Context, req PaneRequest, d Deps) (string, int) {
@@ -152,6 +157,10 @@ func Pane(ctx context.Context, req PaneRequest, d Deps) (string, int) {
 		switch result = classify(ctx, d, req); result {
 		case "accepted":
 			detail = "the lead took the line (live turn or emptied input box)"
+			if !delivered(ctx, d, req) {
+				result = "typed, not delivered"
+				detail = "the lead took the line but its read mark has not advanced past the msg; it may still read it (crew where, or re-check later), never re-typed"
+			}
 		case "held":
 			detail = "the line still sits in the input box after one Enter; not re-sent — a human must submit or clear it (crew where)"
 		default:
@@ -171,6 +180,28 @@ func Pane(ctx context.Context, req PaneRequest, d Deps) (string, int) {
 		return out, exitTyped
 	}
 	return out, 0
+}
+
+// delivered polls d.Delivered, the first check immediate: a lead that took the line
+// still has to run `crew inbox` before its mark moves. The bound is a try count, not a
+// clock deadline, because the fakes' sleeps do not advance the clock.
+func delivered(ctx context.Context, d Deps, req PaneRequest) bool {
+	if d.Delivered == nil {
+		return true
+	}
+	tries, err := strconv.Atoi(envOr(d, "CREW_NUDGE_DELIVER", "20"))
+	if err != nil {
+		tries = 20
+	}
+	for i := 0; i < tries; i++ {
+		if i > 0 {
+			_ = d.Sleep(ctx, "1")
+		}
+		if d.Delivered(ctx, req) {
+			return true
+		}
+	}
+	return false
 }
 
 // classify reads the pane after Enter: a live turn or an emptied box is `accepted`, the
