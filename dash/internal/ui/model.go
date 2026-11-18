@@ -198,8 +198,10 @@ func NewModel(deps Deps, now func() time.Time, live liveDeps) Model {
 	lv.acts = acts
 	ov := newOverviewView(msg.in, now)
 	ov.acts = acts
+	ov.st.narrow = deps.Narrow
 	fl := newFleetView(msg, now)
 	fl.acts = acts
+	fl.narrow = deps.Narrow
 	m.views = [numTabs]view{
 		overviewTab: ov,
 		liveTab:     lv,
@@ -659,7 +661,8 @@ func (m Model) renderTabs() string {
 		line = build("", "│")
 	}
 	if ansi.StringWidth(line) > m.width {
-		line = build("", "")
+		// Active tab only, with hints that [ and ] step through the rest.
+		line = tabActiveStyle.Render("▸ "+tabTitles[m.active]) + tabSepStyle.Render("  [ ]")
 	}
 	return truncateLine(line, m.width)
 }

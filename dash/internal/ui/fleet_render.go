@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"path"
 	"slices"
 	"strings"
 
@@ -91,6 +92,36 @@ type fleetIndex struct {
 	showDead bool
 	deadN    int // dead groups with a row passing the filter, shown or not
 	groupsN  int // groups (crew heads) with a row passing the filter
+	tree     []subMark
+}
+
+// subMark is a sub row's place in its group's tree, among the rows drawn.
+type subMark struct {
+	last bool // the group's last visible sub row
+	dupe bool // another sub row in the group shows the same repo
+}
+
+// markSubs fills ix.tree once ix.vis is final.
+func (ix *fleetIndex) markSubs(fv vm.FleetView) {
+	ix.tree = make([]subMark, len(fv.Crews))
+	for start := 0; start < len(fv.Crews); {
+		end := start + 1
+		for end < len(fv.Crews) && fv.Crews[end].Sub {
+			end++
+		}
+		repos := map[string]int{}
+		lastVis := -1
+		for i := start + 1; i < end; i++ {
+			if ix.vis[i] {
+				repos[strOf(fv.Crews[i].Repo)]++
+				lastVis = i
+			}
+		}
+		for i := start + 1; i < end; i++ {
+			ix.tree[i] = subMark{last: i == lastVis, dupe: repos[strOf(fv.Crews[i].Repo)] > 1}
+		}
+		start = end
+	}
 }
 
 // index is the one visibility rule for crew rows: the filter, the dead
@@ -138,6 +169,7 @@ func (st fleetState) index(fv vm.FleetView) fleetIndex {
 			ix.vis[i] = show
 		}
 	}
+	ix.markSubs(fv)
 	return ix
 }
 
@@ -429,7 +461,7 @@ func crewCols(fv vm.FleetView, ix fleetIndex, iw int) fleetCols {
 	var c fleetCols
 	for _, i := range ix.visible() {
 		row := fv.Crews[i]
-		c.label = max(c.label, ansi.StringWidth(crewLabel(row)))
+		c.label = max(c.label, ansi.StringWidth(crewLabel(row, ix.tree[i])))
 		c.lane = max(c.lane, ansi.StringWidth(crewLane(row)))
 		c.counts = max(c.counts, ansi.StringWidth(workerCounts(row.Workers.ByState)))
 	}
@@ -466,7 +498,7 @@ func renderFleet(w, h int, fv vm.FleetView, st fleetState, mode pillMode) string
 		fpHolds:     {title: "HOLDS", count: fmt.Sprintf("%d holds", len(fv.Holds)), color: colBlue},
 		fpHosts:     {title: "HOSTS", count: fmt.Sprintf("%d unhealthy of %d", fv.Summary.HostsUnhealthy, fv.Summary.Hosts), color: colGreen},
 	}
-	fr := fleetRow{fv: fv, r: r, focus: focus, deadN: ix.deadN, showDead: ix.showDead}
+	fr := fleetRow{fv: fv, r: r, focus: focus, tree: ix.tree, deadN: ix.deadN, showDead: ix.showDead}
 	if pl := r.panels[fpCrews]; pl.shown {
 		fr.cols = crewCols(fv, ix, pl.inner.w)
 	}
@@ -552,6 +584,7 @@ type fleetRow struct {
 	r     fleetRects
 	focus fleetPanel
 	cols  fleetCols
+	tree  []subMark
 
 	deadN    int
 	showDead bool
@@ -606,7 +639,7 @@ func (fr fleetRow) line(it placed, iw int) string {
 	case eAttn:
 		return attnStripLine(fv.Attention[fr.r.stripOff:fr.r.stripOff+fr.r.stripRows], it.idx-fr.r.stripOff, fleetAttnLabel, s)
 	case eCrew:
-		return fr.crewLine(fv.Crews[it.idx], s)
+		return fr.crewLine(it.idx, s)
 	case eCapWeight:
 		return weightLine(fv.Capacity, s, iw)
 	case eCapLoad:
@@ -655,16 +688,64 @@ func shortCrew(id string) string {
 	return string(r[:8])
 }
 
+// cloneName is the base name of a sub row's clone directory, falling back to
+// the common dir's; sub rows of a group share their crew id, so this is what
+// tells apart rows on the same repo.
+func cloneName(c vm.FleetCrewRow) string {
+	for _, p := range []*string{c.Dir, c.Common} {
+		if p != nil && strings.Trim(*p, "/") != "" {
+			return path.Base(*p)
+		}
+	}
+	return ""
+}
+
+// subParts splits a sub row's label into its tree connector, repo, and the
+// clone-name suffix that tells apart rows sharing a repo.
+func subParts(c vm.FleetCrewRow, m subMark) (conn, repo, suffix string) {
+	conn = "  ├─ "
+	if m.last {
+		conn = "  ╰─ "
+	}
+	if m.dupe {
+		if name := cloneName(c); name != "" {
+			suffix = " " + name
+		}
+	}
+	return conn, strOf(c.Repo), suffix
+}
+
 // crewLabel is the row's name: a peer's "@host crew", a head's "crew @host
-// repo", a sub row's indented repo.
-func crewLabel(c vm.FleetCrewRow) string {
+// repo", a sub row's tree connector and repo.
+func crewLabel(c vm.FleetCrewRow, m subMark) string {
 	switch {
 	case c.Origin == vm.OriginPeer:
 		return "@" + c.Host + " " + c.Crew
 	case c.Sub:
-		return "  └ " + strOf(c.Repo)
+		conn, repo, suffix := subParts(c, m)
+		return conn + repo + suffix
 	}
 	return shortCrew(c.Crew) + " @" + c.Host + " " + strOf(c.Repo)
+}
+
+// labelCol writes the label column: a sub row's connector and suffix dim, its
+// repo in text, all clipped to the column width.
+func labelCol(s *spans, c vm.FleetCrewRow, m subMark, width int, text lipgloss.Style) {
+	if !c.Sub || c.Origin == vm.OriginPeer {
+		s.col(crewLabel(c, m), width, text, false)
+		return
+	}
+	conn, repo, suffix := subParts(c, m)
+	rest := width
+	for _, p := range []struct {
+		t  string
+		st lipgloss.Style
+	}{{conn, fg(colDim)}, {repo, text}, {suffix, fg(colDim)}} {
+		t := ansi.Truncate(cleanText(p.t), max0(rest), "…")
+		rest -= ansi.StringWidth(t)
+		s.add(t, p.st)
+	}
+	s.add(strings.Repeat(" ", max0(rest)), lipgloss.NewStyle())
 }
 
 func crewLane(c vm.FleetCrewRow) string {
@@ -731,7 +812,8 @@ func laneColor(lane string) lipgloss.Color {
 	return colDim
 }
 
-func (fr fleetRow) crewLine(c vm.FleetCrewRow, s *spans) string {
+func (fr fleetRow) crewLine(idx int, s *spans) string {
+	c := fr.fv.Crews[idx]
 	gs := dispatcherGlyphState(c)
 	text, counts := fg(colText).Bold(true), fg(colText)
 	if c.Origin == vm.OriginPeer {
@@ -739,9 +821,9 @@ func (fr fleetRow) crewLine(c vm.FleetCrewRow, s *spans) string {
 	}
 	lane := crewLane(c)
 	s.add(stateGlyph(gs), fg(glyphColor(gs))).
-		add(" ", lipgloss.NewStyle()).
-		col(crewLabel(c), fr.cols.label, text, false).
-		add(" ", lipgloss.NewStyle()).
+		add(" ", lipgloss.NewStyle())
+	labelCol(s, c, fr.tree[idx], fr.cols.label, text)
+	s.add(" ", lipgloss.NewStyle()).
 		col(lane, fr.cols.lane, fg(laneColor(lane)), false).
 		add(" ", lipgloss.NewStyle()).
 		col(workerCounts(c.Workers.ByState), fr.cols.counts, counts, false)

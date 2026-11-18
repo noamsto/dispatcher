@@ -98,7 +98,7 @@ func (p actionPrompt) promptPanel(iw int) (panelSpec, []string) {
 type helpKey struct{ keys, text string }
 
 var overviewHelp = []helpKey{
-	{"tab / shift+tab", "cycle focus: attention, checklists, agents, monitors"},
+	{"tab / shift+tab", "cycle focus: attention, checklists, agents, monitors (narrow: agents before checklists)"},
 	{"j k / up down", "move in the focused panel (the attention strip scrolls)"},
 	{"1-9", "act on the attention row with that number"},
 	{"enter", "attention: select its worker, or inspect a crew item; else the detail overlay, esc closes"},

@@ -293,12 +293,17 @@ func newOvInput(prompt, value string) textinput.Model {
 	return in
 }
 
-// cycle moves focus through the focusable panels, skipping the strip when it
-// is not shown.
+// cycle moves focus through the body panels in the order the layout shows
+// them, whether or not they are drawn (focusing one draws it), plus the strip
+// while it is drawn.
 func (v *overviewView) cycle(d int) {
+	r := v.layout()
 	order := []ovPanel{panelChecklists, panelAgents, panelMonitors}
-	if len(v.model.Attention) > 0 {
-		order = append([]ovPanel{panelAttention}, order...)
+	if r.narrow {
+		order = []ovPanel{panelAgents, panelChecklists, panelMonitors}
+	}
+	if r.panels[panelAttention].shown {
+		order = slices.Insert(order, 0, panelAttention)
 	}
 	i := slices.Index(order, v.st.focus)
 	v.setFocus(order[(i+d+len(order))%len(order)])

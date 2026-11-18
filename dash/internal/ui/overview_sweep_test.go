@@ -59,14 +59,16 @@ func sweepSelect(m Model, branch string) Model {
 	return m
 }
 
+type sweepState struct {
+	name  string
+	title string // the overlay's top-border title; empty for none
+	open  func(Model) Model
+}
+
 func TestOverviewSizeSweep(t *testing.T) {
 	asciiProfile(t)
 	typed := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(strings.Repeat("x", 300))}
-	states := []struct {
-		name  string
-		title string // the overlay's top-border title; empty for none
-		open  func(Model) Model
-	}{
+	states := []sweepState{
 		{"normal", "", func(m Model) Model { return m }},
 		{"detail", "DETAIL", func(m Model) Model { return sweepKeys(sweepSelect(m, "feat/a"), keyType(tea.KeyEnter)) }},
 		{"help", "HELP", func(m Model) Model { return sweepKeys(m, keyRune('?')) }},
@@ -74,8 +76,16 @@ func TestOverviewSizeSweep(t *testing.T) {
 		{"merge", "CONFIRM", func(m Model) Model { return sweepKeys(sweepSelect(m, "feat/b"), keyRune('m')) }},
 		{"filter", "FILTER", func(m Model) Model { return sweepKeys(m, keyRune('/'), typed) }},
 	}
-	for w := 100; w <= 200; w += 10 {
-		for h := 30; h <= 60; h += 5 {
+	type span struct{ w0, w1, wStep, h0, h1 int }
+	for _, sp := range []span{{100, 200, 10, 30, 60}, {40, 100, 5, 20, 40}} {
+		sweepSizes(t, sp.w0, sp.w1, sp.wStep, sp.h0, sp.h1, states)
+	}
+}
+
+func sweepSizes(t *testing.T, w0, w1, wStep, h0, h1 int, states []sweepState) {
+	t.Helper()
+	for w := w0; w <= w1; w += wStep {
+		for h := h0; h <= h1; h += 5 {
 			base := sized(sweepModel(), w, h)
 			for _, st := range states {
 				frame := st.open(base).View()
@@ -85,6 +95,9 @@ func TestOverviewSizeSweep(t *testing.T) {
 					continue
 				}
 				assertWidth(t, frame, w, h)
+				if st.name == "normal" && w < wideWidth {
+					assertClosedBorders(t, name, stripped(frame))
+				}
 				if st.title != "" && !hasOverlayTop(frame, st.title) {
 					t.Errorf("%s: no overlay top border titled %s", name, st.title)
 				}
