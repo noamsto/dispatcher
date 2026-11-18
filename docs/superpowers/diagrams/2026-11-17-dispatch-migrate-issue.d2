@@ -1,0 +1,24 @@
+direction: down
+
+dispatcher: "dispatcher\n(laptop going offline)"
+worker: "local claude worker\n(directive read at peek seams)"
+status: "crew status\n(states: working..reaped)"
+dash: "dash attention + crew rate\n(failed = critical, penalised)"
+host: "dispatch --host H\n(_dispatch_remote)"
+dup: "_remote_dup_holder\n(dispatch.sh)"
+fin: "_branch_finished\n(needs reaped + no local ref)"
+reap: "crew reap\n(keeps failed worker, open issue)"
+clone: "remote clone\n(no local branch ref)"
+
+dispatcher -> worker: "directive, ~10 min to land" {class: warn}
+worker -> status: "failed 'migrating to halo'" {class: warn}
+status -> dash: "critical item forever" {class: warn}
+dispatcher -> host: "re-dispatch by hand"
+host -> dup: "claim guard"
+dup -> fin: "holder released?"
+reap -> fin: "never reaps: failed, no PR, issue OPEN" {class: warn}
+dup -> host: "refused: already held" {class: warn}
+host -> clone: "switch_mode=create from main" {class: warn}
+
+dup.class: warn
+reap.class: warn

@@ -262,3 +262,36 @@ func TestAttentionStaleWithoutReasonHasNoDash(t *testing.T) {
 		t.Errorf("message = %q", a.Message)
 	}
 }
+
+func TestAttentionMigratedIsNotAttention(t *testing.T) {
+	in := viewtest.Inputs()
+	in.Snap.Roster.Crews[0].Workers = append(in.Snap.Roster.Crews[0].Workers,
+		map[string]any{"branch": "feat/mig", "state": "migrated", "to_host": "nuc", "host": "", "live": false})
+	v := view.BuildOverview(in)
+	for _, a := range v.Attention {
+		if a.Branch == "feat/mig" {
+			t.Errorf("migrated worker produced %s", a.ID)
+		}
+	}
+	w := worker(t, v, "feat/mig")
+	if w.Detail == nil || *w.Detail != "moved to nuc" {
+		t.Errorf("migrated detail = %v, want %q", w.Detail, "moved to nuc")
+	}
+	if v.Summary.ByState["migrated"] != 1 {
+		t.Errorf("by_state = %v", v.Summary.ByState)
+	}
+	for _, wd := range v.Monitors.Watchdogs {
+		if wd.Branch == "feat/mig" {
+			t.Error("migrated worker is watched")
+		}
+	}
+
+	fin := viewtest.FleetInputs()
+	c := crewOf(fin, "/r/a/.git", "c1")
+	c.Workers = append(c.Workers, map[string]any{"branch": "feat/mig", "state": "migrated", "to_host": "nuc", "host": ""})
+	for _, a := range view.BuildFleet(fin).Attention {
+		if a.Branch == "feat/mig" {
+			t.Errorf("fleet attention for migrated worker: %s", a.ID)
+		}
+	}
+}

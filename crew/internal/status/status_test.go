@@ -151,6 +151,14 @@ func (f *fixture) log(rows ...string) {
 	}
 }
 
+// append adds one row to the bus.
+func (f *fixture) append(row string) {
+	f.t.Helper()
+	if err := bus.Append(f.paths.Log, row); err != nil {
+		f.t.Fatal(err)
+	}
+}
+
 func (f *fixture) rawLog() string {
 	data, _ := os.ReadFile(f.paths.Log)
 	return string(data)
@@ -177,6 +185,18 @@ func (f *fixture) wantRow(want string) {
 	}
 }
 
+// wantLastRow asserts the log's newest row is value-equal to want.
+func (f *fixture) wantLastRow(want string) {
+	f.t.Helper()
+	got := f.lines()
+	if len(got) == 0 {
+		f.t.Fatal("log has no rows")
+	}
+	if g, w := testjson.Compact(testjson.MustParse(f.t, got[len(got)-1])), testjson.Compact(testjson.MustParse(f.t, want)); g != w {
+		f.t.Errorf("newest row:\n got  %s\n want %s", g, w)
+	}
+}
+
 func (f *fixture) wantNoRow() {
 	f.t.Helper()
 	if got := f.lines(); len(got) != 0 {
@@ -199,6 +219,11 @@ func statusRow(from, body string) string {
 // msgRow is a msg row whose body is the JSON text body, as `crew msg` writes it.
 func msgRow(from, to, body string) string {
 	return `{"ts":1,"crew_id":"c1","from":"` + from + `","to":"` + to + `","kind":"msg","body":` + jsonStr(body) + `}`
+}
+
+// directive is the dispatcher's migrate directive to the worker session to.
+func directive(to, host string) string {
+	return msgRow("dispatcher:c1", to, `{"directive":"migrate","to_host":"`+host+`"}`)
 }
 
 func skipIfRoot(t *testing.T) {
@@ -231,7 +256,7 @@ func TestMkdirBeforeParse(t *testing.T) {
 }
 
 func TestArgs(t *testing.T) {
-	const badState = "crew: status state must be one of working|blocked|pr_open|done|failed|exited|reaped (got '%s')\n"
+	const badState = "crew: status state must be one of working|blocked|pr_open|done|failed|exited|reaped|migrated (got '%s')\n"
 	cases := []struct {
 		name string
 		req  StatusRequest
@@ -247,11 +272,21 @@ func TestArgs(t *testing.T) {
 		{"no state", StatusRequest{From: worker}, 1, strings.Replace(badState, "%s", "", 1), ""},
 		{"no args", StatusRequest{}, 1, strings.Replace(badState, "%s", "", 1), ""},
 		{"restamp needs blocked", StatusRequest{From: worker, State: "working", Restamp: true}, 1, "crew: --restamp is only valid with blocked\n", ""},
+		{"migrated", StatusRequest{From: worker, State: "migrated", ToHost: "mini"}, 0, "", `{"state":"migrated","to_host":"mini"}`},
+		{"migrated with detail", StatusRequest{From: worker, State: "migrated", Detail: "moving", ToHost: "a.b_c-1"}, 0, "", `{"state":"migrated","detail":"moving","to_host":"a.b_c-1"}`},
+		{"migrated needs to-host", StatusRequest{From: worker, State: "migrated"}, 1, "crew: status: migrated requires --to-host <host>\n", ""},
+		{"to-host only with migrated", StatusRequest{From: worker, State: "working", ToHost: "mini"}, 1, "crew: status: --to-host is only valid with migrated\n", ""},
+		{"to-host refused with done", StatusRequest{From: worker, State: "done", ToHost: "mini"}, 1, "crew: status: --to-host is only valid with migrated\n", ""},
+		{"host leading dash", StatusRequest{From: worker, State: "migrated", ToHost: "-x"}, 1, "crew: status: invalid --to-host '-x'\n", ""},
+		{"host with space", StatusRequest{From: worker, State: "migrated", ToHost: "a b"}, 1, "crew: status: invalid --to-host 'a b'\n", ""},
 		{"state checked before restamp", StatusRequest{From: worker, State: "nope", Restamp: true}, 1, strings.Replace(badState, "%s", "nope", 1), ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newFixture(t)
+			if tc.code == 0 && tc.req.State == "migrated" {
+				f.log(directive(worker, tc.req.ToHost))
+			}
 			code, stderr := f.statusReq(tc.req)
 			if code != tc.code || stderr != tc.err {
 				t.Fatalf("got %d %q, want %d %q", code, stderr, tc.code, tc.err)
@@ -260,7 +295,7 @@ func TestArgs(t *testing.T) {
 				f.wantNoRow()
 				return
 			}
-			f.wantRow(statusRow(worker, tc.body))
+			f.wantLastRow(statusRow(worker, tc.body))
 		})
 	}
 }
@@ -374,6 +409,100 @@ func TestRefusedRestampWritesNothing(t *testing.T) {
 	}
 	if got := f.rawLog(); got != before {
 		t.Errorf("the refused --restamp changed the log:\n got %s\nwant %s", got, before)
+	}
+}
+
+func TestMigratedRepeatIsSilentNoOp(t *testing.T) {
+	f := newFixture(t)
+	f.log(directive(worker, "mini"))
+	req := StatusRequest{From: worker, State: "migrated", ToHost: "mini"}
+	if code, stderr := f.statusReq(req); code != 0 || stderr != "" {
+		t.Fatalf("first: %d %q", code, stderr)
+	}
+	if code, stderr := f.statusReq(req); code != 0 || stderr != "" {
+		t.Fatalf("repeat: %d %q", code, stderr)
+	}
+	if got := f.lines(); len(got) != 2 {
+		t.Fatalf("log has %d rows, want the directive and one status: %q", len(got), got)
+	}
+	f.wantLastRow(statusRow(worker, `{"state":"migrated","to_host":"mini"}`))
+}
+
+// A corrected host is a new row: the dedupe key carries to_host.
+func TestMigratedToAnotherHostPostsAgain(t *testing.T) {
+	f := newFixture(t)
+	f.log(directive(worker, "b"))
+	if code, stderr := f.statusReq(StatusRequest{From: worker, State: "migrated", ToHost: "b"}); code != 0 {
+		t.Fatalf("to b: %d %q", code, stderr)
+	}
+	f.append(directive(worker, "h"))
+	if code, stderr := f.statusReq(StatusRequest{From: worker, State: "migrated", ToHost: "h"}); code != 0 || stderr != "" {
+		t.Fatalf("to h: %d %q", code, stderr)
+	}
+	if got := f.lines(); len(got) != 4 {
+		t.Fatalf("log has %d rows, want 4: %q", len(got), got)
+	}
+	f.wantLastRow(statusRow(worker, `{"state":"migrated","to_host":"h"}`))
+}
+
+// A worker posts migrated only on its dispatcher's migrate directive naming
+// that host; the newest directive or cancel to that exact session decides.
+func TestMigratedNeedsTheDirective(t *testing.T) {
+	const refusal = "crew: status: migrated needs a dispatcher migrate directive naming --to-host mini\n"
+	cancel := msgRow("dispatcher:c1", worker, `{"directive":"migrate-cancel"}`)
+	cases := []struct {
+		name string
+		rows []string
+		ok   bool
+	}{
+		{"no directive", nil, false},
+		{"directive", []string{directive(worker, "mini")}, true},
+		{"directive names another host", []string{directive(worker, "studio")}, false},
+		{"newer directive names another host", []string{directive(worker, "mini"), directive(worker, "studio")}, false},
+		{"directive to another session", []string{directive("worker:feat/x#s2-1", "mini")}, false},
+		{"directive to the bare branch", []string{directive("worker:feat/x", "mini")}, false},
+		{"directive from another crew", []string{strings.Replace(directive(worker, "mini"), `"crew_id":"c1","from":"dispatcher:c1"`, `"crew_id":"c2","from":"dispatcher:c2"`, 1)}, false},
+		{"directive from a worker", []string{msgRow("worker:feat/y#s1-1", worker, `{"directive":"migrate","to_host":"mini"}`)}, false},
+		{"directive as a status row", []string{statusRow("dispatcher:c1", `{"directive":"migrate","to_host":"mini"}`)}, false},
+		{"body not JSON", []string{msgRow("dispatcher:c1", worker, `directive migrate to_host mini`)}, false},
+		{"cancelled", []string{directive(worker, "mini"), cancel}, false},
+		{"directive after a cancel", []string{cancel, directive(worker, "mini")}, true},
+		{"other msgs after the directive", []string{directive(worker, "mini"), msgRow("dispatcher:c1", worker, "keep going")}, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFixture(t)
+			f.log(tc.rows...)
+			before := f.rawLog()
+			code, stderr := f.statusReq(StatusRequest{From: worker, State: "migrated", ToHost: "mini"})
+			if tc.ok {
+				if code != 0 || stderr != "" {
+					t.Fatalf("got %d %q, want 0", code, stderr)
+				}
+				f.wantLastRow(statusRow(worker, `{"state":"migrated","to_host":"mini"}`))
+				return
+			}
+			if code != 1 || stderr != refusal {
+				t.Fatalf("got %d %q, want 1 %q", code, stderr, refusal)
+			}
+			if f.rawLog() != before {
+				t.Fatalf("refused post wrote the log: %q", f.rawLog())
+			}
+		})
+	}
+}
+
+// A repeat after a cancel is refused, not deduped into a silent success.
+func TestMigratedRepeatAfterCancelIsRefused(t *testing.T) {
+	f := newFixture(t)
+	f.log(directive(worker, "mini"))
+	req := StatusRequest{From: worker, State: "migrated", ToHost: "mini"}
+	if code, stderr := f.statusReq(req); code != 0 {
+		t.Fatalf("first: %d %q", code, stderr)
+	}
+	f.append(msgRow("dispatcher:c1", worker, `{"directive":"migrate-cancel"}`))
+	if code, stderr := f.statusReq(req); code != 1 || !strings.Contains(stderr, "needs a dispatcher migrate directive") {
+		t.Fatalf("after cancel: %d %q", code, stderr)
 	}
 }
 
@@ -1046,6 +1175,7 @@ func TestClearRelaunch(t *testing.T) {
 		{"failed clears", worker, "failed", "%5", "", "feat/x\x1flead", true, true},
 		{"session suffix parsed", "worker:feat/x#s123", "done", "%5", "", "feat/x\x1flead", true, true},
 		{"hash in branch", "worker:feat/7-a#b#s123", "done", "%5", "", "feat/7-a#b\x1flead", true, true},
+		{"migrated clears", worker, "migrated", "%5", "", "feat/x\x1flead", true, true},
 		{"pr_open keeps", worker, "pr_open", "%5", "", "feat/x\x1flead", false, false},
 		{"working keeps", worker, "working", "%5", "", "feat/x\x1flead", false, false},
 		{"blocked keeps", worker, "blocked", "%5", "", "feat/x\x1flead", false, false},
@@ -1072,7 +1202,12 @@ func TestClearRelaunch(t *testing.T) {
 			if tc.roleID != "" {
 				f.env["CREW_ROLE_ID"] = tc.roleID
 			}
-			f.status(tc.from, tc.state)
+			req := StatusRequest{From: tc.from, State: tc.state}
+			if tc.state == "migrated" {
+				req.ToHost = "mini"
+				f.log(directive(tc.from, "mini"))
+			}
+			f.statusReq(req)
 			calls := f.tm.Calls()
 			if got := slices.Contains(calls, query); got != tc.query {
 				t.Errorf("branch/role query issued = %v, want %v; calls %q", got, tc.query, calls)

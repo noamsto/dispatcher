@@ -43,7 +43,7 @@ func boardGroup(state string) int {
 		return grpBlocked
 	case "pr_open":
 		return grpPROpen
-	case "done", "failed", "exited":
+	case "done", "failed", "exited", "migrated":
 		return grpDone
 	}
 	return grpWorking
@@ -53,6 +53,8 @@ func stateColor(state string) lipgloss.Color {
 	switch state {
 	case "failed", "exited":
 		return stateFailedColor
+	case "migrated":
+		return colDim
 	}
 	switch boardGroup(state) {
 	case grpBlocked:

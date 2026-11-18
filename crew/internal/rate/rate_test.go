@@ -269,3 +269,17 @@ func TestReapedRowIsNotTheTerminalState(t *testing.T) {
 		t.Errorf("terminal_state/outcome = %v/%v, want failed/failed", failed["terminal_state"], failed["outcome"])
 	}
 }
+
+func TestMigratedRunYieldsNoRecord(t *testing.T) {
+	f := newFixture(t)
+	f.seedSettings()
+	f.dispatch("feat/x", 1000, "sonnet", "medium")
+	f.status("worker:feat/x#s1", 1500, "working")
+	f.status("worker:feat/x#s1", 1700, "migrated")
+	if _, code := f.runQuiet(); code != 0 {
+		t.Fatalf("exit %d", code)
+	}
+	if rows := f.rows(); len(rows) != 0 {
+		t.Errorf("a migrated run swept %d rows: %v", len(rows), rows)
+	}
+}

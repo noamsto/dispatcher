@@ -25,6 +25,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
@@ -143,6 +144,7 @@ type statusBody struct {
 	Detail  string `json:"detail,omitempty"`
 	PRURL   string `json:"pr_url,omitempty"`
 	Restamp bool   `json:"restamp,omitempty"`
+	ToHost  string `json:"to_host,omitempty"`
 }
 
 // encodeLine is v as one compact JSON line. Unescaped <>& keep the measured
@@ -164,11 +166,13 @@ func post(sub string, paths bus.Paths, stderr io.Writer, build func(text string)
 	return 0
 }
 
-// StatusRequest is `crew status <from> <state> [detail] [pr_url] [--restamp]`.
+// StatusRequest is `crew status <from> <state> [detail] [pr_url] [--restamp] [--to-host <h>]`.
 type StatusRequest struct {
-	From, State, Detail, PR string
-	Restamp                 bool
+	From, State, Detail, PR, ToHost string
+	Restamp                         bool
 }
+
+var hostName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 
 // RunStatus posts a worker's state.
 func RunStatus(ctx context.Context, req StatusRequest, paths bus.Paths, stderr io.Writer, o Options) int {
@@ -178,7 +182,7 @@ func RunStatus(ctx context.Context, req StatusRequest, paths bus.Paths, stderr i
 		return exitFailure
 	}
 
-	from, state, detail, pr, restamp := req.From, req.State, req.Detail, req.PR, req.Restamp
+	from, state, detail, pr, restamp, toHost := req.From, req.State, req.Detail, req.PR, req.Restamp, req.ToHost
 	if refuseSender(ctx, "status", from, crew, o, stderr) {
 		return exitFailure
 	}
@@ -188,9 +192,9 @@ func RunStatus(ctx context.Context, req StatusRequest, paths bus.Paths, stderr i
 	}
 
 	switch state {
-	case "working", "blocked", "pr_open", "done", "failed", "exited", "reaped":
+	case "working", "blocked", "pr_open", "done", "failed", "exited", "reaped", "migrated":
 	default:
-		say(stderr, "crew: status state must be one of working|blocked|pr_open|done|failed|exited|reaped (got '%s')\n", state)
+		say(stderr, "crew: status state must be one of working|blocked|pr_open|done|failed|exited|reaped|migrated (got '%s')\n", state)
 		return exitFailure
 	}
 	if state == "reaped" && (strings.HasPrefix(from, "worker:") || strings.HasPrefix(from, "role:")) {
@@ -201,12 +205,26 @@ func RunStatus(ctx context.Context, req StatusRequest, paths bus.Paths, stderr i
 		say(stderr, "crew: --restamp is only valid with blocked\n")
 		return exitFailure
 	}
+	switch {
+	case state != "migrated" && toHost != "":
+		say(stderr, "crew: status: --to-host is only valid with migrated\n")
+		return exitFailure
+	case state == "migrated" && toHost == "":
+		say(stderr, "crew: status: migrated requires --to-host <host>\n")
+		return exitFailure
+	case state == "migrated" && !hostName.MatchString(toHost):
+		say(stderr, "crew: status: invalid --to-host '%s'\n", toHost)
+		return exitFailure
+	case state == "migrated" && strings.HasPrefix(from, "worker:") && !migrateDirected(paths.Log, crew, from, toHost):
+		say(stderr, "crew: status: migrated needs a dispatcher migrate directive naming --to-host %s\n", toHost)
+		return exitFailure
+	}
 
 	// Terminal states are posted once: a re-announced pr_open/done wakes `watch`
 	// twice with an identical batch.
 	switch state {
-	case "pr_open", "done", "failed", "exited", "reaped":
-		if lastPosted(paths.Log, crew, from) == state+"\t"+pr {
+	case "pr_open", "done", "failed", "exited", "reaped", "migrated":
+		if lastPosted(paths.Log, crew, from) == state+"\t"+pr+"\t"+toHost {
 			clearRelaunch(ctx, o, from, state)
 			return 0
 		}
@@ -225,7 +243,7 @@ func RunStatus(ctx context.Context, req StatusRequest, paths bus.Paths, stderr i
 	code := post("status", paths, stderr, func(d string) string {
 		return encodeLine(row[statusBody]{
 			TS: ts, CrewID: crew, From: from, To: "dispatcher:" + crew, Kind: bus.KindStatus,
-			Body: statusBody{State: state, Detail: d, PRURL: pr, Restamp: restamp},
+			Body: statusBody{State: state, Detail: d, PRURL: pr, Restamp: restamp, ToHost: toHost},
 		})
 	}, detail)
 	if code != 0 {
@@ -264,7 +282,7 @@ func publishPane(ctx context.Context, o Options, state, detail string) {
 // to done.
 // Best effort: it must never fail the write that precedes it.
 func clearRelaunch(ctx context.Context, o Options, from, state string) {
-	if state != "done" && state != "failed" {
+	if state != "done" && state != "failed" && state != "migrated" {
 		return
 	}
 	pane := o.Sender.Getenv("TMUX_PANE")
@@ -288,8 +306,36 @@ func clearRelaunch(ctx context.Context, o Options, from, state string) {
 	}
 }
 
-// lastPosted is the terminal dedupe key, "<state>\t<pr_url>", of the last
-// status row this crew's from posted; "" when there is none. The well-formed
+// migrateDirected reports whether the newest migrate or migrate-cancel
+// directive dispatcher:<crew> sent to exactly from is a migrate naming host.
+// Exactly from: crew reply resolves a branch to its newest session, so a
+// successor session never inherits a directive.
+func migrateDirected(log, crew, from, host string) bool {
+	events, _ := bus.ReadEventsTolerant(log)
+	directed := false
+	for _, ev := range events {
+		m, ok := ev.Doc.(map[string]any)
+		if !ok || ev.CrewID != crew || ev.Kind != bus.KindMsg || m["from"] != "dispatcher:"+crew || m["to"] != from {
+			continue
+		}
+		body, _ := m["body"].(string)
+		v, err := jqrun.FromJSON(body)
+		if err != nil {
+			continue
+		}
+		d, _ := v.(map[string]any)
+		switch d["directive"] {
+		case "migrate":
+			directed = d["to_host"] == host
+		case "migrate-cancel":
+			directed = false
+		}
+	}
+	return directed
+}
+
+// lastPosted is the terminal dedupe key, "<state>\t<pr_url>\t<to_host>", of the
+// last status row this crew's from posted; "" when there is none. The well-formed
 // prefix of the log decides (a torn tail is ignored). A row whose from is
 // missing or not a string matches no from, and a body that is neither an object
 // nor null is skipped. A key holding a newline keeps only its last line.
@@ -301,7 +347,7 @@ func lastPosted(log, crew, from string) string {
 		if !ok || ev.CrewID != crew || ev.Kind != bus.KindStatus || m["from"] != from {
 			continue
 		}
-		var state, pr string
+		var state, pr, toHost string
 		switch body := m["body"].(type) {
 		case nil:
 			state = "null"
@@ -310,10 +356,13 @@ func lastPosted(log, crew, from string) string {
 			if v := body["pr_url"]; v != nil && v != false {
 				pr = text(v)
 			}
+			if v := body["to_host"]; v != nil && v != false {
+				toHost = text(v)
+			}
 		default:
 			continue
 		}
-		last = state + "\t" + pr
+		last = state + "\t" + pr + "\t" + toHost
 	}
 	return last[strings.LastIndex(last, "\n")+1:]
 }

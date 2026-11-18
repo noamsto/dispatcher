@@ -2,7 +2,10 @@ package remote
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -19,7 +22,8 @@ const helperEnv = "CREW_REMOTE_TEST_HELPER"
 
 // fakeBin is a dir holding a fake `dispatch`, `permission-check` and `crew`.
 // Each dumps into $REMOTE_TEST_DUMP: its argv NUL-separated, its cwd, a copy
-// of $DISPATCH_SPEC (mode kept) and its path, and the allowlisted env plus
+// of $DISPATCH_SPEC and of $DISPATCH_MIGRATE_DIR (modes kept) and their
+// paths, and the allowlisted env plus
 // CREW_WORKER_ID. With $FAKE_MARKER set it touches $FAKE_MARKER.started, sleeps
 // 2 s, writes to stdout, then touches the marker.
 func fakeBin(t *testing.T) string {
@@ -32,6 +36,7 @@ printf '%s\0' ` + argv0 + ` "$@" > "$d/argv"
 pwd -P > "$d/pwd"
 umask > "$d/umask"
 if [ -n "${DISPATCH_SPEC:-}" ]; then cp -p "$DISPATCH_SPEC" "$d/spec"; printf '%s' "$DISPATCH_SPEC" > "$d/spec-path"; ls "$(dirname "$DISPATCH_SPEC")" > "$d/scratch-ls"; fi
+if [ -n "${DISPATCH_MIGRATE_DIR:-}" ]; then cp -Rp "$DISPATCH_MIGRATE_DIR" "$d/migrate"; printf '%s' "$DISPATCH_MIGRATE_DIR" > "$d/migrate-path"; fi
 env | grep -E '^(CREW_ID|DISPATCH_TMUX_SESSION|DISPATCH_EMIT_ROW|DISPATCH_SESSION_ID|CREW_IDENTITY_AVOID|CREW_WORKER_ID)=' | sort > "$d/env"
 echo child-out
 echo child-err >&2
@@ -703,5 +708,209 @@ func TestServeHostScopeRefusals(t *testing.T) {
 				t.Fatal("the child ran despite the refusal")
 			}
 		})
+	}
+}
+
+func gzB64(t *testing.T, data []byte) string {
+	t.Helper()
+	var buf bytes.Buffer
+	zw := gzip.NewWriter(&buf)
+	if _, err := zw.Write(data); err != nil {
+		t.Fatal(err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return base64.StdEncoding.EncodeToString(buf.Bytes())
+}
+
+// migrateRequest is a repo-scope request for argv carrying migrate, with spec
+// as its spec when not "".
+func (e serveEnv) migrateRequest(t *testing.T, argv []string, migrate any, spec string) string {
+	t.Helper()
+	m := map[string]any{"v": 1, "repo": e.repo, "slug": "acme/widget", "argv": argv, "env": map[string]string{}}
+	if migrate != nil {
+		m["migrate"] = migrate
+	}
+	if spec != "" {
+		m["spec"] = spec
+	}
+	data, err := json.Marshal(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
+}
+
+var migrateArgvOK = []string{"dispatch", "standard", "opus", "--title", "x"}
+
+func TestServeMigrate(t *testing.T) {
+	e := newServeEnv(t)
+	patch, transcript := "diff --git a/x b/x\n", `{"type":"user"}`+"\n"
+	payload := map[string]any{
+		"meta":     testMeta(),
+		"patch_gz": gzB64(t, []byte(patch)), "transcript_gz": gzB64(t, []byte(transcript)),
+	}
+	rc, _, stderr := e.serve(t, e.migrateRequest(t, migrateArgvOK, payload, ""))
+	if rc != 0 {
+		t.Fatalf("rc %d, stderr %q", rc, stderr)
+	}
+	dir := e.dumped(t, "migrate-path")
+	if root := filepath.Join(e.repo, ".git", "crew", "remote-exec") + "/"; !strings.HasPrefix(dir, root) || filepath.Base(dir) != "migrate" {
+		t.Fatalf("DISPATCH_MIGRATE_DIR = %q, want <scratch>/migrate under %s", dir, root)
+	}
+	if _, err := os.Stat(filepath.Dir(dir)); !os.IsNotExist(err) {
+		t.Fatalf("scratch dir %s left behind (%v)", filepath.Dir(dir), err)
+	}
+	wantMeta := `{"v":1,"branch":"feat/x","tip":"` + testTip + `","from_host":"laptop","mode":"coop","session":"` + testSession + `","handoff":"carry on $(x)\n"}`
+	for name, want := range map[string]string{"meta.json": wantMeta, "patch": patch, "transcript.jsonl": transcript} {
+		path := filepath.Join(e.dump, "migrate", name)
+		got, err := os.ReadFile(path)
+		if err != nil || string(got) != want {
+			t.Fatalf("%s = %q (%v), want %q", name, got, err, want)
+		}
+		if st, err := os.Stat(path); err != nil || st.Mode().Perm() != 0o600 {
+			t.Fatalf("%s mode = %v (%v), want 0600", name, st.Mode(), err)
+		}
+	}
+	if st, err := os.Stat(filepath.Join(e.dump, "migrate")); err != nil || st.Mode().Perm() != 0o700 {
+		t.Fatalf("migrate dir mode = %v (%v), want 0700", st.Mode(), err)
+	}
+
+	e2 := newServeEnv(t)
+	meta := testMeta()
+	delete(meta, "session")
+	if rc, _, stderr := e2.serve(t, e2.migrateRequest(t, migrateArgvOK, map[string]any{"meta": meta}, "")); rc != 0 {
+		t.Fatalf("meta only: rc %d, stderr %q", rc, stderr)
+	}
+	entries, err := os.ReadDir(filepath.Join(e2.dump, "migrate"))
+	if err != nil || len(entries) != 1 || entries[0].Name() != "meta.json" {
+		t.Fatalf("meta only migrate dir = %v (%v), want just meta.json", entries, err)
+	}
+}
+
+func TestServeWithoutMigrateSetsNoDir(t *testing.T) {
+	e := newServeEnv(t)
+	if rc, _, stderr := e.serve(t, e.request(t, []string{"dispatch"}, nil, nil)); rc != 0 {
+		t.Fatalf("rc %d, stderr %q", rc, stderr)
+	}
+	if _, err := os.Stat(filepath.Join(e.dump, "migrate-path")); !os.IsNotExist(err) {
+		t.Fatalf("DISPATCH_MIGRATE_DIR set without a migrate payload (%v)", err)
+	}
+}
+
+func TestAdmitMigrate(t *testing.T) {
+	e := newServeEnv(t)
+	with := func(mut func(meta, payload map[string]any)) map[string]any {
+		meta := testMeta()
+		payload := map[string]any{"meta": meta, "transcript_gz": gzB64(t, []byte("{}\n"))}
+		mut(meta, payload)
+		return payload
+	}
+	setMeta := func(k string, v any) map[string]any {
+		return with(func(meta, _ map[string]any) { meta[k] = v })
+	}
+	ok := with(func(_, _ map[string]any) {})
+	big := make([]byte, 15<<20)
+	if _, err := rand.Read(big); err != nil {
+		t.Fatal(err)
+	}
+	var bomb bytes.Buffer
+	zw, err := gzip.NewWriterLevel(&bomb, gzip.BestSpeed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := zw.Write(make([]byte, maxMigrateBlob+1)); err != nil {
+		t.Fatal(err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name  string
+		stdin string
+		want  string
+	}{
+		{"valid", e.migrateRequest(t, migrateArgvOK, ok, ""), ""},
+		{"deep tier", e.migrateRequest(t, []string{"dispatch", "deep", "opus"}, ok, ""), ""},
+		{"sha256 tip", e.migrateRequest(t, migrateArgvOK, setMeta("tip", strings.Repeat("ab", 32)), ""), ""},
+		{"mode now", e.migrateRequest(t, migrateArgvOK, setMeta("mode", "now"), ""), ""},
+		{"no session no transcript", e.migrateRequest(t, migrateArgvOK, with(func(meta, p map[string]any) {
+			delete(meta, "session")
+			delete(p, "transcript_gz")
+		}), ""), ""},
+		{"20 MiB", e.migrateRequest(t, migrateArgvOK, with(func(_, p map[string]any) { p["patch_gz"] = gzB64(t, big) }), ""), ""},
+
+		{"dispatch --engines", e.migrateRequest(t, []string{"dispatch", "--engines"}, ok, ""), "migrate is only allowed with dispatch <tier>"},
+		{"dispatch resume", e.migrateRequest(t, []string{"dispatch", "resume", "feat/x"}, ok, ""), "migrate is only allowed"},
+		{"dispatch --migrate-check", e.migrateRequest(t, []string{"dispatch", "--migrate-check", "feat/x"}, ok, ""), "migrate is only allowed"},
+		{"bare dispatch", e.migrateRequest(t, []string{"dispatch"}, ok, ""), "migrate is only allowed"},
+		{"crew reply", e.migrateRequest(t, []string{"crew", "reply", "worker:feat/x", "hi"}, ok, ""), "migrate is only allowed"},
+		{"permission-check", e.migrateRequest(t, []string{"permission-check"}, ok, ""), "migrate is only allowed"},
+
+		{"2 MiB without migrate", e.migrateRequest(t, []string{"dispatch"}, nil, strings.Repeat("a", 2<<20)), "request over 1 MiB"},
+		{"2 MiB with null migrate", strings.Replace(e.migrateRequest(t, []string{"dispatch"}, nil, strings.Repeat("a", 2<<20)), `{`, `{"migrate":null,`, 1), "request over 1 MiB"},
+		{"33 MiB", e.migrateRequest(t, migrateArgvOK, with(func(_, p map[string]any) { p["patch_gz"] = strings.Repeat("A", 33<<20) }), ""), "request over 32 MiB"},
+		{"bomb", e.migrateRequest(t, migrateArgvOK, with(func(_, p map[string]any) {
+			p["patch_gz"] = base64.StdEncoding.EncodeToString(bomb.Bytes())
+		}), ""), "128 MiB"},
+		{"not base64", e.migrateRequest(t, migrateArgvOK, with(func(_, p map[string]any) { p["patch_gz"] = "!!" }), ""), "patch_gz"},
+		{"not gzip", e.migrateRequest(t, migrateArgvOK, with(func(_, p map[string]any) {
+			p["transcript_gz"] = base64.StdEncoding.EncodeToString([]byte("plain"))
+		}), ""), "transcript_gz"},
+		{"unknown migrate key", e.migrateRequest(t, migrateArgvOK, with(func(_, p map[string]any) { p["files"] = "x" }), ""), `"files"`},
+		{"case-folded migrate key", e.migrateRequest(t, migrateArgvOK, with(func(_, p map[string]any) {
+			p["Patch_gz"] = p["transcript_gz"]
+		}), ""), `"Patch_gz"`},
+		{"no meta", e.migrateRequest(t, migrateArgvOK, map[string]any{}, ""), "meta"},
+		{"meta not an object", e.migrateRequest(t, migrateArgvOK, map[string]any{"meta": "x"}, ""), "meta"},
+
+		{"version", e.migrateRequest(t, migrateArgvOK, setMeta("v", 2), ""), "version"},
+		{"no version", e.migrateRequest(t, migrateArgvOK, with(func(meta, _ map[string]any) { delete(meta, "v") }), ""), "version"},
+		{"unknown meta key", e.migrateRequest(t, migrateArgvOK, setMeta("extra", 1), ""), `"extra"`},
+		{"case-folded meta key", e.migrateRequest(t, migrateArgvOK, with(func(meta, _ map[string]any) {
+			delete(meta, "branch")
+			meta["Branch"] = "feat/x"
+		}), ""), `"Branch"`},
+		{"bad tip", e.migrateRequest(t, migrateArgvOK, setMeta("tip", "abc"), ""), "tip"},
+		{"upper tip", e.migrateRequest(t, migrateArgvOK, setMeta("tip", strings.ToUpper(testTip)), ""), "tip"},
+		{"tip 41", e.migrateRequest(t, migrateArgvOK, setMeta("tip", testTip+"0"), ""), "tip"},
+		{"tip newline", e.migrateRequest(t, migrateArgvOK, setMeta("tip", testTip+"\n"), ""), "tip"},
+		{"bad from_host", e.migrateRequest(t, migrateArgvOK, setMeta("from_host", "-x"), ""), "from_host"},
+		{"empty from_host", e.migrateRequest(t, migrateArgvOK, setMeta("from_host", ""), ""), "from_host"},
+		{"bad mode", e.migrateRequest(t, migrateArgvOK, setMeta("mode", "later"), ""), "mode"},
+		{"bad session", e.migrateRequest(t, migrateArgvOK, setMeta("session", "s1-2"), ""), "session"},
+		{"upper session", e.migrateRequest(t, migrateArgvOK, setMeta("session", strings.ToUpper(testSession)), ""), "session"},
+		{"session without transcript", e.migrateRequest(t, migrateArgvOK, with(func(_, p map[string]any) { delete(p, "transcript_gz") }), ""), "session"},
+		{"handoff over 64 KiB", e.migrateRequest(t, migrateArgvOK, setMeta("handoff", strings.Repeat("h", 64<<10+1)), ""), "handoff"},
+		{"handoff nul", e.migrateRequest(t, migrateArgvOK, setMeta("handoff", "a\x00b"), ""), "NUL"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, _, err := admit(context.Background(), strings.NewReader(tc.stdin))
+			if tc.want == "" {
+				if err != nil {
+					t.Fatalf("refused: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("err = %v, want %q", err, tc.want)
+			}
+		})
+	}
+	for _, b := range []string{"", "-x", "a..b", "a b", "a\tb", "a~b", "a^b", "a:b", "a?b", "a*b", "a[b", `a\b`, "a/", "a.lock", "a//b", "a@{b", "a\x7fb"} {
+		t.Run("branch "+b, func(t *testing.T) {
+			_, _, err := admit(context.Background(), strings.NewReader(e.migrateRequest(t, migrateArgvOK, setMeta("branch", b), "")))
+			if err == nil || !strings.Contains(err.Error(), "branch") {
+				t.Fatalf("branch %q: err = %v", b, err)
+			}
+		})
+	}
+	if e.childRan() {
+		t.Fatal("admit ran a child")
+	}
+	rc, _, stderr := e.serve(t, hostRequest(t, []string{"crew", "overseer", "status"}, func(m map[string]any) { m["migrate"] = ok }))
+	if rc != 2 || !strings.Contains(stderr, "host scope") {
+		t.Fatalf("host scope with migrate: rc %d, stderr %q", rc, stderr)
 	}
 }

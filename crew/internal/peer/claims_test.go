@@ -36,6 +36,10 @@ func reapRow(branch string) string {
 	return fmt.Sprintf(`{"ts":%d,"kind":"reap","branch":%q}`, ms(0), branch)
 }
 
+func migratedReapRow(branch, to string) string {
+	return fmt.Sprintf(`{"ts":%d,"kind":"reap","branch":%q,"migrated_to":%q}`, ms(0), branch, to)
+}
+
 func TestClaims(t *testing.T) {
 	for _, c := range []struct {
 		name string
@@ -45,6 +49,8 @@ func TestClaims(t *testing.T) {
 		{"dispatch row", []string{dispatchRow("feat/42-x", 0, "")}, "peer halo dispatch row for feat/42-x"},
 		{"dispatch row then reap", []string{dispatchRow("feat/42-x", 0, ""), reapRow("feat/42-x")}, ""},
 		{"reap then a newer dispatch row", []string{reapRow("feat/42-x"), dispatchRow("feat/42-x", 0, "")}, "peer halo dispatch row for feat/42-x"},
+		{"dispatch row then migrated reap", []string{dispatchRow("feat/42-x", 0, ""), migratedReapRow("feat/42-x", "mini")}, "peer halo dispatch row for feat/42-x"},
+		{"dispatch row, migrated reap, then plain reap", []string{dispatchRow("feat/42-x", 0, ""), migratedReapRow("feat/42-x", "mini"), reapRow("feat/42-x")}, ""},
 		{"reap of another branch", []string{dispatchRow("feat/42-x", 0, ""), reapRow("feat/42-y")}, "peer halo dispatch row for feat/42-x"},
 		{"stale dispatch row", []string{dispatchRow("feat/42-x", 25*time.Hour, "")}, ""},
 		{"prefix of another issue", []string{dispatchRow("feat/420-x", 0, "")}, ""},

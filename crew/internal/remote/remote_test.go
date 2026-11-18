@@ -3,7 +3,9 @@ package remote
 import (
 	"bytes"
 	"cmp"
+	"compress/gzip"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -173,7 +175,7 @@ func TestSSHArgv(t *testing.T) {
 }
 
 func TestBuildRequest(t *testing.T) {
-	data, err := BuildRequest("/r/widget", "acme/widget", []string{"crew", "where", "x"}, []string{"CREW_ID=c1"}, nil)
+	data, err := BuildRequest("/r/widget", "acme/widget", []string{"crew", "where", "x"}, []string{"CREW_ID=c1"}, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -181,7 +183,7 @@ func TestBuildRequest(t *testing.T) {
 		t.Fatalf("request = %s", data)
 	}
 	spec := "line $(x)\n"
-	data, err = BuildRequest("/r/widget", "acme/widget", []string{"dispatch"}, nil, &spec)
+	data, err = BuildRequest("/r/widget", "acme/widget", []string{"dispatch"}, nil, &spec, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -213,7 +215,7 @@ func TestBuildRequestRefusesEnv(t *testing.T) {
 		"CREW_IDENTITY_AVOID=a b",
 		"NOEQUALS",
 	} {
-		if _, err := BuildRequest("/r", "a/b", []string{"dispatch"}, []string{env}, nil); err == nil {
+		if _, err := BuildRequest("/r", "a/b", []string{"dispatch"}, []string{env}, nil, nil); err == nil {
 			t.Errorf("env %q accepted", env)
 		}
 	}
@@ -221,13 +223,13 @@ func TestBuildRequestRefusesEnv(t *testing.T) {
 		"CREW_ID=c_1-x", "DISPATCH_TMUX_SESSION=crew-c_1", "DISPATCH_TMUX_SESSION=dispatcher", "DISPATCH_EMIT_ROW=1",
 		"DISPATCH_SESSION_ID=s170-42", "CREW_IDENTITY_AVOID=ada,bo-b", "DISPATCH_ORIGIN_HOST=halo",
 	}
-	if _, err := BuildRequest("/r", "a/b", []string{"dispatch"}, ok, nil); err != nil {
+	if _, err := BuildRequest("/r", "a/b", []string{"dispatch"}, ok, nil, nil); err != nil {
 		t.Fatalf("valid env refused: %v", err)
 	}
 }
 
 func TestBuildRequestNeedsArgv(t *testing.T) {
-	if _, err := BuildRequest("/r", "a/b", nil, nil, nil); err == nil {
+	if _, err := BuildRequest("/r", "a/b", nil, nil, nil, nil); err == nil {
 		t.Fatal("empty argv accepted")
 	}
 }
@@ -385,6 +387,170 @@ func TestRunRefusesBeforeSSH(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(shim, "argv")); err == nil {
 		t.Fatal("ssh ran despite a refusal")
+	}
+}
+
+const (
+	testTip     = "0123456789abcdef0123456789abcdef01234567"
+	testSession = "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0"
+)
+
+func testMeta() map[string]any {
+	return map[string]any{
+		"v": 1, "branch": "feat/x", "tip": testTip, "from_host": "laptop",
+		"mode": "coop", "session": testSession, "handoff": "carry on $(x)\n",
+	}
+}
+
+func writeBundle(t *testing.T, meta map[string]any, files map[string]string) string {
+	t.Helper()
+	dir := t.TempDir()
+	if meta != nil {
+		data, err := json.Marshal(meta)
+		if err != nil {
+			t.Fatal(err)
+		}
+		files["meta.json"] = string(data)
+	}
+	for name, body := range files {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return dir
+}
+
+func gunzipB64(t *testing.T, s string) string {
+	t.Helper()
+	gz, err := base64.StdEncoding.DecodeString(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	zr, err := gzip.NewReader(bytes.NewReader(gz))
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := io.ReadAll(zr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
+}
+
+// runMigrate runs a dispatch call carrying dir and returns the request ssh got.
+func runMigrate(t *testing.T, repo, dir string) (int, string, string) {
+	t.Helper()
+	shim := sshShim(t, "0")
+	var stderr bytes.Buffer
+	rc := Run(context.Background(), Call{
+		Host: "mini", Cwd: repo, MigrateDir: dir, Argv: []string{"dispatch", "standard", "opus", "--", "t"},
+	}, io.Discard, &stderr)
+	stdin, _ := os.ReadFile(filepath.Join(shim, "stdin"))
+	return rc, string(stdin), stderr.String()
+}
+
+func TestRunMigrateDir(t *testing.T) {
+	repo := cloneOf(t, "git@github.com:acme/widget.git")
+	t.Setenv("DISPATCH_CONFIG_BIN", configBin(t, mini))
+	patch, transcript := "diff --git a/x b/x\n", `{"type":"user"}`+"\n"
+	dir := writeBundle(t, testMeta(), map[string]string{"patch": patch, "transcript.jsonl": transcript})
+	rc, sent, stderr := runMigrate(t, repo, dir)
+	if rc != 0 {
+		t.Fatalf("rc %d, stderr %q", rc, stderr)
+	}
+	var req struct {
+		Argv    []string                   `json:"argv"`
+		Migrate map[string]json.RawMessage `json:"migrate"`
+	}
+	if err := json.Unmarshal([]byte(sent), &req); err != nil {
+		t.Fatalf("request %s: %v", sent, err)
+	}
+	if want := `{"v":1,"branch":"feat/x","tip":"` + testTip + `","from_host":"laptop","mode":"coop","session":"` + testSession + `","handoff":"carry on $(x)\n"}`; string(req.Migrate["meta"]) != want {
+		t.Fatalf("meta = %s, want %s", req.Migrate["meta"], want)
+	}
+	var patchGz, transcriptGz string
+	if err := json.Unmarshal(req.Migrate["patch_gz"], &patchGz); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(req.Migrate["transcript_gz"], &transcriptGz); err != nil {
+		t.Fatal(err)
+	}
+	if gunzipB64(t, patchGz) != patch || gunzipB64(t, transcriptGz) != transcript {
+		t.Fatalf("blobs do not round-trip: %s", sent)
+	}
+
+	meta := testMeta()
+	delete(meta, "session")
+	rc, sent, stderr = runMigrate(t, repo, writeBundle(t, meta, map[string]string{}))
+	if rc != 0 {
+		t.Fatalf("meta only: rc %d, stderr %q", rc, stderr)
+	}
+	if strings.Contains(sent, "patch_gz") || strings.Contains(sent, "transcript_gz") || !strings.Contains(sent, `"migrate":{"meta":{`) {
+		t.Fatalf("meta only request = %s", sent)
+	}
+}
+
+func TestRunMigrateDirRefusals(t *testing.T) {
+	repo := cloneOf(t, "git@github.com:acme/widget.git")
+	t.Setenv("DISPATCH_CONFIG_BIN", configBin(t, mini))
+	badMode := testMeta()
+	badMode["mode"] = "later"
+	for _, tc := range []struct {
+		name string
+		dir  string
+		want string
+	}{
+		{"no meta.json", writeBundle(t, nil, map[string]string{"patch": "p"}), "crew: remote-run: --migrate-dir: "},
+		{"bad meta", writeBundle(t, badMode, map[string]string{"transcript.jsonl": "{}\n"}), "mode"},
+		{"session without transcript", writeBundle(t, testMeta(), map[string]string{}), "session"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rc, sent, stderr := runMigrate(t, repo, tc.dir)
+			if rc != 2 || sent != "" || !strings.Contains(stderr, tc.want) {
+				t.Fatalf("rc %d, sent %q, stderr %q, want rc 2 naming %q", rc, sent, stderr, tc.want)
+			}
+		})
+	}
+	_, _, stderr := runMigrate(t, repo, writeBundle(t, nil, map[string]string{}))
+	if !strings.Contains(stderr, "meta.json") {
+		t.Fatalf("missing meta.json refusal %q does not name it", stderr)
+	}
+}
+
+// A bundle file that is a symlink (or anything but a regular file) is refused
+// before ssh: the bundle must not carry what a link points at.
+func TestRunMigrateDirRefusesNonRegular(t *testing.T) {
+	repo := cloneOf(t, "git@github.com:acme/widget.git")
+	t.Setenv("DISPATCH_CONFIG_BIN", configBin(t, mini))
+	secret := filepath.Join(t.TempDir(), "secret")
+	if err := os.WriteFile(secret, []byte("secret\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	meta := testMeta()
+	delete(meta, "session")
+	for _, name := range []string{"meta.json", "patch", "transcript.jsonl"} {
+		t.Run(name, func(t *testing.T) {
+			var dir string
+			if name == "meta.json" {
+				dir = writeBundle(t, nil, map[string]string{})
+			} else {
+				dir = writeBundle(t, meta, map[string]string{})
+			}
+			if err := os.Symlink(secret, filepath.Join(dir, name)); err != nil {
+				t.Fatal(err)
+			}
+			rc, sent, stderr := runMigrate(t, repo, dir)
+			if want := filepath.Join(dir, name) + " is not a regular file"; rc != 2 || sent != "" || !strings.Contains(stderr, want) {
+				t.Fatalf("rc %d, sent %q, stderr %q, want rc 2 naming %q", rc, sent, stderr, want)
+			}
+		})
+	}
+	dir := writeBundle(t, meta, map[string]string{})
+	if err := os.Mkdir(filepath.Join(dir, "patch"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if rc, sent, stderr := runMigrate(t, repo, dir); rc != 2 || sent != "" || !strings.Contains(stderr, "patch is not a regular file") {
+		t.Fatalf("dir patch: rc %d, sent %q, stderr %q", rc, sent, stderr)
 	}
 }
 

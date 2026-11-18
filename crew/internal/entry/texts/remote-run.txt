@@ -1,4 +1,4 @@
-usage: crew remote-run --host H [--env K=V]... [--spec-file F] -- <argv>...
+usage: crew remote-run --host H [--env K=V]... [--spec-file F] [--migrate-dir D] -- <argv>...
 
 Run one command in this repo's clone on remote host H, over ssh, and print its
 output. The host, its ssh destination and the clone's path come from the settings
@@ -8,13 +8,17 @@ only an allowlisted argv: dispatch, permission-check, or crew reply, nudge,
 where, roster, relay, reap, dispatch-row and peer-sync.
 
 Exits 2, before any ssh, for an unknown host, a clone that is not mapped, a bad
---env, or a caller that is not this crew's dispatcher (the sender check runs here,
-before any ssh, since the remote cannot see this env or pane); otherwise with
-ssh's own status (255: the ssh itself failed).
+--env, a bad or missing --migrate-dir meta.json, or a caller that is not this
+crew's dispatcher (the sender check runs here, before any ssh, since the remote
+cannot see this env or pane); otherwise with ssh's own status (255: the ssh
+itself failed).
 
-  --host       Host name, as in the settings
-  --env        KEY=VALUE for the remote command; only CREW_ID, DISPATCH_TMUX_SESSION,
-               DISPATCH_ORIGIN_HOST, DISPATCH_EMIT_ROW, DISPATCH_SESSION_ID and CREW_IDENTITY_AVOID
-  --spec-file  A file whose text reaches the remote command as $DISPATCH_SPEC
+  --host         Host name, as in the settings
+  --env          KEY=VALUE for the remote command; only CREW_ID, DISPATCH_TMUX_SESSION,
+                 DISPATCH_ORIGIN_HOST, DISPATCH_EMIT_ROW, DISPATCH_SESSION_ID and CREW_IDENTITY_AVOID
+  --spec-file    A file whose text reaches the remote command as $DISPATCH_SPEC
+  --migrate-dir  A `dispatch migrate` bundle: meta.json (required), patch and
+                 transcript.jsonl (each optional). Only with `dispatch <tier> …`;
+                 the remote checks it and hands it over as $DISPATCH_MIGRATE_DIR
 
   crew remote-run --host mini --env CREW_ID="$id" -- crew where lime

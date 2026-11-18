@@ -1,12 +1,13 @@
-usage: crew status <from> <state> [detail] [pr] [--restamp] [--]
+usage: crew status <from> <state> [detail] [pr] [--restamp] [--to-host <h>] [--]
 
 Post or update a session's state on the crew bus.
 
   <from>     The posting session: worker:<branch>#s… or dispatcher:<crew>
-  <state>    working | blocked | pr_open | done | failed | exited | reaped (only reap posts it)
+  <state>    working | blocked | pr_open | done | failed | exited | reaped (only reap posts it) | migrated
   [detail]   Short context; put -- before one that starts with a dash
   [pr]       PR url, which pr_open names
   --restamp  blocked only: refresh liveness without re-delivering a reply
+  --to-host  migrated only (required): the host the worker moved to
   --         Everything after this is positional
 
 pr_open and done are refused on a standard/deep implement run until the branch
@@ -17,5 +18,9 @@ pr_open and done by a worker are also refused while a dispatcher:<crew> message
 to that exact session is undelivered: the refusal prints each one on stderr, as
 a JSON line in inbox's form, and marks it delivered, so handle them, then post
 again.
+
+A worker session posts migrated only when the newest migrate directive its
+dispatcher sent to that exact session ({"directive":"migrate","to_host":"H"})
+names the --to-host host and no {"directive":"migrate-cancel"} came after it.
 
   crew status "$CREW_WORKER_ID" working "execute: tests"

@@ -11,3 +11,5 @@ A tmux-remux-restored window is not a live worker. Its lead pane relaunches itse
 **A refusal that names a live claim.** An `already claimed` abort means another crew holds the issue: relay it verbatim and do not remove the label (the core protocol's **Claim** bullet is the rule). Resume applies only to a dead worker of your own.
 
 **Never carry an authorization in the extra prompt.** `dispatch resume`'s extra prompt has no cap, no literal-text check and no human yes, and the bus `resume` row records no `owner_auth`; an authorization travels only through a re-dispatch's `--owner-auth`.
+
+**A migrated branch.** `dispatch resume` of a branch that moved to another host routes to that host. A migration that failed after the stop leaves the branch released to the target: `dispatch resume <b>` locally abandons it (ends the release); `dispatch migrate <b> --host <h>` retries it (skill `dispatcher:remote-host`).

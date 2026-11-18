@@ -78,7 +78,8 @@ map_file() {
   scripts/help-parity.sh | scripts/pi-agent-dir-parity.sh) ;;
   adapters/core/budget-gate.sh) add "${crew_set[@]}" ;;
   adapters/core/claude-worker-settings.sh | adapters/core/cross-repo-hint.sh) add "${dispatch_set[@]}" ;;
-  adapters/core/dispatch-resume.sh | adapters/core/dispatch.sh) add "${dispatch_set[@]}" remote-host ;;
+  adapters/core/dispatch-resume.sh | adapters/core/dispatch.sh) add "${dispatch_set[@]}" remote-host dispatch-migrate ;;
+  adapters/core/dispatch-migrate.sh) add dispatch-migrate remote-host ;;
   adapters/core/directive-delivery.sh) add adapters directive-delivery ;;
   adapters/core/dispatch-notify.sh) add adapters dispatch-notify dispatch ;;
   adapters/core/dispatcher.sh) add adapters dispatch dispatcher module ;;

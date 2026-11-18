@@ -140,6 +140,8 @@ Before pushing, check for an open PR (`gh pr view --json url,state`): the branch
 
 A resume mints a new `worker_id`, retiring old ids in the restored transcript: session identity never carries forward. Read `$CREW_WORKER_ID` fresh from the environment for every bus call; never copy one forward.
 
+Header `migrated_from: <host>`: the run moved hosts. Read `<crew_dir>/artifacts/<branch>/migrated.md` first (handoff and open questions from the old host); uncommitted work was applied from a patch.
+
 ## Fresh seam relaunch (`fresh_seams: true`)
 
 claude/pi only: dispatch never arms codex/cursor, and `dispatch resume` rewrites the header to `fresh_seams: false`.
@@ -190,6 +192,19 @@ One pass, not a held wait like `crew await`; empty output ⇒ proceed.
   - Conflicting or unclear directive: block→await.
   - Verified no-op / acknowledgement: advance the cursor, proceed.
 
+## Migrate directive (all tiers)
+
+A dispatcher msg `{"directive":"migrate","to_host":"H"}` at a peek seam moves this run to host H. Do, in order:
+
+1. Start no new stage or subagent; stop the background processes you started.
+2. Write the handoff to `<crew_dir>/artifacts/<branch>/handoff.md` with the Fresh-seam note's fields (stage, seen-cursor, counters, next step, retro notes, open questions). Crew-dir data: it travels to H over ssh and never reaches GitHub.
+3. Commit the work that belongs in the branch (never root scaffolding) with exactly `wip: checkpoint before host migration` and no body (commit text reaches GitHub: no paths, ids or host names).
+4. A commit hook refuses → no fix, no bypass: leave that work uncommitted (the dispatcher's snapshot patch carries it) and go on with what is committed.
+5. Push plainly through the hooks (never `--no-verify`, never force). Failure → `crew status "$CREW_WORKER_ID" blocked "migrate: push failed: <git's words>"`, then block→await.
+6. Success → `crew status "$CREW_WORKER_ID" migrated --to-host H "<one line>"` (say `uncommitted work travels as a patch` when step 4 fired), no metrics snapshot (the run continues on H), stop.
+
+A later `{"directive":"migrate-cancel"}` from the dispatcher withdraws the directive: if you have not posted `migrated`, carry on with the run (re-stamp `working`). `crew status … migrated` is refused after a cancel.
+
 ## Retro notes (all tiers)
 
 A note records, in your own words, why something went wrong, tagged to group across runs. Write one only when a branch below is taken; never for success or per seam unconditionally.
@@ -222,6 +237,7 @@ Right before every stopping path (done; terminal spec, plan, consult or gate fai
 - start: `crew status "$CREW_WORKER_ID" working`
 - PR open: `crew status "$CREW_WORKER_ID" pr_open "<acceptance ledger>" <pr_url>`, ledger per "Acceptance ledger"
 - finish: `crew status "$CREW_WORKER_ID" done`, optional `"follow-ups: untracked"` detail per "Deferred findings"
+- migrate directive done: `migrated --to-host H` per "Migrate directive" (terminal, no snapshot)
 - question only the dispatcher can answer: block, then await the reply in-band; never stop dead:
   ```
   crew status "$CREW_WORKER_ID" blocked "<why>"

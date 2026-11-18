@@ -1,0 +1,24 @@
+direction: down
+
+mig: "dispatch migrate\n(dispatch-migrate.sh)" {class: good}
+worker: "worker: migrate directive\n(commit, push, status migrated)" {class: good}
+cm: "crew migrate\nstop / snapshot / mark" {class: good}
+bus: "bus: migrated row\nsource=migrate, to_host, dir" {class: good}
+rel: "release rule\n(_branch_release_host, release.Active)" {class: accent}
+payload: "remote-run --migrate-dir\nremote-exec: migrate key" {class: accent}
+remote: "remote dispatch\nfetch branch, apply patch, --resume" {class: accent}
+reap: "crew reap C7\n(removes worktree after remote row)" {class: accent}
+dash: "dash + rate\n(moved: no attention, no penalty)" {class: accent}
+dup: "_remote_dup_holder\n(released to H only)" {class: accent}
+
+mig -> worker: "cooperative: directive" {style.animated: true}
+mig -> cm: "--now: stop, snapshot patch" {style.animated: true}
+worker -> bus: "status migrated"
+cm -> bus: "mark under newest session"
+bus -> rel: "newest non-exited row"
+rel -> dup: "H passes, third host K blocked"
+mig -> payload: "bundle: meta, patch, transcript" {style.animated: true}
+payload -> remote: "DISPATCH_MIGRATE_DIR"
+remote -> reap: "remote:true dispatch row"
+bus -> dash: "terminal, not failed"
+rel -> reap: "mark tip on origin"

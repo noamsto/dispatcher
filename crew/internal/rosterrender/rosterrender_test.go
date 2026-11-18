@@ -311,3 +311,9 @@ func TestReapedRowIsDone(t *testing.T) {
 		t.Errorf("a fresh reaped row is not drawn:\n%s", text)
 	}
 }
+
+func TestMigratedRowIsDoneNotFailed(t *testing.T) {
+	if class, failed := classify("migrated"); class != classDone || failed {
+		t.Errorf("classify(migrated) = %v, %v; want the done sector, not failed", class, failed)
+	}
+}

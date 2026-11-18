@@ -66,7 +66,7 @@ var allowlist = map[string][]field{
 		{"worker_id", textField}, {"host", textField}, {"remote", boolField}, {"title", textField}, {"name", textField},
 		{"also_closes", closesField},
 	},
-	"reap":     {{"ts", intField}, {"kind", textField}, {"branch", textField}},
+	"reap":     {{"ts", intField}, {"kind", textField}, {"branch", textField}, {"migrated_to", textField}},
 	"msg":      {{"ts", intField}, {"crew_id", textField}, {"kind", textField}, {"from", textField}, {"to", textField}, {"body", textField}},
 	"decision": {{"ts", intField}, {"crew_id", textField}, {"kind", textField}, {"from", textField}, {"body", textField}},
 }

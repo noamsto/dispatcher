@@ -546,7 +546,7 @@ func (w *watch) d9Continue() error {
 		return err
 	}
 	switch {
-	case w.bus.state == "done" || w.bus.state == "failed" || w.bus.state == "exited" || w.bus.state == "reaped":
+	case w.bus.state == "done" || w.bus.state == "failed" || w.bus.state == "exited" || w.bus.state == "reaped" || w.bus.state == "migrated":
 		return nil
 	case w.bus.state == "blocked" && w.bus.source != "watchdog":
 		fd.d9Typed = false

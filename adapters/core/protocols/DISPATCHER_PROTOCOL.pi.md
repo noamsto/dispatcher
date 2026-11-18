@@ -19,7 +19,7 @@ Load the named skill before acting: `dispatcher:<x>` on claude, `<x>` on codex/c
 - `overseer` — a msg from `overseer:<host>`: kinds, reply format, advice vs `capacity`
 - `resume` — a worker died mid-task or a tmux-restored window
 - `stacked` — a task built on an unmerged PR (--base), rebase coordination and layer merge
-- `remote-host` — a worker on another machine (--host)
+- `remote-host` — a worker on another machine (--host), or to move a running local worker there (`dispatch migrate`)
 - `peers` — a peer dispatcher's claim, `peer_msg`, sync error, `crew decide`d decision or peer roster row (peer:<host>)
 - `review-pr` — reviewing an existing PR (--pr, --review)
 - `grid-lazy` — a grid whose roles spawn on demand (--lazy)
@@ -112,6 +112,8 @@ dispatch <tier> <model|@class> --effort <low|medium|high|xhigh|max|ultra> (unles
 
 To re-attach after a broken link: `dispatch --host <name> --recover <session> [--crew-id <id>]`.
 
+To move a running local worker to another host: `dispatch migrate <branch|codename|#N> --host <name> [--now] [--wait S]` (skill `dispatcher:remote-host`). `migrated` is terminal and is not a failure: no attention item, no rating.
+
 `--` ends option parsing: later tokens are title text, so a flag-shaped word (e.g. `--base`) passes verbatim. Only the first argument selects a subcommand (`dispatch resume …`); a title mentioning `resume` is never read as one.
 
 `dispatch` creates the worktree and tmux window, stamps `WORKER_TASK.md` (tier, plan, crew_id, dispatcher_pane, closes line(s), task body), and launches the worker with `WORKER_PROTOCOL.md` baked; you supply the tier, model and effort you judged.
@@ -160,7 +162,7 @@ A remote worker (`dispatch --host`) is followed only by the relay in a streaming
 **codex / pi — blocking park.** No background notify, but no short foreground timeout either: call `crew watch --timeout 270` in the **foreground**, block until a worker event or expiry, handle the result and re-park: this **is** your loop. Empty stdout (park expired, exit 0): nothing to handle. pi takes this lane too: it has no `Monitor` or background-completion notification. Always 270, drained or not: the park *is* your turn, and a longer one queues the human when only their input can arrive (270 costs only cache-warmth). Input typed during a park arrives when it ends: expected, not a stall. A foreground call cannot double-arm. For what wakes it, see "`crew watch` wakes on…" below. A hold changes nothing: every 270s wake already checks it.
 
 
-`crew watch` wakes on a worker `status` of `blocked`/`pr_open`/`done`/`failed`, an `exited` that is the session's **first** terminal state (after `working`/`blocked`), or a question `msg` to you, returning `{"cursor":<ts>,"events":[…]}`. A later `exited` is the silent SessionEnd backstop. Terminal states (`done`/`pr_open`/`failed`) free fan-out budget, so that wake also cues the next queued dispatch. Merge any PR only on the human's explicit approval (or a standing approval), through `crew merge <N>`, never a bare `gh pr merge`; it refuses unless CI is green and the worker's `pr_open` ledger validates. On a `pr_open` wake read its ledger (`pass(<evidence>)`/`waived(dispatcher)`); send a missing or gappy one back, never merge it; an implement worker's `done` with no prior `pr_open` skipped the check — send it back. **Recover a mid-run `exited` (the engine died before a terminal status) with `dispatch resume` (skill `dispatcher:resume`), in that worker's worktree or by target**, not a fresh `dispatch`.
+`crew watch` wakes on a worker `status` of `blocked`/`pr_open`/`done`/`failed`, an `exited` that is the session's **first** terminal state (after `working`/`blocked`), or a question `msg` to you, returning `{"cursor":<ts>,"events":[…]}`. A later `exited` is the silent SessionEnd backstop. Terminal states (`done`/`pr_open`/`failed`) free fan-out budget, so that wake also cues the next queued dispatch. `migrated` frees this host's budget too but never wakes `watch`; `dispatch migrate`'s exit 0 is the cue. Merge any PR only on the human's explicit approval (or a standing approval), through `crew merge <N>`, never a bare `gh pr merge`; it refuses unless CI is green and the worker's `pr_open` ledger validates. On a `pr_open` wake read its ledger (`pass(<evidence>)`/`waived(dispatcher)`); send a missing or gappy one back, never merge it; an implement worker's `done` with no prior `pr_open` skipped the check — send it back. **Recover a mid-run `exited` (the engine died before a terminal status) with `dispatch resume` (skill `dispatcher:resume`), in that worker's worktree or by target**, not a fresh `dispatch`.
 
 A same-session repeat `blocked` does not wake if its detail matches the previous one after stripping ` (cycle N of M)` and the `unread:` age `undelivered for Ns`. A first `blocked`, a changed detail and a question `msg` still wake; the row stays logged, so roster `age_s` advances. A watchdog `working` whose detail ends in ` cleared` (e.g. `load: cleared`) does not wake, even with `working` in `--states`.
 

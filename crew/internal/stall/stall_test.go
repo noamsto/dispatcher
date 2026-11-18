@@ -491,6 +491,7 @@ func TestTerminalStates(t *testing.T) {
 		{"failed role", "role:feat/x:rev", Request{Engine: ptr("claude")}, "failed", false},
 		{"exited", "feat/x", Request{}, "exited", false},
 		{"reaped", "feat/x", Request{}, "reaped", false},
+		{"migrated", "feat/x", Request{}, "migrated", false},
 		{"pr_open keeps watching", "feat/x", Request{}, "pr_open", true},
 		{"working keeps watching", "feat/x", Request{}, "working", true},
 	}

@@ -2099,3 +2099,13 @@ func TestOverseerProbeDroppedRowFailsTheProbe(t *testing.T) {
 		}
 	}
 }
+
+func TestProjectWorkerAcceptsMigrated(t *testing.T) {
+	row := projectWorker(map[string]json.RawMessage{
+		"branch": json.RawMessage(`"feat/x"`),
+		"state":  json.RawMessage(`"migrated"`),
+	})
+	if row == nil || row["state"] != "migrated" {
+		t.Errorf("projectWorker dropped a migrated row: %v", row)
+	}
+}

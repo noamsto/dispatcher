@@ -6,12 +6,14 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"testing"
 	"time"
 
 	"github.com/noamsto/dispatcher/crew/internal/filekind"
+	"github.com/noamsto/dispatcher/crew/internal/proc/proctest"
 )
 
 // discardFx is a done worker on rb whose PR is MERGED, with one commit of its
@@ -251,13 +253,9 @@ func TestDiscardRecheck(t *testing.T) {
 	if why := r.discardRecheck(t.Context(), c, "?? b.txt"); why != "changed while saving" {
 		t.Fatalf("why %q", why)
 	}
-	idx := filepath.Join(t.TempDir(), "index")
-	if !r.scratchTree(t.Context(), c, idx) {
-		t.Fatal("scratchTree failed")
-	}
-	tree, ok := r.wtIndexOutput(t.Context(), c, idx, &f.stderr, "write-tree")
-	if !ok {
-		t.Fatal("write-tree failed")
+	tree, err := ScratchTree(t.Context(), c.admin, c.wtpath, "refs/heads/"+rb, filepath.Join(t.TempDir(), "index"), false, &f.stderr)
+	if err != nil {
+		t.Fatal(err)
 	}
 	r.discardTree = tree
 	if why := r.discardRecheck(t.Context(), c, st); why != "" {
@@ -267,5 +265,127 @@ func TestDiscardRecheck(t *testing.T) {
 	// The worker's own index is untouched by the scratch builds.
 	if out, err := exec.Command("git", "-C", f.wt, "diff", "--cached", "--name-only").Output(); err != nil || strings.TrimSpace(string(out)) != "" {
 		t.Fatalf("worker index changed: %q %v", out, err)
+	}
+}
+
+// ignoredScaffoldFx is discardFx with the scaffold names gitignored and only
+// SPEC.md and WORKER_TASK.md written.
+func ignoredScaffoldFx(t *testing.T) *fx {
+	t.Helper()
+	f := discardFx(t)
+	exclude, err := os.OpenFile(f.main+"/.git/info/exclude", os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := exclude.WriteString("WORKER_TASK.md\nSPEC.md\nPLAN.md\nDECOMPOSITION.md\nREVIEW_NOTES.md\nPLAN_ROUND*.md\n"); err != nil {
+		t.Fatal(err)
+	}
+	_ = exclude.Close()
+	portFWrite(t, f.wt+"/SPEC.md", "spec\n")
+	portFWrite(t, f.wt+"/WORKER_TASK.md", "task\n")
+	return f
+}
+
+func treeFiles(t *testing.T, dir, tree string) []string {
+	t.Helper()
+	return strings.Fields(gitOut(t, dir, "ls-tree", "-r", "--name-only", tree))
+}
+
+// The forced add takes the ignored scaffold that exists; a missing name is
+// no pathspec, and WORKER_TASK.md (the remote writes its own) never rides.
+func TestScratchTreeIgnoredScaffold(t *testing.T) {
+	f := ignoredScaffoldFx(t)
+	c := f.candidate()
+	for _, tc := range []struct {
+		ignored bool
+		want    []string
+	}{{false, []string{"a.txt"}}, {true, []string{"SPEC.md", "a.txt"}}} {
+		idx := filepath.Join(t.TempDir(), "index")
+		tree, err := ScratchTree(t.Context(), c.admin, c.wtpath, "refs/heads/"+rb, idx, tc.ignored, &f.stderr)
+		if err != nil {
+			t.Fatalf("ignored=%v: %v stderr=%q", tc.ignored, err, f.stderr.String())
+		}
+		if got := treeFiles(t, f.main, tree); !slices.Equal(got, tc.want) {
+			t.Fatalf("ignored=%v: tree holds %q, want %q", tc.ignored, got, tc.want)
+		}
+	}
+	f.wantErr("")
+}
+
+func TestSnapshotIgnoredScaffold(t *testing.T) {
+	f := ignoredScaffoldFx(t)
+	portFWrite(t, f.wt+"/a.txt", "one\ntwo\n")
+	c := f.candidate()
+	tip := gitOut(t, f.main, "rev-parse", "refs/heads/"+rb)
+	req := SnapshotRequest{
+		Admin: c.admin, WtPath: c.wtpath, Branch: rb, Tmp: t.TempDir(),
+		Root: f.paths.Dir + "/artifacts", Dir: rb + "/migrate-x", Name: "patch",
+		IgnoredScaffold: true, Stderr: &f.stderr,
+	}
+	res, err := Snapshot(t.Context(), req)
+	if err != nil {
+		t.Fatalf("%v stderr=%q", err, f.stderr.String())
+	}
+	if want := req.Root + "/" + req.Dir + "/patch"; res.Patch != want || res.Tip != tip {
+		t.Fatalf("result %+v, want patch %q tip %s", res, want, tip)
+	}
+	if got := treeFiles(t, f.main, res.Tree); !slices.Equal(got, []string{"SPEC.md", "a.txt"}) {
+		t.Fatalf("tree holds %q", got)
+	}
+	// The patch onto a fresh checkout of the tip reproduces the scratch tree.
+	fresh := filepath.Join(f.root, "fresh")
+	runGit(t, f.main, "worktree", "add", "-q", "--detach", fresh, tip)
+	runGit(t, fresh, "apply", "--index", res.Patch)
+	if got := gitOut(t, fresh, "write-tree"); got != res.Tree {
+		t.Fatalf("applied tree %s, want %s", got, res.Tree)
+	}
+	if _, err := os.Lstat(fresh + "/WORKER_TASK.md"); !os.IsNotExist(err) {
+		t.Fatalf("WORKER_TASK.md travelled: %v", err)
+	}
+}
+
+func TestSnapshotCleanTree(t *testing.T) {
+	f := discardFx(t)
+	c := f.candidate()
+	res, err := Snapshot(t.Context(), SnapshotRequest{
+		Admin: c.admin, WtPath: c.wtpath, Branch: rb, Tmp: t.TempDir(),
+		Root: f.paths.Dir + "/artifacts", Dir: rb, Name: "patch", IgnoredScaffold: true, Stderr: &f.stderr,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Patch != "" || res.Tree != gitOut(t, f.main, "rev-parse", rb+"^{tree}") {
+		t.Fatalf("result %+v", res)
+	}
+	if _, err := os.Lstat(f.paths.Dir + "/artifacts"); !os.IsNotExist(err) {
+		t.Fatalf("artifacts made for an empty patch: %v", err)
+	}
+}
+
+// KillWorkerWindows kills the windows stamped or sitting at wt and the
+// processes still rooted in it.
+func TestKillWorkerWindows(t *testing.T) {
+	f := newFx(t)
+	f.tmux["list-windows -a -F #{window_id} #{pane_current_path} #{@worktree}"] = strings.Join([]string{
+		"@1 " + f.wt + " ", "@2 /elsewhere " + f.wt, "@3 " + f.wt + "x /x",
+	}, "\n")
+	f.procs.Procs = map[int]proctest.Proc{101: {Cwd: f.wt + "/sub"}, 102: {Cwd: f.wt + "x"}}
+	p := f.opts().Probes
+	var said []string
+	KillWorkerWindows(t.Context(), p.Tmux, p.Proc, f.wt, func(s string) { said = append(said, s) })
+	var kills []string
+	for _, c := range f.calls {
+		if strings.HasPrefix(c, "tmux kill-window") {
+			kills = append(kills, c)
+		}
+	}
+	if want := []string{"tmux kill-window -t @1", "tmux kill-window -t @2"}; !slices.Equal(kills, want) {
+		t.Fatalf("kills %q, want %q", kills, want)
+	}
+	if k := f.procs.Killed(); !slices.Equal(k, []int{101}) {
+		t.Fatalf("killed %v", k)
+	}
+	if want := []string{"killed pid 101 (cwd " + f.wt + "/sub)"}; !slices.Equal(said, want) {
+		t.Fatalf("said %q", said)
 	}
 }

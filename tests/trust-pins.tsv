@@ -27,7 +27,8 @@ H2	adapters/core/dispatch.sh	_wt_trusted_cwd "${crew_dir%/crew}" || exit 1	1	tru
 R1	adapters/core/dispatch.sh	_wt_trusted_cwd "${crew_dir%/crew}" || exit 1	2	true	tests/dispatch.bats	^dispatch --host refuses from a worker worktree whose .git is already a standalone repo	inside the worker worktree
 R2	adapters/core/dispatch.sh	_wt_trusted_cwd "${crew_dir%/crew}" || exit 1	2	true	tests/dispatch.bats	^trust pin: R2 	redirects the git common dir
 F1	adapters/core/launcher-common.sh	_artifacts_dir_bad "$2"	1	false	tests/dispatch.bats	^add-dir: a symlinked artifacts parent of a slashed branch is not granted	not granting
-F2	adapters/core/dispatch.sh	_artifacts_dir_bad "$branch"	2	false	tests/dispatch.bats	^roles.json: a symlinked artifacts parent is refused and its target left empty	"$status" -eq 1
+F2	adapters/core/dispatch.sh	_artifacts_dir_bad "$branch"	3	false	tests/dispatch.bats	^roles.json: a symlinked artifacts parent is refused and its target left empty	"$status" -eq 1
+MG1	adapters/core/dispatch.sh	_artifacts_dir_bad "$branch"	2	false	tests/dispatch-migrate.bats	^a migrated worker.s symlinked artifacts parent is refused and its target left empty	"$status" -eq 1
 F3	adapters/core/dispatch.sh	_artifacts_dir_bad "$branch"	1	false	tests/dispatch.bats	^roles.json: --spawn-role refuses a symlinked artifacts parent	refusing to use roles.json
 F6	adapters/core/dispatch.sh	"$(_protocol_dirs_record_bad)"	2	"$(false)"	tests/dispatch.bats	^(protocol-dirs record: a symlink planted at the record path is refused|a symlinked protocol-dirs parent or worktrees dir is not written through)	"$status" -eq 1
 F7	adapters/core/dispatch.sh	"$(_protocol_dirs_record_bad)"	1	"$(false)"	tests/dispatch.bats	^spawn-role: record — a symlinked record is refused before any split	"$status" -eq 1

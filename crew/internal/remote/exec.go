@@ -2,8 +2,10 @@ package remote
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -25,8 +27,19 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/claimindex"
 )
 
-// MaxRequest is the most stdin remote-exec reads.
-const MaxRequest = 1 << 20
+// MaxRequest is the most stdin remote-exec reads for a request without a
+// migrate payload; MaxMigrateRequest is the cap for one with it.
+const (
+	MaxRequest        = 1 << 20
+	MaxMigrateRequest = 32 << 20
+)
+
+// maxMigrateBlob bounds what each migrate blob may decompress to.
+const maxMigrateBlob = 128 << 20
+
+// migrateTiers are the words that make `dispatch <tier> …` a fresh launch, the
+// only argv a migrate payload may ride on.
+var migrateTiers = []string{"trivial", "standard", "deep"}
 
 // scratchTTL bounds the scratch dirs a hung-up remote-exec leaves behind.
 const scratchTTL = 24 * time.Hour
@@ -34,7 +47,7 @@ const scratchTTL = 24 * time.Hour
 // requestKeys are the exact top-level keys a request may carry. encoding/json
 // matches field names case-insensitively, so DisallowUnknownFields alone would
 // let `"Repo"` through.
-var requestKeys = []string{"v", "scope", "repo", "slug", "argv", "env", "spec", "stdin"}
+var requestKeys = []string{"v", "scope", "repo", "slug", "argv", "env", "spec", "stdin", "migrate"}
 
 // ServeOptions is how remote-exec finds the programs it runs.
 type ServeOptions struct {
@@ -99,6 +112,14 @@ func Serve(stdin io.Reader, stdout, stderr io.Writer, o ServeOptions) int {
 			return 1
 		}
 		cmd.Env = append(cmd.Env, "DISPATCH_SPEC="+spec)
+	}
+	if req.unpacked != nil {
+		dir, err := writeMigrate(scratch, *req.unpacked)
+		if err != nil {
+			_, _ = fmt.Fprintf(stderr, "crew: remote-exec: %v\n", err)
+			return 1
+		}
+		cmd.Env = append(cmd.Env, "DISPATCH_MIGRATE_DIR="+dir)
 	}
 
 	if req.Argv[0] == "dispatch" {
@@ -166,6 +187,16 @@ func admit(ctx context.Context, stdin io.Reader) (Request, string, error) {
 	if req.Stdin != nil && !slices.Equal(req.Argv, []string{"crew", "peer-sync"}) {
 		return Request{}, "", errors.New("stdin is only allowed with crew peer-sync")
 	}
+	if req.Migrate != nil {
+		if len(req.Argv) < 2 || req.Argv[0] != "dispatch" || !slices.Contains(migrateTiers, req.Argv[1]) {
+			return Request{}, "", errors.New("migrate is only allowed with dispatch <tier> …")
+		}
+		files, err := unpackMigrate(*req.Migrate)
+		if err != nil {
+			return Request{}, "", err
+		}
+		req.unpacked = &files
+	}
 	for k, v := range req.Env {
 		if err := CheckEnv(k, v); err != nil {
 			return Request{}, "", err
@@ -177,8 +208,8 @@ func admit(ctx context.Context, stdin io.Reader) (Request, string, error) {
 // admitHost checks a host-scope request: it names no clone and carries
 // nothing but an argv from HostArgv.
 func admitHost(req Request) error {
-	if req.Repo != "" || req.Slug != "" || len(req.Env) != 0 || req.Spec != nil || req.Stdin != nil {
-		return errors.New("a host scope request takes no repo, slug, env, spec or stdin")
+	if req.Repo != "" || req.Slug != "" || len(req.Env) != 0 || req.Spec != nil || req.Stdin != nil || req.Migrate != nil {
+		return errors.New("a host scope request takes no repo, slug, env, spec, stdin or migrate")
 	}
 	if !allowedHostArgv(req.Argv) {
 		return fmt.Errorf("argv not allowed in host scope: %q", req.Argv[:min(len(req.Argv), 3)])
@@ -187,17 +218,24 @@ func admitHost(req Request) error {
 }
 
 func decode(stdin io.Reader) (Request, error) {
-	data, err := io.ReadAll(io.LimitReader(stdin, MaxRequest+1))
+	data, err := io.ReadAll(io.LimitReader(stdin, MaxMigrateRequest+1))
 	if err != nil {
 		return Request{}, fmt.Errorf("reading the request: %v", err)
 	}
-	if len(data) > MaxRequest {
-		return Request{}, errors.New("request over 1 MiB")
+	if len(data) > MaxMigrateRequest {
+		return Request{}, errors.New("request over 32 MiB")
 	}
+	errOver := errors.New("request over 1 MiB")
 	dec := json.NewDecoder(bytes.NewReader(data))
 	var top map[string]json.RawMessage
 	if err := dec.Decode(&top); err != nil {
+		if len(data) > MaxRequest {
+			return Request{}, errOver
+		}
 		return Request{}, fmt.Errorf("invalid request: %v", err)
+	}
+	if mig := top["migrate"]; len(data) > MaxRequest && (mig == nil || string(mig) == "null") {
+		return Request{}, errOver
 	}
 	if _, err := dec.Token(); err != io.EOF {
 		return Request{}, errors.New("request must be exactly one JSON object")
@@ -205,6 +243,11 @@ func decode(stdin io.Reader) (Request, error) {
 	for k := range top {
 		if !slices.Contains(requestKeys, k) {
 			return Request{}, fmt.Errorf("unknown request key %q", k)
+		}
+	}
+	if mig := top["migrate"]; mig != nil && string(mig) != "null" {
+		if err := checkKeys(mig, migrateKeys, "migrate"); err != nil {
+			return Request{}, err
 		}
 	}
 	var req Request
@@ -234,6 +277,75 @@ func hasNUL(req Request) bool {
 		strs = append(strs, *req.Stdin)
 	}
 	return slices.ContainsFunc(strs, func(s string) bool { return strings.ContainsRune(s, 0) })
+}
+
+// migrateFiles is an admitted migrate payload, ready to write: meta.json
+// re-encoded from the checked meta, and each blob decompressed (nil when
+// absent).
+type migrateFiles struct {
+	meta, patch, transcript []byte
+}
+
+func unpackMigrate(m Migrate) (migrateFiles, error) {
+	meta, err := DecodeMigrateMeta(m.Meta, m.TranscriptGz != "")
+	if err != nil {
+		return migrateFiles{}, err
+	}
+	var f migrateFiles
+	if f.meta, err = json.Marshal(meta); err != nil {
+		return migrateFiles{}, err
+	}
+	if f.patch, err = gunzipBlob("patch_gz", m.PatchGz); err != nil {
+		return migrateFiles{}, err
+	}
+	if f.transcript, err = gunzipBlob("transcript_gz", m.TranscriptGz); err != nil {
+		return migrateFiles{}, err
+	}
+	return f, nil
+}
+
+// gunzipBlob decodes a base64 gzip blob through a reader bounded at
+// maxMigrateBlob, so a small blob cannot inflate without limit.
+func gunzipBlob(name, blob string) ([]byte, error) {
+	if blob == "" {
+		return nil, nil
+	}
+	gz, err := base64.StdEncoding.DecodeString(blob)
+	if err != nil {
+		return nil, fmt.Errorf("migrate %s: %v", name, err)
+	}
+	zr, err := gzip.NewReader(bytes.NewReader(gz))
+	if err != nil {
+		return nil, fmt.Errorf("migrate %s: %v", name, err)
+	}
+	data, err := io.ReadAll(io.LimitReader(zr, maxMigrateBlob+1))
+	if err != nil {
+		return nil, fmt.Errorf("migrate %s: %v", name, err)
+	}
+	if len(data) > maxMigrateBlob {
+		return nil, fmt.Errorf("migrate %s decompresses past 128 MiB", name)
+	}
+	return data, nil
+}
+
+// writeMigrate writes f under scratch's private migrate/ dir and returns it.
+func writeMigrate(scratch string, f migrateFiles) (string, error) {
+	dir := scratch + "/migrate"
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		return "", err
+	}
+	for _, file := range []struct {
+		name string
+		data []byte
+	}{{"meta.json", f.meta}, {"patch", f.patch}, {"transcript.jsonl", f.transcript}} {
+		if file.data == nil {
+			continue
+		}
+		if err := writePrivate(dir+"/"+file.name, file.data); err != nil {
+			return "", err
+		}
+	}
+	return dir, nil
 }
 
 // checkRepo verifies repo is a checkout whose origin derives to slug, and

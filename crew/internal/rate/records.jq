@@ -40,6 +40,8 @@
       | ($ev | map(select(.kind=="status" and .body.state != "reaped"))) as $st
       | ($st | sort_by(.ts) | (.[-1] // null)) as $last
       | ($last.body.state) as $ls
+      # The run continues on another host and is rated there.
+      | select($ls != "migrated")
       | ($st | map(.body.pr_url) | map(select(.!=null)) | last) as $pr
       | ($st | map(select(.body.state=="pr_open")) | sort_by(.ts) | (.[0] // null)) as $propen
       | ($pr != null and $i == $owner_idx) as $owns_pr

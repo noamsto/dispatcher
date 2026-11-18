@@ -53,6 +53,7 @@ Remote hosts:
   peer-claims     Print a peer host's live claim on an issue
   decide          Announce a dispatcher decision to the peer hosts
   decisions       List decisions announced here and by peer hosts
+  migrate         Stop, snapshot and release a worker moving to another host
 
 Holds:
   hold            Park a queued dispatch on a quota window

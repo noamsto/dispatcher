@@ -370,10 +370,11 @@ func TestStatusFinishedWindow(t *testing.T) {
 		wstatus(100, "c1", "feat/fresh", "done", ""),
 		wstatus(4000, "c1", "feat/open", "pr_open", `,"pr_url":"https://github.com/acme/alpha/pull/1"`),
 		wstatus(400, "c1", "feat/gone", "done", ""),
+		wstatus(400, "c1", "feat/moved", "migrated", `,"to_host":"mini"`),
 	)
-	f.windows("feat/old", "feat/fresh", "feat/open")
+	f.windows("feat/old", "feat/fresh", "feat/open", "feat/moved")
 	c := f.collect(StatusRequest{}).crew(t, "c1")
-	for branch, want := range map[string]bool{"feat/old": true, "feat/fresh": false, "feat/open": false, "feat/gone": false} {
+	for branch, want := range map[string]bool{"feat/old": true, "feat/fresh": false, "feat/open": false, "feat/gone": false, "feat/moved": true} {
 		if got := c.worker(t, branch)["finished_window"]; got != want {
 			t.Errorf("%s finished_window = %v, want %v", branch, got, want)
 		}

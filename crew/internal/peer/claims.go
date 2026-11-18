@@ -31,6 +31,7 @@ type peerRow struct {
 	TS         int64             `json:"ts"`
 	Kind       string            `json:"kind"`
 	Branch     string            `json:"branch"`
+	MigratedTo string            `json:"migrated_to"`
 	Issue      json.RawMessage   `json:"issue"`
 	AlsoCloses []json.RawMessage `json:"also_closes"`
 	From       string            `json:"from"`
@@ -122,6 +123,11 @@ func hostClaim(host, path, issue string, now time.Time) (string, error) {
 		}
 		switch row.Kind {
 		case "reap":
+			// A migrated worker's local tree went, but it still works the issue on
+			// the host its dispatch row names.
+			if row.MigratedTo != "" {
+				return true
+			}
 			reaped[row.Branch] = n
 		case "dispatch":
 			if live(claimindex.StaleAfter) && (strings.HasPrefix(row.Branch, "feat/"+issue+"-") || slices.ContainsFunc(row.AlsoCloses, func(r json.RawMessage) bool { return issueText(r) == issue })) {

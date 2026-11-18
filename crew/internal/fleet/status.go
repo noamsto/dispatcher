@@ -601,7 +601,7 @@ func (b *repoBuild) derive(crew string, row map[string]any) {
 	// A finished worker still holding a window past the grace is what the reap
 	// timer should already have released.
 	age, _ := number(row["age_s"])
-	row["finished_window"] = slices.Contains([]string{"done", "failed", "exited"}, state) &&
+	row["finished_window"] = slices.Contains([]string{"done", "failed", "exited", "migrated"}, state) &&
 		row["live"] == true && age > reap.ReleaseGrace
 	if _, unanswered := row["host_error"]; unanswered && row["host_error"] == unprobed {
 		delete(row, "host_error")

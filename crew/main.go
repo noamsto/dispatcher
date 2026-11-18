@@ -38,6 +38,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/jsonval"
 	"github.com/noamsto/dispatcher/crew/internal/log"
 	"github.com/noamsto/dispatcher/crew/internal/merge"
+	"github.com/noamsto/dispatcher/crew/internal/migrate"
 	"github.com/noamsto/dispatcher/crew/internal/nudge"
 	"github.com/noamsto/dispatcher/crew/internal/overseer"
 	"github.com/noamsto/dispatcher/crew/internal/peer"
@@ -132,6 +133,10 @@ func routeHelp(sub string, args []string, stdout, stderr io.Writer) (int, bool) 
 		if isHelpFlag(arg(args, 2)) {
 			return entry.RunHelp([]string{"overseer"}, stdout, stderr), true
 		}
+	case "migrate":
+		if isHelpFlag(arg(args, 2)) {
+			return entry.RunHelp([]string{"migrate"}, stdout, stderr), true
+		}
 	}
 	if isHelpFlag(arg(args, 1)) {
 		return entry.RunHelp([]string{sub}, stdout, stderr), true
@@ -166,7 +171,7 @@ var subcommands = []string{
 	"git-guard", "help", "hold", "msg", "nudge", "queue",
 	"pr-watch", "reap", "reap-autosweep",
 	"relay", "reply", "role-watch", "stall-watch", "status", "stream", "watch",
-	"remote-run", "remote-exec", "dispatch-row", "peer-sync", "peer-claims", "decide", "decisions", "spec-lint", "followups", "class", "overseer", "completion",
+	"remote-run", "remote-exec", "dispatch-row", "peer-sync", "peer-claims", "decide", "decisions", "spec-lint", "followups", "class", "overseer", "migrate", "completion",
 }
 
 // typedSubcommands are the subcommands whose argv root binds: every name but
@@ -182,7 +187,7 @@ var typedSubcommands = map[string]bool{
 	"git-guard": true, "git-baseline": true, "reap": true, "reap-autosweep": true,
 	"adopt": true, "merge": true, "pr-watch": true, "role-watch": true, "stall-watch": true, "help": true,
 	"remote-run": true, "remote-exec": true, "dispatch-row": true, "peer-sync": true, "peer-claims": true, "decide": true, "decisions": true, "spec-lint": true,
-	"followups": true, "class": true, "overseer": true, "completion": true,
+	"followups": true, "class": true, "overseer": true, "migrate": true, "completion": true,
 }
 
 // passthroughCmd is dash to kong: its name, then whatever words it wants, kept
@@ -252,6 +257,7 @@ type root struct {
 	Decisions   decisionsCmd   `cmd:"" name:"decisions" help:"List the decisions announced here and by peer hosts."`
 	Class       classCmd       `cmd:"" name:"class" help:"Revert or promote a model class default."`
 	Overseer    overseerCmd    `cmd:"" name:"overseer" help:"Post the overseer's message to a dispatcher."`
+	Migrate     migrateCmd     `cmd:"" name:"migrate" help:"Stop, snapshot and release a worker moving to another host."`
 
 	SpecLint specLintCmd `cmd:"" name:"spec-lint" help:"Lint a dispatcher task spec."`
 
@@ -374,6 +380,8 @@ func refusalKey(args []string) string {
 			return "queue " + args[1]
 		case args[0] == "overseer" && slices.Contains([]string{"msg", "status", "deliver"}, args[1]):
 			return "overseer " + args[1]
+		case args[0] == "migrate" && slices.Contains([]string{"stop", "snapshot", "mark"}, args[1]):
+			return "migrate " + args[1]
 		case args[0] == "fleet" && args[1] == "stream":
 			return "fleet stream"
 		case args[0] == "fleet" && args[1] == "load":
@@ -816,7 +824,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 	if sub == "remote-run" {
 		c := parsed.typed.RemoteRun
 		return remoteRun(ctx, e, remote.Call{
-			Host: str(c.Host), Cwd: cwd, Env: c.Env, SpecFile: str(c.SpecFile), Argv: remoteArgv(c.Argv),
+			Host: str(c.Host), Cwd: cwd, Env: c.Env, SpecFile: str(c.SpecFile), MigrateDir: str(c.MigrateDir),
+			Argv: remoteArgv(c.Argv),
 		}, stdout, stderr)
 	}
 	if sub == "dispatch-row" {
@@ -863,6 +872,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 		}
 		c := parsed.typed.Class.Promote
 		return classes.Promote(c.Engine, c.Class, c.ID, ce, stderr)
+	}
+	if sub == "migrate" {
+		return runMigrate(ctx, parsed, e, paths, cwd, stdout, stderr)
 	}
 	if sub == "decisions" {
 		c := parsed.typed.Decisions
@@ -1110,7 +1122,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 		}
 		if sub == "status" {
 			c := parsed.typed.Status
-			return status.RunStatus(ctx, status.StatusRequest{From: c.From, State: c.State, Detail: c.Detail, PR: c.PR, Restamp: c.Restamp}, paths, stderr, o)
+			return status.RunStatus(ctx, status.StatusRequest{From: c.From, State: c.State, Detail: c.Detail, PR: c.PR, Restamp: c.Restamp, ToHost: c.ToHost}, paths, stderr, o)
 		}
 		return status.RunMsg(ctx, status.MsgRequest{From: word(0), To: word(1), Body: word(2)}, paths, stderr, o)
 	}
@@ -1473,6 +1485,33 @@ func reapOptions(ctx context.Context) reap.Options {
 				ClassCheck: func(rows []any, w io.Writer) { classes.Check(rows, classEnv(ctx, c, p, proc.OS{}), w) },
 			})
 		},
+	}
+}
+
+// runMigrate is the typed migrate call: the action is the word after `migrate`
+// in the command kong selected, and the crew is --crew, else this session's.
+func runMigrate(ctx context.Context, p crewArgs, e env, paths bus.Paths, cwd string, stdout, stderr io.Writer) int {
+	m := p.typed.Migrate
+	o := migrate.Options{
+		Tmux: tmux.Exec{}, Proc: e.proc, Git: git.Exec{}, Sender: senderProbes(e.proc),
+		Now: e.now, Sleep: time.Sleep, Append: bus.Append,
+	}
+	switch strings.Fields(p.cmd)[1] {
+	case "stop":
+		c := m.Stop
+		req := migrate.StopRequest{Request: migrate.Request{Crew: cmp.Or(str(c.Crew), bus.CrewID(ctx, cwd)), Branch: c.Branch}, Timeout: c.Timeout}
+		return migrate.Stop(ctx, req, paths, cwd, stdout, stderr, o)
+	case "snapshot":
+		c := m.Snapshot
+		req := migrate.Request{Crew: cmp.Or(str(c.Crew), bus.CrewID(ctx, cwd)), Branch: c.Branch}
+		return migrate.Snapshot(ctx, req, paths, cwd, stdout, stderr, o)
+	default:
+		c := m.Mark
+		req := migrate.MarkRequest{
+			Request: migrate.Request{Crew: cmp.Or(str(c.Crew), bus.CrewID(ctx, cwd)), Branch: c.Branch},
+			ToHost:  c.ToHost, Mode: c.Mode, Tip: c.Tip, Tree: c.Tree, Dir: c.Dir, Patch: c.Patch,
+		}
+		return migrate.Mark(ctx, req, paths, cwd, stdout, stderr, o)
 	}
 }
 

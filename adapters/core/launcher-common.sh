@@ -690,10 +690,10 @@ state_glyph() {
   c_block="$(theme_colour peach colour180)"
   c_done="$(theme_colour green green)"
   c_fail="$(theme_colour red red)"
-  printf '#{?#{==:#{@crew_state},working},#[fg=%s]●#[fg=%s],#{?#{==:#{@crew_state},idle},#[fg=%s]○#[fg=%s],#{?#{==:#{@crew_state},blocked},#[fg=%s]⚠#[fg=%s],#{?#{==:#{@crew_state},done},#[fg=%s]✓#[fg=%s],#{?#{==:#{@crew_state},pr_open},#[fg=%s]✓#[fg=%s],#{?#{==:#{@crew_state},failed},#[fg=%s]✗#[fg=%s],#{?#{==:#{@crew_state},exited},#[fg=%s]✗#[fg=%s],#[fg=%s]○#[fg=%s]}}}}}}}' \
+  printf '#{?#{==:#{@crew_state},working},#[fg=%s]●#[fg=%s],#{?#{==:#{@crew_state},idle},#[fg=%s]○#[fg=%s],#{?#{==:#{@crew_state},blocked},#[fg=%s]⚠#[fg=%s],#{?#{==:#{@crew_state},done},#[fg=%s]✓#[fg=%s],#{?#{==:#{@crew_state},pr_open},#[fg=%s]✓#[fg=%s],#{?#{==:#{@crew_state},failed},#[fg=%s]✗#[fg=%s],#{?#{==:#{@crew_state},exited},#[fg=%s]✗#[fg=%s],#{?#{==:#{@crew_state},migrated},#[fg=%s]→#[fg=%s],#[fg=%s]○#[fg=%s]}}}}}}}}' \
     "$c_work" "$restore" "$c_idle" "$restore" "$c_block" "$restore" \
     "$c_done" "$restore" "$c_done" "$restore" "$c_fail" "$restore" \
-    "$c_fail" "$restore" "$c_idle" "$restore"
+    "$c_fail" "$restore" "$c_idle" "$restore" "$c_idle" "$restore"
 }
 
 grid_lead_format() {
@@ -1192,7 +1192,7 @@ pi_skill_args() {
 # re-tiers that failure to deep; and pi deep has none, so a failed deep pi
 # worker is re-dispatched on another engine.
 # _prior_failed_model <branch> <crew_dir> <tier> — prints the model of the
-# dispatch that the branch's latest terminal worker status (failed/done/pr_open)
+# dispatch that the branch's latest terminal worker status (failed/done/pr_open/migrated)
 # ended, provided that status is `failed` and that dispatch ran at <tier>. The
 # dispatch is the failing worker's own session; a resume-only session falls back
 # to the latest dispatch before the failure. Prints nothing otherwise.
@@ -1204,7 +1204,7 @@ _prior_failed_model() {
     [., inputs] | . as $all
     | ([$all[] | select(.kind == "status" and
         ((.from // "") | ltrimstr("worker:") | sub("#[^#]*$"; "")) == $b
-        and (.body.state == "failed" or .body.state == "done" or .body.state == "pr_open"))]
+        and (.body.state == "failed" or .body.state == "done" or .body.state == "pr_open" or .body.state == "migrated"))]
         | sort_by(.ts) | last) as $last
     | if $last == null or $last.body.state != "failed" then empty
       else ($last.from | sub("^worker:[^#]*#"; "")) as $sess
@@ -1217,7 +1217,7 @@ _prior_failed_model() {
 }
 
 # _prior_failed_escalation_available <branch> <crew_dir> — returns 0 if:
-# 1. The branch's latest terminal worker status (failed/done/pr_open) is
+# 1. The branch's latest terminal worker status (failed/done/pr_open/migrated) is
 #    `failed`, AND that worker's session has a matching dispatch or resume
 #    event on the same branch (anti-spoofing), AND
 # 2. No dispatch or resume event on this branch carries escalated_from, AND no
@@ -1234,7 +1234,7 @@ _prior_failed_escalation_available() {
     | ([$all[] | select((.kind == "dispatch" or .kind == "resume") and .branch == $b) | .session]) as $sessions
     | [$all[] | select(.kind == "status" and .from != null
         and ((.from | ltrimstr("worker:") | sub("#[^#]*$"; "")) == $b)
-        and (.body.state == "failed" or .body.state == "done" or .body.state == "pr_open"))]
+        and (.body.state == "failed" or .body.state == "done" or .body.state == "pr_open" or .body.state == "migrated"))]
     | sort_by(.ts) | last as $last
     | $last != null and $last.body.state == "failed"
       and ($sessions | index($last.from | sub("^worker:[^#]*#"; ""))) != null

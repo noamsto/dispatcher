@@ -11,9 +11,11 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/filekind"
 	"github.com/noamsto/dispatcher/crew/internal/frame"
 	"github.com/noamsto/dispatcher/crew/internal/gitguard"
+	"github.com/noamsto/dispatcher/crew/internal/migrate/release"
 	"github.com/noamsto/dispatcher/crew/internal/roster"
 	"github.com/noamsto/dispatcher/crew/internal/wtgit"
 )
@@ -24,7 +26,13 @@ type candidate struct {
 	latestRow
 	wtpath string // the branch's worktree
 	admin  string // its realpath admin dir, set by the admin gate
-	mode   string // "pr", or "issue" when no PR vouches for the branch
+	// mode is "pr", "issue" when no PR vouches for the branch, or "migrated"
+	// when crew migrate's mark does.
+	mode string
+	// rel is the mark of a migrated candidate; markTree is set when its tree
+	// passed only by still holding the mark's snapshot.
+	rel      release.Release
+	markTree bool
 	// pr is the PR URL ("-" for none yet, "" in issue mode); prSrc is "own"
 	// only for the latest session's own pr_url, else "fallback".
 	pr, prSrc string
@@ -365,10 +373,24 @@ func (r *run) treeGates(ctx context.Context, c *candidate) bool {
 		r.keep(c, "git status failed")
 		return false
 	}
-	if dirt(st) {
+	if !dirt(st) {
+		return true
+	}
+	if c.mode != "migrated" {
 		r.keepHuman(ctx, c, "uncommitted changes", classDirty)
 		return false
 	}
+	// add -A runs the tree's filters: the config must be the baseline first.
+	if !r.guardOK(gitguard.Check(r.paths.Common, c.admin, r.stderr)) ||
+		!r.guardOK(gitguard.CheckCwd(r.paths.Common, r.trusted, r.stderr)) {
+		r.keep(c, "git config drift (run `crew git-baseline`)")
+		return false
+	}
+	if !r.holdsMarkTree(ctx, c) {
+		r.keep(c, c.label+", but uncommitted changes beyond its migrate snapshot")
+		return false
+	}
+	c.markTree = true
 	return true
 }
 
@@ -513,6 +535,29 @@ func (r *run) killIdle(ctx context.Context, c *candidate, idle []idleSample) boo
 	return true
 }
 
+// landedGate is the PR gate, or the closed-issue gate when no PR vouches for
+// the branch. False has noted why the branch is kept.
+func (r *run) landedGate(ctx context.Context, c *candidate) bool {
+	r.pickPR(c)
+	if !r.findPR(ctx, c) {
+		r.keep(c, c.why+c.ign())
+		return false
+	}
+	if c.pr != "-" {
+		return r.prGate(ctx, c)
+	}
+	c.mode = "issue"
+	if !r.issueClosed(ctx, c) {
+		if c.humanKeep {
+			r.keepHuman(ctx, c, c.why, classOpenIssue)
+		} else {
+			r.keep(c, c.why)
+		}
+		return false
+	}
+	return true
+}
+
 // consider is one pass of the candidate loop, in the arm's order. It reports
 // whether the branch was reclaimed, and a non-zero status when a cwd-discovered
 // git failed (the arm's `set -e`).
@@ -527,22 +572,11 @@ func (r *run) consider(ctx context.Context, row latestRow) (bool, int) {
 	}
 	c.wtpath = wt
 
-	r.pickPR(c)
-	if !r.findPR(ctx, c) {
-		r.keep(c, c.why+c.ign())
-		return false, 0
-	}
-	if c.pr == "-" {
-		c.mode = "issue"
-		if !r.issueClosed(ctx, c) {
-			if c.humanKeep {
-				r.keepHuman(ctx, c, c.why, classOpenIssue)
-			} else {
-				r.keep(c, c.why)
-			}
+	if c.state == string(bus.StateMigrated) {
+		if !r.migratedGate(ctx, c) {
 			return false, 0
 		}
-	} else if !r.prGate(ctx, c) {
+	} else if !r.landedGate(ctx, c) {
 		return false, 0
 	}
 

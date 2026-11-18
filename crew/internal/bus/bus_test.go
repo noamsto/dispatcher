@@ -338,6 +338,7 @@ func TestStateTerminal(t *testing.T) {
 		{StateFailed, true},
 		{StateExited, true},
 		{StateReaped, true},
+		{StateMigrated, true},
 		{State(""), false},
 		{State("DONE"), false},
 		{State("whatever"), false},

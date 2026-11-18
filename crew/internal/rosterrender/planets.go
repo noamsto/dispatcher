@@ -13,7 +13,8 @@ import (
 )
 
 // The four worker classes a card's column and border colour come from. failed
-// and exited share the done column and carry planet.failed.
+// and exited share the done column and carry planet.failed; migrated shares it
+// without.
 const (
 	classWorking = "working"
 	classBlocked = "blocked"
@@ -320,7 +321,7 @@ func classify(state string) (class string, failed bool) {
 		return classWorking, false
 	case "pr_open":
 		return classPROpen, false
-	case "done", "reaped":
+	case "done", "reaped", "migrated":
 		return classDone, false
 	case "failed", "exited":
 		return classDone, true

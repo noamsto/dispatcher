@@ -11,7 +11,7 @@ import (
 
 var (
 	phaseNames     = []string{"spec", "plan", "execute", "gate", "review", "ship"}
-	terminalStates = []string{"done", "failed", "exited", "reaped"}
+	terminalStates = []string{"done", "failed", "exited", "reaped", "migrated"}
 )
 
 const activityBuckets = 30
