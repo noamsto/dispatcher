@@ -57,6 +57,10 @@ func (v overviewView) overlay(base []string, w, h int) string {
 		case ovDetail:
 			spec := panelSpec{title: "DETAIL", color: colTeal, focused: true}
 			var content []string
+			if v.insp.open {
+				spec.title = "DETAIL"
+				return spec, v.insp.lines(iw)
+			}
 			if s := v.sel(); s.worker >= 0 {
 				content = detailLines(v.model, s.worker, iw)
 				spec.count = cleanText(workerLabel(v.model.Workers[s.worker]))
@@ -98,7 +102,7 @@ var overviewHelp = []helpKey{
 	{"tab / shift+tab", "cycle focus: attention, checklists, agents, monitors"},
 	{"j k / up down", "move in the focused panel (the attention strip scrolls)"},
 	{"1-9", "act on the attention row with that number"},
-	{"enter", "attention: select its worker; else the detail overlay, esc closes"},
+	{"enter", "attention: select its worker, or inspect a crew item; else the detail overlay, esc closes"},
 	{"p", "peek (crew where; switches to the pane inside tmux)"},
 	{"n", "nudge (confirms)"},
 	{"r", "reply (text input)"},

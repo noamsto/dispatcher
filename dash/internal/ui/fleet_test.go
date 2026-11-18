@@ -453,13 +453,24 @@ func TestFleetInspect(t *testing.T) {
 	v, fr := flFixture(t, 120, 40, false)
 	for _, k := range []vm.Kind{vm.KindHoldMatured, vm.KindLaneStale} {
 		i := attnIndex(t, v.fv, k)
-		_, cmd := flKeys(v, digitFor(t, v, i))
-		got := status(t, cmd)
-		if !strings.HasPrefix(got, "run: ") || !strings.Contains(got, strings.Join(v.fv.Attention[i].Action.Argv, " ")) {
-			t.Errorf("%s: status = %q", k, got)
+		argv := v.fv.Attention[i].Action.Argv
+		fr.Responses = map[string]data.FakeResponse{strings.Join(argv, " "): {Stdout: []byte(`{"lane":"stale","pid":7}`)}}
+		nv, cmd := flKeys(v, digitFor(t, v, i))
+		if nv.mode != ovDetail || cmd == nil {
+			t.Fatalf("%s: mode %v", k, nv.mode)
+		}
+		nn, _ := nv.Update(cmd())
+		got := stripped(nn.(fleetView).View(120, 40))
+		for _, w := range []string{"DETAIL", "lane: stale", "pid: 7", strings.Join(argv, " ")} {
+			if !strings.Contains(got, w) {
+				t.Errorf("%s: overlay lacks %q:\n%s", k, w, got)
+			}
+		}
+		nn, _ = nn.Update(keyOf("esc"))
+		if nn.(fleetView).mode != ovNormal {
+			t.Errorf("%s: esc did not close", k)
 		}
 	}
-	noCalls(t, fr)
 }
 
 func TestFleetPeerRefused(t *testing.T) {

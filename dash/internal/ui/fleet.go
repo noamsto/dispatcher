@@ -75,6 +75,12 @@ func (v fleetView) Update(msg tea.Msg) (view, tea.Cmd) {
 	case tea.KeyMsg:
 		cmd := v.handleKey(msg)
 		return v, cmd
+	case inspectMsg:
+		if !v.drilled {
+			v.applyInspect(msg)
+			return v, nil
+		}
+		return v.forward(msg)
 	default:
 		if v.drilled {
 			return v.forward(msg)
@@ -112,6 +118,9 @@ func (v fleetView) View(w, h int) string {
 		return base
 	}
 	return drawOverlay(strings.Split(base, "\n"), w, h, v.pills, func(iw int) (panelSpec, []string) {
+		if v.mode == ovDetail {
+			return panelSpec{title: "DETAIL", color: colTeal, focused: true}, v.insp.lines(iw)
+		}
 		if v.mode == ovHelp {
 			return panelSpec{title: "HELP", color: colTeal, focused: true}, v.helpLines()
 		}
@@ -122,7 +131,7 @@ func (v fleetView) View(w, h int) string {
 var fleetHelp = []helpKey{
 	{"tab / shift+tab", "cycle focus: attention, crews, capacity, holds, hosts"},
 	{"j k / up down", "move in the focused panel (the attention strip scrolls)"},
-	{"1-9", "act on the attention row with that number"},
+	{"1-9", "act on the attention row with that number (a crew item runs its inspect)"},
 	{"enter", "open the crew's Overview (crews or attention); esc returns"},
 	{"L", "relaunch an orphaned crew's dispatcher (confirms, needs tmux)"},
 	{"D", "show or hide the dead crews section"},
@@ -237,6 +246,9 @@ func (v *fleetView) settleFocus() {
 func (v *fleetView) handleKey(msg tea.KeyMsg) tea.Cmd {
 	if v.drilled {
 		return v.drillKey(msg)
+	}
+	if v.inspectKey(msg.String()) {
+		return nil
 	}
 	switch v.mode {
 	case ovFilter:
@@ -417,6 +429,8 @@ func (v *fleetView) digit(n int) tea.Cmd {
 		}
 		v.openRelaunch(*a.Action, a.Crew, repo)
 		return nil
+	case a.Action.Key == "" && a.Branch == "" && inspectable(a):
+		return v.startInspect(a)
 	case a.Action.Key == "":
 		return statusCmd("run: "+shownCommand(*a.Action), false)
 	}

@@ -70,6 +70,7 @@ type actionPrompt struct {
 	mode  ovMode
 	input textinput.Model
 	pend  ovPending
+	insp  inspectState
 }
 
 func newOverviewView(in vm.Inputs, now func() time.Time) overviewView {
@@ -86,6 +87,8 @@ func (v overviewView) Update(msg tea.Msg) (view, tea.Cmd) {
 	case tickMsg:
 		v.in.NowMS = v.now().UnixMilli()
 		v.rebuild()
+	case inspectMsg:
+		v.applyInspect(msg)
 	case tea.WindowSizeMsg:
 		*v.size = ovSize{msg.Width, msg.Height}
 	case tea.MouseMsg:
@@ -246,6 +249,9 @@ func (v *overviewView) handleKey(msg tea.KeyMsg) tea.Cmd {
 		return nil
 	}
 	s := msg.String()
+	if v.inspectKey(s) {
+		return nil
+	}
 	if v.mode == ovDetail && (s == "esc" || s == "enter") {
 		v.mode = ovNormal
 		return nil
@@ -332,7 +338,7 @@ func (v *overviewView) move(d int) {
 }
 
 // enterKey on the strip hands focus to the checklists with the cursor's worker
-// selected, or shows the command of an item that names no worker. Elsewhere it
+// selected, or inspects an item that names no worker. Elsewhere it
 // opens the detail overlay on the checklists, where j and k then move.
 func (v *overviewView) enterKey() tea.Cmd {
 	s := v.sel()
@@ -341,8 +347,10 @@ func (v *overviewView) enterKey() tea.Cmd {
 	case s.worker >= 0:
 		v.setFocus(panelChecklists)
 		if !strip {
-			v.mode = ovDetail
+			v.insp, v.mode = inspectState{}, ovDetail
 		}
+	case strip && inspectable(v.model.Attention[s.cursor]):
+		return v.startInspect(v.model.Attention[s.cursor])
 	case strip && v.model.Attention[s.cursor].Action != nil:
 		return statusCmd("run: "+shownCommand(*v.model.Attention[s.cursor].Action), false)
 	}
@@ -390,6 +398,9 @@ func (v *overviewView) digit(n int) tea.Cmd {
 		return statusCmd("peer worker: read-only", true)
 	}
 	if a.Action.Key == "" {
+		if it.worker < 0 && inspectable(a) {
+			return v.startInspect(a)
+		}
 		return statusCmd("run: "+shownCommand(*a.Action), false)
 	}
 	t := ovTarget{origin: a.Origin, host: a.Host, branch: a.Branch, name: a.Worker}
