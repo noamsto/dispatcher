@@ -4,9 +4,8 @@
 // child-spawn contract (contract.txt `version`) is verified against pi 1.5.2 while this
 // copy keeps the 1.4.0 shape: the two lines upstream rewrote there leave the argv, the
 // JSON event mode and the final-message event alone, so contract.txt tags them
-// `pinned`/`upstream`. Upstream's abort-escalation and exit-status rework is ported in minimal
-// form: SIGKILL escalates on a real exit check, a signal-terminated child is a failed result,
-// and the 1.4.0 `exitCode` result shape is kept.
+// `pinned`/`upstream`. Upstream's abort-escalation and exit-status rework is ported; the
+// 1.4.0 `exitCode` result shape is kept.
 // To re-pin: copy the new upstream index.ts and agents.ts, re-apply the `dispatcher
 // patch:` hunks, reconcile the `pinned`/`upstream` rows (a line matching upstream again
 // becomes `both`), then run `bash scripts/pi-subagent-contract.sh --pinned` AND
@@ -414,7 +413,7 @@ async function runSingleAgent(
 			};
 
 			const abortProcess = () => {
-				// dispatcher patch: proc.killed is true once SIGTERM is sent, so track the real exit
+				// proc.killed is set as soon as SIGTERM is sent, so it cannot gate the escalation
 				if (exited || proc.exitCode !== null || proc.signalCode !== null) return;
 				if (!proc.kill("SIGTERM")) return;
 				wasAborted = true;
