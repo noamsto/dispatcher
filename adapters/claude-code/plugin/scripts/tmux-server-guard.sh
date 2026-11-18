@@ -339,7 +339,7 @@ del_why=''
 bn=()
 bv=()
 bk=()
-re_bind_word='(^|[[:space:];&|()`])(["'"'"']?)([A-Za-z_][A-Za-z0-9_]*)(\[[^]]*\])?([+]?)=$'
+re_bind_word='(^|[[:space:];&|()`])(["'"'"']?)([A-Za-z_][A-Za-z0-9_]*)(\[([^][]|\[[^][]*\])*\])?([+]?)=$'
 re_bind_brace='[$][{]([A-Za-z_][A-Za-z0-9_]*):?=$'
 re_for='(^|[[:space:];&|()`])for[[:space:]]+([A-Za-z_][A-Za-z0-9_]*)[[:space:]]+in([[:space:]]|$)'
 collected=0
@@ -469,7 +469,7 @@ strip_quotes() { # <string>
 # `for NAME in`, which ends at the first operator or newline. Whichever element
 # the shell hands out, the name may hold it.
 bind_words() { # <name> <text> <list: 1 for a for-list, 0 for an array>
-  local t=$2 i=0 n=${#2} c
+  local t=$2 i=0 n=${#2} c skipped=0
   ((n)) || return 0
   if [[ $3 == 0 ]]; then t=${t//$'\n'/ }; fi
   while ((i < n)); do
@@ -485,16 +485,23 @@ bind_words() { # <name> <text> <list: 1 for a for-list, 0 for an array>
     ((ri > i)) || break
     i=$ri
     if [[ $rv =~ ^\[[^]]*\]=(.*)$ ]]; then rv=${BASH_REMATCH[1]}; fi
-    # A literal relative word can never reach the runtime dir, and a long list
-    # of them would only run into the candidate cap.
+    # A literal relative word cannot reach the runtime dir by itself, and a long
+    # list of them would only run into the candidate cap; but it can be the tail
+    # of an absolute path (`/run/$s`), so all of them stand as one unknown.
     case $rv in
     /* | *'$'* | *"$unk"* | *'`'*)
       bn+=("$1")
       bv+=("$rv")
       bk+=('')
       ;;
+    *) skipped=1 ;;
     esac
   done
+  if ((skipped)); then
+    bn+=("$1")
+    bv+=("$unk")
+    bk+=('')
+  fi
 }
 
 # Fill $bn/$bv/$bk from the raw command. A binding counts wherever it appears —
@@ -536,7 +543,7 @@ collect_bindings() {
     fi
     oq=${BASH_REMATCH[2]}
     name=${BASH_REMATCH[3]}
-    app=${BASH_REMATCH[5]}
+    app=${BASH_REMATCH[6]}
     pre='='
     if [[ ${rest:0:1} == '(' ]]; then
       # An array: every element is a plain binding of the name, `+=` or not.
@@ -566,12 +573,12 @@ collect_bindings() {
 # variable says nothing about the worker's shell. An unset or empty value, or
 # a name with no candidates, is unknown, never empty, so `rm -rf "$dir/"` is
 # not `rm -rf /`. A binding that refers back to its own name (`d=$d/x`) reads
-# that name as unknown. Each append (`d+=v`), in line order, extends the
-# previous generation of values (the others, and the empty value): the list
-# grows by one generation per append, not by doubling.
+# that name as unknown. An append (`d+=v`) extends every value collected so far
+# and the empty value, whatever its order on the line: it may be skipped, or an
+# earlier binding may run after it.
 lookup_var() { # <name>
   local i e c v cyc0
-  local -a out=() last gen pidx=() aidx=()
+  local -a out=() gen pidx=() aidx=()
   case $1 in
   UID)
     lv=("$UID")
@@ -618,14 +625,11 @@ lookup_var() { # <name>
       expand_word "${bv[i]}"
       for e in "${exs[@]}"; do out+=("${e:-$unk}"); done
     done
-    last=()
-    for c in ${out[@]+"${out[@]}"}; do last+=("$c"); done
-    last+=('')
     for i in ${aidx[@]+"${aidx[@]}"}; do
       if ((budget || ${#out[@]} > max_cands)); then break; fi
       expand_word "${bv[i]}"
       gen=()
-      for c in "${last[@]}"; do
+      for c in ${out[@]+"${out[@]}"} ""; do
         for e in "${exs[@]}"; do
           v=$c$e
           if ((${#v} > max_len && !budget)); then budget=2; fi
@@ -633,7 +637,6 @@ lookup_var() { # <name>
         done
       done
       out+=("${gen[@]}")
-      last=("${gen[@]}")
     done
     visiting=${visiting%"$1 "}
     ;;
@@ -719,7 +722,7 @@ expand_word() { # <word>
               expand_word "${op:1}"
               vals=("${exs[@]}" "$unk")
               ;;
-            :[0-9]* | :\ * | \#* | /* | ^* | ,* | @*)
+            :* | \#* | /* | ^* | ,* | @*)
               # A slice or a rewrite of the value: whatever it leaves is a
               # piece of it, so lean to deny like `%`.
               lookup_var "$name"
@@ -933,7 +936,7 @@ while IFS= read -r w; do
     continue
   fi
   # A NAME=value prefix is not the command word; collect_bindings reads it.
-  if [[ $w =~ ^[A-Za-z_][A-Za-z0-9_]*= ]]; then continue; fi
+  if [[ $w =~ ^[A-Za-z_][A-Za-z0-9_]*[+]?= ]]; then continue; fi
   if [[ -n $wrapper && $w == -* ]]; then
     if [[ $w != --* ]]; then
       rest=${w#-}

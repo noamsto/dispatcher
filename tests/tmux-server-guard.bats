@@ -334,6 +334,13 @@ worker_env() {
     'a[0]=/run/user/1000; rm -rf "$a"' 'export "D"=/run/user/1000; rm -rf "$D"' 'export D"=$XDG_RUNTIME_DIR"; rm -rf "$D"' \
     'a=(x /run/user/1000); rm -rf "${a[@]:1}"' 'd=$XDG_RUNTIME_DIR; rm -rf "${d:0}"' 'd=$XDG_RUNTIME_DIR; rm -rf "${d//x/y}"' \
     $'x="a\nb"; x=$XDG_RUNTIME_DIR; rm -rf ./"$x" "$x"' \
+    'if [ -n "$X" ]; then d+=/cache; fi; d+=$XDG_RUNTIME_DIR; rm -rf "$d"' 'false && d+=/x; d+=/run/user/1000; rm -rf "$d"' \
+    '(d+=/x); d+=/run/user/1000; rm -rf "$d"' 'd=/tmp; d+=/x; d=/ru; d+=n/user/1000; rm -rf "$d"' \
+    'for s in lock /tmp user; do rm -rf "/run/$s"; done' 'a=(/x run); rm -rf "/${a[1]}/user/1000"' \
+    'a=(/tmp/x); a+=(run); rm -rf "/${a[1]}/user/1000"' 'd=/tmp; for d in run; do rm -rf "/$d/user/1000"; done' \
+    'd=$XDG_RUNTIME_DIR; rm -rf "${d:x}"' 'd=$XDG_RUNTIME_DIR; n=0; rm -rf "${d:n}"' 'd=$XDG_RUNTIME_DIR; rm -rf "${d:(0)}"' \
+    'dirs=(); dirs[${#dirs[@]}]="$XDG_RUNTIME_DIR/tmux-1000"; rm -rf "${dirs[@]}"' 'a[b[1]]=/run/user/1000; rm -rf "$a"' \
+    'x[0] y[1]=/run/user/1000; rm -rf "$y"' 'd+=/x rm -rf /run/user/1000' \
     'for d in "$XDG_RUNTIME_DIR"/tmux-*; do rm -rf "$d"; done' \
     $'for d in a /run/user/1000\ndo rm -rf "$d"; done' \
     'git commit -m "fix \"x\""; rm -rf /run/user/1000' 'echo "a \\" ; rm -rf /run/user/1000'; do
@@ -352,7 +359,7 @@ worker_env() {
   for cmd in 'for d in a b; do rm -rf "$d/"; done' 'a=(x y); rm -rf "${a[@]}"' \
     'export "D=/tmp/x"; rm -rf "$D"' 'd=${D:-"/tmp/x"}; rm -rf "$d"' 'd=/tmp; d+=/x; rm -rf "$d"' \
     'git commit -m "fix \"x\""; rm -rf /tmp/x' 'for d in $(ls "$XDG_RUNTIME_DIR"); do rm -rf "$d"; done' \
-    'p=/tmp/build; p+=/a; p+=/b; p+=/c; p+=/d; rm -rf "$p"' 'files=(a b c d e f g h i j k l m n o p q); rm -f "${files[@]}"' \
+    'd=$(mktemp -d); d+=/x; rm -rf "$d"' 'files=(a b c d e f g h i j k l m n o p q); rm -f "${files[@]}"' \
     'for f in a.o b.o c.o d.o e.o f.o g.o h.o i.o j.o k.o l.o m.o n.o o.o p.o q.o; do rm -f "$f"; done'; do
     run run_guard <<<"$(claude_bash "$cmd")"
     echo "claude: $cmd"
