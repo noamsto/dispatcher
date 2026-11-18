@@ -2,6 +2,7 @@ package ui
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -1289,5 +1290,85 @@ func TestMapDroppedGeometryNamesTheMissingMap(t *testing.T) {
 	_, c := mv.startAction(actJump)
 	if got := c().(actionMsg).text; !strings.Contains(got, "map not rendered") {
 		t.Fatalf("status %q lacks the map-not-rendered reason", got)
+	}
+}
+
+// newDirectMapRig is a mapRig whose terminal cannot read OutPath, so the view
+// sends the PNG inline. The renderer's output path moves to a real file the
+// view can read, and the canned responses follow it.
+func newDirectMapRig(t *testing.T, inTmux bool) (*mapRig, string) {
+	t.Helper()
+	r := newMapRig(t, inTmux, true)
+	out := t.TempDir() + "/map.png"
+	if err := os.WriteFile(out, []byte("png-one"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	r.deps.Map.Direct, r.deps.Map.OutPath = true, out
+	moved := map[string]data.FakeResponse{}
+	for k, v := range r.fake.Responses {
+		moved[strings.ReplaceAll(k, mapOut, out)] = v
+	}
+	r.fake.Responses = moved
+	return r, out
+}
+
+func TestMapDirectTransmitDecodesBackToThePNG(t *testing.T) {
+	r, _ := newDirectMapRig(t, true)
+	r.open()
+	out := r.tty.String()
+	if strings.Contains(out, "t=f") || !strings.Contains(out, "t=d,m=0") {
+		t.Fatalf("direct mode must transmit with t=d: %q", out)
+	}
+	if !strings.HasPrefix(out, "\x1bPtmux;") {
+		t.Fatalf("direct store must ride tmux passthrough: %q", out)
+	}
+	if !strings.Contains(out, base64.StdEncoding.EncodeToString([]byte("png-one"))) {
+		t.Fatalf("the PNG payload is missing: %q", out)
+	}
+}
+
+func TestMapUnchangedImageIsNotRetransmitted(t *testing.T) {
+	r, out := newDirectMapRig(t, false)
+	m := r.open()
+	first := strings.Count(r.tty.String(), "t=d")
+	if first != 1 {
+		t.Fatalf("%d direct stores after opening, want 1", first)
+	}
+	id := m.views[mapTab].(mapView).curID
+
+	m = r.press(m, keyRune('l')) // a new render, same PNG bytes
+	if got := strings.Count(r.tty.String(), "t=d"); got != first {
+		t.Fatalf("an unchanged image was transmitted again: %d stores", got)
+	}
+	if got := m.views[mapTab].(mapView).curID; got != id {
+		t.Fatalf("the image id moved from %d to %d without a new image", id, got)
+	}
+
+	if err := os.WriteFile(out, []byte("png-two"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	r.press(m, keyRune('l'))
+	if got := strings.Count(r.tty.String(), "t=d"); got != first+1 {
+		t.Fatalf("a changed image was not transmitted: %d stores", got)
+	}
+}
+
+func TestMapLocalTransmitStillUsesFile(t *testing.T) {
+	r := newMapRig(t, false, true)
+	r.open()
+	if out := r.tty.String(); !strings.Contains(out, "t=f;") || strings.Contains(out, "t=d") {
+		t.Fatalf("a local terminal must keep t=f: %q", out)
+	}
+}
+
+func TestMapUnreadableImageShowsMessage(t *testing.T) {
+	asciiProfile(t)
+	r, out := newDirectMapRig(t, false)
+	if err := os.Remove(out); err != nil {
+		t.Fatal(err)
+	}
+	m := r.open()
+	if frame := m.views[mapTab].View(100, 24); !strings.Contains(frame, "Map unavailable: ") {
+		t.Fatalf("missing image not reported:\n%s", frame)
 	}
 }

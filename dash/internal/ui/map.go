@@ -1,8 +1,10 @@
 package ui
 
 import (
+	"crypto/sha256"
 	"fmt"
 	"io"
+	"os"
 	"slices"
 	"strings"
 
@@ -18,11 +20,14 @@ import (
 // MapDeps are the terminal seams the Map tab needs. TTY receives the kitty
 // store and delete sequences (the controlling terminal, never bubbletea's
 // stdout); CellPx is the terminal's cell size in pixels; Capable says whether
-// the terminal can show the image and, when not, why.
+// the terminal can show the image and, when not, why. Direct sends the PNG
+// bytes inline because the terminal cannot read OutPath (ssh, or a mirrored
+// remote-bridge session).
 type MapDeps struct {
 	TTY     io.Writer
 	CellPx  func() (w, h int)
 	Capable func() (ok bool, why string)
+	Direct  bool
 	OutPath string // the PNG crew renders into
 	IDBase  int    // kitty.ID; the view alternates IDBase+1 and IDBase+2
 }
@@ -74,7 +79,8 @@ type mapView struct {
 	place  mapgeom.Placement // the block geom was rendered for
 	stored bool              // an image is on the terminal
 	curID  int
-	paint  bool // the next transmit needs a full repaint
+	sum    [sha256.Size]byte // the PNG stored under curID, tracked only when Direct
+	paint  bool              // the next transmit needs a full repaint
 	err    string
 
 	gen      int
@@ -417,9 +423,29 @@ func (v *mapView) accept(msg mapRenderedMsg) tea.Cmd {
 	if v.curID == id {
 		id++
 	}
-	inTmux := v.acts.inTmux
-	_, _ = io.WriteString(v.deps.TTY, kitty.Delete(id, inTmux))
-	_, _ = io.WriteString(v.deps.TTY, kitty.Store(id, v.deps.OutPath, msg.place.Cols, msg.place.Rows, inTmux))
+	if v.deps.Direct {
+		png, err := os.ReadFile(v.deps.OutPath)
+		if err != nil {
+			v.err = cleanText(err.Error())
+			v.drop()
+			return nil
+		}
+		// A chunked image is large on a relayed link, so resend only a changed
+		// one; the terminal still holds the last under curID.
+		sum := sha256.Sum256(png)
+		if v.stored && sum == v.sum && msg.place == v.place {
+			id = v.curID
+		} else {
+			inTmux := v.acts.inTmux
+			_, _ = io.WriteString(v.deps.TTY, kitty.Delete(id, inTmux))
+			_, _ = io.WriteString(v.deps.TTY, kitty.StoreDirect(id, png, msg.place.Cols, msg.place.Rows, inTmux))
+			v.sum = sum
+		}
+	} else {
+		inTmux := v.acts.inTmux
+		_, _ = io.WriteString(v.deps.TTY, kitty.Delete(id, inTmux))
+		_, _ = io.WriteString(v.deps.TTY, kitty.Store(id, v.deps.OutPath, msg.place.Cols, msg.place.Rows, inTmux))
+	}
 	v.geom, v.place, v.curID, v.stored, v.err = msg.geom, msg.place, id, true, ""
 
 	// The selection may have left the crew since the render started; the next
