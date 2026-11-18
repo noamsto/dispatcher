@@ -168,7 +168,7 @@ write_user() {
 }
 
 @test "interactive: declining the write confirmation writes nothing" {
-  run bash -c 'printf "%s\n" "" "" "" "" "y" "n" | DISPATCHER_SETUP_INTERACTIVE=1 bash "$0"' "$SETUP"
+  run bash -c 'printf "%s\n" "" "" "" "y" "" "n" | DISPATCHER_SETUP_INTERACTIVE=1 bash "$0"' "$SETUP"
   [ "$status" -eq 0 ]
   [[ "$output" == *"nothing written"* ]]
   [ ! -e "$USER_FILE" ]
