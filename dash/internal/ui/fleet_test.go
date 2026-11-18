@@ -13,6 +13,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/noamsto/dispatcher/dash/internal/data"
 	vm "github.com/noamsto/dispatcher/dash/internal/view"
@@ -1088,4 +1089,100 @@ func TestFleetFilterKeepsGroupsWhole(t *testing.T) {
 	if !ix.vis[n-1] || !ix.vis[n-2] {
 		t.Errorf("pinned sub: sub %v head %v, want both", ix.vis[n-1], ix.vis[n-2])
 	}
+}
+
+func TestFleetSubTreeConnectorsAndDuplicateRepo(t *testing.T) {
+	head := vm.FleetCrewRow{Key: "h", Crew: "crew-head-long", Host: "lap", Repo: new("a")}
+	sub := func(key, repo, dir string) vm.FleetCrewRow {
+		return vm.FleetCrewRow{Key: key, Crew: "crew-head-long", Host: "lap", Repo: new(repo), Dir: new(dir), Sub: true}
+	}
+	s3 := sub("s3", "acme/rpi-lab", "")
+	s3.Dir, s3.Common = nil, new("/srv/clones/rpi-three/")
+	fv := vm.FleetView{Crews: []vm.FleetCrewRow{head, sub("s1", "acme/rpi-lab", "/w/rpi-one"), sub("s2", "b", "/w/b"), s3}}
+	ix := fleetState{}.index(fv)
+	want := []string{
+		"crew-hea @lap a",
+		"  ├─ acme/rpi-lab rpi-one",
+		"  ├─ b",
+		"  ╰─ acme/rpi-lab rpi-three",
+	}
+	for i, w := range want {
+		if got := crewLabel(fv.Crews[i], ix.tree[i]); got != w {
+			t.Errorf("label %d = %q, want %q", i, got, w)
+		}
+	}
+
+	for _, width := range []int{8, 12, 30} {
+		for i := range fv.Crews {
+			s := newSpans(width, nil)
+			labelCol(s, fv.Crews[i], ix.tree[i], width, fg(colText))
+			if got := ansi.StringWidth(s.String()); got != width {
+				t.Errorf("width %d row %d: label drew %d cells", width, i, got)
+			}
+		}
+	}
+}
+
+func TestFleetSubTreeLastAndDupesCountVisibleRows(t *testing.T) {
+	sub := func(key, repo, dir, section string) vm.FleetCrewRow {
+		return vm.FleetCrewRow{Key: key, Crew: "c", Host: "lap", Repo: new(repo), Dir: new(dir), Section: section, Sub: true}
+	}
+	marks := func(ix fleetIndex, from, to int) (last []bool, dupe []bool) {
+		for i := from; i < to; i++ {
+			last = append(last, ix.tree[i].last)
+			dupe = append(dupe, ix.tree[i].dupe)
+		}
+		return last, dupe
+	}
+
+	t.Run("filter hides the last raw sub row", func(t *testing.T) {
+		fv := vm.FleetView{Crews: []vm.FleetCrewRow{
+			{Key: "h", Crew: "c", Host: "lap", Repo: new("head")},
+			sub("s1", "match-x", "/w/one", ""),
+			sub("s2", "match-x", "/w/two", ""),
+			sub("s3", "other", "/w/three", ""),
+		}}
+		ix := fleetState{filter: "match"}.index(fv)
+		if ix.vis[3] || !ix.vis[1] || !ix.vis[2] {
+			t.Fatalf("vis = %v, want s1,s2 shown and s3 hidden", ix.vis)
+		}
+		last, _ := marks(ix, 1, 4)
+		if !slices.Equal(last, []bool{false, true, false}) {
+			t.Errorf("last = %v, want [false true false]", last)
+		}
+	})
+
+	t.Run("duplicates count visible rows only", func(t *testing.T) {
+		fv := vm.FleetView{Crews: []vm.FleetCrewRow{
+			{Key: "h", Crew: "c", Host: "lap", Repo: new("head")},
+			sub("s1", "match-x", "/w/one", ""),
+			sub("s2", "other", "/w/two", ""),
+			sub("s3", "other", "/w/three", ""),
+		}}
+		ix := fleetState{filter: "match"}.index(fv)
+		_, dupe := marks(ix, 1, 4)
+		if !slices.Equal(dupe, []bool{false, false, false}) {
+			t.Errorf("dupe = %v, want none: the other repo is hidden", dupe)
+		}
+	})
+
+	t.Run("collapsed dead section pins one sub row", func(t *testing.T) {
+		fv := vm.FleetView{Crews: []vm.FleetCrewRow{
+			{Key: "h", Crew: "c", Host: "lap", Repo: new("head"), Section: "dead"},
+			sub("s1", "r", "/w/one", "dead"),
+			sub("s2", "r", "/w/two", "dead"),
+			sub("s3", "r", "/w/three", "dead"),
+		}}
+		ix := fleetState{crew: "s2"}.index(fv)
+		if !ix.vis[2] || ix.vis[1] || ix.vis[3] {
+			t.Fatalf("vis = %v, want only the head and s2 shown", ix.vis)
+		}
+		last, dupe := marks(ix, 1, 4)
+		if !slices.Equal(last, []bool{false, true, false}) {
+			t.Errorf("last = %v, want [false true false]", last)
+		}
+		if dupe[1] {
+			t.Errorf("s2 is the only visible sub row on its repo, dupe = true")
+		}
+	})
 }
