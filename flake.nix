@@ -6,6 +6,9 @@
     # Separate pin: `claude plugin test` landed after the main nixpkgs lock's
     # claude-code (2.1.220). Only the mod-tests runner reads it.
     nixpkgs-claude.url = "github:NixOS/nixpkgs/7a0f122f5090cf4c2ade2a13a0e229d4e19ba71f";
+    # Separate pin: the main lock's pi-coding-agent trails contract.txt's pinned
+    # version. Only the pi-subagent-typecheck check reads it; bump with the pin.
+    nixpkgs-pi.url = "github:NixOS/nixpkgs/1a08097fc1ed85575db39763b2c4a5d8970a37ba";
     flake-parts.url = "github:hercules-ci/flake-parts";
     treefmt-nix = {
       url = "github:numtide/treefmt-nix";
@@ -418,6 +421,16 @@
           # The pi subagent extension's child-spawn contract: fails when our pinned
           # copy drifts from the argv/event/agent-dir lines the dispatcher relies on.
           pi-subagent-contract = pkgs.runCommand "pi-subagent-contract" {nativeBuildInputs = with pkgs; [bash coreutils gnugrep gnused gawk];} "bash ${./scripts/pi-subagent-contract.sh} --pinned ${./adapters/pi/extensions/subagent} --contract ${./adapters/pi/extensions/subagent/contract.txt} && touch $out";
+
+          # tsc over the same extension against the types of the pi pinned in
+          # contract.txt: an import or API a pi upgrade drops fails here, not at
+          # runtime in a worker.
+          pi-subagent-typecheck = import ./nix/pi-subagent-typecheck.nix {
+            inherit pkgs;
+            pi = inputs.nixpkgs-pi.legacyPackages.${system}.pi-coding-agent;
+            contract = ./adapters/pi/extensions/subagent/contract.txt;
+            src = ./adapters/pi/extensions/subagent;
+          };
 
           # `nix flake check` only evaluates packages, not builds them — these
           # make it build, which runs buildGoModule's `go test ./...` (doCheck).
