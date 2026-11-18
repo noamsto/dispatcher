@@ -16162,7 +16162,7 @@ _replay_lead_launch_env() {
   cmd="${launch#send-keys -t %1 }"
   cmd="${cmd% Enter}"
   (
-    unset CREW_WORKER_ID CREW_ID
+    unset CREW_WORKER_ID CREW_ID CREW_SUBAGENT
     export CREW_WORKER_ID="$fs_worker" CREW_ID="$fs_crew"
     PATH="$(path_without_real lead-launcher)"
     bash -c "$cmd" </dev/null
