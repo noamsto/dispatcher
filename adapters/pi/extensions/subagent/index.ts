@@ -1,15 +1,13 @@
 // Derived from pi 1.4.0 examples/extensions/subagent. Dispatcher patches (each marked
 // `dispatcher patch:` in the code): agents dir relative to this file, no project-scope
 // agents, --no-approve and CREW_SUBAGENT=1 for the child, fixed-roster tool text. The
-// child-spawn contract (contract.txt `version`) is verified against pi 1.5.2, where
-// upstream restructured the spawn into `let proc` + `proc = spawn(...)` and turned the
-// `message_end` guard into an early return; neither changes the argv shape, the JSON
-// event mode or which event carries the final message, so we keep the 1.4.0 shape here
-// and tag both lines `pinned`/`upstream` in contract.txt — upstream also reworked abort
-// escalation and exit-status handling there, which we have not ported. To re-pin: copy
-// the new upstream index.ts and agents.ts, re-apply the `dispatcher patch:` hunks,
-// reconcile the `pinned`/`upstream` rows in contract.txt (a line that matches upstream
-// again becomes `both`), then run `bash scripts/pi-subagent-contract.sh --pinned` AND
+// child-spawn contract (contract.txt `version`) is verified against pi 1.5.2 while this
+// copy keeps the 1.4.0 shape: the two lines upstream rewrote there leave the argv, the
+// JSON event mode and the final-message event alone, so contract.txt tags them
+// `pinned`/`upstream`. Upstream's abort-escalation and exit-status rework is not ported.
+// To re-pin: copy the new upstream index.ts and agents.ts, re-apply the `dispatcher
+// patch:` hunks, reconcile the `pinned`/`upstream` rows (a line matching upstream again
+// becomes `both`), then run `bash scripts/pi-subagent-contract.sh --pinned` AND
 // `--installed`: only `--pinned` checks this copy.
 /**
  * Subagent Tool - Delegate tasks to specialized agents
