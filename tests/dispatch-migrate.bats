@@ -209,6 +209,19 @@ migrate_dispatch() { # dispatch_remote --host mini 7 x carrying $BUNDLE
   TMUX_PANE=%0 DISPATCH_MIGRATE_BUNDLE="$BUNDLE" run --separate-stderr dispatch_remote --host mini 7 x
 }
 
+@test "a migrated worker's symlinked artifacts parent is refused and its target left empty" {
+  seed_pushed_branch
+  make_bundle
+  victim="$BATS_TEST_TMPDIR/victim"
+  mkdir -p "$victim" "$(remote_crew_dir)/artifacts"
+  ln -s "$victim" "$(remote_crew_dir)/artifacts/feat"
+
+  migrate_dispatch
+  [ "$status" -eq 1 ]
+  [[ $stderr == *"is a symlink or not a directory — refusing to write migrated.md"* ]]
+  [ -z "$(ls -A "$victim")" ]
+}
+
 @test "a migrated claude worker lands on the remote at the tip with the patch applied and its transcript resumed" {
   seed_pushed_branch
   make_bundle
