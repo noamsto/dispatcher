@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
 
@@ -46,6 +47,10 @@ func ovKeys(v overviewView, keys ...string) (overviewView, tea.Cmd) {
 			v, cmd = ovPress(v, keyType(tea.KeyEnter))
 		case "esc":
 			v, cmd = ovPress(v, keyType(tea.KeyEsc))
+		case "left":
+			v, cmd = ovPress(v, keyType(tea.KeyLeft))
+		case "right":
+			v, cmd = ovPress(v, keyType(tea.KeyRight))
 		default:
 			v, cmd = ovPress(v, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(k)})
 		}
@@ -142,9 +147,9 @@ func TestOverviewMovePerPanel(t *testing.T) {
 	if selBranch(v) != "feat/b" {
 		t.Errorf("checklists j: sel=%s, want feat/b", selBranch(v))
 	}
-	v, _ = ovKeys(v, "k", "k")
+	v, _ = ovKeys(v, "k")
 	if selBranch(v) != "feat/a" {
-		t.Errorf("checklists k clamps at the top: sel=%s", selBranch(v))
+		t.Errorf("checklists k: sel=%s, want feat/a", selBranch(v))
 	}
 	// Agents: the same shared selection moves over agent rows.
 	v, _ = ovKeys(v, "tab", "j")
@@ -1058,6 +1063,277 @@ func TestOverviewAttentionUsesReapKeeps(t *testing.T) {
 		}
 	}
 	t.Fatal("no failed:c1:feat/h item")
+}
+
+// ovAt puts focus on panel p at its i-th worker (negative counts from the end).
+func ovAt(t *testing.T, v overviewView, p ovPanel, i int) overviewView {
+	t.Helper()
+	ws := panelWorkers(p, v.model, newOvIndex(v.model, v.st))
+	if len(ws) == 0 {
+		t.Fatalf("panel %v has no workers", p)
+	}
+	if i < 0 {
+		i += len(ws)
+	}
+	v.setFocus(p)
+	v.setWorker(ws[i])
+	return v
+}
+
+func ovStripAt(v overviewView, i int) overviewView {
+	v.setFocus(panelAttention)
+	v.setCursor(i)
+	return v
+}
+
+func TestOverviewHjklStripEdgeWithStale(t *testing.T) {
+	asciiProfile(t)
+	in := viewtest.Inputs()
+	for _, c := range in.Snap.Roster.Crews {
+		for _, w := range c.Workers {
+			if w["branch"] == "feat/h" {
+				w["needs_cleanup"] = true
+				w["cleanup_reason"] = "uncommitted changes; issue closed"
+			}
+		}
+	}
+	v := newOverviewView(in, overviewNow)
+	v.View(150, 40)
+	stale := slices.IndexFunc(v.model.Attention, func(a vm.AttentionItem) bool { return a.Kind == vm.KindStale })
+	if stale < 0 {
+		t.Fatal("stale worker is not an attention item")
+	}
+	last := len(v.model.Attention) - 1
+	if stale > 0 {
+		if w, _ := ovKeys(ovStripAt(v, stale), "k"); w.st.focus != panelAttention || w.sel().cursor != stale-1 {
+			t.Errorf("k from stale: focus=%v cursor=%d", w.st.focus, w.sel().cursor)
+		}
+	}
+	if stale < last {
+		if w, _ := ovKeys(ovStripAt(v, stale), "j"); w.st.focus != panelAttention || w.sel().cursor != stale+1 {
+			t.Errorf("j from stale: focus=%v cursor=%d", w.st.focus, w.sel().cursor)
+		}
+	} else if w, _ := ovKeys(ovStripAt(v, stale), "j"); w.st.focus != panelChecklists {
+		t.Errorf("j past stale: focus=%v", w.st.focus)
+	}
+	if w, _ := ovKeys(ovStripAt(v, last), "k"); w.st.focus != panelAttention || w.sel().cursor != last-1 {
+		t.Errorf("k from last with stale present: focus=%v cursor=%d", w.st.focus, w.sel().cursor)
+	}
+}
+
+func TestOverviewHjklStrip(t *testing.T) {
+	v, _ := ovFixture(t, 150, 40, false, nil)
+	last := len(v.model.Attention) - 1
+	if last < 2 {
+		t.Fatalf("fixture strip too short: %d", last+1)
+	}
+	t.Run("first k stays", func(t *testing.T) {
+		w, _ := ovKeys(ovStripAt(v, 0), "k")
+		if w.st.focus != panelAttention || w.sel().cursor != 0 {
+			t.Errorf("focus=%v cursor=%d", w.st.focus, w.sel().cursor)
+		}
+	})
+	t.Run("first j next", func(t *testing.T) {
+		w, _ := ovKeys(ovStripAt(v, 0), "j")
+		if w.st.focus != panelAttention || w.sel().cursor != 1 {
+			t.Errorf("focus=%v cursor=%d", w.st.focus, w.sel().cursor)
+		}
+	})
+	t.Run("last k previous", func(t *testing.T) {
+		w, _ := ovKeys(ovStripAt(v, last), "k")
+		if w.st.focus != panelAttention || w.sel().cursor != last-1 {
+			t.Errorf("focus=%v cursor=%d", w.st.focus, w.sel().cursor)
+		}
+	})
+	t.Run("last j returns to checklists by default", func(t *testing.T) {
+		w, _ := ovKeys(ovStripAt(v, last), "j")
+		if w.st.focus != panelChecklists {
+			t.Errorf("focus=%v", w.st.focus)
+		}
+	})
+	t.Run("last j returns to the panel k left from", func(t *testing.T) {
+		for _, p := range []ovPanel{panelAgents, panelMonitors, panelChecklists} {
+			w, _ := ovKeys(ovAt(t, v, p, 0), "k")
+			if w.st.focus != panelAttention || w.sel().cursor != last {
+				t.Fatalf("%v: k focus=%v cursor=%d, want strip last", p, w.st.focus, w.sel().cursor)
+			}
+			w, _ = ovKeys(w, "j")
+			if w.st.focus != p {
+				t.Errorf("%v: j returned to %v", p, w.st.focus)
+			}
+		}
+	})
+	t.Run("h and l are no-ops", func(t *testing.T) {
+		for _, k := range []string{"h", "l", "left", "right"} {
+			w, _ := ovKeys(ovStripAt(v, 1), k)
+			if w.st.focus != panelAttention || w.sel().cursor != 1 {
+				t.Errorf("%s: focus=%v cursor=%d", k, w.st.focus, w.sel().cursor)
+			}
+		}
+	})
+}
+
+func TestOverviewHjklPanels(t *testing.T) {
+	v, _ := ovFixture(t, 150, 40, false, nil)
+	last := len(v.model.Attention) - 1
+	for i, p := range []ovPanel{panelChecklists, panelAgents, panelMonitors} {
+		name := []string{"checklists", "agents", "monitors"}[i]
+		ws := panelWorkers(p, v.model, newOvIndex(v.model, v.st))
+		if len(ws) < 2 {
+			t.Fatalf("panel %v needs two workers, has %d", p, len(ws))
+		}
+		t.Run(name+" first k goes to the strip last item", func(t *testing.T) {
+			w, _ := ovKeys(ovAt(t, v, p, 0), "k")
+			if w.st.focus != panelAttention || w.sel().cursor != last {
+				t.Errorf("focus=%v cursor=%d", w.st.focus, w.sel().cursor)
+			}
+		})
+		t.Run(name+" first j next", func(t *testing.T) {
+			w, _ := ovKeys(ovAt(t, v, p, 0), "j")
+			if w.st.focus != p || w.sel().worker != ws[1] {
+				t.Errorf("focus=%v worker=%d, want %d", w.st.focus, w.sel().worker, ws[1])
+			}
+		})
+		t.Run(name+" last j stays", func(t *testing.T) {
+			w, _ := ovKeys(ovAt(t, v, p, -1), "j")
+			if w.st.focus != p || w.sel().worker != ws[len(ws)-1] {
+				t.Errorf("focus=%v worker=%d", w.st.focus, w.sel().worker)
+			}
+		})
+		t.Run(name+" last k previous", func(t *testing.T) {
+			w, _ := ovKeys(ovAt(t, v, p, -1), "k")
+			if w.st.focus != p || w.sel().worker != ws[len(ws)-2] {
+				t.Errorf("focus=%v worker=%d", w.st.focus, w.sel().worker)
+			}
+		})
+	}
+}
+
+func TestOverviewHjklEmptyPanel(t *testing.T) {
+	v, _ := ovFixture(t, 150, 40, false, nil)
+	v.st.filter = "no-such-worker"
+	v.setFocus(panelAgents)
+	w, _ := ovKeys(v, "j")
+	if w.st.focus != panelAgents {
+		t.Errorf("j on an empty panel: focus=%v", w.st.focus)
+	}
+	w, _ = ovKeys(w, "k")
+	if w.st.focus != panelAttention || w.sel().cursor != len(w.model.Attention)-1 {
+		t.Errorf("k on an empty panel: focus=%v cursor=%d", w.st.focus, w.sel().cursor)
+	}
+}
+
+func TestOverviewHjklEmptyStrip(t *testing.T) {
+	v := newOverviewView(allClearInputs(), overviewNow)
+	v.View(150, 40)
+	v = ovAt(t, v, panelChecklists, 0)
+	w, _ := ovKeys(v, "k")
+	if w.st.focus != panelChecklists {
+		t.Errorf("k with no strip: focus=%v", w.st.focus)
+	}
+}
+
+func TestOverviewHjklAcrossRow(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		w    int
+		keys []string
+		want []ovPanel
+	}{
+		{"wide l", 150, []string{"l", "l", "l"}, []ovPanel{panelAgents, panelMonitors, panelMonitors}},
+		{"wide h", 150, []string{"l", "l", "h", "h", "h"}, []ovPanel{panelAgents, panelMonitors, panelAgents, panelChecklists, panelChecklists}},
+		{"wide arrows", 150, []string{"right", "right", "left"}, []ovPanel{panelAgents, panelMonitors, panelAgents}},
+		{"narrow", 80, []string{"l", "l", "l", "h", "h", "h"}, []ovPanel{panelAgents, panelMonitors, panelMonitors, panelAgents, panelChecklists, panelChecklists}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			v, _ := ovFixture(t, tc.w, 30, false, nil)
+			v = ovAt(t, v, panelChecklists, 0)
+			for i, k := range tc.keys {
+				v, _ = ovKeys(v, k)
+				if v.st.focus != tc.want[i] {
+					t.Fatalf("%s %d: focus=%v, want %v", k, i+1, v.st.focus, tc.want[i])
+				}
+				if tc.w < wideWidth {
+					if !v.layout().panels[tc.want[i]].shown {
+						t.Fatalf("%s %d: focused %v not shown", k, i+1, tc.want[i])
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestOverviewHjklNarrowReturn(t *testing.T) {
+	v, _ := ovFixture(t, 80, 30, false, nil)
+	v = ovAt(t, v, panelChecklists, 0)
+	v, _ = ovKeys(v, "l", "k")
+	if v.st.focus != panelAttention {
+		t.Fatalf("focus=%v", v.st.focus)
+	}
+	v, _ = ovKeys(v, "j")
+	if v.st.focus != panelAgents {
+		t.Errorf("returned to %v, want agents", v.st.focus)
+	}
+}
+
+func TestOverviewHjklHelpAndFooter(t *testing.T) {
+	v, _ := ovFixture(t, 150, 40, false, nil)
+	if !slices.ContainsFunc(v.Keys(), func(b key.Binding) bool { return b.Help().Key == "hjkl" }) {
+		t.Error("footer has no hjkl hint")
+	}
+	if !slices.ContainsFunc(overviewHelp, func(h helpKey) bool { return strings.Contains(h.keys, "h j k l") }) {
+		t.Error("help has no h j k l row")
+	}
+}
+
+func TestOverviewHjklReturnRestoresWorker(t *testing.T) {
+	for _, p := range []ovPanel{panelChecklists, panelAgents, panelMonitors} {
+		v, _ := ovFixture(t, 150, 40, false, nil)
+		v = ovAt(t, v, p, 0)
+		want := v.sel().worker
+		v, _ = ovKeys(v, "k")
+		if v.st.focus != panelAttention {
+			t.Fatalf("panel %v: k focus=%v", p, v.st.focus)
+		}
+		v, _ = ovKeys(v, "j")
+		if v.st.focus != p || v.sel().worker != want {
+			t.Errorf("panel %v: focus=%v worker=%d, want %v worker=%d", p, v.st.focus, v.sel().worker, p, want)
+		}
+	}
+}
+
+func TestOverviewHjklStaleReturnPanel(t *testing.T) {
+	v, _ := ovFixture(t, 150, 40, false, nil)
+	v = ovAt(t, v, panelAgents, 0)
+	v, _ = ovKeys(v, "k")
+	for i := 0; i < 6 && v.st.focus == panelAttention; i++ {
+		v, _ = ovKeys(v, "tab")
+	}
+	for i := 0; i < 6 && v.st.focus != panelAttention; i++ {
+		v, _ = ovKeys(v, "tab")
+	}
+	if v.st.focus != panelAttention {
+		t.Fatalf("focus=%v, never back on the strip", v.st.focus)
+	}
+	v = ovStripAt(v, len(v.model.Attention)-1)
+	v, _ = ovKeys(v, "j")
+	if v.st.focus != panelChecklists {
+		t.Errorf("focus=%v, want checklists", v.st.focus)
+	}
+}
+
+func TestOverviewHjklDetailGuard(t *testing.T) {
+	v, _ := ovFixture(t, 150, 40, false, nil)
+	v = ovAt(t, v, panelChecklists, 0)
+	want := v.sel().worker
+	v, _ = ovKeys(v, "enter")
+	if v.mode != ovDetail {
+		t.Fatalf("mode=%v, want detail", v.mode)
+	}
+	v, _ = ovKeys(v, "k")
+	if v.st.focus != panelChecklists || v.mode != ovDetail || v.sel().worker != want {
+		t.Errorf("focus=%v mode=%v worker=%d, want checklists detail %d", v.st.focus, v.mode, v.sel().worker, want)
+	}
 }
 
 func TestOverviewMarksStaleWorker(t *testing.T) {
