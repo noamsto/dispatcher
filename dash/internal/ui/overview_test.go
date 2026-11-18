@@ -295,15 +295,44 @@ func TestInspectStaleResultIgnored(t *testing.T) {
 		t.Errorf("a late result reopened the overlay")
 	}
 
-	// A different item's overlay is not overwritten by the first one's result.
-	v, cmd = ovKeys(v, "4")
-	v, _ = ovKeys(v, "esc")
-	v, _ = ovKeys(v, "1")
-	other := v.insp
-	v = settle(t, v, cmd)
-	if v.insp != other {
-		t.Errorf("a result for another item changed the overlay: %+v", v.insp)
+	// A result for another item does not touch the open overlay.
+	v, _ = ovKeys(v, "4")
+	before := v.insp
+	nv, _ := v.Update(inspectMsg{id: "other", out: `{"x":1}`})
+	if nv.(overviewView).insp != before {
+		t.Errorf("a result for another item changed the overlay: %+v", nv.(overviewView).insp)
 	}
+}
+
+func TestInspectRunsInItemDir(t *testing.T) {
+	asciiProfile(t)
+	dir := "/r/x"
+	in := viewtest.Inputs()
+	in.Dir = &dir
+	fr := &data.FakeRunner{}
+	v := newOverviewView(in, overviewNow)
+	v.acts = actionDeps{ctx: context.Background(), runner: fr, crew: []string{"crew"}}
+	v.View(150, 40)
+	_, cmd := ovKeys(v, "4")
+	cmd()
+	if calls := fr.CallsSnapshot(); len(calls) != 1 || calls[0].Dir != dir {
+		t.Errorf("calls = %+v, want one in %q", calls, dir)
+	}
+}
+
+func TestInspectControlRunsNothing(t *testing.T) {
+	v, fr := ovFixture(t, 150, 40, false, nil)
+	v = poisonActions(v, false, true)
+	for _, k := range []string{"4", "enter"} {
+		nv, cmd := ovKeys(v, k)
+		if cmd != nil {
+			cmd()
+		}
+		if nv.insp.open {
+			t.Errorf("%s opened an inspect overlay for a control-byte argv", k)
+		}
+	}
+	noCalls(t, fr)
 }
 
 func TestInspectErrorShown(t *testing.T) {

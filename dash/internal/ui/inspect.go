@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"text/tabwriter"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
@@ -32,7 +33,7 @@ type inspectState struct {
 // inspectable reports whether a's action is the item's own keyless read-only
 // inspect command.
 func inspectable(a vm.AttentionItem) bool {
-	return a.Action != nil && a.Action.Key == "" && len(a.Action.Argv) > 0
+	return a.Action != nil && a.Action.Key == "" && a.Action.Verb == "inspect" && len(a.Action.Argv) > 0
 }
 
 // startInspect opens the inspect overlay for a and runs its Argv off the
@@ -74,13 +75,13 @@ func (p *actionPrompt) inspectKey(s string) (consumed bool) {
 
 func (s inspectState) lines(iw int) []string {
 	a := s.item
-	out := []string{" " + cleanText(a.Message)}
+	out := wrapLines(" "+a.Message, iw, 0)
 	for _, kv := range [][2]string{
 		{"kind", string(a.Kind)}, {"severity", string(a.Severity)}, {"crew", a.Crew},
 		{"host", a.Host}, {"age", ovAge(a.AgeSec)}, {"command", shownCommand(*a.Action)},
 	} {
 		if kv[1] != "" {
-			out = append(out, "   "+kv[0]+": "+cleanText(kv[1]))
+			out = append(out, wrapLines(kv[0]+": "+kv[1], iw, 3)...)
 		}
 	}
 	out = append(out, section("OUTPUT"))
@@ -88,17 +89,24 @@ func (s inspectState) lines(iw int) []string {
 	case !s.done:
 		out = append(out, "   "+fg(colDim).Render("running…"))
 	case s.err != "":
-		out = append(out, wrapLines("   error: "+s.err, iw)...)
+		out = append(out, wrapLines("error: "+s.err, iw, 3)...)
 	default:
 		for _, l := range inspectOutput(s.out) {
-			out = append(out, wrapLines("   "+l, iw)...)
+			out = append(out, wrapLines(l, iw, 3)...)
 		}
 	}
 	return out
 }
 
-func wrapLines(text string, iw int) []string {
-	return strings.Split(ansi.Wrap(cleanText(text), max(iw, 1), ""), "\n")
+// wrapLines is text cleaned and word-wrapped to iw columns, every line
+// indented by indent spaces.
+func wrapLines(text string, iw, indent int) []string {
+	lines := strings.Split(ansi.Wrap(cleanText(ansi.Strip(text)), max(iw-indent, 1), ""), "\n")
+	pad := strings.Repeat(" ", indent)
+	for i, l := range lines {
+		lines[i] = pad + l
+	}
+	return lines
 }
 
 // inspectOutput is out as key: value lines when it is one JSON object, else
@@ -117,7 +125,11 @@ func inspectOutput(out string) []string {
 		}
 		return lines
 	}
-	lines := strings.Split(strings.TrimRight(out, "\r\n"), "\n")
+	var tab strings.Builder
+	tw := tabwriter.NewWriter(&tab, 0, 1, 2, ' ', 0)
+	_, _ = tw.Write([]byte(strings.TrimRight(out, "\r\n")))
+	_ = tw.Flush()
+	lines := strings.Split(tab.String(), "\n")
 	if len(lines) == 1 && strings.TrimSpace(lines[0]) == "" {
 		return []string{"(no output)"}
 	}

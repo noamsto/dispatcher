@@ -63,7 +63,7 @@ func InspectLaneArgv(crew []string, crewID string) []string {
 }
 
 func InspectHoldArgv(crew []string, crewID string) []string {
-	return append(slices.Clone(crew), "hold", "due", "--crew", crewID)
+	return append(slices.Clone(crew), "hold", "list", "--crew", crewID)
 }
 
 func deref(s *string) string {
