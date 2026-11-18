@@ -438,9 +438,10 @@ assert_within() { # <name> <ms> <command>
   assert_block 'expansion budget'
 }
 
-# A command past the size limit skips the quadratic analysis: it is refused when
-# its raw text has a delete verb with a runtime-dir reference, or a tmux server
-# word, and allowed otherwise.
+# A command past the size limit skips the quadratic analysis: a delete or tmux
+# verb at command position is refused when its words hold a variable, glob,
+# runtime-dir path or a cd came before it, or when it is a tmux server call
+# with no -L/-S; prose and other commands' arguments are allowed.
 long_command() { # <tail>: filler over the limit, then <tail>
   local filler
   filler=$(printf 'echo plain filler text, not a command of interest\n%.0s' $(seq 200))
@@ -637,4 +638,37 @@ long_command() { # <tail>: filler over the limit, then <tail>
   assert_within many-operands 2000 "${cmd}rm -rf$(printf ' "$a"%.0s' $(seq 30)) /run/user/1000"
   [ "$status" -eq 0 ]
   jq -e '.hookSpecificOutput.permissionDecision == "deny"' <<<"$output" >/dev/null
+}
+
+@test "tmux-server-guard: the size gate refuses globbed, split, relative and rebound runtime-dir deletes" {
+  runtime_env
+  local tail
+  for tail in 'rm -rf ru?/user/1000' 'rm -rf */user/1000' 'rm -rf ru*/*/1000' 'd=/ru; rm -rf "$d"n/user/1000' \
+    'rm -rf var/run/user/1000' 'rm -rf proc/self/root/run/user/1000' $'cd /\nrm -rf run/user/1000' \
+    'cd /; rm -rf run' 'tmp=$(mktemp -d); rm -rf "$tmp"' 'sudo rm -rf /run/user/1000' 'env -u TMUX tmux kill-server' \
+    'x=1 command rm -rf "${XDG_RUNTIME_DIR}"' 'find / -delete' 'rm -rf /' 'echo ok && rm -rf /run/user/1000' \
+    'for d in a b; do rm -rf "$d"; done' $'rm -rf /run/user/1000 \\\n  /tmp/x' \
+    $'cat <<EOF\nbody\nEOF\nrm -rf /run/user/1000' $'cat <<\'EOF\'\nit\'s prose\nEOF\nrm -rf /run/user/1000' \
+    $'echo "it\'s"; rm -rf /run/user/1000' $'rm -rf $\'a\\\'b\' /run/user/1000'; do
+    run run_guard <<<"$(claude_bash "$(long_command "$tail")")"
+    echo "claude: $tail"
+    assert_block 'split the command'
+  done
+}
+
+@test "tmux-server-guard: the size gate reads prose, other commands' arguments and private servers as allowed" {
+  runtime_env
+  local tail prose
+  prose=$(printf 'The guard denies a tmux call such as kill-session, and rm of XDG_RUNTIME_DIR.\n%.0s' 1 2 3)
+  for tail in $'cat <<EOF\n'"$prose"$'\nEOF\necho done' \
+    "git commit -m \"fix(guard): $prose"$'\nrm -rf /run/user/1000 is what it stops"' \
+    'tmux -L scratch kill-server' 'tmux -S /tmp/sock kill-server' 'tmux -f /dev/null -L s kill-server' \
+    'tmux -LS kill-server' 'rm -f build/out.o' 'rm -rf /tmp/x /tmp/y' \
+    'echo rm -rf "$XDG_RUNTIME_DIR" tmux kill-server' 'grep -n "rm -rf" notes.txt' \
+    'tmux display-message "tmux kill-server"' $'cat <<EOF\nit\'s prose\nEOF\necho done' \
+    "echo \"it's\" # tmux kill-server" 'tmux set -t main status off; rm -f a.o'; do
+    run run_guard <<<"$(claude_bash "$(long_command "$tail")")"
+    echo "claude: $tail"
+    assert_allow
+  done
 }

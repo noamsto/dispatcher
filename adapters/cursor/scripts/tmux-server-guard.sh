@@ -39,8 +39,11 @@
 # 16 candidate values, or a name with more than 64, a candidate over 512
 # characters, or a lookup chain past 1500 steps is refused, each with its own reason: past the hook's timeout the guard
 # would fail open. For the same reason a command over 8 KiB skips the
-# analysis: it is refused when it has both a delete verb and a runtime-dir
-# reference (or a tmux server word), and allowed otherwise.
+# analysis for a linear pass over its command words: a delete verb at command
+# position is refused when its words hold a `$`, backtick, glob, `/run/user`,
+# `user/`, `/proc/`, XDG_RUNTIME_DIR or TMUX_TMPDIR, or a `cd` came earlier; a
+# tmux server call with no -L/-S is refused. Anything else, prose included, is
+# allowed.
 #
 #   engine        event                  command at             verdict shape
 #   claude        PreToolUse Bash        tool_input.command     hookSpecificOutput deny
@@ -116,19 +119,165 @@ emit_deny() { # <reason>
 
 # The tokenizer below is quadratic in the command's length: past the hook's
 # timeout the guard would fail open. A command over this many bytes gets a
-# cheap raw-text check instead of the analysis.
+# linear awk pass over its command words instead of the analysis: a delete or
+# tmux verb is only read at command position, so prose in a here-doc body, a
+# commit message or an echo argument names nothing.
 max_bytes=8192
 if (($(printf '%s' "$command" | wc -c) > max_bytes)); then
-  # Quotes and backslashes stripped and `/./` folded, so `/run/"user"/./1000`
-  # reads as the path it is.
-  raw=${command//[\"\'\\]/}
-  while [[ $raw == */./* ]]; do raw=${raw//\/.\//\/}; done
-  re_verb='(^|[^[:alnum:]_.-])(rm|rmdir|unlink|trash|trash-put|gtrash)($|[^[:alnum:]_.-])|(^|[[:space:]])-delete($|[^[:alnum:]_-])'
-  re_rt='XDG_RUNTIME_DIR|TMUX_TMPDIR|(^|[^[:alnum:]_-])/run(/+user|/*([[:space:];&|)]|$))'
-  re_server='(^|[^[:alnum:]_.-])tmux($|[^[:alnum:]_.-]).*(kill-server|kill-session|source-file|set-hook|set-option|set-window-option)'
-  re_server+='|(^|[^[:alnum:]_.-])tmux[^;&|]*[[:space:]](source|setw?[[:space:]]([^;&|]*[[:space:]])?-[A-Za-z]*[gs])([[:space:];&|]|$)'
-  if { grep -Eq "$re_verb" <<<"$raw" && grep -Eq "$re_rt" <<<"$raw"; } || grep -Eq "$re_server" <<<"$raw"; then
-    emit_deny "This command is over $max_bytes bytes, too long for the guard to analyse within the hook's timeout, and its raw text names a delete together with the per-user runtime dir (\$XDG_RUNTIME_DIR, /run/user/<uid>, TMUX_TMPDIR) or a tmux server command (kill-server, set -g, source-file). The guard refuses what it cannot check.
+  # shellcheck disable=SC2016
+  gate_awk='
+function reset_seg() { phase = 0; wrapper = ""; wval = 0; edur = 0; risky = 0; fdel = 0; isfind = 0; nt = 0 }
+function deny() { print "deny"; denied = 1; exit }
+function risky_word(w,   x) {
+  x = w
+  while (index(x, "/./")) gsub(/\/\.\//, "/", x)
+  sub(/\/\.$/, "/", x)
+  if (x ~ /^\/+$/ || x ~ /[$`*?[]/ || x ~ /user\/|\/proc\/|XDG_RUNTIME_DIR|TMUX_TMPDIR/ || x ~ /(^|[^[:alnum:]_-])\/run(\/+user|\/*$)/) risky = 1
+}
+function classify(   i, w, sock, sub_, skip, dw, rest, c) {
+  sock = 0; sub_ = ""; skip = 0; dw = 0
+  for (i = 1; i <= nt; i++) {
+    w = targs[i]
+    if (skip) { skip = 0; continue }
+    if (sub_ != "") {
+      if (sub_ ~ /^(set-option|set|set-window-option|setw|set-hook)$/ && w ~ /^-[A-Za-z]*g[A-Za-z]*$/) dw = 1
+      if (sub_ ~ /^(set-option|set)$/ && w ~ /^-[A-Za-z]*s[A-Za-z]*$/) dw = 1
+      continue
+    }
+    if (w !~ /^-/) { sub_ = w; continue }
+    rest = substr(w, 2)
+    while (rest != "") {
+      c = substr(rest, 1, 1); rest = substr(rest, 2)
+      if (c == "L" || c == "S") sock = 1
+      if (index("LSfcT", c)) { if (rest == "") skip = 1; break }
+    }
+  }
+  if (sock) return
+  if (dw || sub_ ~ /^(kill-server|kill-session|source-file|source)$/) deny()
+}
+function seg_word(w,   base, rest, c) {
+  if (phase == 0) {
+    if (wval) { wval = 0; return }
+    if (w ~ /^[A-Za-z_][A-Za-z0-9_]*[+]?=/) return
+    if (wrapper != "" && w ~ /^-/) {
+      if (w !~ /^--/) {
+        rest = substr(w, 2)
+        while (rest != "") {
+          c = substr(rest, 1, 1); rest = substr(rest, 2)
+          if (index(wtab, " " wrapper ":" c " ")) { if (rest == "") wval = 1; break }
+        }
+      }
+      return
+    }
+    if (edur && w ~ /^[0-9]+([.][0-9]+)?[smhd]?$/) { edur = 0; return }
+    base = w; sub(/^.*\//, "", base)
+    if (base ~ /^(env|command|exec|nohup|time|nice|sudo|xargs|do|then|if|elif|else|while|until|!|[{])$/) { wrapper = base; return }
+    if (base == "timeout") { wrapper = base; edur = 1; return }
+    if (base == "cd" || base == "pushd") { seen_cd = 1; phase = 3; return }
+    if (base == "tmux") { phase = 2; return }
+    if (base ~ /^(rm|rmdir|unlink|trash|trash-put|gtrash|shred)$/) { phase = 1; return }
+    if (base == "find") { phase = 1; isfind = 1; return }
+    phase = 3
+    return
+  }
+  if (phase == 1) {
+    if (isfind && w ~ /^-(delete|exec|execdir|ok|okdir)$/) fdel = 1
+    risky_word(w)
+    return
+  }
+  if (phase == 2) targs[++nt] = w
+}
+function flush_word() {
+  if (!inword) return
+  inword = 0
+  seg_word(word)
+  word = ""
+}
+function end_seg() {
+  flush_word()
+  if (phase == 1 && (!isfind || fdel) && (risky || seen_cd)) deny()
+  if (phase == 2) classify()
+  reset_seg()
+}
+function parse_heredoc(s, i,   n, dash, e, c, d) {
+  n = length(s); dash = 0; d = ""
+  if (substr(s, i, 1) == "-") { dash = 1; i++ }
+  while (substr(s, i, 1) == " " || substr(s, i, 1) == "\t") i++
+  c = substr(s, i, 1)
+  if (c == "\047" || c == "\"") {
+    e = c; i++
+    while (i <= n && substr(s, i, 1) != e) { d = d substr(s, i, 1); i++ }
+    i++
+  } else {
+    while (i <= n) {
+      c = substr(s, i, 1)
+      if (c ~ /[ \t;|&()<>]/) break
+      if (c == "\\") { i++; c = substr(s, i, 1) }
+      d = d c; i++
+    }
+  }
+  if (d != "") { hd_n++; hd_d[hd_n] = d; hd_s[hd_n] = dash }
+  return i
+}
+function scan_line(s, body,   n, i, c, d) {
+  n = length(s); i = 1
+  if (body) { q = ""; inword = 0; word = "" }
+  while (i <= n) {
+    c = substr(s, i, 1)
+    if (q == "\047") {
+      if (c == "\047") q = ""; else word = word c
+    } else if (q == "A") {
+      if (c == "\047") q = ""
+      else if (c == "\\") { i++; word = word substr(s, i, 1) }
+      else word = word c
+    } else if (q == "\"") {
+      if (c == "\"") q = ""
+      else if (c == "\\") {
+        d = substr(s, i + 1, 1)
+        if (d == "\"" || d == "\\" || d == "$" || d == "`") { word = word d; i++ }
+        else if (d == "") cont = 1
+        else word = word c
+      } else word = word c
+    } else if (c == "\047") {
+      if (word ~ /[$]$/) q = "A"; else q = "\047"
+      inword = 1
+    } else if (c == "\"") { q = "\""; inword = 1 }
+    else if (c == " " || c == "\t") flush_word()
+    else if (c == "\\") {
+      d = substr(s, i + 1, 1)
+      if (d == "") cont = 1
+      else { word = word d; inword = 1; i++ }
+    }
+    else if (c == ";" || c == "|" || c == "&" || c == "(" || c == ")" || c == "`") end_seg()
+    else if (c == "#" && !inword) break
+    else if (c == "<" && !body && substr(s, i + 1, 1) == "<" && substr(s, i + 2, 1) != "<") { i = parse_heredoc(s, i + 2) - 1 }
+    else { word = word c; inword = 1 }
+    i++
+  }
+}
+BEGIN {
+  wtab = " env:a exec:a env:C env:u nice:n timeout:k timeout:s xargs:n xargs:I xargs:L xargs:P xargs:s xargs:d xargs:E xargs:a xargs:l "
+  wtab = wtab "sudo:C sudo:g sudo:h sudo:p sudo:r sudo:t sudo:T sudo:U sudo:u "
+  reset_seg()
+}
+{
+  if (hd_n > 0 && hd_active) {
+    t = $0
+    if (hd_s[hd_cur]) sub(/^\t+/, "", t)
+    if (t == hd_d[hd_cur]) { hd_cur++; if (hd_cur > hd_n) { hd_active = 0; hd_n = 0 } }
+    else { scan_line($0, 1); q = ""; cont = 0; end_seg() }
+    next
+  }
+  scan_line($0, 0)
+  if (q != "") { if (!cont) word = word "\n"; inword = 1 }
+  else if (!cont) { end_seg(); if (hd_n > 0) { hd_cur = 1; hd_active = 1 } }
+  cont = 0
+}
+END { if (!denied) end_seg() }
+'
+  verdict=$(printf '%s\n' "$command" | LC_ALL=C awk "$gate_awk") || verdict=deny
+  if [[ $verdict == deny ]]; then
+    emit_deny "This command is over $max_bytes bytes, too long for the guard to analyse within the hook's timeout, and it has a delete that may reach the per-user runtime dir (a \$ variable, a glob, a /run/user or /proc path, XDG_RUNTIME_DIR, TMUX_TMPDIR, or a cd earlier in the command) or a tmux server command with no -L/-S (kill-server, set -g, source-file). The guard refuses what it cannot check.
 Fix: split the command into smaller ones, or write the long part to a script file and run that, keeping any delete and any tmux server call out of it ('d=\$(mktemp -d); rm -rf \"\$d\"' for scratch dirs, 'tmux -L <name>' for a private server)."
   fi
   exit 0
