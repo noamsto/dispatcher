@@ -211,16 +211,22 @@ func portEIssue(f *fx, state string, claim bool) {
 }
 
 func TestPortEIssueModeKeeps(t *testing.T) {
+	const unpushed = "crew reap: keeping feat/r — done but no PR on the bus or GitHub; 1 commit(s) not on any remote and not patch-equivalent to origin/main"
 	cases := []struct {
 		name  string
 		state string
 		claim bool
-		want  string
+		want  func(f *fx) []string
 	}{
-		{"closed issue with commits on no remote", "CLOSED", true,
-			"crew reap: keeping feat/r — done but no PR on the bus or GitHub; 1 commit(s) not on any remote and not patch-equivalent to origin/main"},
-		{"no claim-issue row", "CLOSED", false,
-			"crew reap: keeping feat/r — done but no PR on the bus or GitHub; no claim-issue row"},
+		{"closed issue with commits on no remote", "CLOSED", true, func(f *fx) []string {
+			return []string{unpushed,
+				"crew reap:   stale: needs human cleanup — " + strings.TrimPrefix(unpushed, "crew reap: keeping feat/r — ") + "; issue closed",
+				"crew reap:   inspect: " + f.inspectCmd(),
+				"crew reap:   remove:  " + f.removeCmd()}
+		}},
+		{"no claim-issue row, fresh", "CLOSED", false, func(*fx) []string {
+			return []string{"crew reap: keeping feat/r — done but no PR on the bus or GitHub; no claim-issue row"}
+		}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -230,7 +236,7 @@ func TestPortEIssueModeKeeps(t *testing.T) {
 			if rc := f.reap(f.main, Request{}); rc != 0 {
 				t.Fatalf("rc=%d stderr=%q", rc, f.stderr.String())
 			}
-			f.wantOut(c.want, "crew reap: nothing reclaimed")
+			f.wantOut(append(c.want(f), "crew reap: nothing reclaimed")...)
 			if !portCExists(f.wt) {
 				t.Fatal("worktree removed")
 			}

@@ -104,6 +104,7 @@ func run() int {
 			EventsPath:      eventsPath,
 			EventsPathErr:   eventsErr,
 			Now:             cfg.Now,
+			Narrow:          o.narrow,
 			Map:             mapDeps,
 			DispatchConfig:  cfg.DispatchConfigBin,
 			FleetWatchPaths: func() []string { return watchPaths(fleet.knownCommons()) },
@@ -128,11 +129,16 @@ func resolveMap(runner data.Runner) (ui.MapDeps, func()) {
 	if err != nil {
 		return notCapable("no controlling tty"), func() {}
 	}
+	// Fd switches the handle back to blocking: a non-blocking write of a large
+	// inline image returns partial writes, letting bubbletea's output land
+	// inside the escape sequence.
+	_ = tty.Fd()
 	run := func(ctx context.Context, name string, args ...string) ([]byte, error) {
 		out, _, err := runner.Run(ctx, name, args...)
 		return out, err
 	}
-	if ok, why := kitty.Capable(os.Getenv, run); !ok {
+	mode, why := kitty.Detect(os.Getenv, run)
+	if mode == kitty.ModeNone {
 		_ = tty.Close()
 		return notCapable(why), func() {}
 	}
@@ -152,6 +158,7 @@ func resolveMap(runner data.Runner) (ui.MapDeps, func()) {
 			TTY:     tty,
 			CellPx:  func() (int, int) { return cellW, cellH },
 			Capable: func() (bool, string) { return true, "" },
+			Direct:  mode == kitty.ModeDirect,
 			OutPath: png.Name(),
 			IDBase:  kitty.ID(host, os.Getenv("TMUX_PANE")),
 		}, func() {
@@ -545,10 +552,11 @@ type opts struct {
 	mode, view string
 	watch      bool
 	keeps      bool // one-shot --json probes crew reap for keep reasons
+	narrow     bool // force the stacked narrow layout in the interactive UI
 }
 
 func usage() string {
-	return "usage: crew dash [--once | --json [--view <name> [--watch] [--keeps]]]\n" +
+	return "usage: crew dash [--narrow | --once | --json [--view <name> [--watch] [--keeps]]]\n" +
 		"views: " + strings.Join(view.Names, ", ") + "\n"
 }
 
@@ -569,6 +577,8 @@ func parseArgs(args []string) (opts, error) {
 			seen = &o.watch
 		case "--keeps":
 			seen = &o.keeps
+		case "--narrow":
+			seen = &o.narrow
 		case "--view":
 			if o.view != "" {
 				return opts{}, errors.New("--view given twice")
@@ -592,8 +602,10 @@ func parseArgs(args []string) (opts, error) {
 	}
 
 	switch {
-	case onceFlag && (jsonFlag || o.view != "" || o.watch || o.keeps):
+	case onceFlag && (jsonFlag || o.view != "" || o.watch || o.keeps || o.narrow):
 		return opts{}, errors.New("--once takes no other flags")
+	case o.narrow && (jsonFlag || o.view != "" || o.watch || o.keeps):
+		return opts{}, errors.New("--narrow takes no other flags")
 	case o.view != "" && !jsonFlag:
 		return opts{}, errors.New("--view needs --json")
 	case o.watch && o.view == "":

@@ -270,7 +270,7 @@ func TestRetroReportWithoutRowsRendersNoNotesYet(t *testing.T) {
 	}
 }
 
-const usageText = "usage: crew dash [--once | --json [--view <name> [--watch] [--keeps]]]\n" +
+const usageText = "usage: crew dash [--narrow | --once | --json [--view <name> [--watch] [--keeps]]]\n" +
 	"views: overview, roster, budget, runs, settings, map, fleet\n"
 
 func TestUnknownArgumentExits2WithUsage(t *testing.T) {
@@ -321,6 +321,9 @@ func TestParseArgs(t *testing.T) {
 		{args: []string{"--json", "--view"}, wantErr: "--view needs a name"},
 		{args: []string{"--once", "--json"}, wantErr: "--once takes no other flags"},
 		{args: []string{"--once", "--watch"}, wantErr: "--once takes no other flags"},
+		{args: []string{"--narrow"}, want: opts{narrow: true}},
+		{args: []string{"--once", "--narrow"}, wantErr: "--once takes no other flags"},
+		{args: []string{"--narrow", "--json"}, wantErr: "--narrow takes no other flags"},
 		{args: []string{"--json", "extra"}, wantErr: `unknown argument "extra"`},
 		{args: []string{"--json", "--json"}, wantErr: "--json given twice"},
 	} {

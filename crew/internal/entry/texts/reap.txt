@@ -1,4 +1,4 @@
-usage: crew reap [--quiet] [--dry-run] [--no-wait] [--fleet] [--json] [--idle S] [--discard BRANCH]
+usage: crew reap [--quiet] [--dry-run] [--no-wait] [--fleet] [--json] [--idle S] [--stale-after S] [--discard BRANCH]
 
 Reclaim a worker's tmux window and worktree once its PR has landed. The PR, not
 elapsed time, is the gate: a done worker sits for as long as its PR takes. The
@@ -12,6 +12,10 @@ reap row, else `gh pr list --head`.
   --json      With --dry-run, print one {"keeps":[{repo,crew,branch,reason}]}
               document of the branches reap would keep, and nothing else
   --idle      Idle seconds before the idle-release phase kills the window (default 300)
+  --stale-after
+              Seconds a done/failed/exited worker's kept worktree may sit before
+              it is reported stale (default 259200); also stale once its claimed
+              issues are all CLOSED
   --discard BRANCH
               Save a finished worker's uncommitted state, then reclaim it
 
@@ -29,6 +33,14 @@ Kept: an open PR, uncommitted changes, a live engine, a tip past the head of a
 PR that is not the latest session's own, or no PR with a done/failed worker
 whose claimed issue is not CLOSED, has no claim-issue row, or has commits on no
 remote and not patch-equivalent to the default branch.
+
+A kept worktree that needs a human (uncommitted changes, or no PR with an open
+issue, unpushed commits or no default ref) and is stale prints a stale:,
+inspect: and remove: line, and a non-dry run posts a `stale` bus row that
+`crew roster` surfaces as needs_cleanup. --json adds stale, stale_reason,
+worktree, inspect and remove to that keep. Reap never removes it. A finished
+session whose worktree is already gone is retired (`would retire` under
+--dry-run).
 
 No crew filter: the workers worth reaping belong to earlier dispatcher sessions.
 

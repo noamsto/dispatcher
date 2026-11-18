@@ -57,6 +57,12 @@ type run struct {
 	// tree it was saved from.
 	discardPatch, discardSt, discardTree string
 	clean                                *cleaner
+	// docs is the bus, read once for the stale and ghost passes; staleRecs is
+	// each branch's newest stale row once this run posted one; staleNow marks
+	// the branches this pass found stale.
+	docs      []map[string]any
+	staleRecs map[string]staleRec
+	staleNow  map[string]bool
 }
 
 // Run is crew.sh's `reap)` arm: reclaim the window and worktree of workers
@@ -137,13 +143,23 @@ func Run(ctx context.Context, req Request, paths bus.Paths, cwd string, stdout, 
 		if row.branch == "" {
 			continue
 		}
+		retired, code := r.retireGhost(ctx, row)
+		if code != 0 {
+			return code
+		}
+		if retired {
+			reaped++
+			continue
+		}
 		removed, code := r.consider(ctx, row)
 		if code != 0 {
 			return code
 		}
 		if removed {
 			reaped++
+			continue
 		}
+		r.clearStale(row)
 	}
 	if !r.dry && reaped == 0 {
 		r.note("nothing reclaimed")

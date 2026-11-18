@@ -1086,6 +1086,31 @@ func ovStripAt(v overviewView, i int) overviewView {
 	return v
 }
 
+func TestOverviewHjklStripEdgeWithStale(t *testing.T) {
+	asciiProfile(t)
+	in := viewtest.Inputs()
+	for _, c := range in.Snap.Roster.Crews {
+		for _, w := range c.Workers {
+			if w["branch"] == "feat/h" {
+				w["needs_cleanup"] = true
+				w["cleanup_reason"] = "uncommitted changes; issue closed"
+			}
+		}
+	}
+	v := newOverviewView(in, overviewNow)
+	v.View(150, 40)
+	if slices.IndexFunc(v.model.Attention, func(a vm.AttentionItem) bool { return a.Kind == vm.KindStale }) < 0 {
+		t.Fatal("stale worker is not an attention item")
+	}
+	last := len(v.model.Attention) - 1
+	if w, _ := ovKeys(ovStripAt(v, last), "k"); w.st.focus != panelAttention || w.sel().cursor != last-1 {
+		t.Errorf("k from stale: focus=%v cursor=%d", w.st.focus, w.sel().cursor)
+	}
+	if w, _ := ovKeys(ovStripAt(v, last), "j"); w.st.focus != panelChecklists {
+		t.Errorf("j past stale: focus=%v", w.st.focus)
+	}
+}
+
 func TestOverviewHjklStrip(t *testing.T) {
 	v, _ := ovFixture(t, 150, 40, false, nil)
 	last := len(v.model.Attention) - 1
@@ -1219,8 +1244,8 @@ func TestOverviewHjklAcrossRow(t *testing.T) {
 					t.Fatalf("%s %d: focus=%v, want %v", k, i+1, v.st.focus, tc.want[i])
 				}
 				if tc.w < wideWidth {
-					if got := shownPanels(tc.w, v.st.focus); len(got) != 1 || got[0] != tc.want[i] {
-						t.Fatalf("%s %d: shown=%v", k, i+1, got)
+					if !v.layout().panels[tc.want[i]].shown {
+						t.Fatalf("%s %d: focused %v not shown", k, i+1, tc.want[i])
 					}
 				}
 			}
@@ -1298,5 +1323,47 @@ func TestOverviewHjklDetailGuard(t *testing.T) {
 	v, _ = ovKeys(v, "k")
 	if v.st.focus != panelChecklists || v.mode != ovDetail || v.sel().worker != want {
 		t.Errorf("focus=%v mode=%v worker=%d, want checklists detail %d", v.st.focus, v.mode, v.sel().worker, want)
+	}
+}
+
+func TestOverviewMarksStaleWorker(t *testing.T) {
+	asciiProfile(t)
+	in := viewtest.Inputs()
+	for _, c := range in.Snap.Roster.Crews {
+		for _, w := range c.Workers {
+			if w["branch"] == "feat/h" {
+				w["needs_cleanup"] = true
+				w["cleanup_reason"] = "uncommitted changes; issue closed"
+			}
+		}
+	}
+	v := newOverviewView(in, overviewNow)
+	got := stripped(v.View(150, 40))
+	if !strings.Contains(got, "stale") {
+		t.Errorf("no stale marker:\n%s", got)
+	}
+	if !strings.Contains(got, "○ stale") {
+		t.Errorf("no stale marker on the worker card:\n%s", got)
+	}
+}
+
+func TestDetailOverlayStaleWorkerAgents(t *testing.T) {
+	asciiProfile(t)
+	in := viewtest.Inputs()
+	for _, c := range in.Snap.Roster.Crews {
+		for _, w := range c.Workers {
+			if w["branch"] == "feat/h" {
+				w["needs_cleanup"] = true
+				w["cleanup_reason"] = "uncommitted changes; issue closed"
+			}
+		}
+	}
+	v := newOverviewView(in, overviewNow)
+	v.View(150, 40)
+	selectBranch(t, &v, "feat/h")
+	v, _ = ovKeys(v, "enter")
+	got := stripped(v.View(150, 40))
+	if want := "none — stale, waiting on human cleanup"; !strings.Contains(got, want) {
+		t.Errorf("detail lacks %q:\n%s", want, got)
 	}
 }

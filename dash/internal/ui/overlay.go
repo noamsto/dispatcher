@@ -98,7 +98,7 @@ func (p actionPrompt) promptPanel(iw int) (panelSpec, []string) {
 type helpKey struct{ keys, text string }
 
 var overviewHelp = []helpKey{
-	{"tab / shift+tab", "cycle focus: attention, checklists, agents, monitors"},
+	{"tab / shift+tab", "cycle focus: attention, checklists, agents, monitors (narrow: agents before checklists)"},
 	{"h j k l / arrows", "h l: panels; j k: rows, crossing to or from the strip at an edge"},
 	{"1-9", "act on the attention row with that number"},
 	{"enter", "attention: select its worker, or inspect a crew item; else the detail overlay, esc closes"},
@@ -161,6 +161,9 @@ func detailLines(ov vm.OverviewView, wi, iw int) []string {
 	out = append(out, section("ACCEPTANCE")+" "+ac)
 
 	out = append(out, section("AGENTS"))
+	if w.NeedsCleanup {
+		out = append(out, "   "+fg(colDim).Render("none — stale, waiting on human cleanup"))
+	}
 	for _, a := range ov.Agents {
 		if a.Crew != w.Crew || a.Branch != w.Branch {
 			continue

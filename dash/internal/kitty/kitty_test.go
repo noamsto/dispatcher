@@ -119,7 +119,7 @@ func env(kv map[string]string) func(string) string {
 	return func(k string) string { return kv[k] }
 }
 
-// tmuxRunner answers the tmux queries Capable makes; show-environment reports
+// tmuxRunner answers the tmux queries Detect makes; show-environment reports
 // no ssh client unless withSSH overrides it.
 func tmuxRunner(termname string, termErr error, passthrough string, passErr error) Runner {
 	return func(_ context.Context, name string, args ...string) ([]byte, error) {
@@ -152,54 +152,52 @@ func noRun(context.Context, string, ...string) ([]byte, error) {
 	return nil, errors.New("runner must not be called outside tmux")
 }
 
-const sshWhy = "the terminal must run on this host: over ssh it cannot read the image file"
-
-func TestCapable(t *testing.T) {
+func TestDetect(t *testing.T) {
 	for _, c := range []struct {
 		name string
 		env  map[string]string
 		run  Runner
-		ok   bool
+		mode Mode
 		why  string
 	}{
-		{"kitty", map[string]string{"TERM": "xterm-kitty"}, noRun, true, ""},
-		{"ghostty", map[string]string{"TERM": "xterm-ghostty"}, noRun, true, ""},
-		{"plain xterm", map[string]string{"TERM": "xterm-256color"}, noRun, false, "needs kitty or ghostty"},
-		{"no TERM", map[string]string{}, noRun, false, "needs kitty or ghostty"},
+		{"kitty", map[string]string{"TERM": "xterm-kitty"}, noRun, ModeFile, ""},
+		{"ghostty", map[string]string{"TERM": "xterm-ghostty"}, noRun, ModeFile, ""},
+		{"plain xterm", map[string]string{"TERM": "xterm-256color"}, noRun, ModeNone, "needs kitty or ghostty"},
+		{"no TERM", map[string]string{}, noRun, ModeNone, "needs kitty or ghostty"},
 		{"tmux kitty passthrough on", map[string]string{"TERM": "tmux-256color", "TMUX": "/tmp/tmux-1/default,1,0"},
-			tmuxRunner("xterm-kitty", nil, "on", nil), true, ""},
+			tmuxRunner("xterm-kitty", nil, "on", nil), ModeFile, ""},
 		{"tmux ghostty passthrough all", map[string]string{"TERM": "tmux-256color", "TMUX": "x"},
-			tmuxRunner("xterm-ghostty", nil, "all", nil), true, ""},
+			tmuxRunner("xterm-ghostty", nil, "all", nil), ModeFile, ""},
 		{"tmux kitty passthrough off", map[string]string{"TERM": "tmux-256color", "TMUX": "x"},
-			tmuxRunner("xterm-kitty", nil, "off", nil), false, "tmux allow-passthrough is off — run: tmux set -g allow-passthrough on"},
+			tmuxRunner("xterm-kitty", nil, "off", nil), ModeNone, "tmux allow-passthrough is off — run: tmux set -g allow-passthrough on"},
 		{"tmux kitty passthrough option unknown", map[string]string{"TMUX": "x"},
-			tmuxRunner("xterm-kitty", nil, "", errors.New("exit 1")), false, "tmux allow-passthrough is off — run: tmux set -g allow-passthrough on"},
+			tmuxRunner("xterm-kitty", nil, "", errors.New("exit 1")), ModeNone, "tmux allow-passthrough is off — run: tmux set -g allow-passthrough on"},
 		{"tmux non-kitty client", map[string]string{"TERM": "xterm-kitty", "TMUX": "x"},
-			tmuxRunner("xterm-256color", nil, "on", nil), false, "tmux client terminal is xterm-256color, not kitty"},
+			tmuxRunner("xterm-256color", nil, "on", nil), ModeNone, "tmux client terminal is xterm-256color, not kitty"},
 		{"tmux client probe fails", map[string]string{"TERM": "xterm-kitty", "TMUX": "x"},
-			tmuxRunner("", errors.New("no server"), "on", nil), false, "cannot read the tmux client terminal: no server"},
-		{"ssh connection", map[string]string{"TERM": "xterm-kitty", "SSH_CONNECTION": "1.2.3.4 5 6.7.8.9 22"}, noRun, false, sshWhy},
-		{"ssh tty", map[string]string{"TERM": "xterm-kitty", "SSH_TTY": "/dev/pts/3"}, noRun, false, sshWhy},
+			tmuxRunner("", errors.New("no server"), "on", nil), ModeNone, "cannot read the tmux client terminal: no server"},
+		{"ssh connection", map[string]string{"TERM": "xterm-kitty", "SSH_CONNECTION": "1.2.3.4 5 6.7.8.9 22"}, noRun, ModeDirect, ""},
+		{"ssh tty", map[string]string{"TERM": "xterm-kitty", "SSH_TTY": "/dev/pts/3"}, noRun, ModeDirect, ""},
 		{"tmux ignores process ssh env when the client is local",
 			map[string]string{"TMUX": "x", "SSH_CONNECTION": "1.2.3.4 5 6.7.8.9 22", "SSH_TTY": "/dev/pts/3"},
-			withSSH(tmuxRunner("xterm-kitty", nil, "on", nil), "-SSH_CONNECTION\n", nil), true, ""},
+			withSSH(tmuxRunner("xterm-kitty", nil, "on", nil), "-SSH_CONNECTION\n", nil), ModeFile, ""},
 		{"tmux unknown variable means not ssh", map[string]string{"TMUX": "x", "SSH_TTY": "/dev/pts/3"},
-			withSSH(tmuxRunner("xterm-kitty", nil, "on", nil), "", errors.New("exit 1")), true, ""},
+			withSSH(tmuxRunner("xterm-kitty", nil, "on", nil), "", errors.New("exit 1")), ModeFile, ""},
 		{"tmux client attached over ssh", map[string]string{"TMUX": "x"},
-			withSSH(tmuxRunner("xterm-kitty", nil, "on", nil), "SSH_CONNECTION=1.2.3.4 1 5.6.7.8 22\n", nil), false, sshWhy},
+			withSSH(tmuxRunner("xterm-kitty", nil, "on", nil), "SSH_CONNECTION=1.2.3.4 1 5.6.7.8 22\n", nil), ModeDirect, ""},
 		{"tmux non-kitty client wins over ssh", map[string]string{"TMUX": "x"},
-			withSSH(tmuxRunner("xterm-256color", nil, "on", nil), "SSH_CONNECTION=1.2.3.4 1 5.6.7.8 22\n", nil), false, "tmux client terminal is xterm-256color, not kitty"},
+			withSSH(tmuxRunner("xterm-256color", nil, "on", nil), "SSH_CONNECTION=1.2.3.4 1 5.6.7.8 22\n", nil), ModeNone, "tmux client terminal is xterm-256color, not kitty"},
 		{"tmux passthrough off wins over ssh", map[string]string{"TMUX": "x"},
-			withSSH(tmuxRunner("xterm-kitty", nil, "off", nil), "SSH_CONNECTION=1.2.3.4 1 5.6.7.8 22\n", nil), false, "tmux allow-passthrough is off — run: tmux set -g allow-passthrough on"},
+			withSSH(tmuxRunner("xterm-kitty", nil, "off", nil), "SSH_CONNECTION=1.2.3.4 1 5.6.7.8 22\n", nil), ModeNone, "tmux allow-passthrough is off — run: tmux set -g allow-passthrough on"},
 	} {
-		ok, why := Capable(env(c.env), c.run)
-		if ok != c.ok || why != c.why {
-			t.Errorf("%s: Capable = %v, %q; want %v, %q", c.name, ok, why, c.ok, c.why)
+		mode, why := Detect(env(c.env), c.run)
+		if mode != c.mode || why != c.why {
+			t.Errorf("%s: Detect = %v, %q; want %v, %q", c.name, mode, why, c.mode, c.why)
 		}
 	}
 }
 
-func TestCapableQueriesTmuxArgv(t *testing.T) {
+func TestDetectQueriesTmuxArgv(t *testing.T) {
 	var calls []string
 	run := func(_ context.Context, name string, args ...string) ([]byte, error) {
 		calls = append(calls, name+" "+strings.Join(args, " "))
@@ -208,7 +206,7 @@ func TestCapableQueriesTmuxArgv(t *testing.T) {
 		}
 		return []byte("on"), nil
 	}
-	if ok, why := Capable(env(map[string]string{"TMUX": "x"}), run); !ok {
+	if mode, why := Detect(env(map[string]string{"TMUX": "x"}), run); mode != ModeFile {
 		t.Fatalf("not capable: %s", why)
 	}
 	want := []string{
@@ -218,5 +216,83 @@ func TestCapableQueriesTmuxArgv(t *testing.T) {
 	}
 	if strings.Join(calls, "|") != strings.Join(want, "|") {
 		t.Errorf("calls = %q, want %q", calls, want)
+	}
+}
+
+func TestDetectNonKittyOverSSHDoesNotBlameSSH(t *testing.T) {
+	e := env(map[string]string{"TERM": "xterm-256color", "SSH_CONNECTION": "1.2.3.4 5 6.7.8.9 22"})
+	mode, why := Detect(e, noRun)
+	if mode != ModeNone || why != "needs kitty or ghostty" || strings.Contains(why, "ssh") {
+		t.Errorf("Detect = %v, %q", mode, why)
+	}
+}
+
+// parseChunks splits StoreDirect output into its APCs, unwrapping tmux
+// passthrough, and returns each one's keys and payload.
+func parseChunks(t *testing.T, out string, inTmux bool) (keys, payloads []string) {
+	t.Helper()
+	var apcs []string
+	if inTmux {
+		for _, piece := range strings.Split(out, "\x1bPtmux;")[1:] {
+			body, ok := strings.CutSuffix(piece, "\x1b\\")
+			if !ok {
+				t.Fatalf("passthrough not terminated: %q", piece[max(0, len(piece)-8):])
+			}
+			apcs = append(apcs, strings.ReplaceAll(body, "\x1b\x1b", "\x1b"))
+		}
+	} else {
+		for _, apc := range strings.SplitAfter(out, "\x1b\\") {
+			if apc != "" {
+				apcs = append(apcs, apc)
+			}
+		}
+	}
+	for _, apc := range apcs {
+		k, p := splitAPC(t, apc)
+		keys, payloads = append(keys, k), append(payloads, p)
+	}
+	return keys, payloads
+}
+
+func splitAPC(t *testing.T, apc string) (keys, payload string) {
+	t.Helper()
+	body, ok := strings.CutPrefix(apc, "\x1b_G")
+	body, ok2 := strings.CutSuffix(body, "\x1b\\")
+	if !ok || !ok2 {
+		t.Fatalf("not an APC: %q", apc)
+	}
+	keys, payload, _ = strings.Cut(body, ";")
+	return keys, payload
+}
+
+func TestStoreDirectChunksAndRoundTrips(t *testing.T) {
+	png := make([]byte, 7000) // 9336 base64 bytes: 4096, 4096, 1144
+	for i := range png {
+		png[i] = byte(i * 7)
+	}
+	for _, inTmux := range []bool{false, true} {
+		keys, payloads := parseChunks(t, StoreDirect(7, png, 80, 24, inTmux), inTmux)
+		if len(keys) != 3 {
+			t.Fatalf("tmux=%v: %d chunks, want 3", inTmux, len(keys))
+		}
+		if keys[0] != "i=7,a=T,U=1,q=2,f=100,c=80,r=24,t=d,m=1" || keys[1] != "m=1,q=2" || keys[2] != "m=0,q=2" {
+			t.Errorf("tmux=%v: keys = %q", inTmux, keys)
+		}
+		for i, p := range payloads[:2] {
+			if len(p) != 4096 {
+				t.Errorf("chunk %d is %d bytes, want 4096", i, len(p))
+			}
+		}
+		got, err := base64.StdEncoding.DecodeString(strings.Join(payloads, ""))
+		if err != nil || string(got) != string(png) {
+			t.Errorf("tmux=%v: payload does not decode back to the PNG (err %v)", inTmux, err)
+		}
+	}
+}
+
+func TestStoreDirectSmallImageIsOneFinalChunk(t *testing.T) {
+	keys, payloads := parseChunks(t, StoreDirect(3, []byte("png"), 2, 1, false), false)
+	if len(keys) != 1 || !strings.HasSuffix(keys[0], "t=d,m=0") || payloads[0] != base64.StdEncoding.EncodeToString([]byte("png")) {
+		t.Errorf("keys = %q payloads = %q", keys, payloads)
 	}
 }

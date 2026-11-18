@@ -82,6 +82,7 @@ map_file() {
   adapters/core/directive-delivery.sh) add adapters directive-delivery ;;
   adapters/core/dispatch-notify.sh) add adapters dispatch-notify dispatch ;;
   adapters/core/dispatcher.sh) add adapters dispatch dispatcher module ;;
+  adapters/core/dispatcher-setup.sh) add dispatcher-setup dispatcher module ;;
   adapters/core/lead-launcher.sh) add adapters dispatch dispatch-resume dispatcher lead-launcher module ;;
   adapters/core/model-resolve.sh) add dispatch model-resolve module ;;
   adapters/core/openrouter-key.sh) add adapters dispatch module refresh-budget refresh-scores ;;

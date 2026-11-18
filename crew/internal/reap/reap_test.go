@@ -561,7 +561,11 @@ func TestIssueMode(t *testing.T) {
 	// Both closed: no origin default branch ref in this repo keeps it.
 	f.gh["issue view 6 --json state --jq .state"] = "CLOSED"
 	f.reap(f.main, Request{})
-	f.wantOut("crew reap: keeping feat/r — done but no PR on the bus or GitHub; no origin default branch ref", "crew reap: nothing reclaimed")
+	f.wantOut("crew reap: keeping feat/r — done but no PR on the bus or GitHub; no origin default branch ref",
+		"crew reap:   stale: needs human cleanup — done but no PR on the bus or GitHub; no origin default branch ref; issue closed",
+		"crew reap:   inspect: "+f.inspectCmd(),
+		"crew reap:   remove:  "+f.removeCmd(),
+		"crew reap: nothing reclaimed")
 
 	f.bus(status("exited", "", 0))
 	f.reap(f.main, Request{})

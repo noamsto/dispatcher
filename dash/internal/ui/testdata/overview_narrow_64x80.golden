@@ -1,0 +1,80 @@
+╭ ▸ ATTENTION ──────────────────────────────── 12 need action ─╮
+│▌1 ✗ feat/h exit 1 after test failure           20m → peek    │
+│ 2 ✗ feat/g dead: quiet: no output 20m          15m → peek    │
+│ 3 ✗ otter  reviewer: role reviewer engine ex…   6m → peek    │
+│ 4 ✗ c2     crew stream lane is dead            now → inspect │
+│ 5 ! feat/r need the staging db password         7m → reply   │
+│ 6 ! feat/c which schema should the migration…   5m → reply   │
+│ 7 ! feat/e quiet: no output 4m                  4m → nudge   │
+│ 8 ! feat/d prompt: permission dialog            3m → peek    │
+│ 9 ! feat/f runaway: 900 tool calls in 10m       2m → peek    │
+╰──────────────────────────────────────────────────────────────╯
+╭ AGENTS ────────────────────────────────────────── 16 agents ─╮
+│ ● otter sonnet                                               │
+│   roles ● pla ✗ rev                                          │
+│ ● heron sonnet                                               │
+│   roles —                                                    │
+│ ● feat/c sonnet                                              │
+│   roles ✗ spe                                                │
+│ ● feat/d sonnet                                              │
+│   roles —                                                    │
+│ ● feat/e sonnet                                              │
+│   roles —                                                    │
+│ ● feat/f sonnet                                              │
+│   roles —                                                    │
+│ ✗ feat/g sonnet                                              │
+│   roles —                                                    │
+│▌✗ feat/h sonnet                                              │
+│▌  roles —                                                    │
+│ ● feat/r@halo gpt-5                                          │
+│   roles ?                                                    │
+│ ● feat/j sonnet                                              │
+│   roles —                                                    │
+│                                                              │
+╰──────────────────────────────────────────────────────────────╯
+╭ CHECKLISTS ─────────────────────────────────── 0 of 13 done ─╮
+│ ● otter standard                                         AC —│
+│   ●─●─◉─○─○─○ execute                                        │
+│ ● heron standard                                       AC 5/5│
+│   ●─●─●─●─●─● pr_open                                        │
+│ ● feat/c standard                                        AC —│
+│   ○─○─○─○─○─○ blocked                                        │
+│ ● feat/d standard                                        AC —│
+│   ○─○─○─○─○─○ blocked                                        │
+│ ● feat/e standard                                        AC —│
+│   ○─○─○─○─○─○ blocked                                        │
+│ ● feat/f standard                                        AC —│
+│   ○─○─○─○─○─○ blocked                                        │
+│ ✗ feat/g standard                                        AC —│
+│   ○─○─○─○─○─○ failed                                         │
+│▌✗ feat/h standard                                        AC —│
+│▌  ○─○─○─○─○─○ failed                                         │
+│ ● feat/r@halo deep                                       AC —│
+│   ?                                                          │
+│ ● feat/j standard                                        AC —│
+│   ●─-─◉─○─○─○ execute                                        │
+│                                                              │
+╰──────────────────────────────────────────────────────────────╯
+╭ MONITORS ─────────────────────────────────────── 11 watched ─╮
+│ WATCHDOG ────────────────────────────────────────────────────│
+│ otter      ▁▁▁▁▁▁█▁█▁▁█▁▁▁▁▁▁▁▁▁█▁▁▁▁▁▁█▁ ok 45s             │
+│ heron      ▁▁▁▁▁▁▁█▁█▁▁█▁▁▁█▁█▁▁▁▁▁▁▁▁▁▁▁ ok 10m             │
+│ feat/c     ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁ ok 5m              │
+│ feat/d     ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁ prompt 3m          │
+│ feat/e     ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁ stall 4m           │
+│ feat/f     ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁ runaway 2m         │
+│ feat/r@ha… ······························ ok 7m              │
+│ feat/j     ▁▁▁▁▁▁▁▁▁▁▁▁▁▁█▁▁▁▁▁▁▁▁▁▁█▁▁▁▁ ok 30s             │
+│ feat/p@mbp ······························ ok                 │
+│ feat/q@nuc ······························ ?                  │
+│ @halo      ······························ ?                  │
+│ PR CHECKS ───────────────────────────────────────────────────│
+│ #12 ● checks ● merge 10m                                     │
+│ BUDGET ──────────────────────────────────────────────────────│
+│ claude 5h   ██░░░░░░░░░░░░░░░░░░  10%                        │
+│ claude 7d   ████████████░░░░░░░░  62% ↑                      │
+╰──────────────────────────────────────────────────────────────╯
+╭ RECENT EVENTS ─────────────────────────────────── 19 events ─╮
+│ 1m otter working execute                                     │
+│ 4m feat/j working execute                                    │
+╰──────────────────────────────────────────────────────────────╯
