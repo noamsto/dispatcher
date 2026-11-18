@@ -1059,3 +1059,45 @@ func TestOverviewAttentionUsesReapKeeps(t *testing.T) {
 	}
 	t.Fatal("no failed:c1:feat/h item")
 }
+
+func TestOverviewMarksStaleWorker(t *testing.T) {
+	asciiProfile(t)
+	in := viewtest.Inputs()
+	for _, c := range in.Snap.Roster.Crews {
+		for _, w := range c.Workers {
+			if w["branch"] == "feat/h" {
+				w["needs_cleanup"] = true
+				w["cleanup_reason"] = "uncommitted changes; issue closed"
+			}
+		}
+	}
+	v := newOverviewView(in, overviewNow)
+	got := stripped(v.View(150, 40))
+	if !strings.Contains(got, "stale") {
+		t.Errorf("no stale marker:\n%s", got)
+	}
+	if !strings.Contains(got, "○ stale") {
+		t.Errorf("no stale marker on the worker card:\n%s", got)
+	}
+}
+
+func TestDetailOverlayStaleWorkerAgents(t *testing.T) {
+	asciiProfile(t)
+	in := viewtest.Inputs()
+	for _, c := range in.Snap.Roster.Crews {
+		for _, w := range c.Workers {
+			if w["branch"] == "feat/h" {
+				w["needs_cleanup"] = true
+				w["cleanup_reason"] = "uncommitted changes; issue closed"
+			}
+		}
+	}
+	v := newOverviewView(in, overviewNow)
+	v.View(150, 40)
+	selectBranch(t, &v, "feat/h")
+	v, _ = ovKeys(v, "enter")
+	got := stripped(v.View(150, 40))
+	if want := "none — stale, waiting on human cleanup"; !strings.Contains(got, want) {
+		t.Errorf("detail lacks %q:\n%s", want, got)
+	}
+}

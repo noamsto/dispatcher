@@ -37,6 +37,8 @@ func TestSummarizeEventEveryKind(t *testing.T) {
 		{"claim", `{"kind":"claim","from":"worker:feat/a#s1"}`, "claimed"},
 		{"claim-issue", `{"kind":"claim-issue","issue":"7","branch":"feat/a"}`, "claimed issue #7"},
 		{"reap", `{"kind":"reap","branch":"feat/a","pr":"https://github.com/o/r/pull/1138","pr_state":"MERGED"}`, "reaped PR #1138 MERGED"},
+		{"stale", `{"kind":"stale","branch":"feat/a","stale":true,"reason":"uncommitted changes; issue closed"}`, "stale uncommitted changes; issue closed"},
+		{"stale cleared", `{"kind":"stale","branch":"feat/a","stale":false}`, "stale cleared"},
 		{"reap bare", `{"kind":"reap","branch":"feat/a"}`, "reaped"},
 		{"release", `{"kind":"release","branch":"feat/a","state":"done"}`, "released done"},
 		{"resume", `{"kind":"resume","branch":"feat/a","engine":"claude","model":"opus"}`, "resumed claude opus"},

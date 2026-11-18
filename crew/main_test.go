@@ -1819,6 +1819,9 @@ var refusalRows = []struct {
 	{"reap json without dry-run", []string{"reap", "--json"}, "crew: reap: --json needs --dry-run", 1},
 	{"reap idle missing value", []string{"reap", "--idle"}, "crew: --idle needs a value in seconds", 1},
 	{"reap idle empty value", []string{"reap", "--idle", ""}, "crew: --idle needs a value in seconds", 1},
+	{"reap stale-after missing value", []string{"reap", "--stale-after"}, "crew: --stale-after needs a value in seconds", 1},
+	{"reap stale-after empty value", []string{"reap", "--stale-after", ""}, "crew: --stale-after needs a value in seconds", 1},
+	{"reap stale-after not digits", []string{"reap", "--stale-after", "3d"}, "crew: --stale-after must be a non-negative integer number of seconds", 1},
 	{"reap discard missing value", []string{"reap", "--discard"}, "crew: --discard needs a branch", 1},
 	{"reap idle not digits", []string{"reap", "--idle", "abc"}, "crew: --idle must be a non-negative integer number of seconds", 1},
 	{"reap bad bool", []string{"reap", "--quiet=maybe"},
@@ -1949,7 +1952,7 @@ const (
 	stackUsage           = "usage: crew stack cut [--record] <child-branch|PR#> [<oid>]\n       crew stack align <top-PR#|branch>"
 	rateRootNeedsDir     = "crew: rate --root needs a directory"
 	whereUsage           = "usage: crew where <codename|branch|%id> [--crew ID]"
-	reapUsage            = "crew: reap takes --quiet, --dry-run, --no-wait, --fleet, --json, --idle S and --discard BRANCH "
+	reapUsage            = "crew: reap takes --quiet, --dry-run, --no-wait, --fleet, --json, --idle S, --stale-after S and --discard BRANCH "
 	baselineUsage        = "usage: crew git-baseline [--accept]"
 	wantRemoteRunUsage   = "usage: crew remote-run --host H [--env K=V]... [--spec-file F] -- <argv>..."
 	wantDispatchRowUsage = "usage: crew dispatch-row --session S [--crew ID]"
@@ -2334,6 +2337,7 @@ func TestParseSpellingsAreIdentical(t *testing.T) {
 			[]string{"roster-render", "--no-open=true", "--once=true", "--detach=true"}, false},
 		{"git-baseline --accept", []string{"git-baseline", "--accept"}, []string{"git-baseline", "--accept=true"}, false},
 		{"reap --idle", []string{"reap", "--idle", "5"}, []string{"reap", "--idle=5"}, false},
+		{"reap --stale-after", []string{"reap", "--stale-after", "60"}, []string{"reap", "--stale-after=60"}, false},
 		{"reap --discard", []string{"reap", "--discard", "b"}, []string{"reap", "--discard=b"}, false},
 		{"reap bools", []string{"reap", "--quiet", "--dry-run", "--no-wait"}, []string{"reap", "--quiet=true", "--dry-run=true", "--no-wait=true"}, false},
 		{"adopt --force", []string{"adopt", "--force", "c1"}, []string{"adopt", "--force=true", "c1"}, false},
@@ -2367,6 +2371,7 @@ func TestParseSpellingsAreIdentical(t *testing.T) {
 		{"role-watch --interval", []string{"role-watch", "reviewer", "--interval", "1"}, []string{"role-watch", "reviewer", "--interval=1"}, false},
 		{"role-watch --defer-notice", []string{"role-watch", "reviewer", "--defer-notice", "5"}, []string{"role-watch", "reviewer", "--defer-notice=5"}, false},
 		{"role-watch --submit-retries", []string{"role-watch", "reviewer", "--submit-retries", "2"}, []string{"role-watch", "reviewer", "--submit-retries=2"}, false},
+		{"reap --stale-after empty", []string{"reap", "--stale-after", ""}, []string{"reap", "--stale-after="}, true},
 		{"reap --idle empty", []string{"reap", "--idle", ""}, []string{"reap", "--idle="}, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

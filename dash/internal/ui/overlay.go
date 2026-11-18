@@ -161,6 +161,9 @@ func detailLines(ov vm.OverviewView, wi, iw int) []string {
 	out = append(out, section("ACCEPTANCE")+" "+ac)
 
 	out = append(out, section("AGENTS"))
+	if w.NeedsCleanup {
+		out = append(out, "   "+fg(colDim).Render("none — stale, waiting on human cleanup"))
+	}
 	for _, a := range ov.Agents {
 		if a.Crew != w.Crew || a.Branch != w.Branch {
 			continue

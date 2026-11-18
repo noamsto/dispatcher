@@ -35,6 +35,11 @@ type candidate struct {
 	// it; nopr is issue mode's "<state> but no PR …" lead-in; why is a failed
 	// lookup's reason.
 	ignored, nopr, why string
+	// class is the keep's stale-eligibility, set where a keep may need a human.
+	class keepClass
+	// humanKeep is set when issueClosed kept the branch on a definite state a
+	// human may have to clean up, not on a failed read.
+	humanKeep bool
 }
 
 // ign is `${ignored:+ ($ignored)}`.
@@ -131,6 +136,7 @@ func (r *run) issueClosed(ctx context.Context, c *candidate) bool {
 	c.nopr = c.state + " but no PR on the bus or GitHub" + c.ign()
 	if c.state != "done" && c.state != "failed" {
 		c.why = c.nopr + "; only done/failed reclaim on a closed issue"
+		c.humanKeep = true
 		return false
 	}
 	claimed, err := r.claimed(c.branch)
@@ -140,12 +146,14 @@ func (r *run) issueClosed(ctx context.Context, c *candidate) bool {
 	}
 	if claimed == "" {
 		c.why = c.nopr + "; no claim-issue row"
+		c.humanKeep = true
 		return false
 	}
 	c.issues = nil
 	for n := range strings.SplitSeq(claimed, "\n") {
 		if !numericRe.MatchString(n) {
 			c.why = c.nopr + "; claim-issue row names a non-numeric issue"
+			c.humanKeep = true
 			return false
 		}
 		state, _ := r.p.Gh.Run(ctx, "issue", "view", n, "--json", "state", "--jq", ".state")
@@ -154,6 +162,7 @@ func (r *run) issueClosed(ctx context.Context, c *candidate) bool {
 			return false
 		}
 		if state != "CLOSED" {
+			c.humanKeep = state == "OPEN"
 			c.why = c.nopr + "; issue #" + n + " is " + state
 			return false
 		}
@@ -357,7 +366,7 @@ func (r *run) treeGates(ctx context.Context, c *candidate) bool {
 		return false
 	}
 	if dirt(st) {
-		r.keep(c, "uncommitted changes")
+		r.keepHuman(ctx, c, "uncommitted changes", classDirty)
 		return false
 	}
 	return true
@@ -421,7 +430,7 @@ func (r *run) pushedGate(ctx context.Context, c *candidate) bool {
 		}
 	}
 	if def == "" {
-		r.keep(c, c.nopr+"; no origin default branch ref")
+		r.keepHuman(ctx, c, c.nopr+"; no origin default branch ref", classNoDefault)
 		return false
 	}
 	short := strings.TrimPrefix(def, "refs/remotes/")
@@ -443,7 +452,7 @@ func (r *run) pushedGate(ctx context.Context, c *candidate) bool {
 		}
 	}
 	if ahead > 0 {
-		r.keep(c, c.nopr+"; "+strconv.Itoa(ahead)+" commit(s) not on any remote and not patch-equivalent to "+short)
+		r.keepHuman(ctx, c, c.nopr+"; "+strconv.Itoa(ahead)+" commit(s) not on any remote and not patch-equivalent to "+short, classUnpushed)
 		return false
 	}
 	return true
@@ -526,7 +535,11 @@ func (r *run) consider(ctx context.Context, row latestRow) (bool, int) {
 	if c.pr == "-" {
 		c.mode = "issue"
 		if !r.issueClosed(ctx, c) {
-			r.keep(c, c.why)
+			if c.humanKeep {
+				r.keepHuman(ctx, c, c.why, classOpenIssue)
+			} else {
+				r.keep(c, c.why)
+			}
 			return false, 0
 		}
 	} else if !r.prGate(ctx, c) {

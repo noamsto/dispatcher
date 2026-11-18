@@ -13,6 +13,12 @@ type Keep struct {
 	Crew   string `json:"crew"`
 	Branch string `json:"branch"`
 	Reason string `json:"reason"`
+	// The stale fields appear only on a keep that needs a human to clean up.
+	Stale       bool   `json:"stale,omitempty"`
+	StaleReason string `json:"stale_reason,omitempty"`
+	Worktree    string `json:"worktree,omitempty"`
+	Inspect     string `json:"inspect,omitempty"`
+	Remove      string `json:"remove,omitempty"`
 }
 
 type keepLog struct{ keeps []Keep }
