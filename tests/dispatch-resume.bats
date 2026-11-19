@@ -1422,6 +1422,31 @@ _ro_rule() { printf -v r ' %q' "Edit(/$1/**)"; }
   [ "$status" -eq 0 ]
 }
 
+@test "1687: a claude resume that cannot pre-trust its worktree fails before any header write, the resume row and the working status" {
+  setup_worker_wt
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  sleep 100 &
+  holder_pid=$!
+  ln -s "$holder_pid" "$HOME/.claude.json.dispatch.lock"
+  touch "$(bus_log)"
+  before=$(jq -s '[.[] | select(.kind == "resume")] | length' "$(bus_log)")
+  cp "$WT/WORKER_TASK.md" "$BATS_TEST_TMPDIR/task.before"
+  old_worker=$(grep -m1 '^worker_id: ' "$WT/WORKER_TASK.md")
+  [ -n "$old_worker" ]
+  cd "$WT"
+  run --separate-stderr run_resume
+  kill "$holder_pid" 2>/dev/null || true
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"could not pre-trust worktree"*"held by pid $holder_pid"* ]]
+  [ "$(jq -s '[.[] | select(.kind == "resume")] | length' "$(bus_log)")" = "$before" ]
+  run ! grep -q ' working resumed' "$STUB_LOG"
+  run ! grep -q '^msg ' "$STUB_LOG"
+  [ "$(readlink "$HOME/.claude.json.dispatch.lock")" = "$holder_pid" ]
+  [ "$(grep -m1 '^worker_id: ' "$WT/WORKER_TASK.md")" = "$old_worker" ]
+  run ! grep -q '^resume: true$' "$WT/WORKER_TASK.md"
+  cmp "$BATS_TEST_TMPDIR/task.before" "$WT/WORKER_TASK.md"
+}
+
 @test "resume stamps the window for --spawn-role and rewrites the protocol-dirs record" {
   setup_worker_wt
   stub_tmux_with_pane_at_wt '@4' '%8' iris

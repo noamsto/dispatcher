@@ -649,6 +649,10 @@ if [ -n "$spawn_repo" ]; then
     echo "dispatcher: --spawn: the git common dir $common does not end in /.git, so there is no main worktree to spawn in" >&2
     exit 1
   fi
+  if ! [ -d "$common/crew" ] || [ -L "$common/crew" ]; then
+    echo "dispatcher: --spawn: $spawn_repo has no crew bus ($common/crew) — spawn starts dispatchers only in repos crew already knows; start the first one by hand" >&2
+    exit 1
+  fi
   wt=${common%/.git}
   cd -- "$wt" || exit 1
   if ! table=$(crew crews --home 2>/dev/null); then
@@ -667,9 +671,7 @@ if [ -n "$spawn_repo" ]; then
     fi
   done <<<"$table"
 
-  # Same lock and 30-min marker as --relaunch, per repo. The crew dir does not
-  # exist yet in a repo that never had a crew, and the lock's mkdir needs it.
-  mkdir -p -- "$common/crew"
+  # Same lock and 30-min marker as --relaunch, per repo.
   lock="$common/crew/.spawn.lock"
   mkdir -- "$lock" 2>/dev/null || {
     echo "dispatcher: --spawn: another --spawn in this repo is in progress ($lock — rmdir it if none is running)" >&2

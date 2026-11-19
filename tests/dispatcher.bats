@@ -2438,7 +2438,8 @@ _invalid_record_row() { # record message
 }
 
 # _spawn_setup — the relaunch stubs, a `crew new` that mints c-new, and a fresh
-# repo $SPAWN_REPO that has never had a crew (no .git/crew).
+# repo $SPAWN_REPO that has never had a crew (no .git/crew). _spawn_bus gives it
+# the crew bus dir that spawn requires, still with no crew registered.
 _spawn_setup() {
   _relaunch_setup
   _fake_settings "$_auto_start_on"
@@ -2472,6 +2473,8 @@ EOF
   SPAWN_REPO=$(cd "$SPAWN_REPO" && pwd -P)
   SPAWN_MARKER="$SPAWN_REPO/.git/crew/spawn"
 }
+
+_spawn_bus() { mkdir "$SPAWN_REPO/.git/crew"; }
 
 _spawn_refuses() { # message [repo]
   : >"$STUB_LOG"
@@ -2532,13 +2535,31 @@ _spawn_refuses() { # message [repo]
 
 @test "1687: --spawn refuses while any crew in the repo is live, or crew crews fails" {
   _spawn_setup
+  _spawn_bus
   begin_rows
   crews_tsv "$(printf 'c1\t5\t5\t1\t999999\tno')" "$(printf 'c2\t5\t5\t1\t4321\tyes')" >"$STUB_DIR/crews.tsv"
   keep_row live _spawn_refuses "dispatcher: --spawn: crew c2's dispatcher is live in this repo — ask it instead"
   touch "$STUB_DIR/crews.fail"
   keep_row crews-fails _spawn_refuses "dispatcher: --spawn: 'crew crews' failed"
   finish_rows 2
+  [ ! -e "$SPAWN_MARKER" ]
+  [ ! -e "$SPAWN_REPO/.git/crew/.spawn.lock" ]
+}
+
+# The spawned claude dispatcher pre-trusts its checkout, so spawn must not reach
+# a clone crew never knew.
+@test "1687: --spawn refuses a repo with no crew bus, or a symlinked one" {
+  _spawn_setup
+  mkdir "$BATS_TEST_TMPDIR/elsewhere"
+  begin_rows
+  keep_row missing _spawn_refuses "dispatcher: --spawn: $SPAWN_REPO has no crew bus ($SPAWN_REPO/.git/crew) — spawn starts dispatchers only in repos crew already knows; start the first one by hand"
+  [ ! -s "$STUB_LOG" ]
   [ ! -e "$SPAWN_REPO/.git/crew" ]
+  ln -s "$BATS_TEST_TMPDIR/elsewhere" "$SPAWN_REPO/.git/crew"
+  keep_row symlink _spawn_refuses "has no crew bus ($SPAWN_REPO/.git/crew)"
+  [ ! -s "$STUB_LOG" ]
+  finish_rows 2
+  [ -z "$(ls -A "$BATS_TEST_TMPDIR/elsewhere")" ]
 }
 
 @test "1687: --spawn refuses while another --spawn in the repo holds the lock" {
@@ -2549,8 +2570,9 @@ _spawn_refuses() { # message [repo]
   [ ! -e "$SPAWN_MARKER" ]
 }
 
-@test "1687: --spawn starts a new crew in a repo that never had one, as an argv with a clean identity" {
+@test "1687: --spawn starts a new crew in a repo with a crew bus but no crew, as an argv with a clean identity" {
   _spawn_setup
+  _spawn_bus
   CREW_OVERSEER=host CREW_WORKER_ID=w1 CREW_ROLE_ID=r1 run --separate-stderr run_launcher --spawn "$SPAWN_REPO"
   live_pid=$(cat "$STUB_DIR/dispatcher.pid")
   [ "$status" -eq 0 ]
@@ -2573,6 +2595,7 @@ _spawn_refuses() { # message [repo]
 
 @test "1687: --spawn refuses a second spawn in the repo within 30 min, and passes an older marker" {
   _spawn_setup
+  _spawn_bus
   run run_launcher --spawn "$SPAWN_REPO"
   [ "$status" -eq 0 ]
   live_pid=$(cat "$STUB_DIR/dispatcher.pid")

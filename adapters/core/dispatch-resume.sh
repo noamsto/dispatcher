@@ -1121,6 +1121,19 @@ if [ -d "$cdir" ]; then
   esac
 fi
 
+# A resumed worktree may have lost its trust record; an unstamped path wedges the
+# worker on Claude Code's workspace-trust dialog, same as at dispatch.
+if [ "$agent" = claude ] && ! _claude_pretrust "$wt_path"; then
+  claude_json_lock_path="$HOME/.claude.json.dispatch.lock"
+  held=$(readlink "$claude_json_lock_path" 2>/dev/null || true)
+  if [ -n "$held" ] && kill -0 "$held" 2>/dev/null; then
+    echo "dispatch resume: could not pre-trust worktree $wt_path — $claude_json_lock_path is held by pid $held (a dispatch mid-scaffold) — the worker would wedge on the workspace-trust dialog" >&2
+  else
+    echo "dispatch resume: could not pre-trust worktree $wt_path — a stale lock from a hard-killed dispatch remains at $claude_json_lock_path; remove it and retry" >&2
+  fi
+  exit 1
+fi
+
 # Rewrite header lines in place, never the whole document: the worker may have
 # been handed a spec, and this header is the record we just read. worker_id
 # MUST move — it carries the session, so leaving the old one would have the
@@ -1298,19 +1311,6 @@ printf -v q_crew_id '%q' "$crew_id"
 printf -v q_agent_name '%q' "$agent_name"
 printf -v q_model '%q' "$model"
 printf -v q_effort '%q' "$effort"
-
-# A resumed worktree may have lost its trust record; an unstamped path wedges the
-# worker on Claude Code's workspace-trust dialog, same as at dispatch.
-if [ "$agent" = claude ] && ! _claude_pretrust "$wt_path"; then
-  claude_json_lock_path="$HOME/.claude.json.dispatch.lock"
-  held=$(readlink "$claude_json_lock_path" 2>/dev/null || true)
-  if [ -n "$held" ] && kill -0 "$held" 2>/dev/null; then
-    echo "dispatch resume: could not pre-trust worktree $wt_path — $claude_json_lock_path is held by pid $held (a dispatch mid-scaffold) — the worker would wedge on the workspace-trust dialog" >&2
-  else
-    echo "dispatch resume: could not pre-trust worktree $wt_path — a stale lock from a hard-killed dispatch remains at $claude_json_lock_path; remove it and retry" >&2
-  fi
-  exit 1
-fi
 
 tmux_env="$(worker_tmux_env "$wt_path")" || exit 1
 
