@@ -100,7 +100,18 @@ type FleetCrewDispatcher struct {
 	Lane       *string `json:"lane"`
 	LastEventS *int64  `json:"last_event_s"`
 	PID        *int    `json:"pid"`
+	Session    string  `json:"session"`
 }
+
+// What the dispatcher's own session is doing, from its tmux pane state and
+// whether the crew still has unfinished workers.
+const (
+	SessionWorking  = "working"
+	SessionStandby  = "standby"
+	SessionNeedsYou = "needs_you"
+	SessionIdle     = "idle"
+	SessionUnknown  = "unknown"
+)
 
 type FleetWorkerCounts struct {
 	Total   int            `json:"total"`
@@ -184,6 +195,27 @@ func repoRoot(common string) string {
 		return filepath.Dir(common)
 	}
 	return common
+}
+
+// dispatcherSession classifies a dispatcher from its tmux pane state. Idle
+// with no unfinished worker is the dispatcher waiting for the operator's next
+// instruction: a state, not an attention item.
+func dispatcherSession(state string, paneState *string, unfinished int) string {
+	if state != "live" || paneState == nil {
+		return SessionUnknown
+	}
+	switch *paneState {
+	case "waiting":
+		return SessionNeedsYou
+	case "processing", "compacting":
+		return SessionWorking
+	case "idle", "done":
+		if unfinished > 0 {
+			return SessionStandby
+		}
+		return SessionIdle
+	}
+	return SessionUnknown
 }
 
 // fleetCrew is one crew row before the active filter. Local rows point into
@@ -438,9 +470,18 @@ func (c fleetCrew) orphaned(rows []WorkerRow) bool {
 }
 
 // linkItems are the crew-level items the repo-scoped Overview cannot see: a
-// remote worker the live dispatcher has lost sight of, and an orphaned crew.
+// remote worker the live dispatcher has lost sight of, a dispatcher waiting on
+// the operator (once per crew, on its home repo row), and an orphaned crew.
 func (c fleetCrew) linkItems(rows []WorkerRow) []AttentionItem {
 	var items []AttentionItem
+	if c.live() && c.repo == c.homeRepo && dispatcherSession("live", c.home.Dispatcher.PaneState, 0) == SessionNeedsYou {
+		items = append(items, AttentionItem{
+			ID: fmt.Sprintf("%s:%s:", KindDispatcherWaiting, c.crew), Crew: c.crew, Origin: OriginLocal,
+			Severity: SeverityWarning, Kind: KindDispatcherWaiting,
+			Clears:  clearsText(KindDispatcherWaiting, clearsCtx{}),
+			Message: "dispatcher waiting on you",
+		})
+	}
 	if c.live() {
 		for _, w := range rows {
 			if w.Origin != OriginRemote || w.HostError == nil || isTerminal(w.State) {
@@ -475,7 +516,7 @@ func stateKey(state string) string {
 	return state
 }
 
-func (c fleetCrew) row(rows []WorkerRow, attention int) FleetCrewRow {
+func (c fleetCrew) row(rows []WorkerRow, attention, crewUnfinished int) FleetCrewRow {
 	r := FleetCrewRow{
 		Key: c.key, Origin: c.origin, Host: c.host, Crew: c.crew, Actions: []Action{},
 		Workers:   FleetWorkerCounts{Total: len(rows), ByState: map[string]int{}},
@@ -492,7 +533,10 @@ func (c fleetCrew) row(rows []WorkerRow, attention int) FleetCrewRow {
 	}
 	d := c.home.Dispatcher
 	r.Repo, r.Common, r.HomeRepo = &c.repo.Repo, &c.repo.Common, &c.homeRepo.Repo
-	r.Dispatcher = &FleetCrewDispatcher{State: d.State, Lane: d.Lane, LastEventS: d.LastEventS, PID: d.PID}
+	r.Dispatcher = &FleetCrewDispatcher{
+		State: d.State, Lane: d.Lane, LastEventS: d.LastEventS, PID: d.PID,
+		Session: dispatcherSession(d.State, d.PaneState, crewUnfinished),
+	}
 	r.AttentionState = &c.home.Attention
 	r.Dir = c.dir()
 	if c.orphaned(rows) {
@@ -528,9 +572,18 @@ func BuildFleet(f FleetInputs) FleetView {
 	v.Summary.Dropped = dropped
 	var locals []builtCrew
 	var built []builtRow
-	for _, c := range crews {
-		in := c.inputs(f)
-		rows := overviewRows(in)
+	ins := make([]Inputs, len(crews))
+	crewRows := make([][]WorkerRow, len(crews))
+	crewUnfinished := map[string]int{}
+	for i, c := range crews {
+		ins[i] = c.inputs(f)
+		crewRows[i] = overviewRows(ins[i])
+		if c.origin == OriginLocal {
+			crewUnfinished[c.crew] += unfinished(crewRows[i])
+		}
+	}
+	for i, c := range crews {
+		in, rows := ins[i], crewRows[i]
 		if c.origin == OriginLocal {
 			locals = append(locals, builtCrew{c, rows})
 		}
@@ -544,7 +597,7 @@ func BuildFleet(f FleetInputs) FleetView {
 			items[i].CrewKey = &key
 			items[i].ID = key + "#" + items[i].ID
 		}
-		row := c.row(rows, len(items))
+		row := c.row(rows, len(items), crewUnfinished[c.crew])
 		built = append(built, builtRow{row: row, home: c.repo == c.homeRepo, live: c.live()})
 		v.Attention = append(v.Attention, items...)
 		v.Summary.Workers += row.Workers.Total

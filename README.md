@@ -979,8 +979,13 @@ live; Fleet loads on first activation (see below):
   local model slots, budget windows), Holds and Hosts (relay, sync lag,
   reachability). An orphaned crew (dispatcher dead or closed, workers unfinished)
   raises a `dispatcher_gone` item (critical and relaunchable when dead, a
-  warning with no action when closed). Fleet refreshes on `R`, on relay or peer
-  changes while active, and every 10 s while active.
+  warning with no action when closed). A live dispatcher that is waiting on a
+  prompt or dialog raises a `dispatcher_waiting` item (warning, no action:
+  answer it in its pane). A head crew row labels the dispatcher's session
+  `needs you` (that wait), `standby` (idle while workers are unfinished) or
+  `awaiting you` (idle with no unfinished workers, waiting for the next
+  instruction; shown as a state, never an item). Fleet refreshes on `R`, on
+  relay or peer changes while active, and every 10 s while active.
 
 `--json --view` takes `overview`, `roster`, `budget`, `runs`, `settings`,
 `map` or `fleet`. Each view carries `schema_version` and snake_case fields, and

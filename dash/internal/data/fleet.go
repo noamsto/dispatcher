@@ -103,6 +103,7 @@ type FleetDispatcher struct {
 	Lane       *string `json:"lane"`
 	LastEventS *int64  `json:"last_event_s"`
 	Home       *string `json:"home"`
+	PaneState  *string `json:"pane_state"`
 }
 
 type FleetCrewHold struct {

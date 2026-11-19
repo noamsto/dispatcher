@@ -455,7 +455,7 @@ func fleetLayout(w, h int, fv vm.FleetView, st fleetState) fleetRects {
 
 // fleetCols are the Crews panel's column widths, sized to every visible row
 // so scrolling never shifts them.
-type fleetCols struct{ label, lane, counts int }
+type fleetCols struct{ label, lane, session, counts int }
 
 func crewCols(fv vm.FleetView, ix fleetIndex, iw int) fleetCols {
 	var c fleetCols
@@ -463,6 +463,7 @@ func crewCols(fv vm.FleetView, ix fleetIndex, iw int) fleetCols {
 		row := fv.Crews[i]
 		c.label = max(c.label, ansi.StringWidth(crewLabel(row, ix.tree[i])))
 		c.lane = max(c.lane, ansi.StringWidth(crewLane(row)))
+		c.session = max(c.session, ansi.StringWidth(crewSession(row)))
 		c.counts = max(c.counts, ansi.StringWidth(workerCounts(row.Workers.ByState)))
 	}
 	c.label = min(c.label, max(8, iw/2))
@@ -755,14 +756,45 @@ func crewLane(c vm.FleetCrewRow) string {
 	return ovStr(c.Dispatcher.Lane, "—")
 }
 
+// crewSession labels what a head row's dispatcher session is doing when that
+// is worth a word: working and unknown stay blank, the glyph says working.
+func crewSession(c vm.FleetCrewRow) string {
+	if c.Dispatcher == nil || c.Sub {
+		return ""
+	}
+	switch c.Dispatcher.Session {
+	case vm.SessionNeedsYou:
+		return "needs you"
+	case vm.SessionStandby:
+		return "standby"
+	case vm.SessionIdle:
+		return "awaiting you"
+	}
+	return ""
+}
+
+func sessionStyle(c vm.FleetCrewRow) lipgloss.Style {
+	switch c.Dispatcher.Session {
+	case vm.SessionNeedsYou:
+		return fg(colAmber).Bold(true)
+	case vm.SessionStandby:
+		return fg(colGreen).Faint(true)
+	}
+	return fg(colDim)
+}
+
 // dispatcherGlyphState maps a dispatcher state onto the worker state whose
-// glyph and colour read the same: live runs, dead failed, closed idle.
+// glyph and colour read the same: live runs (blocked when it waits on the
+// operator), dead failed, closed idle.
 func dispatcherGlyphState(c vm.FleetCrewRow) string {
 	if c.Dispatcher == nil {
 		return ""
 	}
 	switch c.Dispatcher.State {
 	case "live":
+		if c.Dispatcher.Session == vm.SessionNeedsYou {
+			return "blocked"
+		}
 		return "working"
 	case "dead":
 		return "failed"
@@ -825,8 +857,16 @@ func (fr fleetRow) crewLine(idx int, s *spans) string {
 	labelCol(s, c, fr.tree[idx], fr.cols.label, text)
 	s.add(" ", lipgloss.NewStyle()).
 		col(lane, fr.cols.lane, fg(laneColor(lane)), false).
-		add(" ", lipgloss.NewStyle()).
-		col(workerCounts(c.Workers.ByState), fr.cols.counts, counts, false)
+		add(" ", lipgloss.NewStyle())
+	if fr.cols.session > 0 {
+		label := crewSession(c)
+		st := lipgloss.NewStyle()
+		if label != "" {
+			st = sessionStyle(c)
+		}
+		s.col(label, fr.cols.session, st, false).add(" ", lipgloss.NewStyle())
+	}
+	s.col(workerCounts(c.Workers.ByState), fr.cols.counts, counts, false)
 	if c.Attention > 0 {
 		s.add(fmt.Sprintf(" %d!", c.Attention), fg(colAmber).Bold(true))
 	}
