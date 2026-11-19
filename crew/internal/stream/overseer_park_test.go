@@ -350,6 +350,9 @@ func TestDifferMovesRoundTripThroughJSON(t *testing.T) {
 			{key: "k1", crew: "c1"}: {"feat/a", "feat/b"},
 			{key: "k8", crew: "c8"}: {},
 		},
+		awaitNew: map[crewRef]int64{
+			{key: "k1", crew: "c1"}: ovStart + 7*minute,
+		},
 	}
 	back := tr.snapshot().transitions()
 	if !back.seen {
@@ -373,6 +376,9 @@ func TestDifferMovesRoundTripThroughJSON(t *testing.T) {
 	if !reflect.DeepEqual(back.awaitHeld, tr.awaitHeld) {
 		t.Errorf("awaitHeld = %v, want %v", back.awaitHeld, tr.awaitHeld)
 	}
+	if !reflect.DeepEqual(back.awaitNew, tr.awaitNew) {
+		t.Errorf("awaitNew = %v, want %v", back.awaitNew, tr.awaitNew)
+	}
 
 	data, err := json.Marshal(differFile{Version: differVersion,
 		Partners: []hostMoves{{Host: "mbp", Seen: true, OK: true, Moves: tr.snapshot()}}})
@@ -390,11 +396,11 @@ func TestDifferMovesRoundTripThroughJSON(t *testing.T) {
 		t.Errorf("partner = %+v, want host mbp seen and ok", g)
 	}
 	if round := got.Partners[0].Moves.transitions(); !round.seen ||
-		!reflect.DeepEqual(round.on, tr.on) || !reflect.DeepEqual(round.down, tr.down) || !reflect.DeepEqual(round.deadSince, tr.deadSince) || !reflect.DeepEqual(round.awaitSince, tr.awaitSince) || !reflect.DeepEqual(round.awaitOff, tr.awaitOff) || !reflect.DeepEqual(round.awaitHeld, tr.awaitHeld) {
+		!reflect.DeepEqual(round.on, tr.on) || !reflect.DeepEqual(round.down, tr.down) || !reflect.DeepEqual(round.deadSince, tr.deadSince) || !reflect.DeepEqual(round.awaitSince, tr.awaitSince) || !reflect.DeepEqual(round.awaitOff, tr.awaitOff) || !reflect.DeepEqual(round.awaitHeld, tr.awaitHeld) || !reflect.DeepEqual(round.awaitNew, tr.awaitNew) {
 		t.Errorf("partner moves = %+v, want the lane's own", round)
 	}
 	// The flattened deadEntry: refEntry's key/crew sit beside ts, not nested.
-	if !strings.Contains(string(data), `"dead_since"`) || !strings.Contains(string(data), `"await_since"`) || !strings.Contains(string(data), `"await_off"`) || !strings.Contains(string(data), `"await_held"`) || !strings.Contains(string(data), `"ts"`) {
+	if !strings.Contains(string(data), `"dead_since"`) || !strings.Contains(string(data), `"await_since"`) || !strings.Contains(string(data), `"await_off"`) || !strings.Contains(string(data), `"await_held"`) || !strings.Contains(string(data), `"await_new"`) || !strings.Contains(string(data), `"ts"`) {
 		t.Errorf("differ JSON %s lacks the flattened dead_since entries", data)
 	}
 }
@@ -407,6 +413,9 @@ func TestDifferMovesWithoutAwaitHeld(t *testing.T) {
 	}
 	if held := m.transitions().awaitHeld; held == nil || len(held) != 0 {
 		t.Errorf("awaitHeld = %#v, want non-nil and empty", held)
+	}
+	if pend := m.transitions().awaitNew; pend == nil || len(pend) != 0 {
+		t.Errorf("awaitNew = %#v, want non-nil and empty", pend)
 	}
 }
 

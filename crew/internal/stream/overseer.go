@@ -805,7 +805,9 @@ type capacityLine struct {
 // transitions is the differ's memory between status documents: the level
 // conditions true at the last evaluation, the crews it reported down, and when
 // each live crew's lane was first seen dead. awaitHeld is the held branches a
-// fired dispatcher_awaiting episode counted.
+// fired dispatcher_awaiting episode last reported, shrunk as later held
+// documents drop them; awaitNew is when held work outside that set was first
+// seen.
 type transitions struct {
 	seen       bool
 	on         map[condKey]bool
@@ -814,10 +816,11 @@ type transitions struct {
 	awaitSince map[crewRef]int64
 	awaitOff   map[crewRef]int64
 	awaitHeld  map[crewRef][]string
+	awaitNew   map[crewRef]int64
 }
 
 func newTransitions() *transitions {
-	return &transitions{on: map[condKey]bool{}, down: map[crewRef]bool{}, deadSince: map[crewRef]int64{}, awaitSince: map[crewRef]int64{}, awaitOff: map[crewRef]int64{}, awaitHeld: map[crewRef][]string{}}
+	return &transitions{on: map[condKey]bool{}, down: map[crewRef]bool{}, deadSince: map[crewRef]int64{}, awaitSince: map[crewRef]int64{}, awaitOff: map[crewRef]int64{}, awaitHeld: map[crewRef][]string{}, awaitNew: map[crewRef]int64{}}
 }
 
 type crewRef struct{ key, crew string }
@@ -852,6 +855,7 @@ type differMoves struct {
 	AwaitSince []deadEntry `json:"await_since"`
 	AwaitOff   []deadEntry `json:"await_off"`
 	AwaitHeld  []heldEntry `json:"await_held"`
+	AwaitNew   []deadEntry `json:"await_new"`
 }
 
 type condEntry struct {
@@ -897,7 +901,7 @@ type hostMoves struct {
 // snapshot is t as JSON may carry it: its maps as entries, in map order, which
 // a reader must not depend on.
 func (t *transitions) snapshot() differMoves {
-	m := differMoves{On: []condEntry{}, Down: []refEntry{}, DeadSince: []deadEntry{}, AwaitSince: []deadEntry{}, AwaitOff: []deadEntry{}, AwaitHeld: []heldEntry{}}
+	m := differMoves{On: []condEntry{}, Down: []refEntry{}, DeadSince: []deadEntry{}, AwaitSince: []deadEntry{}, AwaitOff: []deadEntry{}, AwaitHeld: []heldEntry{}, AwaitNew: []deadEntry{}}
 	if t == nil {
 		return m
 	}
@@ -920,11 +924,14 @@ func (t *transitions) snapshot() differMoves {
 	for ref, held := range t.awaitHeld {
 		m.AwaitHeld = append(m.AwaitHeld, heldEntry{refEntry: refEntry{Key: ref.key, Crew: ref.crew}, Held: held})
 	}
+	for ref, ts := range t.awaitNew {
+		m.AwaitNew = append(m.AwaitNew, deadEntry{refEntry: refEntry{Key: ref.key, Crew: ref.crew}, TS: ts})
+	}
 	return m
 }
 
 // transitions is the differ memory m describes. Stale entries are safe: next
-// rebuilds on, deadSince, awaitSince, awaitOff and awaitHeld from what the document still holds.
+// rebuilds on, deadSince, awaitSince, awaitOff, awaitHeld and awaitNew from what the document still holds.
 func (m differMoves) transitions() *transitions {
 	t := newTransitions()
 	t.seen = m.Seen
@@ -945,6 +952,9 @@ func (m differMoves) transitions() *transitions {
 	}
 	for _, e := range m.AwaitHeld {
 		t.awaitHeld[crewRef{key: e.Key, crew: e.Crew}] = e.Held
+	}
+	for _, e := range m.AwaitNew {
+		t.awaitNew[crewRef{key: e.Key, crew: e.Crew}] = e.TS
 	}
 	return t
 }
@@ -987,6 +997,12 @@ func (t *transitions) next(doc fleetpkg.StatusDoc, nowMS int64) []any {
 	for ref, h := range t.awaitHeld {
 		if !present[ref.key] {
 			awaitHeld[ref] = h
+		}
+	}
+	awaitNew := map[crewRef]int64{}
+	for ref, ts := range t.awaitNew {
+		if !present[ref.key] {
+			awaitNew[ref] = ts
 		}
 	}
 	var out []any
@@ -1038,6 +1054,9 @@ func (t *transitions) next(doc fleetpkg.StatusDoc, nowMS int64) []any {
 						if h, ok := t.awaitHeld[ref]; ok {
 							awaitHeld[ref] = h
 						}
+						if ts, ok := t.awaitNew[ref]; ok {
+							awaitNew[ref] = ts
+						}
 					}
 				}
 				if held {
@@ -1045,19 +1064,28 @@ func (t *transitions) next(doc fleetpkg.StatusDoc, nowMS int64) []any {
 					if !ok {
 						since = doc.TS
 					}
-					// Held work the fired episode did not count is a new ask, and a
-					// live dispatcher may be about to wake on that new pr_open, so
-					// the dwell restarts instead of firing at once.
-					newWork := false
-					if prev, ok := t.awaitHeld[ref]; ok && t.on[awaitKey] {
-						newWork = slices.ContainsFunc(cur, func(b string) bool { return !slices.Contains(prev, b) })
-					}
-					if newWork {
-						since = doc.TS
-					}
 					awaitSince[ref] = since
 					awaitHeld[ref] = cur
-					if !newWork && doc.TS-since >= awaitAfter.Milliseconds() {
+					prev, reported := t.awaitHeld[ref]
+					fresh := reported && t.on[awaitKey] && slices.ContainsFunc(cur, func(b string) bool { return !slices.Contains(prev, b) })
+					switch {
+					case fresh:
+						// Held work outside the reported set is a new ask. Its dwell
+						// has its own clock because the episode must stay on, so a
+						// short wake keeps its grace; the dwell exists because a live
+						// dispatcher may be about to wake on that new pr_open.
+						pend, ok := t.awaitNew[ref]
+						if !ok {
+							pend = doc.TS
+						}
+						on[awaitKey] = true
+						if doc.TS-pend >= awaitAfter.Milliseconds() {
+							out = append(out, n.line(head("dispatcher_awaiting"), *c.Dispatcher.PaneState, (doc.TS-pend)/1000, nowMS))
+						} else {
+							awaitHeld[ref] = prev
+							awaitNew[ref] = pend
+						}
+					case doc.TS-since >= awaitAfter.Milliseconds():
 						fire(awaitKey,
 							n.line(head("dispatcher_awaiting"), *c.Dispatcher.PaneState, (doc.TS-since)/1000, nowMS))
 					}
@@ -1156,7 +1184,7 @@ func (t *transitions) next(doc fleetpkg.StatusDoc, nowMS int64) []any {
 		}
 	}
 
-	t.on, t.deadSince, t.awaitSince, t.awaitOff, t.awaitHeld, t.seen = on, deadSince, awaitSince, awaitOff, awaitHeld, true
+	t.on, t.deadSince, t.awaitSince, t.awaitOff, t.awaitHeld, t.awaitNew, t.seen = on, deadSince, awaitSince, awaitOff, awaitHeld, awaitNew, true
 	return out
 }
 
