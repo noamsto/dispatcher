@@ -43,6 +43,7 @@ var (
 	reShells   = posix(`(^|[^0-9])[1-9][0-9]*[[:space:]](shells?|background[[:space:]]tasks?)([[:space:]]still running|[[:space:]]·|$)`)
 	reBgWork   = posix(`(^|[^0-9])[1-9][0-9]*[[:space:]](shells?|background[[:space:]]tasks?|monitors?)([[:space:]]still running|[[:space:]]·|$)`)
 	reNameRule = posix(`^─+[[:space:]][^[:space:]].*[[:space:]]─+$`)
+	reTrustYes = posix(`^[[:space:]]*(❯|>)[[:space:]]*1\.[[:space:]]Yes, I trust this folder`)
 	reDraft    = posixLongest("^[[:space:]]*❯([[:space:]]|\u00a0)*")
 	reCSI      = regexp.MustCompile(`\x1b\[[0-9;]*m`)
 
@@ -163,6 +164,24 @@ func IsAddDirPrompt(engine, text string) bool {
 	}
 	above := t[:len(t)-1]
 	return anyContains(above, "Yes, add it") && anyContains(above, "Adding a new directory:")
+}
+
+// IsWorkspaceTrustPrompt is claude's startup workspace-trust dialog, answered by
+// Enter with the cursor on option 1.
+func IsWorkspaceTrustPrompt(text string) bool {
+	// A named session paints its `── <name> ─` rule below the dialog.
+	t := Tail(text, 11)
+	if n := len(t); n > 0 && reNameRule.MatchString(t[n-1]) {
+		t = t[:n-1]
+	}
+	t = t[max(len(t)-10, 0):]
+	if len(t) == 0 || !strings.Contains(t[len(t)-1], "Enter to confirm") {
+		return false
+	}
+	above := t[:len(t)-1]
+	return anyMatch(above, reTrustYes) && anyContains(above, "2. No, exit") &&
+		anyContains(above, "Is this a project you created or one you trust?") &&
+		!IsPermissionPrompt("claude", text) && !IsAddDirPrompt("claude", text)
 }
 
 // IsPrompt is _is_prompt.
