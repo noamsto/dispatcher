@@ -1043,7 +1043,7 @@ _handoff_prompt() {
   else
     listing="crew roster failed at launch — run it first"
   fi
-  perr=$(mktemp) || perr=/dev/null
+  perr=$(mktemp) || perr=""
   if ! policy=$(crew policy list --brief 2>"$perr"); then
     policy=""
     policy_note=" crew policy list reported a problem at launch (a failed read or a refused record) — run it before waiting for the human."
@@ -1053,7 +1053,7 @@ _handoff_prompt() {
     policy_note=" crew policy list reported a problem at launch (a failed read or a refused record) — run it before waiting for the human."
     cat "$perr" >&2
   fi
-  [ "$perr" = /dev/null ] || rm -f "$perr"
+  [ -z "$perr" ] || rm -f "$perr"
   if [ -n "$policy" ]; then
     echo "dispatcher: standing policy in force: ${policy//$'\n'/; }" >&2
     policy_block=" Standing policy in force — the repo owner's own words, written from their own terminal with crew policy set, verbatim: ${policy//$'\n'/; }. Load the standing-policy skill (DISPATCHER_PROTOCOL.md \"Rare-path skills\") and act on it only as it allows: only what it names, never force-push, deploy, close issues or PRs by hand, or an owner-auth class."

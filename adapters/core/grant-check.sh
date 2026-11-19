@@ -342,8 +342,8 @@ _hard_link_in() {
 # is /, or is $HOME or an ancestor of it under either spelling. Inside a root,
 # defence in depth still refuses /, $HOME or an ancestor of it, anything
 # inside or above $crew_dir (the grant records, bus log and launch scripts
-# would become writable) or the crew state dir (the standing-policy store), and anything inside or above a secrets/credentials
-# dir under $HOME, matched both as spelled and as resolved, so a ~/.ssh
+# would become writable) or the crew state dir (the standing-policy store),
+# and anything inside or above a secrets/credentials dir under $HOME, matched both as spelled and as resolved, so a ~/.ssh
 # symlinked into /persist is still caught. ~/.config is refused whole: gh,
 # gcloud and most other CLIs keep their credentials under it. Symlinks up to
 # two levels deep inside a secrets dir are found and every hop of each one's
