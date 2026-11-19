@@ -2347,6 +2347,10 @@ func TestTransitionsDispatcherAwaiting(t *testing.T) {
 	run(map[int64][]string{5: await, 17: await}, at(0, "done", "alive", po), at(5, "done", "alive", po), at(6, "processing", "alive", po),
 		at(11, "processing", "alive", po), at(12, "done", "alive", po), at(16, "done", "alive", po), at(17, "done", "alive", po))
 
+	// A repo skipped mid-grace keeps its grace start.
+	run(map[int64][]string{5: await, 17: await}, at(0, "done", "alive", po), at(5, "done", "alive", po), at(6, "processing", "alive", po),
+		ovDoc(ovStart+9*minute), at(11, "processing", "alive", po), at(12, "done", "alive", po), at(16, "done", "alive", po), at(17, "done", "alive", po))
+
 	// A short wake of a parked dispatcher keeps its episode: no re-fire.
 	run(map[int64][]string{5: await}, at(0, "done", "alive", po), at(5, "done", "alive", po), at(6, "processing", "alive", po),
 		at(7, "done", "alive", po), at(12, "done", "alive", po), at(30, "done", "alive", po))
