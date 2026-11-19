@@ -84,3 +84,27 @@ func TestHasSpinnerRow(t *testing.T) {
 		}
 	}
 }
+
+func TestInterruptedAboveBox(t *testing.T) {
+	interrupted := fixture(t, "nudge_interrupted.txt")
+	row := "  ⎿  Interrupted · What should Claude do instead?"
+	cases := []struct {
+		name string
+		text string
+		want bool
+	}{
+		{"interrupted frame", interrupted, true},
+		{"tool row truncated", strings.Replace(interrupted, "feat-x/build)", "feat-x/bu…", 1), true},
+		{"finished turn", fixture(t, "done_idle.txt"), false},
+		{"fresh session", fixture(t, "nudge_fresh.txt"), false},
+		{"row not directly above the box", strings.Replace(interrupted, row+"\n", row+"\n  ⎿  Done\n", 1), false},
+		{"altered text", strings.Replace(interrupted, "Claude do", "Claude does", 1), false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := InterruptedAboveBox(tc.text); got != tc.want {
+				t.Errorf("InterruptedAboveBox = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}

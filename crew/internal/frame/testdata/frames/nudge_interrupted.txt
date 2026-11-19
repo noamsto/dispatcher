@@ -1,0 +1,6 @@
+● Bash(rm -rf /tmp/wt/build)
+  ⎿  Interrupted · What should Claude do instead?
+────────────────── reef ─
+❯
+──────────────────
+  -- INSERT -- ⏵⏵ auto mode on · ← for agents

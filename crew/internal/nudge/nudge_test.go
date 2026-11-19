@@ -872,3 +872,49 @@ func TestNudgeRowLeadingZeroMsgTS(t *testing.T) {
 		t.Errorf("row %s lacks msg_ts 7", got)
 	}
 }
+
+// The turn a blocked tool call ended: an Interrupted row above an empty box has no
+// finished-turn marker, yet the lead waits for direction, so the nudge goes through.
+func TestPaneAcceptedClaudeInterrupted(t *testing.T) {
+	wins, panes := anchored()
+	idle := fixture(t, "nudge_interrupted.txt")
+	typed := strings.Replace(idle, "\n❯\n", "\n❯ crew inbox \"$CREW_WORKER_ID\"\n", 1)
+	p := &fakePane{frames: []string{idle, idle, typed, fixture(t, "meter.2s.1.2k.txt")}, windows: wins, panes: panes}
+	b := &fakeBus{rows: sessionRows(t, idleReq, "working")}
+	out, rc := Pane(context.Background(), req("claude"), newDeps(p, b, map[string]string{"CREW_NUDGE_SETTLE": "0", "CREW_NUDGE_GAP": "0"}))
+	if rc != 0 || !strings.HasPrefix(out, "nudge accepted: %9 ") {
+		t.Fatalf("Pane = (%q, %d), want accepted on an Interrupted frame", out, rc)
+	}
+	if got := keys(p); !slices.Equal(got, typedArgv) {
+		t.Errorf("keys = %q, want %q", got, typedArgv)
+	}
+}
+
+// The Interrupted allowance covers only the missing finished-turn marker: any other
+// busy signal on the same frame still refuses.
+func TestPaneRefusesInterruptedFramesThatAreNotIdle(t *testing.T) {
+	wins, panes := anchored()
+	idle := fixture(t, "nudge_interrupted.txt")
+	dialog := fixture(t, "rw_permission.txt")
+	cases := []struct {
+		name  string
+		frame string
+		want  string
+	}{
+		{"typed input", strings.Replace(idle, "\n❯\n", "\n❯ hello draft text\n", 1), "unsent input in the input box"},
+		{"live turn", strings.Replace(idle, "  ⎿  Interrupted", "✻ Churning… (2s · ↓ 1.2k tokens)\n  ⎿  Interrupted", 1), "live turn or no idle input box"},
+		{"permission dialog", idle + "\n" + dialog[strings.Index(dialog, "──────"):], "permission dialog on screen"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := &fakePane{frames: []string{tc.frame}, windows: wins, panes: panes}
+			out, rc := Pane(context.Background(), req("claude"), newDeps(p, &fakeBus{}, nil))
+			if rc != exitRefused || out != tc.want {
+				t.Errorf("Pane = (%q, %d), want (%q, %d)", out, rc, tc.want, exitRefused)
+			}
+			if got := keys(p); len(got) != 0 {
+				t.Errorf("typed into a refused pane: %q", got)
+			}
+		})
+	}
+}

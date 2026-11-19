@@ -622,3 +622,15 @@ func doneBehindPostTurn(text string) bool {
 	}
 	return false
 }
+
+// reInterrupted is the row claude prints when a tool call was blocked or cancelled
+// and the turn ended there, awaiting direction.
+var reInterrupted = posix(`^[[:space:]]*⎿[[:space:]]+Interrupted · What should Claude do instead\?[[:space:]]*$`)
+
+// InterruptedAboveBox reports the `Interrupted · What should Claude do instead?`
+// row directly above the box. It is not part of PaneIdleReason: that turn never
+// finished, so reap and stall must keep the pane, while a nudge may still wake it.
+func InterruptedAboveBox(text string) bool {
+	_, plain, a, _, off, ok := scanBox(text)
+	return ok && a-1 >= off && reInterrupted.MatchString(plain[a-1])
+}

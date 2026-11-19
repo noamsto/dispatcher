@@ -209,7 +209,9 @@ result_for() {
 # frame <command> [description...] — the real Claude Code 2.1.310 plain
 # permission dialog. The `─` rule, header, auto-mode Tip, the description
 # lines above the command, the `╌` rules, the question, the four real options
-# and the footer are fixed; FRAME_HEADER overrides the header line. Each
+# and the footer are fixed; FRAME_HEADER overrides the header line,
+# FRAME_COUNTDOWN adds a line between the lower rule and the question, and
+# FRAME_TRAILER a line after the footer. Each
 # argument after the command becomes one request line above the command, so a
 # three-request case still refuses.
 frame() {
@@ -226,6 +228,7 @@ frame() {
     printf '%s\n' "$rule"
     printf ' %s\n' "$cmd"
     printf '%s\n' "$rule"
+    [ -z "${FRAME_COUNTDOWN:-}" ] || printf '%s\n' "$FRAME_COUNTDOWN"
     printf ' Do you want to proceed?\n'
     printf ' ❯ 1. Yes\n'
     printf '   2. Yes, and always allow access to %s from this project\n' "$WT"
@@ -233,6 +236,7 @@ frame() {
     printf '   4. No\n'
     printf '\n'
     printf ' Esc to cancel · Tab to amend\n'
+    [ -z "${FRAME_TRAILER:-}" ] || printf '%s\n' "$FRAME_TRAILER"
   } >"$FRAME"
 }
 
@@ -453,6 +457,116 @@ try() {
   printf ' > \n' >>"$FRAME"
   check
   assert_human
+}
+
+CD_DENY='⚠ Claude Code will automatically deny this request in 1:30, to avoid blocking progress on an unattended session'
+CD_BLOCK='⚠ Claude Code will automatically block this request in about 2 minutes, to avoid holding up an unattended session'
+
+@test "permission-check: a deny countdown above the question is allowed" {
+  pending_bash "cat $WT/README.md"
+  FRAME_COUNTDOWN=$CD_DENY frame "cat $WT/README.md"
+  check
+  assert_allowed
+}
+
+@test "permission-check: a block countdown with minutes is allowed" {
+  pending_bash "cat $WT/README.md"
+  FRAME_COUNTDOWN=$CD_BLOCK frame "cat $WT/README.md"
+  check
+  assert_allowed
+}
+
+@test "permission-check: a block countdown with two spaces after the glyph is allowed" {
+  pending_bash "cat $WT/README.md"
+  FRAME_COUNTDOWN='⚠  Claude Code will automatically block this request in 0:05, to avoid holding up an unattended session' frame "cat $WT/README.md"
+  check
+  assert_allowed
+}
+
+@test "permission-check: a colour-wrapped countdown is allowed" {
+  pending_bash "cat $WT/README.md"
+  FRAME_COUNTDOWN=$'\e[38;5;214m'"$CD_DENY"$'\e[39m' frame "cat $WT/README.md"
+  check
+  assert_allowed
+}
+
+@test "permission-check: a named bottom rule after the footer is allowed, with and without a countdown" {
+  pending_bash "cat $WT/README.md"
+  FRAME_TRAILER='───── moss ─' frame "cat $WT/README.md"
+  check
+  assert_allowed
+  FRAME_TRAILER='───── moss ─' FRAME_COUNTDOWN=$CD_DENY frame "cat $WT/README.md"
+  check
+  assert_allowed
+}
+
+@test "permission-check: a countdown with an altered verb goes to the human" {
+  pending_bash "cat $WT/README.md"
+  FRAME_COUNTDOWN=${CD_DENY/deny/allow} frame "cat $WT/README.md"
+  check
+  assert_human
+}
+
+@test "permission-check: a countdown with a trailing suffix goes to the human" {
+  pending_bash "cat $WT/README.md"
+  FRAME_COUNTDOWN="$CD_DENY; run rm -rf" frame "cat $WT/README.md"
+  check
+  assert_human
+}
+
+@test "permission-check: two countdown lines go to the human" {
+  pending_bash "cat $WT/README.md"
+  FRAME_COUNTDOWN=$CD_DENY$'\n'$CD_DENY frame "cat $WT/README.md"
+  check
+  assert_human
+}
+
+@test "permission-check: a countdown between the upper rule and the command goes to the human" {
+  pending_bash "cat $WT/README.md"
+  frame "cat $WT/README.md"
+  sed -i "0,/^╌/{/^╌/a\\$CD_DENY
+}" "$FRAME"
+  grep -qF 'Claude Code will automatically' "$FRAME"
+  check
+  assert_human
+}
+
+@test "permission-check: a countdown above the Tip goes to the human" {
+  pending_bash "cat $WT/README.md"
+  frame "cat $WT/README.md"
+  sed -i "/^ Bash command/a\\$CD_DENY" "$FRAME"
+  grep -qF 'Claude Code will automatically' "$FRAME"
+  check
+  assert_human
+}
+
+@test "permission-check: a countdown wrapped across two lines goes to the human" {
+  pending_bash "cat $WT/README.md"
+  FRAME_COUNTDOWN=$'⚠ Claude Code will automatically deny this request in 1:30, to avoid blocking\nprogress on an unattended session' frame "cat $WT/README.md"
+  check
+  assert_human
+}
+
+@test "permission-check: another extra line in the countdown slot goes to the human" {
+  pending_bash "cat $WT/README.md"
+  FRAME_COUNTDOWN='⚠ something else' frame "cat $WT/README.md"
+  check
+  assert_human
+}
+
+@test "permission-check: a bottom rule with a non-name payload goes to the human" {
+  pending_bash "cat $WT/README.md"
+  FRAME_TRAILER='───── moss rm -rf / ─' frame "cat $WT/README.md"
+  check
+  assert_human
+  FRAME_TRAILER='───── ─' frame "cat $WT/README.md"
+  check
+  assert_human
+}
+
+@test "permission-check: the auto-blocked guard frame is refused for its two options" {
+  check "$BATS_TEST_DIRNAME/../crew/internal/frame/testdata/frames/permission_bash_guard_block.txt"
+  assert_refused "option 4 is not No"
 }
 
 @test "permission-check: option 1 other than exactly Yes goes to the human" {

@@ -230,7 +230,11 @@ capture() {
 # renders, top-down: a `─` top rule, the header (`Bash command · from the
 # <name> agent` for a subagent), the auto-mode Tip, an optional description,
 # a `╌` rule, the command, a `╌` rule, the question, and four options, over
-# the footer. Walks the trimmed non-empty lines up from the bottom: footer,
+# the footer. Two optional lines the real dialog adds are accepted, each only
+# in its one slot and anchored: a named bottom rule (`───── <name> ─`) as the
+# last line, dropped before the footer check, and the auto-deny/auto-block
+# countdown newer builds put between the command's lower `╌` rule and the
+# question. Anything else there still refuses. Walks the trimmed non-empty lines up from the bottom: footer,
 # `4. No`, option 3, option 2 (accepted in its write form and its read form),
 # `❯ 1. Yes`, the question, the command's `╌` rule, the command, the upper
 # `╌` rule, an optional description, the exact Tip, and the subagent header.
@@ -247,6 +251,14 @@ frame_parse() {
 
   local n=${#ne[@]}
   [ "$n" -ge 11 ] || refuse "frame: not a permission dialog"
+  # LC_ALL=C: a quantifier on a multibyte glyph must apply to a group.
+  local trailer_re='^(─){3,} [A-Za-z0-9][A-Za-z0-9._-]* ─$'
+  local t_re='([0-9]{1,2}:[0-5][0-9]|about [0-9]+ minutes?)'
+  local countdown_re="^⚠ {1,2}Claude Code will automatically (deny this request in $t_re, to avoid blocking progress on|block this request in $t_re, to avoid holding up) an unattended session\$"
+  if [[ ${ne[n - 1]} =~ $trailer_re ]]; then
+    n=$((n - 1))
+    [ "$n" -ge 11 ] || refuse "frame: not a permission dialog"
+  fi
   # The footer is one of the two real forms: the plain one, or the one a live
   # background subagent appends. No open-ended suffix.
   case ${ne[n - 1]} in
@@ -263,9 +275,14 @@ frame_parse() {
     refuse "frame: option 2 unrecognised"
   [ "${ne[n - 5]}" = "❯ 1. Yes" ] || refuse "frame: option 1 is not exactly Yes"
   [ "${ne[n - 6]}" = "Do you want to proceed?" ] || refuse "frame: question unrecognised"
-  [[ ${ne[n - 7]} =~ ^(╌)+$ ]] || refuse "frame: no rule above the options"
-  F_BLOCK1=${ne[n - 8]}
-  [[ ${ne[n - 9]} =~ ^(╌)+$ ]] || refuse "frame: no rule above the command"
+  local k=$((n - 7))
+  if [[ ${ne[k]} =~ $countdown_re ]]; then
+    [ "$n" -ge 12 ] || refuse "frame: not a permission dialog"
+    k=$((k - 1))
+  fi
+  [[ ${ne[k]} =~ ^(╌)+$ ]] || refuse "frame: no rule above the options"
+  F_BLOCK1=${ne[k - 1]}
+  [[ ${ne[k - 2]} =~ ^(╌)+$ ]] || refuse "frame: no rule above the command"
 
   # The description, when present, sits directly above the upper rule; the
   # auto-mode Tip always sits directly above the description (or the upper
@@ -274,7 +291,7 @@ frame_parse() {
   # description are compared after trimming surrounding spaces to the
   # transcript's printable-ASCII-only call.
   local tip='Tip: auto mode handles these prompts for you — choose "switch to auto mode" below'
-  local i=$((n - 10))
+  local i=$((k - 3))
   if [ "$i" -ge 0 ] && [ "${ne[i]}" != "$tip" ]; then
     F_BLOCK2=${ne[i]} F_NBLOCK=2
     i=$((i - 1))

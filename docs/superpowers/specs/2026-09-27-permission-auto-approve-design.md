@@ -233,14 +233,21 @@ permission-check.sh --capture <file> --branch <branch> --worktree <dir> \
 
 1. The last non-empty line is the footer: exactly
    `Esc to cancel · Tab to amend`, or that plus the background-agent chrome
-   ` · ctrl+x ctrl+k twice to stop background agents`.
+   ` · ctrl+x ctrl+k twice to stop background agents`. One optional named
+   bottom rule, matching `^(─){3,} [A-Za-z0-9][A-Za-z0-9._-]* ─$`, may follow
+   the footer as the final line; it is dropped before this check.
 2. Walking up over non-empty lines: `4. No`; exactly
    `3. Yes, and switch to auto mode · auto mode handles these prompts for you`;
    a line matching `2. Yes, and always allow access to … from this project` or
    `2. Yes, allow reading from … from this project` (the write and read forms
    of the same option); exactly `❯ 1. Yes`; exactly
    `Do you want to proceed?`.
-3. Above the question: a `╌` rule, the command, a `╌` rule; above the upper
+3. Above the question: optionally one auto-deny/auto-block countdown line,
+   exactly `⚠ Claude Code will automatically deny this request in T, to avoid
+blocking progress on an unattended session` or `⚠ Claude Code will
+automatically block this request in T, to avoid holding up an unattended
+session` (one or two spaces after `⚠`; `T` is `M:SS` or `about N minute(s)`),
+   in that slot only; then a `╌` rule, the command, a `╌` rule; above the upper
    rule an optional description line, then exactly
    `Tip: auto mode handles these prompts for you — choose "switch to auto mode" below`.
 4. The header is exactly `Bash command · from the <name> agent` with `<name>`
