@@ -103,7 +103,7 @@ func (l *segLog) rotate() error {
 	if err != nil {
 		return err
 	}
-	l.f.Close()
+	_ = l.f.Close()
 	l.f, l.start, l.size = f, next, 0
 	segs, err := listSegments(l.dir)
 	if err != nil {
@@ -158,7 +158,7 @@ func readLogOnce(dir string, off int64) (chunk []byte, next, oldest, end int64, 
 		if err == nil {
 			_, err = io.Copy(&buf, io.LimitReader(f, s.size-max(from-s.start, 0)))
 		}
-		f.Close()
+		_ = f.Close()
 		if err != nil {
 			return nil, off, oldest, end, err
 		}
@@ -182,11 +182,11 @@ func writeFileAtomic(path string, data []byte) error {
 		err = cerr
 	}
 	if err != nil {
-		os.Remove(tmp.Name())
+		_ = os.Remove(tmp.Name())
 		return err
 	}
 	if err := os.Rename(tmp.Name(), path); err != nil {
-		os.Remove(tmp.Name())
+		_ = os.Remove(tmp.Name())
 		return err
 	}
 	return nil

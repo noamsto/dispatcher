@@ -14,7 +14,7 @@ func TestSegLogAppendRead(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer w.Close()
+	defer func() { _ = w.Close() }()
 	data := "one\ntwo\nthree\n"
 	if _, err := w.Write([]byte(data)); err != nil {
 		t.Fatal(err)
@@ -34,7 +34,7 @@ func TestReadLogPartialTrailingLine(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer w.Close()
+	defer func() { _ = w.Close() }()
 	if _, err := w.Write([]byte("a\n")); err != nil {
 		t.Fatal(err)
 	}
@@ -43,7 +43,7 @@ func TestReadLogPartialTrailingLine(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	if _, err := f.WriteString("par"); err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +66,7 @@ func TestSegLogRotationRetention(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer w.Close()
+	defer func() { _ = w.Close() }()
 	var lines []string
 	for i := range 20 {
 		l := fmt.Sprintf("line-%02d-xxxxxxxxxx\n", i)
@@ -124,19 +124,23 @@ func TestSegLogReopenContinues(t *testing.T) {
 		t.Fatal(err)
 	}
 	for i := range 6 {
-		w.Write([]byte(fmt.Sprintf("row-%d-xxxxxxxxxxxxxxxx\n", i)))
+		if _, err := fmt.Fprintf(w, "row-%d-xxxxxxxxxxxxxxxx\n", i); err != nil {
+			t.Fatal(err)
+		}
 	}
 	before := w.end()
-	w.Close()
+	_ = w.Close()
 	w2, err := openSegLog(dir, 64, 3)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer w2.Close()
+	defer func() { _ = w2.Close() }()
 	if w2.end() != before {
 		t.Fatalf("end %d != %d", w2.end(), before)
 	}
-	w2.Write([]byte("more\n"))
+	if _, err := w2.Write([]byte("more\n")); err != nil {
+		t.Fatal(err)
+	}
 	if w2.end() != before+5 {
 		t.Fatalf("end %d", w2.end())
 	}
@@ -158,7 +162,9 @@ func TestDaemonInfoRoundTrip(t *testing.T) {
 	if out, ok := readDaemonInfo(p); !ok || out != in {
 		t.Fatalf("got %+v %v", out, ok)
 	}
-	os.WriteFile(p, []byte("{nope"), 0o644)
+	if err := os.WriteFile(p, []byte("{nope"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	if _, ok := readDaemonInfo(p); ok {
 		t.Fatal("corrupt should be !ok")
 	}
@@ -176,7 +182,9 @@ func TestFollowStateRoundTrip(t *testing.T) {
 	if out, ok := readFollowState(p); !ok || out != in {
 		t.Fatalf("got %+v %v", out, ok)
 	}
-	os.WriteFile(p, []byte("x"), 0o644)
+	if err := os.WriteFile(p, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	if _, ok := readFollowState(p); ok {
 		t.Fatal("corrupt should be !ok")
 	}

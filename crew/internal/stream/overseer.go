@@ -161,7 +161,7 @@ func runOverseer(fr FleetRequest, rediscover int64, stdout, stderr io.Writer, o 
 	v.loadDiffer()
 	rc := v.run(ctx, sigs)
 	if log != nil {
-		log.Close()
+		_ = log.Close()
 	}
 	return rc
 }
@@ -183,7 +183,7 @@ func openDaemon(lane, lockd string, o FleetOptions, stderr io.Writer) (*segLog, 
 			PID: int64(os.Getpid()), StartedMS: clockMS(o.Options), StartOffset: log.end(),
 		})
 		if err != nil {
-			log.Close()
+			_ = log.Close()
 		}
 	}
 	if err != nil {

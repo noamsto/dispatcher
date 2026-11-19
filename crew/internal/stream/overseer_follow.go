@@ -281,12 +281,12 @@ func spawnDaemon(self string) func(args []string, stderrPath string) error {
 		if err != nil {
 			return err
 		}
-		defer null.Close()
+		defer func() { _ = null.Close() }()
 		errf, err := os.OpenFile(stderrPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
 		if err != nil {
 			return err
 		}
-		defer errf.Close()
+		defer func() { _ = errf.Close() }()
 		// The environment is inherited unchanged: the daemon's sender gate reads
 		// CREW_OVERSEER and its lane root XDG_STATE_HOME.
 		cmd := exec.Command(self, args...)
