@@ -378,7 +378,7 @@ func refusalKey(args []string) string {
 			return "hold " + args[1]
 		case args[0] == "queue" && slices.Contains([]string{"add", "list", "drop"}, args[1]):
 			return "queue " + args[1]
-		case args[0] == "overseer" && slices.Contains([]string{"msg", "status", "deliver"}, args[1]):
+		case args[0] == "overseer" && slices.Contains([]string{"msg", "status", "deliver", "trust"}, args[1]):
 			return "overseer " + args[1]
 		case args[0] == "migrate" && slices.Contains([]string{"stop", "snapshot", "mark"}, args[1]):
 			return "migrate " + args[1]
@@ -630,6 +630,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 		case "deliver":
 			d := c.Deliver
 			return overseer.RunDeliver(ctx, overseer.DeliverRequest{Origin: d.Origin, Repo: d.Repo, Crew: d.Crew, Body: d.Body}, stdout, stderr, o)
+		case "trust":
+			return overseer.RunTrust(ctx, c.Trust.Pane, stdout, stderr, o)
 		default:
 			m := c.Msg
 			return overseer.RunMsg(ctx, overseer.MsgRequest{Repo: m.Repo, Crew: m.Crew, Body: m.Body, Host: str(m.Host)}, stdout, stderr, o)

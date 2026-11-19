@@ -1,5 +1,6 @@
-// Package overseer is the overseer session's verbs: `crew overseer msg`, and
-// the `status` and `deliver` verbs a federated overseer runs on another host.
+// Package overseer is the overseer session's verbs: `crew overseer msg` and
+// `trust`, and the `status` and `deliver` verbs a federated overseer runs on
+// another host.
 package overseer
 
 import (
@@ -29,6 +30,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/roster"
 	"github.com/noamsto/dispatcher/crew/internal/sender"
 	"github.com/noamsto/dispatcher/crew/internal/status"
+	"github.com/noamsto/dispatcher/crew/internal/tmux"
 )
 
 // MsgUsage is the line every `crew overseer msg` grammar refusal prints.
@@ -74,6 +76,11 @@ type Options struct {
 	// ServedRoot reads the root the far verbs walk besides the registry
 	// (.overseer.root, "" for none); nil serves the registry alone.
 	ServedRoot func(context.Context) (string, error)
+	// Tmux is the local server `trust` reads and types into.
+	Tmux tmux.Client
+	// AcceptTrust reads whether the owner set .overseer.acceptTrust to true;
+	// nil reads as off.
+	AcceptTrust func(context.Context) (bool, error)
 }
 
 // RunMsg posts the overseer's JSON message to the dispatcher of <crew> on the

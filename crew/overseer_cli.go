@@ -65,31 +65,51 @@ func overseerProbeFor(p sender.Probes, run func(context.Context, remote.Call, io
 func overseerOptions(e env, stderr io.Writer) overseer.Options {
 	o := fleet.Options{Tmux: tmux.Exec{}, Git: git.Exec{}, Clock: clock.FromEnv()}
 	return overseer.Options{
-		Git:        git.Exec{},
-		Clock:      clock.FromEnv(),
-		Sender:     overseerProbes(e),
-		RunHost:    remote.RunHost,
-		Status:     statusOptions(o, e, stderr),
-		ServedRoot: servedRoot,
+		Git:         git.Exec{},
+		Clock:       clock.FromEnv(),
+		Sender:      overseerProbes(e),
+		RunHost:     remote.RunHost,
+		Status:      statusOptions(o, e, stderr),
+		ServedRoot:  servedRoot,
+		Tmux:        tmux.Exec{},
+		AcceptTrust: acceptTrust,
 	}
+}
+
+// overseerSettings is the .overseer object of the dispatcher settings.
+// acceptTrust stays raw so only a JSON true enables trust, and a malformed
+// value never breaks the root the far verbs read.
+type overseerSettings struct {
+	Root        string          `json:"root"`
+	AcceptTrust json.RawMessage `json:"acceptTrust"`
+}
+
+// readOverseerSettings runs dispatch-config for the .overseer object.
+func readOverseerSettings(ctx context.Context) (overseerSettings, error) {
+	bin := remote.ConfigBin()
+	out, err := exec.CommandContext(ctx, bin).Output()
+	if err != nil {
+		return overseerSettings{}, fmt.Errorf("%s: %w", bin, err)
+	}
+	var s struct {
+		Overseer overseerSettings `json:"overseer"`
+	}
+	if err := json.Unmarshal(out, &s); err != nil {
+		return overseerSettings{}, fmt.Errorf("%s: %w", bin, err)
+	}
+	return s.Overseer, nil
 }
 
 // servedRoot is the sweep root the far verbs walk besides the registry:
 // .overseer.root of the dispatcher settings, "" when unset. Unreadable
 // settings are an error, so a far verb never serves fewer buses than it has.
 func servedRoot(ctx context.Context) (string, error) {
-	bin := remote.ConfigBin()
-	out, err := exec.CommandContext(ctx, bin).Output()
-	if err != nil {
-		return "", fmt.Errorf("%s: %w", bin, err)
-	}
-	var s struct {
-		Overseer struct {
-			Root string `json:"root"`
-		} `json:"overseer"`
-	}
-	if err := json.Unmarshal(out, &s); err != nil {
-		return "", fmt.Errorf("%s: %w", bin, err)
-	}
-	return s.Overseer.Root, nil
+	s, err := readOverseerSettings(ctx)
+	return s.Root, err
+}
+
+// acceptTrust is whether .overseer.acceptTrust is exactly true.
+func acceptTrust(ctx context.Context) (bool, error) {
+	s, err := readOverseerSettings(ctx)
+	return string(s.AcceptTrust) == "true", err
 }
