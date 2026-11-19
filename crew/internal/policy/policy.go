@@ -90,6 +90,16 @@ func ttyName() string {
 	return t
 }
 
+const (
+	// Usage is what a bare or unknown action prints.
+	Usage = "crew: policy set|clear|show|list"
+	// SetUsage and its siblings are the action's line for a grammar error.
+	SetUsage   = "crew: policy set <name> <text>"
+	ClearUsage = "crew: policy clear <name>"
+	ShowUsage  = "crew: policy show <name> [--json]"
+	ListUsage  = "crew: policy list [--json | --brief]"
+)
+
 // ErrMissing is wrapped by Load and Clear when the policy does not exist.
 var ErrMissing = errors.New("no such standing policy")
 
