@@ -408,6 +408,9 @@ func overviewErrors(in Inputs, rows []WorkerRow) []string {
 	if e := in.Snap.Roster.Error; e != nil {
 		errs = append(errs, "roster: "+*e)
 	}
+	if e := in.Snap.Roster.ForeignError; e != nil {
+		errs = append(errs, *e)
+	}
 	for _, c := range in.Snap.Roster.Crews {
 		if c.WorkersError != nil {
 			errs = append(errs, fmt.Sprintf("crew %s: workers: %s", c.ID, *c.WorkersError))
@@ -462,13 +465,17 @@ func BuildOverview(in Inputs) OverviewView {
 	}
 	for _, w := range rows {
 		d := in.Bus.Workers[data.WorkerKey{Crew: w.Crew, Branch: w.Branch}]
+		var dispatcher *WorkerDispatcher
+		if w.Origin != OriginPeer {
+			dispatcher = dispatchers[w.Crew]
+		}
 		v.Workers = append(v.Workers, OverviewWorker{
 			Crew: w.Crew, Branch: w.Branch, Name: w.Name, Tmux: w.Tmux, Host: w.Host, Origin: w.Origin,
 			State: w.State, Detail: w.Detail, Tier: w.Tier, Engine: w.Engine, Model: w.Model,
 			Title: w.Title, PRURL: w.PRURL, PR: w.PR, AgeSec: w.AgeS,
 			BlockedSince: w.BlockedSince, AnsweredAt: w.AnsweredAt,
 			Phase: phaseOf(w, d, now), Acceptance: acceptanceOf(w, d), Actions: w.Actions,
-			NeedsCleanup: w.NeedsCleanup, Dispatcher: dispatchers[w.Crew],
+			NeedsCleanup: w.NeedsCleanup, Dispatcher: dispatcher,
 		})
 		if !w.NeedsCleanup {
 			agent := agentRow(w, in, now)

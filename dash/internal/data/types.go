@@ -206,6 +206,9 @@ type RosterSection struct {
 	Crews []RosterCrew     `json:"crews"`
 	Peers []map[string]any `json:"-"`
 	Error *string          `json:"error"`
+	// ForeignError says why the foreign-crew lookup failed; the here crews are
+	// still listed, so it is not a whole-roster Error.
+	ForeignError *string `json:"-"`
 }
 
 // LaneStatus is one crew's `crew stream --status` probe: State is alive,

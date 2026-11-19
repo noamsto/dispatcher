@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 // Config resolves every source Collect calls: crew is the resolved argv
@@ -242,7 +243,7 @@ func CollectRoster(ctx context.Context, r Runner, cfg Config) RosterSection {
 			candidates = append(candidates, row)
 		}
 	}
-	elsewhere := foreignCrews(ctx, r, cfg, candidates)
+	elsewhere, foreignErr := foreignCrews(ctx, r, cfg, candidates)
 	var ids []string
 	locs := map[string]*DispatcherLoc{}
 	for _, row := range rows {
@@ -265,20 +266,25 @@ func CollectRoster(ctx context.Context, r Runner, cfg Config) RosterSection {
 		}()
 	}
 	wg.Wait()
-	return RosterSection{Crews: crews, Peers: mergePeers(peerRows), Error: nil}
+	return RosterSection{Crews: crews, Peers: mergePeers(peerRows), ForeignError: foreignErr}
 }
+
+// fleetStatusTimeout bounds the fleet-status lookup so a stuck call cannot
+// stall every roster refresh.
+const fleetStatusTimeout = 10 * time.Second
 
 // foreignCrews finds the candidates whose dispatcher is live in another repo's
 // bus: crews with workers on this bus but no live pid here, not homed here,
 // that `crew fleet status` lists under a repo with a live dispatcher. Either
-// lookup failing drops the candidates, as before.
-func foreignCrews(ctx context.Context, r Runner, cfg Config, candidates []crewRow) map[string]*DispatcherLoc {
+// lookup failing drops the candidates and returns the reason.
+func foreignCrews(ctx context.Context, r Runner, cfg Config, candidates []crewRow) (map[string]*DispatcherLoc, *string) {
 	if len(candidates) == 0 {
-		return nil
+		return nil, nil
 	}
-	out, _, err := r.Run(ctx, cfg.Crew[0], crewArgs(cfg, "crews", "--home")...)
-	if exitCode(err) != 0 {
-		return nil
+	out, errb, err := r.Run(ctx, cfg.Crew[0], crewArgs(cfg, "crews", "--home")...)
+	if rc := exitCode(err); rc != 0 {
+		msg := "foreign crews: " + firstLineOrExit(errb, rc)
+		return nil, &msg
 	}
 	homed := map[string]bool{}
 	for _, row := range parseCrewRows(out) {
@@ -291,11 +297,14 @@ func foreignCrews(ctx context.Context, r Runner, cfg Config, candidates []crewRo
 		}
 	}
 	if len(pending) == 0 {
-		return nil
+		return nil, nil
 	}
-	st, errMsg := CollectFleetStatus(ctx, r, cfg)
+	fleetCtx, cancel := context.WithTimeout(ctx, fleetStatusTimeout)
+	defer cancel()
+	st, errMsg := CollectFleetStatus(fleetCtx, r, cfg)
 	if errMsg != nil {
-		return nil
+		msg := "foreign crews: " + *errMsg
+		return nil, &msg
 	}
 	found := map[string]*DispatcherLoc{}
 	for _, repo := range st.Repos {
@@ -306,7 +315,7 @@ func foreignCrews(ctx context.Context, r Runner, cfg Config, candidates []crewRo
 			found[c.CrewID] = &DispatcherLoc{Where: "elsewhere", Repo: &repo.Repo, Common: &repo.Common}
 		}
 	}
-	return found
+	return found, nil
 }
 
 // mergePeers dedupes peer rows (every crew's roster repeats them) by

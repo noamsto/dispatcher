@@ -640,7 +640,7 @@ func TestCollectRosterForeignLookupFailureOmitsCandidates(t *testing.T) {
 			r := foreignRunner(t)
 			r.Responses[key] = FakeResponse{Stderr: []byte("boom\n"), Err: FakeExitError{Code: 1}}
 			sec := CollectRoster(context.Background(), r, baseConfig())
-			if sec.Error != nil || len(sec.Crews) != 1 || sec.Crews[0].ID != "c1" {
+			if sec.Error != nil || sec.ForeignError == nil || *sec.ForeignError != "foreign crews: boom" || len(sec.Crews) != 1 || sec.Crews[0].ID != "c1" {
 				t.Errorf("roster = %+v", sec)
 			}
 		})

@@ -271,6 +271,38 @@ func TestPeerRowNeverShadowsLocalRow(t *testing.T) {
 	}
 }
 
+func TestPeerRowDispatcherIsNull(t *testing.T) {
+	in := viewtest.Inputs()
+	in.Snap.Roster.Crews = []data.RosterCrew{
+		{ID: "c1", Workers: []map[string]any{}, Holds: []map[string]any{}, Dispatcher: &data.DispatcherLoc{Where: "here"}},
+	}
+	in.Snap.Roster.Peers = []map[string]any{
+		{"crew_id": "c1", "branch": "feat/peer", "host": "mbp", "peer": true, "state": "blocked"},
+	}
+	var n int
+	for _, w := range view.BuildOverview(in).Workers {
+		if w.Origin != view.OriginPeer {
+			continue
+		}
+		n++
+		if w.Dispatcher != nil {
+			t.Errorf("peer row dispatcher = %+v, want nil", w.Dispatcher)
+		}
+	}
+	if n == 0 {
+		t.Fatal("no peer row in overview")
+	}
+}
+
+func TestOverviewListsForeignError(t *testing.T) {
+	in := viewtest.Inputs()
+	msg := "foreign crews: boom"
+	in.Snap.Roster.ForeignError = &msg
+	if !slices.Contains(view.BuildOverview(in).Errors, msg) {
+		t.Errorf("Errors = %v, want %q", view.BuildOverview(in).Errors, msg)
+	}
+}
+
 func TestOverviewInputsDir(t *testing.T) {
 	check := func(v view.OverviewView, want *string) {
 		t.Helper()
