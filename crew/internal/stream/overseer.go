@@ -1041,7 +1041,12 @@ func (t *transitions) next(doc fleetpkg.StatusDoc, nowMS int64) []any {
 				}
 			}
 			n, cur, held := awaiting(c.Dispatcher.PaneState, c.Workers)
-			if c.Attention != "guest" && live {
+			laneDeadKey := condKey{event: "lane_dead", key: r.Key, crew: c.CrewID}
+			laneDead := c.Dispatcher.Lane != nil && *c.Dispatcher.Lane == "dead"
+			// A fired lane_dead outlives its last active worker reaching
+			// pr_open: the dispatcher is still deaf, not awaiting the human.
+			keepDead := held && t.on[laneDeadKey] && laneDead
+			if c.Attention != "guest" && live && !keepDead {
 				awaitKey := condKey{event: "dispatcher_awaiting", key: r.Key, crew: c.CrewID}
 				// A parked dispatcher's own short wakes (heartbeat, hold_due, reap)
 				// must not end a fired episode, or the same held work re-fires.
@@ -1099,15 +1104,18 @@ func (t *transitions) next(doc fleetpkg.StatusDoc, nowMS int64) []any {
 			// covers it. A standby one (turn ended, workers active) is deaf to
 			// them and still fires. Skipping the block also drops the clock,
 			// which a dispatcher the human wakes would otherwise trip on its
-			// first turn.
-			if c.Attention != "guest" && live && !held && c.Dispatcher.Lane != nil && *c.Dispatcher.Lane == "dead" {
+			// first turn. An already fired lane_dead is kept while the lane
+			// stays dead (keepDead).
+			if c.Attention != "guest" && live && laneDead && (!held || keepDead) {
 				since, ok := t.deadSince[ref]
 				if !ok {
 					since = doc.TS
 				}
 				deadSince[ref] = since
-				if doc.TS-since >= laneDeadAfter.Milliseconds() && strandsWork(c.Workers) {
-					fire(condKey{event: "lane_dead", key: r.Key, crew: c.CrewID},
+				if keepDead {
+					on[laneDeadKey] = true
+				} else if doc.TS-since >= laneDeadAfter.Milliseconds() && strandsWork(c.Workers) {
+					fire(laneDeadKey,
 						laneDeadLine{overseerHead: head("lane_dead"), DeadS: (doc.TS - since) / 1000, TS: nowMS})
 				}
 			}
