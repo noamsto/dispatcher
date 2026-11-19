@@ -1,10 +1,12 @@
 package data
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -209,5 +211,236 @@ func TestNewRunClearsPriorRoles(t *testing.T) {
 	}
 	if r := d.Roles[RoleKey{"c1", "feat/x", "reviewer"}]; r != nil {
 		t.Errorf("old run's role survived a new run: %+v", r)
+	}
+}
+
+func sinkRow(ts int64, from, to, body string) string {
+	b, _ := json.Marshal(body)
+	return fmt.Sprintf(`{"ts":%d,"crew_id":"c1","from":%q,"to":%q,"kind":"msg","body":%s}`, ts, from, to, b)
+}
+
+func statusRow(ts int64, from, state, detail string) string {
+	return fmt.Sprintf(`{"ts":%d,"crew_id":"c1","from":%q,"to":"dispatcher:c1","kind":"status","body":{"state":%q,"detail":%q}}`, ts, from, state, detail)
+}
+
+func scanRows(t *testing.T, rows ...string) BusDigest {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "events.jsonl")
+	if err := os.WriteFile(path, []byte(strings.Join(rows, "\n")+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	d, err := NewBusScanner(path).Scan(digestBase + 100000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return d
+}
+
+func TestScanSubagents(t *testing.T) {
+	const w, sink = "worker:feat/x#s1", "subagent:c1"
+	key := WorkerKey{"c1", "feat/x"}
+	at := func(n int64) int64 { return digestBase + n*1000 }
+	tests := []struct {
+		name string
+		rows []string
+		want []SubagentRun
+	}{
+		{"spawn runs", []string{
+			sinkRow(at(1), w, sink, `{"subagent":"spawn","id":"t1","engine":"claude","label":"look","agent":"Explore","model":"m","effort":"high"}`),
+		}, []SubagentRun{{ID: "t1", Session: "s1", Engine: "claude", Label: "look", Agent: "Explore", Model: "m", Effort: "high", State: "running", StartTS: at(1)}}},
+		{"claude foreground", []string{
+			sinkRow(at(1), w, sink, `{"subagent":"spawn","id":"t1","label":"look"}`),
+			sinkRow(at(2), w, sink, `{"subagent":"finish","agent_id":"a1","outcome":"ok"}`),
+			sinkRow(at(3), w, sink, `{"subagent":"finish","id":"t1","agent_id":"a1","outcome":"ok","model":"opus"}`),
+		}, []SubagentRun{{ID: "t1", AgentID: "a1", Session: "s1", Label: "look", Model: "opus", State: "done", StartTS: at(1), EndTS: at(3)}}},
+		{"background", []string{
+			sinkRow(at(1), w, sink, `{"subagent":"spawn","id":"t1","label":"look"}`),
+			sinkRow(at(2), w, sink, `{"subagent":"spawn","id":"t1","agent_id":"a1"}`),
+			sinkRow(at(3), w, sink, `{"subagent":"finish","agent_id":"a1","outcome":"ok"}`),
+		}, []SubagentRun{{ID: "t1", AgentID: "a1", Session: "s1", Label: "look", State: "done", StartTS: at(1), EndTS: at(3)}}},
+		{"unknown id falls back to agent_id", []string{
+			sinkRow(at(1), w, sink, `{"subagent":"spawn","id":"t1","agent_id":"a1"}`),
+			sinkRow(at(2), w, sink, `{"subagent":"finish","id":"zz","agent_id":"a1"}`),
+		}, []SubagentRun{{ID: "t1", AgentID: "a1", Session: "s1", State: "done", StartTS: at(1), EndTS: at(2)}}},
+		{"error is failed", []string{
+			sinkRow(at(1), w, sink, `{"subagent":"spawn","id":"t1"}`),
+			sinkRow(at(2), w, sink, `{"subagent":"finish","id":"t1","outcome":"error"}`),
+		}, []SubagentRun{{ID: "t1", Session: "s1", State: "failed", StartTS: at(1), EndTS: at(2)}}},
+		{"aborted is failed", []string{
+			sinkRow(at(1), w, sink, `{"subagent":"spawn","id":"t1"}`),
+			sinkRow(at(2), w, sink, `{"subagent":"finish","id":"t1","outcome":"aborted"}`),
+		}, []SubagentRun{{ID: "t1", Session: "s1", State: "failed", StartTS: at(1), EndTS: at(2)}}},
+		{"duplicate finish ignored", []string{
+			sinkRow(at(1), w, sink, `{"subagent":"spawn","id":"t1"}`),
+			sinkRow(at(2), w, sink, `{"subagent":"finish","id":"t1","outcome":"ok"}`),
+			sinkRow(at(3), w, sink, `{"subagent":"finish","id":"t1","outcome":"error","model":"late"}`),
+		}, []SubagentRun{{ID: "t1", Session: "s1", State: "done", StartTS: at(1), EndTS: at(2)}}},
+		{"unknown finish dropped", []string{
+			sinkRow(at(1), w, sink, `{"subagent":"finish","id":"nope"}`),
+		}, nil},
+		{"spawn without id dropped", []string{
+			sinkRow(at(1), w, sink, `{"subagent":"spawn","label":"x"}`),
+		}, nil},
+		{"unknown phase dropped", []string{
+			sinkRow(at(1), w, sink, `{"subagent":"pause","id":"t1"}`),
+		}, nil},
+		{"role sender ignored", []string{
+			sinkRow(at(1), "role:feat/x:reviewer", sink, `{"subagent":"spawn","id":"t1"}`),
+		}, nil},
+		{"wrong crew ignored", []string{
+			sinkRow(at(1), w, "subagent:c2", `{"subagent":"spawn","id":"t1"}`),
+		}, nil},
+		{"other recipient ignored", []string{
+			sinkRow(at(1), w, "dispatcher:c1", `{"subagent":"spawn","id":"t1"}`),
+		}, nil},
+		{"malformed body ignored", []string{
+			sinkRow(at(1), w, sink, `not json`),
+			sinkRow(at(2), w, sink, `{"subagent":7,"id":"t1"}`),
+		}, nil},
+		{"label clipped to 80 runes, others to 64", []string{
+			sinkRow(at(1), w, sink, fmt.Sprintf(`{"subagent":"spawn","id":"t1","label":%q,"agent":%q}`, strings.Repeat("é", 100), strings.Repeat("a", 100))),
+		}, []SubagentRun{{ID: "t1", Session: "s1", Label: strings.Repeat("é", 80), Agent: strings.Repeat("a", 64), State: "running", StartTS: at(1)}}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := scanRows(t, tc.rows...).Subagents[key]
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("runs = %+v, want %+v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestScanSubagentsCap(t *testing.T) {
+	const w, sink = "worker:feat/x#s1", "subagent:c1"
+	key := WorkerKey{"c1", "feat/x"}
+	ids := func(runs []SubagentRun) []string {
+		var out []string
+		for _, r := range runs {
+			out = append(out, r.ID)
+		}
+		return out
+	}
+	spawn := func(rows []string, i int) []string {
+		return append(rows, sinkRow(digestBase+int64(i), w, sink, fmt.Sprintf(`{"subagent":"spawn","id":"r%d"}`, i)))
+	}
+
+	t.Run("evicts oldest finished before running", func(t *testing.T) {
+		var rows []string
+		for i := range 16 {
+			rows = spawn(rows, i)
+		}
+		rows = append(rows, sinkRow(digestBase+100, w, sink, `{"subagent":"finish","id":"r3"}`))
+		rows = spawn(rows, 16)
+		got := ids(scanRows(t, rows...).Subagents[key])
+		if len(got) != 16 || slices.Contains(got, "r3") || got[0] != "r0" || got[15] != "r16" {
+			t.Errorf("ids = %v, want r3 evicted, r0 kept, r16 last", got)
+		}
+	})
+	t.Run("all running evicts oldest", func(t *testing.T) {
+		var rows []string
+		for i := range 17 {
+			rows = spawn(rows, i)
+		}
+		got := ids(scanRows(t, rows...).Subagents[key])
+		if len(got) != 16 || got[0] != "r1" || got[15] != "r16" {
+			t.Errorf("ids = %v, want r1..r16", got)
+		}
+	})
+}
+
+func TestScanSubagentsSinkRows(t *testing.T) {
+	d := scanRows(t,
+		statusRow(digestBase+1000, "worker:feat/x#s1", "working", "execute"),
+		sinkRow(digestBase+2000, "worker:feat/x#s1", "subagent:c1", `{"subagent":"spawn","id":"t1"}`),
+	)
+	if len(d.Recent) != 1 || d.Recent[0].Kind != "status" {
+		t.Errorf("recent = %+v, want only the status row", d.Recent)
+	}
+	if got := len(d.Workers[WorkerKey{"c1", "feat/x"}].Activity); got != 2 {
+		t.Errorf("activity = %d, want 2 (sink row counted)", got)
+	}
+}
+
+func TestScanSubagentsSession(t *testing.T) {
+	key := WorkerKey{"c1", "feat/x"}
+	d := scanRows(t,
+		statusRow(digestBase+1000, "worker:feat/x#s1", "working", "execute"),
+		sinkRow(digestBase+2000, "worker:feat/x#s1", "subagent:c1", `{"subagent":"spawn","id":"t1"}`),
+		statusRow(digestBase+3000, "worker:feat/x#s2", "working", "execute"),
+		sinkRow(digestBase+4000, "worker:feat/x#s2", "subagent:c1", `{"subagent":"spawn","id":"t2"}`),
+		`{"ts":1794800005000,"crew_id":"c1","from":"worker:feat/x#s9","kind":"status","body":{"state":"working","source":"watchdog"}}`,
+	)
+	if got := d.Workers[key].Session; got != "s2" {
+		t.Errorf("worker session = %q, want s2 (watchdog and msg rows excluded)", got)
+	}
+	runs := d.Subagents[key]
+	if len(runs) != 2 || runs[0].Session != "s1" || runs[1].Session != "s2" {
+		t.Errorf("run sessions = %+v, want s1, s2", runs)
+	}
+	bare := scanRows(t, sinkRow(digestBase, "worker:feat/y", "subagent:c1", `{"subagent":"spawn","id":"t"}`))
+	if got := bare.Workers[WorkerKey{"c1", "feat/y"}].Session; got != "" {
+		t.Errorf("session without suffix or status = %q, want empty", got)
+	}
+}
+
+func TestNewRunClearsPriorSubagents(t *testing.T) {
+	d := scanRows(t,
+		statusRow(digestBase, "worker:feat/x#s1", "working", "execute"),
+		sinkRow(digestBase+1000, "worker:feat/x#s1", "subagent:c1", `{"subagent":"spawn","id":"t1"}`),
+		statusRow(digestBase+2000, "worker:feat/x#s1", "failed", "x"),
+		statusRow(digestBase+3000, "worker:feat/x#s2", "working", "spec"),
+	)
+	if runs := d.Subagents[WorkerKey{"c1", "feat/x"}]; len(runs) != 0 {
+		t.Errorf("old run's subagents survived a new run: %+v", runs)
+	}
+}
+
+func TestScanSubagentsCloneIsolation(t *testing.T) {
+	key := WorkerKey{"c1", "feat/x"}
+	path := filepath.Join(t.TempDir(), "events.jsonl")
+	row := sinkRow(digestBase, "worker:feat/x#s1", "subagent:c1", `{"subagent":"spawn","id":"t1"}`) + "\n"
+	if err := os.WriteFile(path, []byte(row), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s := NewBusScanner(path)
+	d, err := s.Scan(digestBase + 1000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d.Subagents[key][0].State = "mutated"
+	d2, err := s.Scan(digestBase + 1000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := d2.Subagents[key][0].State; got != "running" {
+		t.Errorf("state = %q after mutating a returned digest, want running", got)
+	}
+}
+
+func TestScanSubagentsIncremental(t *testing.T) {
+	key := WorkerKey{"c1", "feat/x"}
+	path := filepath.Join(t.TempDir(), "events.jsonl")
+	write := func(flag int, rows ...string) {
+		t.Helper()
+		f, err := os.OpenFile(path, flag, 0o600)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = f.Close() }()
+		if _, err := f.WriteString(strings.Join(rows, "\n") + "\n"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s := NewBusScanner(path)
+	write(os.O_CREATE|os.O_WRONLY, sinkRow(digestBase, "worker:feat/x#s1", "subagent:c1", `{"subagent":"spawn","id":"t1"}`))
+	d, err := s.Scan(digestBase + 1000)
+	if err != nil || d.Subagents[key][0].State != "running" {
+		t.Fatalf("first scan = %+v, %v", d.Subagents[key], err)
+	}
+	write(os.O_APPEND|os.O_WRONLY, sinkRow(digestBase+500, "worker:feat/x#s1", "subagent:c1", `{"subagent":"finish","id":"t1"}`))
+	d, err = s.Scan(digestBase + 1000)
+	if err != nil || d.Subagents[key][0].State != "done" || d.Subagents[key][0].EndTS != digestBase+500 {
+		t.Fatalf("second scan = %+v, %v", d.Subagents[key], err)
 	}
 }

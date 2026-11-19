@@ -1,7 +1,7 @@
  ✓ all clear
-╭ ▸ CHECKLISTS ───────── 0 of 11 done ─╮╭ AGENTS ──────── 11 agents ─╮╭ MONITORS ───── 11 watched ─╮
+╭ ▸ CHECKLISTS ───────── 0 of 11 done ─╮╭ AGENTS ──────── 12 agents ─╮╭ MONITORS ───── 11 watched ─╮
 │▌● otter standard                 AC —││▌● otter sonnet standard    ││ WATCHDOG ──────────────────│
-│▌  ●─●─◉─○─○─○ execute                ││▌  roles —                  ││▌otter      ▁▁▁█▁ ok 45s    │
+│▌  ●─●─◉─○─○─○ execute                ││▌  roles —  sub ●1          ││▌otter      ▁▁▁█▄ ok 45s    │
 │ ● heron standard               AC 5/5││ ● heron sonnet standard    ││ heron      ▁▁▁▁▁ ok 10m    │
 │   ●─●─●─◉─○─○ gate                   ││   roles —                  ││ feat/c     ▁▁▁▁▁ ok 5m     │
 │ ● feat/c standard                AC —││ ● feat/c sonnet standard   ││ feat/d     ▁▁▁▁▁ prompt 3m │

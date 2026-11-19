@@ -177,7 +177,14 @@ func detailLines(ov vm.OverviewView, wi, iw int) []string {
 			out = append(out, "   "+fg(glyphColor(st)).Render(stateGlyph(st))+" "+cleanText(ovStr(r.Role, "?")+" "+r.State)+
 				fg(colDim).Render(" "+cleanText(ovStr(r.Detail, ""))))
 		}
-		out = append(out, "   "+fg(colDim).Render("execute subagents: not reported"))
+		if len(a.Execute) == 0 {
+			out = append(out, "   "+fg(colDim).Render("execute subagents: none"))
+			continue
+		}
+		out = append(out, "   "+fg(colDim).Render("execute subagents"))
+		for _, n := range a.Execute {
+			out = append(out, subagentLine(n))
+		}
 	}
 
 	out = append(out, section("ATTENTION"))
@@ -245,4 +252,30 @@ func eventOf(from, branch string) bool {
 
 func phaseGlyph(status string) string {
 	return phaseCells(&vm.Phase{Steps: []vm.PhaseStep{{Status: status}}})[0].glyph
+}
+
+// subagentState maps a subagent node state onto the lead-state vocabulary the
+// shared glyph and colour helpers speak.
+func subagentState(state string) string {
+	switch state {
+	case "running":
+		return "working"
+	case "done", "failed":
+		return state
+	}
+	return "unknown"
+}
+
+func subagentLine(n vm.AgentNode) string {
+	st := subagentState(n.State)
+	parts := []string{}
+	for _, f := range []string{ovStr(n.Label, ""), ovStr(n.Model, ""), ovStr(n.Effort, ""), n.State} {
+		if f = cleanText(f); f != "" {
+			parts = append(parts, f)
+		}
+	}
+	if n.AgeSec != nil {
+		parts = append(parts, ovAge(*n.AgeSec))
+	}
+	return "     " + fg(glyphColor(st)).Render(stateGlyph(st)) + " " + strings.Join(parts, " ")
 }

@@ -587,7 +587,7 @@ func TestDetailOverlay(t *testing.T) {
 	v, _ = ovKeys(v, "enter")
 	got := stripped(v.View(150, 40))
 	for _, want := range []string{"DETAIL", "otter", "feat/a", "PHASE", "execute", "ACCEPTANCE",
-		"execute subagents: not reported", "plan-critic", "reviewer", "crew where --crew c1 -- feat/a", "RECENT EVENTS"} {
+		"execute subagents", "step 2", "plan-critic", "reviewer", "crew where --crew c1 -- feat/a", "RECENT EVENTS"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("detail lacks %q", want)
 		}
@@ -1375,5 +1375,27 @@ func TestDetailOverlayStaleWorkerAgents(t *testing.T) {
 	got := stripped(v.View(150, 40))
 	if want := "none — stale, waiting on human cleanup"; !strings.Contains(got, want) {
 		t.Errorf("detail lacks %q:\n%s", want, got)
+	}
+}
+
+func TestDetailOverlaySubagents(t *testing.T) {
+	asciiProfile(t)
+	v, _ := ovFixture(t, 150, 40, false, nil)
+	v.View(150, 40)
+	selectBranch(t, &v, "feat/a")
+	card := stripped(v.View(150, 40))
+	if !strings.Contains(card, "sub ●1") {
+		t.Errorf("card lacks running subagent count:\n%s", card)
+	}
+	v, _ = ovKeys(v, "enter")
+	got := stripped(v.View(150, 40))
+	for _, want := range []string{"✓ step 1", "● step 2"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("detail lacks %q:\n%s", want, got)
+		}
+	}
+	v, _ = ovKeys(v, "j")
+	if got := stripped(v.View(150, 40)); !strings.Contains(got, "execute subagents: none") {
+		t.Errorf("feat/b detail lacks none line:\n%s", got)
 	}
 }

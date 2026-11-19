@@ -156,6 +156,8 @@ for d in "$root/adapters/claude-code/plugin" "$root/adapters/codex/plugin"; do
   chmod +x "$d/scripts/tmux-server-guard.sh"
   cp "$root/adapters/core/phase-status.sh" "$d/scripts/phase-status.sh"
   chmod +x "$d/scripts/phase-status.sh"
+  cp "$root/adapters/core/subagent-notify.sh" "$d/scripts/subagent-notify.sh"
+  chmod +x "$d/scripts/subagent-notify.sh"
   cp "$root/adapters/core/directive-delivery.sh" "$d/scripts/directive-delivery.sh"
   chmod +x "$d/scripts/directive-delivery.sh"
   rm -rf "$d/protocols" "$d/reviewers"
@@ -197,6 +199,8 @@ cp "$root/adapters/core/tmux-server-guard.sh" "$root/adapters/cursor/scripts/tmu
 chmod +x "$root/adapters/cursor/scripts/tmux-server-guard.sh"
 cp "$root/adapters/core/phase-status.sh" "$root/adapters/cursor/scripts/phase-status.sh"
 chmod +x "$root/adapters/cursor/scripts/phase-status.sh"
+cp "$root/adapters/core/subagent-notify.sh" "$root/adapters/cursor/scripts/subagent-notify.sh"
+chmod +x "$root/adapters/cursor/scripts/subagent-notify.sh"
 cp "$root/adapters/core/directive-delivery.sh" "$root/adapters/cursor/scripts/directive-delivery.sh"
 chmod +x "$root/adapters/cursor/scripts/directive-delivery.sh"
 

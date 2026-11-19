@@ -90,6 +90,7 @@ map_file() {
   adapters/core/overseer.sh) add dispatcher module ;;
   adapters/core/permission-check.sh) add adapters dispatch-resume dispatch module permission-check remote-host ;;
   adapters/core/phase-status.sh) add adapters phase-status ;;
+  adapters/core/subagent-notify.sh) add adapters subagent-notify ;;
   adapters/core/pr-watch.sh) add adapters dispatch module pr-watch ;;
   adapters/core/public-leak-guard.sh) add "${dispatch_set[@]}" public-leak-guard ;;
   adapters/core/refresh-budget.sh) add adapters dispatch module refresh-budget ;;

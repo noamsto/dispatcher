@@ -87,6 +87,8 @@ func msgText(body any) string {
 		}
 	}
 	switch {
+	case evStr(obj, "subagent") != "":
+		return "subagent " + evStr(obj, "subagent") + " " + ovFirst(evStr(obj, "label"), ovFirst(evStr(obj, "id"), evStr(obj, "agent_id")))
 	case obj["seam"] != nil && obj["tag"] != nil:
 		t := "retro " + evStr(obj, "tag")
 		if d := evStr(obj, "detail"); d != "" {
