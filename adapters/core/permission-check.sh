@@ -249,7 +249,10 @@ frame_parse() {
     line=${lines[i]}
     t=${line#"${line%%[![:space:]]*}"}
     t=${t%"${t##*[![:space:]]}"}
-    [ -z "$t" ] || { ne+=("$t"); ni+=("$i"); }
+    [ -z "$t" ] || {
+      ne+=("$t")
+      ni+=("$i")
+    }
   done
 
   local n=${#ne[@]}
