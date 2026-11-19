@@ -100,7 +100,7 @@ func runOverseer(fr FleetRequest, rediscover int64, stdout, stderr io.Writer, o 
 		return overseerStatus(lane, c.crew, stdout, o.Options)
 	}
 	if fr.Follow {
-		return runFollow(fr, c, lane, stderr, o)
+		return runFollow(fr, c, lane, stdout, stderr, o)
 	}
 	if err := os.MkdirAll(lane, 0o755); err != nil {
 		say(stderr, "crew: %v\n", err)
@@ -1200,12 +1200,19 @@ func wholeNumber(v any) (int64, bool) {
 	return 0, false
 }
 
+// daemonHolds reports the lane's daemon.json when its pid is the one holding
+// the lane's lock; a leftover file from an older daemon does not count.
+func daemonHolds(lane string) (daemonInfo, bool) {
+	holder, err := strconv.ParseInt(lock.Holder(filepath.Join(lane, "stream.lock.d")), 10, 64)
+	d, ok := readDaemonInfo(filepath.Join(lane, daemonInfoName))
+	return d, ok && err == nil && d.PID == holder
+}
+
 // overseerStatus is status with the lane's mode: "daemon" when daemon.json
 // names the pid that holds the lane's lock.
 func overseerStatus(lane, crew string, stdout io.Writer, o Options) int {
 	mode := ""
-	holder, err := strconv.ParseInt(lock.Holder(filepath.Join(lane, "stream.lock.d")), 10, 64)
-	if d, ok := readDaemonInfo(filepath.Join(lane, daemonInfoName)); ok && err == nil && d.PID == holder {
+	if _, ok := daemonHolds(lane); ok {
 		mode = "daemon"
 	}
 	return statusMode(lane, crew, mode, stdout, o)
