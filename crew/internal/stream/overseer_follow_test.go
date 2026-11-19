@@ -440,3 +440,223 @@ func TestOverseerFollowRefusesANonDaemonHolder(t *testing.T) {
 		t.Errorf("spawns %v stdout %q", f.spawns, r.out.str())
 	}
 }
+
+func TestOverseerFollowTakenOverDecision(t *testing.T) {
+	lane := t.TempDir()
+	if takenOver(lane, 42) {
+		t.Fatal("no marker read as taken over")
+	}
+	writeFile(t, filepath.Join(lane, takeoverName), "42")
+	if !takenOver(lane, 42) || takenOver(lane, 43) {
+		t.Fatal("the marker must name exactly its pid")
+	}
+}
+
+func TestOverseerFollowTakesOverWritesTheMarker(t *testing.T) {
+	f := newFollowRig(t)
+	f.fakeDaemon(ovStart, 0)
+	lockd := mkdir(t, filepath.Join(f.lane, "follow.lock.d"))
+	holder := exec.Command("sleep", "60")
+	if err := holder.Start(); err != nil {
+		t.Fatal(err)
+	}
+	go func() { _ = holder.Wait() }()
+	t.Cleanup(func() { _ = holder.Process.Kill() })
+	writeFile(t, filepath.Join(lockd, "pid"), fmt.Sprintf("%d\n", holder.Process.Pid))
+	var named atomic.Bool
+	go func() {
+		for range 2000 {
+			if takenOver(f.lane, holder.Process.Pid) {
+				named.Store(true)
+				return
+			}
+			time.Sleep(time.Millisecond)
+		}
+	}()
+
+	r := f.follow(Request{})
+	r.started()
+	if !named.Load() {
+		t.Error("the holder was TERMed without a takeover marker naming it")
+	}
+	if _, err := os.Stat(filepath.Join(f.lane, takeoverName)); err == nil {
+		t.Error("the new follow left follow.takeover behind")
+	}
+	r.finish()
+}
+
+// term TERMs this process, which only the running follow has subscribed to.
+func (r *followRun) term() int {
+	r.f.t.Helper()
+	if err := syscall.Kill(os.Getpid(), syscall.SIGTERM); err != nil {
+		r.f.t.Fatal(err)
+	}
+	select {
+	case rc := <-r.done:
+		return rc
+	case <-time.After(10 * time.Second):
+		r.f.t.Fatal("the follow did not stop on TERM")
+		return -1
+	}
+}
+
+func TestOverseerFollowTakenOverPrintsEnded(t *testing.T) {
+	f := newFollowRig(t)
+	f.fakeDaemon(ovStart, 0)
+	r := f.follow(Request{})
+	r.started()
+	writeFile(t, filepath.Join(f.lane, takeoverName), fmt.Sprint(os.Getpid()))
+	if rc := r.term(); rc != 0 {
+		t.Fatalf("rc %d", rc)
+	}
+	m := r.markers()
+	if len(m) != 2 {
+		t.Fatalf("markers %v", m)
+	}
+	wantMarker(t, m[1], "ended", "taken_over")
+	if m[1]["offset"] != m[0]["offset"] {
+		t.Errorf("ended offset %v, want %v", m[1]["offset"], m[0]["offset"])
+	}
+}
+
+func TestOverseerFollowTERMWithoutTakeoverIsSilent(t *testing.T) {
+	f := newFollowRig(t)
+	f.fakeDaemon(ovStart, 0)
+	writeFile(t, filepath.Join(f.lane, takeoverName), fmt.Sprint(os.Getpid()+1))
+	r := f.follow(Request{})
+	r.started()
+	if rc := r.term(); rc != 0 {
+		t.Fatalf("rc %d", rc)
+	}
+	if m := r.markers(); len(m) != 1 {
+		t.Fatalf("markers %v", m)
+	}
+}
+
+func TestOverseerFollowSignalDuringDaemonStart(t *testing.T) {
+	f := newFollowRig(t)
+	f.spawn = func([]string) error { return nil }
+	r := f.follow(Request{})
+	waitFor(t, "the spawn", func() bool { return f.spawnCount() == 1 })
+	start := time.Now()
+	if rc := r.term(); rc != 0 {
+		t.Fatalf("rc %d stderr %q", rc, r.errb.str())
+	}
+	if time.Since(start) > 2*time.Second {
+		t.Errorf("the start wait ignored the signal for %v", time.Since(start))
+	}
+	if r.out.str() != "" {
+		t.Errorf("stdout %q", r.out.str())
+	}
+	if _, err := os.Stat(filepath.Join(f.lane, "follow.lock.d")); err == nil {
+		t.Error("follow.lock.d was not released")
+	}
+}
+
+func TestOverseerFollowForcesAStaleDaemon(t *testing.T) {
+	f := newFollowRig(t)
+	f.fakeDaemon(ovStart, 0)
+	r := f.follow(Request{})
+	r.started()
+	staleTick := func() {
+		writeFile(t, filepath.Join(f.lane, "stream.tick"), fmt.Sprintf(`{"pid":%d,"ts":%d,"park":2}`, os.Getpid(), f.clock.Now().UnixMilli()-100_000))
+	}
+	staleTick()
+	r.kick()
+	if f.spawnCount() != 0 || len(r.markers()) != 1 {
+		t.Fatalf("forced on the first stale poll: spawns %v", f.spawns)
+	}
+	staleTick()
+	r.kick()
+	if f.spawnCount() != 1 || !slices.Contains(f.spawnArgs(0), "--force") {
+		t.Fatalf("spawns %v", f.spawns)
+	}
+	m := r.markers()
+	if len(m) != 2 {
+		t.Fatalf("markers %v", m)
+	}
+	wantMarker(t, m[1], "fresh", "started")
+	r.finish()
+}
+
+func TestOverseerFollowGapMidFollow(t *testing.T) {
+	f := newFollowRig(t)
+	f.fakeDaemon(ovStart, 0)
+	dir := filepath.Join(f.lane, logDirName)
+	log, err := openSegLog(dir, 100, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = log.Close() }()
+	emit := func(from, count int) {
+		for i := from; i < from+count; i++ {
+			if _, err := fmt.Fprintf(log, `{"n":"%03d","pad":"xxxxxxxxxxxxxxxxxxxx"}`+"\n", i); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	emit(0, 2)
+	r := f.follow(Request{})
+	r.started()
+	before := r.out.str()
+	emit(2, 20)
+	segs, _ := listSegments(dir)
+	oldest := segs[0].start
+	m0 := r.markers()[0]
+	if float64(oldest) <= m0["offset"].(float64)+float64(len(before)) {
+		t.Fatalf("the log did not prune past the follower: oldest %d", oldest)
+	}
+	want, _, _, _, _ := readLog(dir, oldest)
+	r.kick()
+	m := r.markers()
+	if len(m) != 2 {
+		t.Fatalf("markers %v", m)
+	}
+	wantMarker(t, m[1], "fresh", "gap")
+	if m[1]["offset"] != float64(oldest) {
+		t.Errorf("gap offset %v, want %d", m[1]["offset"], oldest)
+	}
+	_, rest, _ := strings.Cut(strings.TrimPrefix(r.out.str(), before), "\n")
+	if rest != string(want) {
+		t.Fatalf("after the gap %q, want %q", rest, want)
+	}
+	after := r.out.str()
+	r.kick()
+	if r.out.str() != after {
+		t.Fatalf("lines repeated: %q", strings.TrimPrefix(r.out.str(), after))
+	}
+	r.finish()
+}
+
+func TestOverseerFollowReadErrorLine(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
+	f := newFollowRig(t)
+	f.fakeDaemon(ovStart, 0)
+	dir := mkdir(t, filepath.Join(f.lane, logDirName))
+	r := f.follow(Request{})
+	r.started()
+	if err := os.Chmod(dir, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
+	r.kick()
+	r.kick()
+	var errs []map[string]any
+	for _, l := range r.lines() {
+		if l["stream"] == "error" {
+			errs = append(errs, l)
+		}
+	}
+	if len(errs) != 1 {
+		t.Fatalf("error lines %v, want one per heartbeat", errs)
+	}
+	if errs[0]["crew"] != "overseer:"+ovHost || !strings.Contains(errs[0]["detail"].(string), "permission denied") {
+		t.Errorf("error line %v", errs[0])
+	}
+	if err := os.Chmod(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	r.finish()
+}

@@ -189,3 +189,79 @@ func TestFollowStateRoundTrip(t *testing.T) {
 		t.Fatal("corrupt should be !ok")
 	}
 }
+
+func TestSegLogRotatesBeforeTheNextWrite(t *testing.T) {
+	dir := t.TempDir()
+	w, err := openSegLog(dir, 8, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.Write([]byte("12345678\n")); err != nil {
+		t.Fatal(err)
+	}
+	if segs, _ := listSegments(dir); len(segs) != 1 {
+		t.Fatalf("rotated on the filling write: %v", segs)
+	}
+	_ = w.Close()
+	w, err = openSegLog(dir, 8, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = w.Close() }()
+	if _, err := w.Write([]byte("b\n")); err != nil {
+		t.Fatal(err)
+	}
+	segs, _ := listSegments(dir)
+	if len(segs) != 2 || segs[1] != (segment{9, 2}) {
+		t.Fatalf("a reopened full segment did not rotate first: %v", segs)
+	}
+}
+
+func TestSegLogRotateErrorWritesNothing(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
+	dir := t.TempDir()
+	w, err := openSegLog(dir, 4, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = w.Close() }()
+	if _, err := w.Write([]byte("full\n")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dir, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
+	if n, err := w.Write([]byte("lost\n")); n != 0 || err == nil {
+		t.Fatalf("n=%d err=%v, want 0 and an error", n, err)
+	}
+	if chunk, _, _, end, _ := readLog(dir, 0); string(chunk) != "full\n" || end != 5 {
+		t.Fatalf("bytes landed despite the rotate error: %q end=%d", chunk, end)
+	}
+}
+
+func TestSegLogPruneErrorKeepsRotating(t *testing.T) {
+	dir := t.TempDir()
+	w, err := openSegLog(dir, 2, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = w.Close() }()
+	if _, err := w.Write([]byte("a\n")); err != nil {
+		t.Fatal(err)
+	}
+	// A non-empty directory under a segment name makes its prune fail.
+	stuck := filepath.Join(dir, segName(0))
+	if err := os.Remove(stuck); err != nil {
+		t.Fatal(err)
+	}
+	mkdir(t, filepath.Join(stuck, "x"))
+	if _, err := w.Write([]byte("b\n")); err != nil {
+		t.Fatalf("a failed prune failed the write: %v", err)
+	}
+	if w.end() != 4 {
+		t.Fatalf("end %d", w.end())
+	}
+}

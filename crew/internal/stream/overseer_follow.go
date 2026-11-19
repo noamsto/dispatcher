@@ -7,6 +7,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -20,6 +21,8 @@ const (
 
 	daemonStartTries = 100
 	daemonStartPoll  = 100 * time.Millisecond
+
+	takeoverName = "follow.takeover"
 )
 
 // followLine is the marker a follow prints before any log line.
@@ -40,6 +43,11 @@ type follow struct {
 	o              FleetOptions
 	spawn          func(args []string, stderrPath string) error
 	stdout, stderr io.Writer
+	crew           string
+	heartbeat      int64
+	sup            *suppress
+	sigs           <-chan os.Signal
+	signalled      bool
 	info           daemonInfo
 	offset         int64
 	stale          int
@@ -65,13 +73,17 @@ func runFollow(fr FleetRequest, c call, lane string, stdout, stderr io.Writer, o
 	}
 	defer lock.Release(lockd)
 
-	f := &follow{fr: fr, lane: lane, o: o, spawn: o.Spawn, stdout: stdout, stderr: stderr}
+	f := &follow{fr: fr, lane: lane, o: o, spawn: o.Spawn, stdout: stdout, stderr: stderr,
+		crew: c.crew, heartbeat: c.heartbeat, sup: &suppress{key: map[string]string{}, ts: map[string]int64{}}, sigs: sigs}
 	if f.spawn == nil {
 		f.spawn = spawnDaemon(o.Self)
 	}
 	deadline := o.Clock.Now().Add(time.Duration(park) * time.Second)
 	spawned, ok := f.ensure(fr.Force)
-	if !ok || !f.start(spawned) {
+	if !ok {
+		return f.failed()
+	}
+	if !f.start(spawned) {
 		return 1
 	}
 	for {
@@ -80,27 +92,63 @@ func runFollow(fr FleetRequest, c call, lane string, stdout, stderr io.Writer, o
 		}
 		select {
 		case <-sigs:
-			return 0
+			return f.ended()
 		case <-o.Rediscover(time.Duration(overseerPoll) * time.Second):
 		}
 		if !o.Clock.Now().Before(deadline) {
 			return 0
 		}
 		if !f.recheck() {
-			return 1
+			return f.failed()
 		}
 	}
 }
 
+// failed is the exit code of a failed ensure, which a signal interrupts.
+func (f *follow) failed() int {
+	if f.signalled {
+		return f.ended()
+	}
+	return 1
+}
+
+// ended is a signalled follow's exit. One TERMed by a newer follow says so,
+// so its Monitor reads the end as a handover rather than a death.
+func (f *follow) ended() int {
+	if !takenOver(f.lane, os.Getpid()) {
+		return 0
+	}
+	say(f.stdout, "%s\n", encode(followLine{Stream: "follow", Lane: "ended", Reason: "taken_over", PID: f.info.PID, Offset: f.offset, TS: clockMS(f.o.Options)}))
+	if f.o.Flush != nil {
+		_ = f.o.Flush()
+	}
+	return 0
+}
+
+// takenOver is whether the lane's takeover marker names pid.
+func takenOver(lane string, pid int) bool {
+	b, err := os.ReadFile(filepath.Join(lane, takeoverName))
+	return err == nil && strings.TrimSpace(string(b)) == strconv.Itoa(pid)
+}
+
 // takeFollow takes follow.lock.d, TERMing a live holder first: a re-armed
-// follow always wins over an orphaned older one.
+// follow always wins over an orphaned older one. The takeover marker names
+// the holder before it is TERMed, so it can tell a handover from a stop.
 func takeFollow(lockd string, o Options, stderr io.Writer) bool {
 	pid := strconv.Itoa(os.Getpid())
+	takeover := filepath.Join(filepath.Dir(lockd), takeoverName)
 	if lock.Acquire(lockd, pid) {
+		_ = os.Remove(takeover)
 		return true
 	}
 	holder := lock.Holder(lockd)
+	if target, ok := signalTarget(holder); ok {
+		if err := writeFileAtomic(takeover, []byte(strconv.Itoa(target))); err != nil {
+			say(stderr, "crew: fleet stream: follow: %s\n", oneLine(err))
+		}
+	}
 	if valid, gone := reclaim(holder, o); valid && gone && lock.Acquire(lockd, pid) {
+		_ = os.Remove(takeover)
 		return true
 	}
 	say(stderr, "crew: fleet stream: could not take over the overseer follow from pid %s\n", orUnknown(holder))
@@ -135,7 +183,12 @@ func (f *follow) ensure(force bool) (spawned, ok bool) {
 		return false, false
 	}
 	for range daemonStartTries {
-		<-f.o.Timer(daemonStartPoll)
+		select {
+		case <-f.sigs:
+			f.signalled = true
+			return false, false
+		case <-f.o.Timer(daemonStartPoll):
+		}
 		info, ok := readDaemonInfo(f.infoPath())
 		if ok && (!had || info.PID != before.PID || info.StartedMS != before.StartedMS) && f.state() == "alive" {
 			f.info = info
@@ -231,7 +284,11 @@ func (f *follow) write(p []byte) bool {
 func (f *follow) drain() bool {
 	chunk, next, oldest, _, err := readLog(filepath.Join(f.lane, logDirName), f.offset)
 	if err != nil {
-		say(f.stderr, "crew: fleet stream: follow: %s\n", oneLine(err))
+		detail := "follow: " + oneLine(err)
+		ts := clockMS(f.o.Options)
+		if f.sup.repeat("readlog", digitsToN(detail), ts, f.heartbeat*1000) {
+			say(f.stdout, "%s\n", encode(errorLine{Stream: "error", Crew: f.crew, RC: 1, Detail: detail, TS: ts}))
+		}
 		return true
 	}
 	if oldest > f.offset {

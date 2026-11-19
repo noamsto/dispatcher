@@ -34,10 +34,29 @@ teardown() {
     kill "$pid" 2>/dev/null || true
     wait "$pid" 2>/dev/null || true
   done
-  # The follow's daemon is detached; TERM only the pid its lane recorded.
-  if [ -n "${LANE_DIR:-}" ] && [ -f "$LANE_DIR/daemon.json" ]; then
-    kill "$(jq -r .pid "$LANE_DIR/daemon.json")" 2>/dev/null || true
+  # The follow's daemon is detached; TERM only the pids its lane recorded.
+  local pids=() f
+  if [ -n "${LANE_DIR:-}" ]; then
+    for f in "$LANE_DIR/daemon.json" "$LANE_DIR/stream.lock.d/pid"; do
+      [ -f "$f" ] || continue
+      case "$f" in
+      *.json) pid="$(jq -r '.pid // empty' "$f" 2>/dev/null || true)" ;;
+      *) pid="$(cat "$f" 2>/dev/null || true)" ;;
+      esac
+      [ -n "$pid" ] && pids+=("$pid")
+    done
   fi
+  [ -n "${first:-}" ] && pids+=("$first")
+  for pid in "${pids[@]}"; do
+    kill "$pid" 2>/dev/null || true
+  done
+  local i
+  for pid in "${pids[@]}"; do
+    for i in $(seq 50); do
+      kill -0 "$pid" 2>/dev/null || break
+      sleep 0.1
+    done
+  done
   teardown_repo
 }
 

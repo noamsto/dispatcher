@@ -27,7 +27,8 @@ usage: crew fleet stream --crew ID [--rediscover S] [--states a,b,c] [--park S]
                          [--park S] [--heartbeat S] [--force]
        crew fleet stream --overseer --daemon [--interval S] [--rediscover S]
                          [--heartbeat S] [--force]
-       crew fleet stream --overseer --follow [--park S] [--force]
+       crew fleet stream --overseer --follow [--park S] [--force] [--interval S]
+                         [--rediscover S] [--heartbeat S]
        crew fleet stream --status --overseer
 
 One long-running lane that delivers a crew's bus events from every repo on the
@@ -78,14 +79,18 @@ holds; --states, --coalesce and --retry are accepted and do nothing here. An
 explicit --park S makes the lane one-shot: it returns after its first
 non-heartbeat line or after S seconds, whichever is first.
 
---daemon is the overseer lane detached: it appends its lines to bounded rotating
-segments under <lane>/out/, writes <lane>/daemon.json and holds the lane's usual
-lock. --follow starts the daemon if none is alive (--force restarts it, which is
-also how a running daemon picks up an upgraded crew binary), prints a first
-marker line {"stream":"follow","lane":"fresh"|"resume","reason":...,"pid":N,
+--daemon runs the overseer lane in the foreground, appending its lines to bounded
+rotating segments under <lane>/out/ instead of stdout; it writes <lane>/daemon.json
+and holds the lane's usual lock. --follow starts the daemon detached, in its own
+session, if none is alive (--force restarts it, which is also how a running daemon
+picks up an upgraded crew binary; a stale daemon is replaced without it), prints a
+first marker line {"stream":"follow","lane":"fresh"|"resume","reason":...,"pid":N,
 "offset":N,"ts":ms}, then the lane's lines from the offset saved in
-<lane>/follow.json. It exits 0 after --park S (default 1680); a new follow takes
-over from an older one.
+<lane>/follow.json. Later markers of the same shape announce a daemon restart or a
+gap. It exits 0 after --park S (default 1680); a new follow takes over from an older
+one, which ends with {"stream":"follow","lane":"ended","reason":"taken_over",...}.
+--interval, --rediscover and --heartbeat apply only when this follow starts the
+daemon. A live non-daemon lane is refused unless --force.
 
 The overseer lane starts silent: a bus with no overseer cursor is read from the
 lane's start, and its first completed status read is a baseline that wakes

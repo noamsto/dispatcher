@@ -88,15 +88,21 @@ func openSegLog(dir string, segBytes int64, keepSegs int) (*segLog, error) {
 	return l, nil
 }
 
+// Write rotates a full segment before appending, so a rotate error leaves p
+// unwritten: callers retry the same bytes on an error.
 func (l *segLog) Write(p []byte) (int, error) {
+	if l.size >= l.segBytes {
+		if err := l.rotate(); err != nil {
+			return 0, err
+		}
+	}
 	n, err := l.f.Write(p)
 	l.size += int64(n)
-	if err != nil || l.size < l.segBytes {
-		return n, err
-	}
-	return n, l.rotate()
+	return n, err
 }
 
+// rotate opens the next segment, then prunes best-effort: a failed prune is
+// retried by the next rotation.
 func (l *segLog) rotate() error {
 	next := l.start + l.size
 	f, err := os.OpenFile(filepath.Join(l.dir, segName(next)), os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0o644)
@@ -105,14 +111,9 @@ func (l *segLog) rotate() error {
 	}
 	_ = l.f.Close()
 	l.f, l.start, l.size = f, next, 0
-	segs, err := listSegments(l.dir)
-	if err != nil {
-		return err
-	}
+	segs, _ := listSegments(l.dir)
 	for i := 0; i < len(segs)-l.keepSegs; i++ {
-		if err := os.Remove(filepath.Join(l.dir, segName(segs[i].start))); err != nil && !errors.Is(err, fs.ErrNotExist) {
-			return err
-		}
+		_ = os.Remove(filepath.Join(l.dir, segName(segs[i].start)))
 	}
 	return nil
 }
