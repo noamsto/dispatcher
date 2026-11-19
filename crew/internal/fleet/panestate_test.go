@@ -31,8 +31,12 @@ func paneDir(t *testing.T, mode os.FileMode, id, text string) string {
 // agent 300 runs under it through shell 200, 400 is alive elsewhere.
 const dispatcherPID = 100
 
+// tmuxServerPID is the dispatcher's tmux server, its parent; 500 is another
+// server's alive pid.
+const tmuxServerPID = 50
+
 func paneProcs() *proctest.Table {
-	return proctest.New(map[int]bool{dispatcherPID: true, 400: true}, map[int]int{200: dispatcherPID, 300: 200})
+	return proctest.New(map[int]bool{tmuxServerPID: true, dispatcherPID: true, 400: true, 500: true}, map[int]int{dispatcherPID: tmuxServerPID, 200: dispatcherPID, 300: 200})
 }
 
 func TestReadPaneState(t *testing.T) {
@@ -62,6 +66,28 @@ func TestReadPaneState(t *testing.T) {
 			dir := paneDir(t, 0o700, "81", tc.text)
 			if got := readPaneState(envDir(dir), "%81", paneProcs(), dispatcherPID); got == nil || *got != "waiting" {
 				t.Errorf("got %v, want waiting", got)
+			}
+		})
+	}
+
+	for _, tc := range []struct {
+		name, text string
+		want       bool
+	}{
+		{"server is the dispatcher's tmux server", "state=waiting\nserver=50\n", true},
+		{"server is foreign", "state=waiting\nserver=500\n", false},
+		{"server is dead", "state=waiting\nserver=999\n", false},
+		{"server is the dispatcher itself", "state=waiting\nserver=100\n", false},
+		{"server garbage", "state=waiting\nserver=abc\n", false},
+		{"server zero", "state=waiting\nserver=0\n", false},
+		{"server empty", "state=waiting\nserver=\n", false},
+		{"agent_pid wins over a foreign server", "state=waiting\nagent_pid=300\nserver=500\n", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := paneDir(t, 0o700, "81", tc.text)
+			got := readPaneState(envDir(dir), "%81", paneProcs(), dispatcherPID)
+			if tc.want != (got != nil) {
+				t.Errorf("got %v, want state %v", got, tc.want)
 			}
 		})
 	}

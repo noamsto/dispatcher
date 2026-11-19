@@ -474,7 +474,9 @@ func crewCols(fv vm.FleetView, ix fleetIndex, iw int) fleetCols {
 		c.counts = max(c.counts, ansi.StringWidth(workerCounts(row.Workers.ByState)))
 		w := 0
 		for _, m := range crewMarks(row) {
-			w += ansi.StringWidth(m.text)
+			if m.reserved {
+				w += ansi.StringWidth(m.text)
+			}
 		}
 		tail = max(tail, w)
 	}
@@ -894,19 +896,21 @@ func (fr fleetRow) crewLine(idx int, s *spans) string {
 type crewMark struct {
 	text string
 	st   lipgloss.Style
+	// reserved marks keep their width off the label; the rest truncate.
+	reserved bool
 }
 
 // crewMarks are the spans after the counts: attention, orphaned, idle repos.
 func crewMarks(c vm.FleetCrewRow) []crewMark {
 	var ms []crewMark
 	if c.Attention > 0 {
-		ms = append(ms, crewMark{fmt.Sprintf(" %d!", c.Attention), fg(colAmber).Bold(true)})
+		ms = append(ms, crewMark{fmt.Sprintf(" %d!", c.Attention), fg(colAmber).Bold(true), true})
 	}
 	if c.Orphaned {
-		ms = append(ms, crewMark{" orphaned", fg(colRed).Bold(true)})
+		ms = append(ms, crewMark{" orphaned", fg(colRed).Bold(true), true})
 	}
 	if c.IdleRepos > 0 {
-		ms = append(ms, crewMark{fmt.Sprintf(" +%d idle repos", c.IdleRepos), fg(colDim)})
+		ms = append(ms, crewMark{fmt.Sprintf(" +%d idle repos", c.IdleRepos), fg(colDim), false})
 	}
 	return ms
 }

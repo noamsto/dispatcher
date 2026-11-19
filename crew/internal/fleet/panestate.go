@@ -32,8 +32,9 @@ const paneStateCap = 4 << 10
 // does not say whose file it is. A file's agent_pid line must name a live
 // process in the dispatcher's tree (the dispatcher pid is its launcher); present
 // but dead, elsewhere or malformed, the file is another server's. A file
-// without the line (an older hook, or a remote bridge's mirror entry) is taken
-// as written.
+// without the line falls back to its server= line, the writing tmux server's
+// pid, which must be alive and an ancestor of the dispatcher; only a file with
+// neither (an older hook) is taken as written.
 func readPaneState(getenv func(string) string, pane string, procs proc.Table, dispatcher int) *string {
 	if !paneIDRE.MatchString(pane) {
 		return nil
@@ -63,7 +64,7 @@ func readPaneState(getenv func(string) string, pane string, procs proc.Table, di
 		return nil
 	}
 	var state *string
-	var agent *string
+	var agent, server *string
 	for line := range strings.SplitSeq(string(raw), "\n") {
 		if v, ok := strings.CutPrefix(line, "state="); ok && slices.Contains(paneStates, v) && state == nil {
 			state = &v
@@ -71,11 +72,33 @@ func readPaneState(getenv func(string) string, pane string, procs proc.Table, di
 		if v, ok := strings.CutPrefix(line, "agent_pid="); ok && agent == nil {
 			agent = &v
 		}
+		if v, ok := strings.CutPrefix(line, "server="); ok && server == nil {
+			server = &v
+		}
 	}
-	if state == nil || agent != nil && !underDispatcher(procs, *agent, dispatcher) {
+	switch {
+	case state == nil:
 		return nil
+	case agent != nil:
+		if !underDispatcher(procs, *agent, dispatcher) {
+			return nil
+		}
+	case server != nil:
+		if !isDispatcherServer(procs, *server, dispatcher) {
+			return nil
+		}
 	}
 	return state
+}
+
+// isDispatcherServer is whether server, a server= value, is a positive pid that
+// is alive and an ancestor of the dispatcher: its tmux server.
+func isDispatcherServer(procs proc.Table, server string, dispatcher int) bool {
+	pid, err := strconv.Atoi(server)
+	if err != nil || pid <= 0 || dispatcher <= 0 || !procs.Alive(pid) {
+		return false
+	}
+	return proc.AncestorsOf(procs, dispatcher)[pid]
 }
 
 // underDispatcher is whether agent, an agent_pid value, is a positive pid that
