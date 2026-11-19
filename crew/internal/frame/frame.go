@@ -634,3 +634,23 @@ func InterruptedAboveBox(text string) bool {
 	_, plain, a, _, off, ok := scanBox(text)
 	return ok && a-1 >= off && reInterrupted.MatchString(plain[a-1])
 }
+
+// reAgentFinished is the row claude prints when a background agent completes.
+var reAgentFinished = posix(`^[[:space:]]*●[[:space:]]+Agent ".*" finished · .+$`)
+
+// AgentFinishedAboveBox reports a background-agent completion row as the last
+// non-blank row above the box. The row also precedes the lead starting its next
+// turn, so it never proves idleness alone: callers must see the frame hold still.
+func AgentFinishedAboveBox(text string) bool {
+	_, plain, a, _, off, ok := scanBox(text)
+	if !ok {
+		return false
+	}
+	for j := a - 1; j >= off; j-- {
+		if strings.TrimSpace(plain[j]) == "" {
+			continue
+		}
+		return reAgentFinished.MatchString(plain[j])
+	}
+	return false
+}

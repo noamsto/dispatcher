@@ -56,6 +56,45 @@ type PaneRequest struct {
 	Actor   string // `dispatcher:<crew>` from the arm, `watchdog` from D6 and D9
 	MsgTS   string // the pointed-at msg's ms timestamp (a dispatcher directive or a role verdict); D9 types with "0"
 	Line    string // what to type; empty is the inbox line
+	// Agent carries the stability samples of a caller that re-checks (the --wait
+	// loop, the watchdog); nil is a single look, which never accepts an agent-finished frame.
+	Agent *AgentSample
+}
+
+// agentStableSecs is how long an agent-finished frame must hold byte-identical
+// before it counts as idle. A lead that is about to start its next turn paints the
+// spinner within a few seconds of the completion row, so ten seconds of stillness
+// separates a parked lead from one mid-handoff without stalling a nudge long.
+const agentStableSecs = 10
+
+// Refusals for the agent-finished frame. ReasonAgentOnce is a single look;
+// ReasonAgentPending is a re-checking caller still waiting out the stable window,
+// which --wait treats like a live turn.
+const (
+	ReasonAgentOnce    = "background agent finished, no done marker: idle not yet proven — re-run with --wait to confirm the frame holds still"
+	ReasonAgentPending = "background agent finished, no done marker: confirming the frame holds still"
+)
+
+// AgentSample is the first sighting of the current agent-finished frame.
+type AgentSample struct {
+	frame string
+	at    int64
+}
+
+// confirm records the frame and reports whether it has held byte-identical for
+// agentStableSecs. A nil receiver is a one-shot caller.
+func (s *AgentSample) confirm(plain string, now int64) (string, bool) {
+	if s == nil {
+		return ReasonAgentOnce, false
+	}
+	if s.frame != plain {
+		s.frame, s.at = plain, now
+		return ReasonAgentPending, false
+	}
+	if now-s.at < agentStableSecs {
+		return ReasonAgentPending, false
+	}
+	return "", true
 }
 
 func (r PaneRequest) text() string {
@@ -116,14 +155,24 @@ func Pane(ctx context.Context, req PaneRequest, d Deps) (string, int) {
 	// The frame gate runs before the anchor gate: the anchor's session fold reads
 	// the whole bus log, and a busy lead is the common refusal. It runs again right
 	// before typing, since that read leaves time for a human to start typing.
-	if why, ok := frameGate(ctx, d, req.Pane, req.Engine); !ok {
-		return why, exitRefused
+	gate := frameGate(ctx, d, req.Pane, req.Engine)
+	if !gate.ok {
+		return gate.why, exitRefused
+	}
+	if gate.agentFrame != "" {
+		if why, ok := req.Agent.confirm(gate.agentFrame, d.Clock.Seconds()); !ok {
+			return why, exitRefused
+		}
 	}
 	if why, ok := anchorGate(ctx, d, req); !ok {
 		return why, exitRefused
 	}
-	if why, ok := frameGate(ctx, d, req.Pane, req.Engine); !ok {
-		return why, exitRefused
+	// A frame that changed since the stability proof is a turn that started.
+	if again := frameGate(ctx, d, req.Pane, req.Engine); !again.ok || again.agentFrame != gate.agentFrame {
+		if again.ok {
+			return ReasonAgentPending, exitRefused
+		}
+		return again.why, exitRefused
 	}
 	if _, err := d.Tmux.Run(ctx, "send-keys", "-t", req.Pane, "-l", req.text()); err != nil {
 		return "send-keys failed", exitRefused
@@ -313,35 +362,52 @@ func capture(ctx context.Context, d Deps, pane string, colored bool) (string, bo
 	return text, ok && (!colored || text != "")
 }
 
+// gateResult is the frame gate's verdict: ok, or why not. agentFrame is set when the
+// frame is idle only on the strength of a background-agent completion row, which a
+// caller must see hold still before typing.
+type gateResult struct {
+	why        string
+	ok         bool
+	agentFrame string
+}
+
 // frameGate is `_nudge_frame_gate`: the pane shows an idle, empty input box, or the
 // reason it does not.
-func frameGate(ctx context.Context, d Deps, pane, engine string) (string, bool) {
+func frameGate(ctx context.Context, d Deps, pane, engine string) gateResult {
 	plain, _ := capture(ctx, d, pane, false)
 	colored, _ := capture(ctx, d, pane, true)
 	if plain == "" {
-		return "pane unreadable", false
+		return gateResult{why: "pane unreadable"}
 	}
 	if engine != "claude" {
 		// pi: the option-select frame, then a live turn or no box, then a box
 		// holding something the lead has not sent.
 		switch {
 		case frame.IsPrompt(engine, plain):
-			return "prompt on screen", false
+			return gateResult{why: "prompt on screen"}
 		case !frame.PiIdleBox(plain):
-			return "live turn or no idle input box", false
+			return gateResult{why: "live turn or no idle input box"}
 		case boxText(plain, engine) != "":
-			return "unsent input in the input box", false
+			return gateResult{why: "unsent input in the input box"}
 		}
-		return "", true
+		return gateResult{ok: true}
 	}
 	// skipBg: a detached background shell is no reason to refuse a directive, so an
 	// idle box passes with one on screen.
 	// An Interrupted turn has no finished-turn marker but waits for direction.
-	if why, idle := frame.PaneIdleReason(plain, colored, true); !idle &&
-		(why != "no finished-turn marker above the input box" || !frame.InterruptedAboveBox(plain)) {
-		return busyReason(plain, colored, why), false
+	// An agent-finished row is idle only once the caller has seen it hold still.
+	if why, idle := frame.PaneIdleReason(plain, colored, true); !idle {
+		if why == "no finished-turn marker above the input box" {
+			switch {
+			case frame.InterruptedAboveBox(plain):
+				return gateResult{ok: true}
+			case frame.AgentFinishedAboveBox(plain):
+				return gateResult{ok: true, agentFrame: plain}
+			}
+		}
+		return gateResult{why: busyReason(plain, colored, why)}
 	}
-	return "", true
+	return gateResult{ok: true}
 }
 
 // busyReason is `_nudge_busy_reason`: a claude lead's idle-frame refusal, narrowed to

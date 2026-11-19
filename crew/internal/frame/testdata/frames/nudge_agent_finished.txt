@@ -1,0 +1,6 @@
+● Agent "Plan critic" finished · 5m 8s
+
+────────────────── reef ─
+❯
+──────────────────
+  -- INSERT -- ⏵⏵ auto mode on · ← for agents

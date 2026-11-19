@@ -434,6 +434,11 @@ func TestUnreadWatchAutoNudge(t *testing.T) {
 				t.Fatalf("types %+v, want %d", types, tc.wantCalls)
 			}
 			for i, req := range types {
+				// The stability sample is the watch's own state, not part of the type.
+				if req.Agent == nil {
+					t.Errorf("type %d carries no agent sample", i)
+				}
+				req.Agent = nil
 				if req != want {
 					t.Errorf("type %d = %+v, want %+v", i, req, want)
 				}

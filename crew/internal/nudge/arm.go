@@ -236,11 +236,14 @@ type arm struct {
 	// waiting is the arm's nudge_waiting: once a `waiting` row exists, every end
 	// records a `resolved` row so a joiner can report the outcome.
 	waiting bool
+	// agent is the --wait loop's stability sample of an agent-finished frame; nil
+	// outside --wait, where one look never proves idle.
+	agent *AgentSample
 }
 
 func (a *arm) request(actor string) PaneRequest {
 	return PaneRequest{
-		Pane: a.pane, Engine: a.engine, Session: a.sid, Crew: a.crew, Actor: actor, MsgTS: a.ts,
+		Pane: a.pane, Engine: a.engine, Session: a.sid, Crew: a.crew, Actor: actor, MsgTS: a.ts, Agent: a.agent,
 	}
 }
 
@@ -411,6 +414,7 @@ func (a *arm) wait(ctx context.Context, wait string) int {
 		}
 	}
 
+	a.agent = &AgentSample{}
 	for {
 		if prev, ok := a.fold(alreadyProgram, map[string]any{"m": json.Number(strconv.FormatInt(num(a.ts), 10))}); ok {
 			res := rowText(prev, "result")
@@ -433,7 +437,7 @@ func (a *arm) wait(ctx context.Context, wait string) int {
 			_, detail, _ := strings.Cut(out, " — ")
 			return a.end(strings.SplitN(res, ":", 2)[0], rc, detail, out)
 		}
-		if out != "live turn or no idle input box" {
+		if out != "live turn or no idle input box" && out != ReasonAgentPending {
 			return a.end("refused", exitRefused, out, "refused — "+out)
 		}
 		if !a.waiting {
