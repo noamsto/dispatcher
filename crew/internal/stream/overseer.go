@@ -179,8 +179,10 @@ func openDaemon(lane, lockd string, o FleetOptions, stderr io.Writer) (*segLog, 
 	}
 	log, err := openSegLog(filepath.Join(lane, logDirName), segBytes, keepSegs)
 	if err == nil {
+		exe, exeID := o.Binary()
 		err = writeDaemonInfo(filepath.Join(lane, daemonInfoName), daemonInfo{
 			PID: int64(os.Getpid()), StartedMS: clockMS(o.Options), StartOffset: log.end(),
+			Exe: exe, ExeID: exeID,
 		})
 		if err != nil {
 			_ = log.Close()

@@ -13,7 +13,9 @@ func TestOverseerDaemonWritesTheLogNotStdout(t *testing.T) {
 	alpha := gitRepo(t, "alpha")
 	appendRow(t, alpha, ovMsg(ovStart+1000, "c1", "dispatcher:c1", ovMe, "alpha ack"))
 	r := newOvRig(t)
-	l := startFleet(t, r.options(okRepos(alpha)), FleetRequest{Overseer: true, Daemon: true})
+	o := r.options(okRepos(alpha))
+	o.Binary = func() (string, string) { return "/store/crew", "7:9" }
+	l := startFleet(t, o, FleetRequest{Overseer: true, Daemon: true})
 
 	lane := filepath.Join(l.root, ovMe)
 	var text string
@@ -26,7 +28,7 @@ func TestOverseerDaemonWritesTheLogNotStdout(t *testing.T) {
 		t.Errorf("stdout = %q, want nothing", got)
 	}
 	info, ok := readDaemonInfo(filepath.Join(lane, daemonInfoName))
-	if !ok || info.PID != int64(os.Getpid()) || info.StartOffset != 0 {
+	if !ok || info.PID != int64(os.Getpid()) || info.StartOffset != 0 || info.Exe != "/store/crew" || info.ExeID != "7:9" {
 		t.Errorf("daemon.json = %+v, %v", info, ok)
 	}
 	l.stop()

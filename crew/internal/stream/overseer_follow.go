@@ -51,6 +51,7 @@ type follow struct {
 	info           daemonInfo
 	offset         int64
 	stale          int
+	upgraded       bool
 }
 
 // runFollow is `--follow`. It never stops the daemon it ensures.
@@ -79,7 +80,13 @@ func runFollow(fr FleetRequest, c call, lane string, stdout, stderr io.Writer, o
 		f.spawn = spawnDaemon(o.Self)
 	}
 	deadline := o.Clock.Now().Add(time.Duration(park) * time.Second)
-	spawned, ok := f.ensure(fr.Force)
+	force := fr.Force
+	if !force && f.state() == "alive" {
+		if info, ok := daemonHolds(lane); ok && f.binaryChanged(info) {
+			force, f.upgraded = true, true
+		}
+	}
+	spawned, ok := f.ensure(force)
 	if !ok {
 		return f.failed()
 	}
@@ -162,6 +169,17 @@ func dropStaleTakeover(takeover string) {
 		return
 	}
 	_ = os.Remove(takeover)
+}
+
+// binaryChanged is whether the daemon runs a different binary than this
+// follow: a replaced path or file, or a daemon too old to record one. A follow
+// that cannot name its own binary never forces.
+func (f *follow) binaryChanged(info daemonInfo) bool {
+	exe, id := f.o.Binary()
+	if exe == "" {
+		return false
+	}
+	return info.Exe != exe || info.ExeID != id
 }
 
 func (f *follow) infoPath() string { return filepath.Join(f.lane, daemonInfoName) }
@@ -254,6 +272,9 @@ func (f *follow) start(spawned bool) bool {
 	}
 	if spawned {
 		reason = "started"
+		if f.upgraded {
+			reason = "upgraded"
+		}
 	}
 	f.offset = off
 	return f.mark(reason)
