@@ -64,6 +64,8 @@ no_note=0
 # --relaunch: restart a dead crew from its launch record, in --repo.
 relaunch_id=""
 relaunch_repo=""
+# --spawn: start a new crew's dispatcher in this repo (owner-gated).
+spawn_repo=""
 agent_set=0
 # --overseer: the one-per-host fleet session, started from the repos root.
 overseer=0
@@ -136,6 +138,14 @@ while [ $# -gt 0 ]; do
     }
     shift 2
     ;;
+  --spawn)
+    spawn_repo="${2:-}"
+    [ -n "$spawn_repo" ] || {
+      echo "dispatcher: --spawn needs a value (the repo path)" >&2
+      exit 1
+    }
+    shift 2
+    ;;
   --overseer)
     overseer=1
     shift
@@ -155,6 +165,11 @@ while [ $# -gt 0 ]; do
   esac
 done
 
+if [ -n "$spawn_repo" ] && { [ "$agent_set$overseer" != 00 ] ||
+  [ -n "$model$effort$autocompact$note_src$task$relaunch_id$relaunch_repo" ] || [ "$new_crew$fresh$no_note" != 000 ]; }; then
+  echo "dispatcher: --spawn takes no other flags or task words — the new crew starts on the launcher's defaults; relay work to it afterwards as a request" >&2
+  exit 2
+fi
 if [ -n "$relaunch_repo" ] && [ -z "$relaunch_id" ]; then
   echo "dispatcher: --repo only goes with --relaunch" >&2
   exit 2
@@ -411,6 +426,53 @@ _relaunch_argv() {
   esac
 }
 
+# _owner_auto_start — succeed only when the owner's settings set
+# overseer.autoStart to true. owner_settings keeps the JSON for the caller;
+# owner_settings_read 0 means the read itself failed, which counts as off.
+_owner_auto_start() {
+  owner_settings_read=0
+  owner_settings=$("${DISPATCH_CONFIG_BIN:-@dispatchConfig@}" 2>/dev/null) || return 1
+  owner_settings_read=1
+  jq -e '.overseer.autoStart == true' <<<"$owner_settings" >/dev/null 2>&1
+}
+
+# _start_in_window <flag> <old-pid> <argv>... — run <argv> as crew $CREW_ID's
+# dispatcher in a new window of this tmux session, cwd $wt, and wait up to 10 s
+# for $crew_dir/pid to name a live pid other than <old-pid>. Sets pane; exits
+# with a refusal on any failure.
+_start_in_window() {
+  local flag=$1 old_pid=$2 new_pid
+  shift 2
+  # The window starts on a placeholder so remain-on-exit is set before the
+  # launcher runs: one that dies at once would otherwise close the pane first.
+  pane=$(tmux new-window -d -P -F '#{pane_id}' -c "$wt" -n "dispatcher:$(basename "$wt")" -- sleep 60) || {
+    echo "dispatcher: $flag: tmux new-window failed" >&2
+    exit 1
+  }
+  if ! [[ $pane =~ ^%[0-9]+$ ]]; then
+    echo "dispatcher: $flag: tmux new-window answered ${pane@Q}, not a pane id" >&2
+    exit 1
+  fi
+  # Kept on until the new pid shows, so a refusing launcher's message stays
+  # readable; off after, or every later normal exit would leave a dead window.
+  tmux set-option -p -t "$pane" remain-on-exit on
+  tmux respawn-pane -k -t "$pane" -c "$wt" -e "CREW_ID=$CREW_ID" -- "$@" || {
+    tmux kill-pane -t "$pane" || true
+    echo "dispatcher: $flag: tmux respawn-pane failed — killed placeholder pane $pane" >&2
+    exit 1
+  }
+  for _ in $(seq 20); do
+    sleep 0.5
+    new_pid=$(cat -- "$crew_dir/pid" 2>/dev/null) || new_pid=""
+    if [[ $new_pid =~ ^[1-9][0-9]*$ ]] && [ "$new_pid" != "$old_pid" ] && kill -0 "$new_pid" 2>/dev/null; then
+      tmux set-option -p -t "$pane" remain-on-exit off
+      return 0
+    fi
+  done
+  echo "dispatcher: $flag: no live dispatcher registered for crew $CREW_ID within 10 s — pane $pane stays open (remain-on-exit) with the launcher's output" >&2
+  exit 1
+}
+
 # Relaunch: start a crashed crew's dispatcher again, in a new window of this
 # tmux session, from the launch record its launcher wrote. The record lives in
 # the git common dir, which every worker in the repo can write, so each field is
@@ -458,28 +520,53 @@ if [ -n "$relaunch_id" ]; then
   fi
 
   record="$crew_dir/launch"
-  if [ ! -f "$record" ]; then
-    echo "dispatcher: no launch record — relaunch by hand with --agent/--model" >&2
-    exit 1
+  rec_from="crew $CREW_ID's launch record"
+  # Only a missing record falls back: a present one that fails validation is
+  # worker-written data gone wrong, and refuses as before.
+  if [ ! -e "$record" ]; then
+    if ! _owner_auto_start; then
+      if [ "$owner_settings_read" = 0 ]; then
+        echo "dispatcher: no launch record, and the settings could not be read (so overseer.autoStart counts as off) — relaunch by hand with --agent/--model" >&2
+      else
+        echo "dispatcher: no launch record — relaunch by hand with --agent/--model, or the owner enables overseer.autoStart" >&2
+      fi
+      exit 1
+    fi
+    # The launcher's default agent and its owner-set defaults, as a launch of
+    # `dispatcher` with no flags would resolve them.
+    _settings_default() { # key fallback
+      jq -r --arg k "$1" --arg d "$2" '.orchestratorDefaults.claude[$k] // $d | tostring' <<<"$owner_settings"
+    }
+    rec_agent=claude
+    rec_model=$(_settings_default model '')
+    rec_effort=$(_settings_default effort '')
+    rec_autocompact=$(_settings_default autoCompact auto)
+    if [ -z "$rec_model" ]; then
+      echo "dispatcher: --relaunch: crew $CREW_ID has no launch record and orchestratorDefaults.claude.model is unset — relaunch by hand with --agent/--model" >&2
+      exit 1
+    fi
+    rec_from="the settings default (orchestratorDefaults.claude)"
+    echo "dispatcher: --relaunch: crew $CREW_ID has no launch record — using the settings defaults (overseer.autoStart)" >&2
+  else
+    if ! jq -es 'length == 1 and (.[0] | type == "object")' "$record" >/dev/null 2>&1; then
+      echo "dispatcher: --relaunch: crew $CREW_ID's launch record is not a JSON object — relaunch by hand with --agent/--model" >&2
+      exit 1
+    fi
+    _record_field() { # key
+      jq -r --arg k "$1" '.[$k] |
+        if type == "string" then . elif type == "number" and $k == "autocompact" then tostring
+        else error("not a string") end' "$record" 2>/dev/null && return 0
+      echo "dispatcher: --relaunch: crew $CREW_ID's launch record $1 is missing or not a string — relaunch by hand with --agent/--model" >&2
+      return 1
+    }
+    rec_agent=$(_record_field agent) || exit 1
+    rec_model=$(_record_field model) || exit 1
+    rec_effort=$(_record_field effort) || exit 1
+    rec_autocompact=$(_record_field autocompact) || exit 1
   fi
-  if ! jq -es 'length == 1 and (.[0] | type == "object")' "$record" >/dev/null 2>&1; then
-    echo "dispatcher: --relaunch: crew $CREW_ID's launch record is not a JSON object — relaunch by hand with --agent/--model" >&2
-    exit 1
-  fi
-  _record_field() { # key
-    jq -r --arg k "$1" '.[$k] |
-      if type == "string" then . elif type == "number" and $k == "autocompact" then tostring
-      else error("not a string") end' "$record" 2>/dev/null && return 0
-    echo "dispatcher: --relaunch: crew $CREW_ID's launch record $1 is missing or not a string — relaunch by hand with --agent/--model" >&2
-    return 1
-  }
-  rec_agent=$(_record_field agent) || exit 1
-  rec_model=$(_record_field model) || exit 1
-  rec_effort=$(_record_field effort) || exit 1
-  rec_autocompact=$(_record_field autocompact) || exit 1
   _bad_record() { # field value
     local shown=${2:0:40}
-    echo "dispatcher: --relaunch: crew $CREW_ID's launch record $1 ${shown@Q} is not valid — relaunch by hand with --agent/--model" >&2
+    echo "dispatcher: --relaunch: $rec_from $1 ${shown@Q} is not valid — relaunch by hand with --agent/--model" >&2
     exit 1
   }
   case "$rec_agent" in
@@ -491,7 +578,7 @@ if [ -n "$relaunch_id" ]; then
     exit 1
   }
   if ! grep -qx -- "$rec_agent" <<<"$engines"; then
-    echo "dispatcher: --relaunch: crew $CREW_ID's launch record agent $rec_agent is not enabled and installed here (dispatch --engines)" >&2
+    echo "dispatcher: --relaunch: $rec_from agent $rec_agent is not enabled and installed here (dispatch --engines)" >&2
     exit 1
   fi
   # No leading '-': the model must not read as a flag.
@@ -528,35 +615,91 @@ if [ -n "$relaunch_id" ]; then
   old_pid=$(cat -- "$crew_dir/pid" 2>/dev/null) || old_pid=""
 
   _relaunch_argv "$rec_agent" "$rec_model" "$rec_effort" "$rec_autocompact"
-  # The window starts on a placeholder so remain-on-exit is set before the
-  # launcher runs: one that dies at once would otherwise close the pane first.
-  pane=$(tmux new-window -d -P -F '#{pane_id}' -c "$wt" -n "dispatcher:$(basename "$wt")" -- sleep 60) || {
-    echo "dispatcher: --relaunch: tmux new-window failed" >&2
-    exit 1
-  }
-  if ! [[ $pane =~ ^%[0-9]+$ ]]; then
-    echo "dispatcher: --relaunch: tmux new-window answered ${pane@Q}, not a pane id" >&2
+  _start_in_window --relaunch "$old_pid" "${relaunch_cmd[@]}"
+  echo "dispatcher: relaunched crew $CREW_ID in pane $pane"
+  exit 0
+fi
+
+# Spawn: start a new crew's dispatcher in <repo>'s main checkout, in a new
+# window of this tmux session, on the launcher's own defaults. The overseer's
+# sanctioned start, so only the owner's overseer.autoStart enables it, and it
+# carries no caller text into the new session.
+if [ -n "$spawn_repo" ]; then
+  if [ -z "${TMUX:-}" ]; then
+    echo "dispatcher: --spawn needs tmux: the new dispatcher gets a new window in this tmux session" >&2
     exit 1
   fi
-  # Kept on until the new pid shows, so a refusing launcher's message stays
-  # readable; off after, or every later normal exit would leave a dead window.
-  tmux set-option -p -t "$pane" remain-on-exit on
-  tmux respawn-pane -k -t "$pane" -c "$wt" -e "CREW_ID=$CREW_ID" -- "${relaunch_cmd[@]}" || {
-    tmux kill-pane -t "$pane" || true
-    echo "dispatcher: --relaunch: tmux respawn-pane failed — killed placeholder pane $pane" >&2
+  if ! _owner_auto_start; then
+    if [ "$owner_settings_read" = 0 ]; then
+      echo "dispatcher: --spawn: the settings could not be read, so overseer.autoStart counts as off — not spawning" >&2
+    else
+      echo "dispatcher: --spawn is off — the owner enables it with overseer.autoStart" >&2
+    fi
+    exit 1
+  fi
+  cd -- "$spawn_repo" || {
+    echo "dispatcher: --spawn: cannot enter ${spawn_repo@Q}" >&2
     exit 1
   }
-  for _ in $(seq 20); do
-    sleep 0.5
-    new_pid=$(cat -- "$crew_dir/pid" 2>/dev/null) || new_pid=""
-    if [[ $new_pid =~ ^[1-9][0-9]*$ ]] && [ "$new_pid" != "$old_pid" ] && kill -0 "$new_pid" 2>/dev/null; then
-      tmux set-option -p -t "$pane" remain-on-exit off
-      echo "dispatcher: relaunched crew $CREW_ID in pane $pane"
-      exit 0
+  common=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || {
+    echo "dispatcher: --spawn: $spawn_repo is not a git repo" >&2
+    exit 1
+  }
+  if [[ $common != */.git ]]; then
+    echo "dispatcher: --spawn: the git common dir $common does not end in /.git, so there is no main worktree to spawn in" >&2
+    exit 1
+  fi
+  wt=${common%/.git}
+  cd -- "$wt" || exit 1
+  if ! table=$(crew crews --home 2>/dev/null); then
+    echo "dispatcher: --spawn: 'crew crews' failed — cannot tell whether a dispatcher is live in this repo, so not spawning" >&2
+    exit 1
+  fi
+  header=1
+  while IFS=$'\t' read -r row_id _ _ _ _ row_alive; do
+    if [ "$header" = 1 ]; then
+      header=0
+      continue
     fi
-  done
-  echo "dispatcher: --relaunch: no live dispatcher registered for crew $CREW_ID within 10 s — pane $pane stays open (remain-on-exit) with the launcher's output" >&2
-  exit 1
+    if [ "$row_alive" = yes ]; then
+      echo "dispatcher: --spawn: crew $row_id's dispatcher is live in this repo — ask it instead" >&2
+      exit 1
+    fi
+  done <<<"$table"
+
+  # Same lock and 30-min marker as --relaunch, per repo. The crew dir does not
+  # exist yet in a repo that never had a crew, and the lock's mkdir needs it.
+  mkdir -p -- "$common/crew"
+  lock="$common/crew/.spawn.lock"
+  mkdir -- "$lock" 2>/dev/null || {
+    echo "dispatcher: --spawn: another --spawn in this repo is in progress ($lock — rmdir it if none is running)" >&2
+    exit 1
+  }
+  trap 'rmdir -- "$lock" 2>/dev/null || true' EXIT
+  marker="$common/crew/spawn"
+  if [ -e "$marker" ]; then
+    last=$(cat -- "$marker" 2>/dev/null) || last=""
+    if ! [[ $last =~ ^[0-9]{1,12}$ ]] || [ "$(($(date +%s) - 10#$last))" -lt 1800 ]; then
+      echo "dispatcher: --spawn: a dispatcher was spawned in this repo within the last 30 min ($marker) — check its window before spawning again" >&2
+      exit 1
+    fi
+  fi
+  # Minted here, not by the launcher, so the pid wait below knows which crew
+  # dir to watch; the launcher keeps an exported CREW_ID and registers it.
+  CREW_ID=$(crew new) || {
+    echo "dispatcher: --spawn: 'crew new' failed" >&2
+    exit 1
+  }
+  _require_plain_crew_id
+  marker_tmp=$(mktemp "$common/crew/.spawn.XXXXXX")
+  date +%s >"$marker_tmp"
+  mv -f -- "$marker_tmp" "$marker"
+
+  crew_dir="$common/crew/crews/$CREW_ID"
+  # The new dispatcher must not inherit the overseer's or a worker's identity.
+  _start_in_window --spawn "" env -u CREW_OVERSEER -u CREW_WORKER_ID -u CREW_ROLE_ID dispatcher
+  echo "dispatcher: spawned crew $CREW_ID in pane $pane"
+  exit 0
 fi
 
 # Checked before the crew is minted: pi's --append-system-prompt takes text or a
@@ -1159,6 +1302,14 @@ while :; do
     plugin_layer=""
     eval "plugin_layer=$(claude_worker_plugin_settings "$settings" "$chrome")"
     set -- "$@" --settings "$plugin_layer"
+    # An unstamped checkout stops the session on Claude Code's workspace-trust
+    # dialog; both spellings of the cwd are stamped since the store keys by one.
+    if [ "$overseer" = 0 ] && git rev-parse --git-common-dir >/dev/null 2>&1; then
+      trust_dirs=("$(pwd -P)")
+      [ "$PWD" = "${trust_dirs[0]}" ] || trust_dirs+=("$PWD")
+      _claude_pretrust "${trust_dirs[@]}" ||
+        echo "dispatcher: could not pre-trust ${trust_dirs[0]} — the session may stop on Claude Code's workspace-trust dialog" >&2
+    fi
     env "${launch_env[@]}" claude "$@" ${first_prompt:+"$first_prompt"} || rc=$?
     ;;
   codex | cursor)

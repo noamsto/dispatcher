@@ -23,6 +23,7 @@ complete -c dispatcher -l fresh -d 'Hand this crew off to a new session'
 complete -c dispatcher -l note -r -F -d 'File holding the handoff note'
 complete -c dispatcher -l no-note -d 'A --fresh after a crash, with no note'
 complete -c dispatcher -l relaunch -r -f -a '(__dispatcher_crew_ids)' -d 'Restart a dead crew from its launch record'
+complete -c dispatcher -l spawn -r -f -a '(__fish_complete_directories)' -d "Start a new crew's dispatcher in a repo (overseer.autoStart)"
 complete -c dispatcher -l overseer -d 'Start the one-per-host fleet session'
 complete -c dispatcher -l repo -r -f -a '(__fish_complete_directories)' -d "The crew's repo path, with --relaunch"
 
