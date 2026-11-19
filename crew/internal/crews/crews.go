@@ -222,7 +222,8 @@ func RecordedLive(t proc.Table, now time.Time, pid int, pidfile string) bool {
 		return false
 	}
 	if data, err := os.ReadFile(PidStartFile(pidfile)); err == nil {
-		recorded := strings.TrimRight(string(data), "\n ")
+		line, _, _ := strings.Cut(string(data), "\n")
+		recorded := strings.TrimRight(line, "\r ")
 		// Cut on the first space only: the macOS token itself contains spaces.
 		recPid, recTok, ok := strings.Cut(recorded, " ")
 		if ok && recPid == strconv.Itoa(pid) && recTok != "" {

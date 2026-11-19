@@ -228,6 +228,8 @@ func TestTableRecordedStartToken(t *testing.T) {
 		{"e: current start unreadable fails closed", "7777 tok-A", proctest.Proc{Comm: "x"}, 0, "yes"},
 		{"f: token recorded for another pid → heuristic", "9999 tok-A", proctest.Proc{Start: "tok-B", Elapsed: 10}, 0, "yes"},
 		{"g: blank sidecar → heuristic", "\n", proctest.Proc{Start: "tok-B", Elapsed: 10}, 0, "yes"},
+		{"h: trailing junk lines ignored", "7777 tok-A\njunk\n", proctest.Proc{Start: "tok-A", Elapsed: 10}, 100 * time.Second, "yes"},
+		{"i: CRLF line ending ignored", "7777 tok-A\r\n", proctest.Proc{Start: "tok-A", Elapsed: 10}, 100 * time.Second, "yes"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			p := fixture(t)
