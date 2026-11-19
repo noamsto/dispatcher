@@ -42,6 +42,10 @@ type trustCase struct {
 	frames   []string
 	accept   func(context.Context) (bool, error)
 	gone     bool // tmux reports pane %7 as gone
+	path     string
+	notRepo  bool  // the pane's cwd has no git common dir
+	capErr   error // capture-pane fails
+	sendErr  error // send-keys fails
 	tmuxPane *tmuxtest.Fake
 	captures int
 }
@@ -54,6 +58,7 @@ func newTrustCase(t *testing.T) *trustCase {
 		common:  f.repo("r", ""),
 		cmd:     "claude",
 		crew:    "c1",
+		path:    panePath,
 		frames: []string{
 			readFixture(t, "../frame/testdata/frames/prompt_trust.txt"),
 			readFixture(t, "../frame/testdata/frames/idle_box.txt"),
@@ -70,13 +75,16 @@ func (tc *trustCase) answer(args []string) (string, error) {
 		if tc.gone {
 			return "", errors.New("can't find pane: %7")
 		}
-		return strings.Join([]string{"%7", tc.cmd, panePath, tc.role, tc.crew}, "\x1f"), nil
+		return strings.Join([]string{"%7", tc.cmd, tc.path, tc.role, tc.crew}, "\x1f"), nil
 	case "capture-pane":
+		if tc.capErr != nil {
+			return "", tc.capErr
+		}
 		frame := tc.frames[min(tc.captures, len(tc.frames)-1)]
 		tc.captures++
 		return frame, nil
 	case "send-keys":
-		return "", nil
+		return "", tc.sendErr
 	}
 	return "", tmuxtest.ErrNoServer
 }
@@ -106,7 +114,7 @@ func (tc *trustCase) opts() Options {
 	o := tc.fixture.opts()
 	o.Clock.CrewClock = tc.root + "/clock"
 	o.Git = &gittest.Fake{Func: func(dir string, args []string) (string, error) {
-		if dir == panePath && strings.Join(args, " ") == "rev-parse --path-format=absolute --git-common-dir" {
+		if dir == panePath && !tc.notRepo && strings.Join(args, " ") == "rev-parse --path-format=absolute --git-common-dir" {
 			return tc.common, nil
 		}
 		return "", &git.ExitError{Code: 128}
@@ -227,7 +235,7 @@ func TestTrustNoticeFailure(t *testing.T) {
 		code   int
 		lines  int
 	}{
-		{"accepted becomes 1", 2, 1, 1},
+		{"accepted becomes 4", 2, 4, 1},
 		{"still shown stays 3", 1, 3, 2},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
@@ -288,6 +296,9 @@ func TestTrustRefusals(t *testing.T) {
 			tc.dispatcherPane("c3", "%7")
 		}, 1, "pane %7 has no @crew_id stamp, and crews c2, c3 all name it as their dispatcher pane"},
 		{"crew not on the bus", "%7", func(tc *trustCase) { tc.crew = "c9" }, 1, "crew c9 is not on COMMON's bus"},
+		{"capture fails", "%7", func(tc *trustCase) { tc.capErr = errors.New("capture boom") }, 1, "pane %7 cannot be captured"},
+		{"pane cwd not in a git repo", "%7", func(tc *trustCase) { tc.notRepo = true }, 1, "pane %7's directory " + panePath + " is not in a git repo"},
+		{"pane cwd not absolute", "%7", func(tc *trustCase) { tc.path = "relative/dir" }, 1, "pane %7 has no working directory"},
 		{"add-dir frame", "%7", func(tc *trustCase) {
 			tc.frames = []string{readFixture(t, "../stall/testdata/prompt_adddir.txt")}
 		}, 2, "add-dir trust dialog rejects injected keys — relay it to the human"},
@@ -317,6 +328,20 @@ func TestTrustRefusals(t *testing.T) {
 				t.Errorf("a refusal changed a log:\nbefore %q\nafter  %q", before, after)
 			}
 		})
+	}
+}
+
+// TestTrustSendKeysFailure: a failed send-keys is a refusal that writes no row.
+func TestTrustSendKeysFailure(t *testing.T) {
+	tc := newTrustCase(t)
+	tc.sendErr = errors.New("send boom")
+	before := tc.logs()
+	code, stdout, stderr := tc.run("%7")
+	if want := trustPrefix + "send-keys to pane %7 failed\n"; code != 2 || stdout != "" || stderr != want {
+		t.Errorf("exit %d, stdout %q, stderr %q; want 2 and %q", code, stdout, stderr, want)
+	}
+	if after := tc.logs(); !maps.Equal(after, before) {
+		t.Errorf("a refusal changed a log:\nbefore %q\nafter  %q", before, after)
 	}
 }
 

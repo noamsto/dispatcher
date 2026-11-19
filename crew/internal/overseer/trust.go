@@ -25,8 +25,9 @@ import (
 const TrustUsage = "usage: crew overseer trust <pane>"
 
 const (
-	exitRefused = 2 // refused before typing
-	exitTyped   = 3 // typed, and the dialog is still shown
+	exitRefused      = 2 // refused before typing
+	exitTyped        = 3 // typed, and the dialog is still shown
+	exitNoticeFailed = 4 // typed and the dialog cleared, but the notice failed
 
 	// trustFormat is the pane's id, command, cwd and stamps, \x1f-separated.
 	trustFormat = "#{pane_id}\x1f#{pane_current_command}\x1f#{pane_current_path}\x1f#{@crew_role}\x1f#{@crew_id}"
@@ -45,8 +46,9 @@ type trustPane struct{ id, cmd, path, role, crew string }
 // that owns the pane. The checks run in a fixed order, sender first, so a
 // caller that is not the overseer reads no settings and no pane; every refusal
 // prints one line, types nothing and writes no row. Exit 0 accepted, 1 a usage
-// or resolution error (or the notice failed), 2 refused before typing, 3 typed
-// and the dialog is still shown.
+// or resolution error (nothing typed), 2 refused before typing, 3 typed and the
+// dialog is still shown (even when its notice also fails), 4 typed and accepted
+// but the notice to the dispatcher failed.
 func RunTrust(ctx context.Context, pane string, stdout, stderr io.Writer, o Options) int {
 	self, err := hostName(o.Sender)
 	if err != nil {
@@ -95,7 +97,7 @@ func RunTrust(ctx context.Context, pane string, stdout, stderr io.Writer, o Opti
 	if err := trustNotice(ctx, self, crew, detail, paths, o); err != nil {
 		_, _ = fmt.Fprintf(stderr, "crew: overseer trust: typed Enter in pane %s, but the notice to dispatcher:%s failed (%v)\n", pane, crew, err)
 		if code == 0 {
-			code = exitFailure
+			code = exitNoticeFailed
 		}
 	}
 	if code == 0 {
