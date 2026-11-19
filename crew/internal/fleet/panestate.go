@@ -32,7 +32,8 @@ const paneStateCap = 4 << 10
 // does not say whose file it is. A file's agent_pid line must name a live
 // process in the dispatcher's tree (the dispatcher pid is its launcher); present
 // but dead, elsewhere or malformed, the file is another server's. A file
-// without the line predates it and is taken as written.
+// without the line (an older hook, or a remote bridge's mirror entry) is taken
+// as written.
 func readPaneState(getenv func(string) string, pane string, procs proc.Table, dispatcher int) *string {
 	if !paneIDRE.MatchString(pane) {
 		return nil
