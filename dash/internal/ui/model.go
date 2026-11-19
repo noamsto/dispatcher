@@ -5,6 +5,7 @@ package ui
 import (
 	"context"
 	"os"
+	"os/exec"
 	"slices"
 	"strings"
 	"time"
@@ -211,12 +212,21 @@ func NewModel(deps Deps, now func() time.Time, live liveDeps) Model {
 		runsTab:     newRunsView(msg.runs),
 		settingsTab: newSettingsView(msg.settings, settingsDeps{
 			ctx: ctx, runner: deps.Runner, bin: deps.DispatchConfig,
-			getenv: os.Getenv, exec: tea.ExecProcess,
+			getenv: os.Getenv, exec: editorExec(os.Getenv),
 		}),
 		mapTab:   newMapView(msg.mapv, deps.Map, acts),
 		fleetTab: fl,
 	}
 	return m
+}
+
+// editorExec is tea.ExecProcess, bracketed by theme-report toggles when the
+// dash subscribes to them.
+func editorExec(getenv func(string) string) func(*exec.Cmd, tea.ExecCallback) tea.Cmd {
+	if !themeReportsWanted(getenv) {
+		return tea.ExecProcess
+	}
+	return themeAwareExec(tea.ExecProcess, os.Stdout)
 }
 
 // snapshotMsg builds every view model from the current sources. The fleet

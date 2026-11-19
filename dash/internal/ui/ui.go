@@ -6,7 +6,9 @@ package ui
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
+	"os/exec"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -74,13 +76,13 @@ func Run(deps Deps) error {
 	m := NewModel(deps, time.Now, live)
 	m.themePinned = themePinned(os.Getenv)
 	p := tea.NewProgram(m, tea.WithAltScreen())
-	notify := !colorForcedAscii(os.Getenv) && !m.themePinned
+	notify := themeReportsWanted(os.Getenv)
 	if notify {
-		_, _ = fmt.Fprint(os.Stdout, "\x1b[?2031h")
+		_, _ = fmt.Fprint(os.Stdout, themeReportsOn)
 	}
 	_, err := p.Run()
 	if notify {
-		_, _ = fmt.Fprint(os.Stdout, "\x1b[?2031l")
+		_, _ = fmt.Fprint(os.Stdout, themeReportsOff)
 	}
 	deps.Map.deleteImages(deps.InTmux)
 	if watcher != nil {
@@ -90,6 +92,35 @@ func Run(deps Deps) error {
 		_ = live.fleetWatcher.Close()
 	}
 	return err
+}
+
+// DEC mode 2031 (theme-change reports) toggles, and the CSI ? 996 n query whose
+// reply is the same CSI ? 997 ; N n report.
+const (
+	themeReportsOn  = "\x1b[?2031h"
+	themeReportsOff = "\x1b[?2031l"
+	themeQuery      = "\x1b[?996n"
+)
+
+// themeReportsWanted is whether the dash subscribes to theme-change reports.
+func themeReportsWanted(getenv func(string) string) bool {
+	return !colorForcedAscii(getenv) && !themePinned(getenv)
+}
+
+// themeAwareExec wraps an editor hand-off so theme reports stay off while the
+// editor owns the tty, then are re-enabled and re-queried so a flip during
+// the edit is picked up.
+func themeAwareExec(inner func(*exec.Cmd, tea.ExecCallback) tea.Cmd, w io.Writer) func(*exec.Cmd, tea.ExecCallback) tea.Cmd {
+	return func(c *exec.Cmd, cb tea.ExecCallback) tea.Cmd {
+		run := inner(c, func(err error) tea.Msg {
+			_, _ = fmt.Fprint(w, themeReportsOn+themeQuery)
+			return cb(err)
+		})
+		return func() tea.Msg {
+			_, _ = fmt.Fprint(w, themeReportsOff)
+			return run()
+		}
+	}
 }
 
 // colorForcedAscii decides whether the interactive TUI must force the Ascii
