@@ -435,8 +435,8 @@ func TestUnreadWatchAutoNudge(t *testing.T) {
 			}
 			for i, req := range types {
 				// The stability sample is the watch's own state, not part of the type.
-				if req.Agent == nil {
-					t.Errorf("type %d carries no agent sample", i)
+				if req.Agent == nil || req.Agent != types[0].Agent {
+					t.Errorf("type %d carries sample %p, want the one shared across calls (%p)", i, req.Agent, types[0].Agent)
 				}
 				req.Agent = nil
 				if req != want {

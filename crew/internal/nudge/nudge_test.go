@@ -1002,3 +1002,22 @@ func TestPaneAgentFinishedSingleLook(t *testing.T) {
 		t.Errorf("typed on a single look: %q", got)
 	}
 }
+
+// A frame that is still idle but changed after the stability proof is a new
+// completion row, not the one that was confirmed: it never types.
+func TestPaneAgentFinishedChangedAfterConfirm(t *testing.T) {
+	wins, panes := anchored()
+	a := fixture(t, "nudge_agent_finished.txt")
+	a2 := strings.Replace(a, "5m 8s", "5m 9s", 1)
+	clk := &tickClock{now: time.Unix(1800000000, 0)}
+	r := req("claude")
+	r.Agent = &AgentSample{frame: a, at: clk.now.Unix() - 2*agentStableSecs}
+	p := &fakePane{frames: []string{a, a2}, windows: wins, panes: panes}
+	out, rc := Pane(context.Background(), r, agentDeps(t, p, clk))
+	if rc != exitRefused || out != ReasonAgentPending {
+		t.Fatalf("Pane = (%q, %d), want pending refusal", out, rc)
+	}
+	if got := keys(p); len(got) != 0 {
+		t.Errorf("typed into a changed frame: %q", got)
+	}
+}
