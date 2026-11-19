@@ -2318,8 +2318,9 @@ func TestTransitionsDispatcherAwaiting(t *testing.T) {
 	run(map[int64][]string{5: await}, at(0, "done", "dead", po), at(5, "done", "dead", po), at(10, "done", "dead", po),
 		at(11, "done", "dead", po), at(30, "done", "dead", po))
 
-	// Standby: the dispatcher waits on a working worker, not the human.
-	run(nil, at(0, "idle", "dead", w("working"), po), at(5, "idle", "dead", w("working"), po),
+	// Standby: the dispatcher waits on a working worker, not the human, and a
+	// dead lane leaves it deaf to that worker: lane_dead, never awaiting.
+	run(map[int64][]string{10: dead}, at(0, "idle", "dead", w("working"), po), at(5, "idle", "dead", w("working"), po),
 		at(10, "idle", "dead", w("working"), po), at(20, "idle", "dead", w("working"), po))
 
 	// A busy dispatcher keeps today's lane_dead.
@@ -2333,7 +2334,8 @@ func TestTransitionsDispatcherAwaiting(t *testing.T) {
 	// Nothing held: a finished dispatcher is idle, not awaiting.
 	run(nil, at(0, "done", "alive"), at(5, "done", "alive"), at(10, "done", "alive"))
 	run(nil, at(0, "done", "alive", stale("pr_open")), at(5, "done", "alive", stale("pr_open")), at(10, "done", "alive", stale("pr_open")))
-	run(nil, at(0, "done", "dead", w("done")), at(5, "done", "dead", w("done")), at(10, "done", "dead", w("done")), at(20, "done", "dead", w("done")))
+	// A done row is a wake state the dead lane strands, so lane_dead keeps firing.
+	run(map[int64][]string{10: dead}, at(0, "done", "dead", w("done")), at(5, "done", "dead", w("done")), at(10, "done", "dead", w("done")), at(20, "done", "dead", w("done")))
 
 	// A failed row is held work.
 	fl := w("failed")

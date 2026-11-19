@@ -945,9 +945,9 @@ func (t *transitions) next(doc fleetpkg.StatusDoc, nowMS int64) []any {
 					t.down[ref] = true
 				}
 			}
+			n, held := awaiting(c.Dispatcher.PaneState, c.Workers)
 			if c.Attention != "guest" && live {
 				awaitKey := condKey{event: "dispatcher_awaiting", key: r.Key, crew: c.CrewID}
-				n, held := awaiting(c.Dispatcher.PaneState, c.Workers)
 				// A parked dispatcher's own short wakes (heartbeat, hold_due, reap)
 				// must not end a fired episode, or the same held work re-fires.
 				if !held && t.on[awaitKey] {
@@ -973,11 +973,13 @@ func (t *transitions) next(doc fleetpkg.StatusDoc, nowMS int64) []any {
 					}
 				}
 			}
-			// A parked dispatcher has not re-armed its lane because it waits,
-			// so a dead lane under a turn-ended pane is not dead time. Skipping
-			// the block also drops the clock, which a dispatcher the human wakes
-			// would otherwise trip on its first turn.
-			if c.Attention != "guest" && live && !turnEnded(c.Dispatcher.PaneState) && c.Dispatcher.Lane != nil && *c.Dispatcher.Lane == "dead" {
+			// A dispatcher parked on the human has not re-armed its lane because
+			// it waits, so its dead lane is not dead time; dispatcher_awaiting
+			// covers it. A standby one (turn ended, workers active) is deaf to
+			// them and still fires. Skipping the block also drops the clock,
+			// which a dispatcher the human wakes would otherwise trip on its
+			// first turn.
+			if c.Attention != "guest" && live && !held && c.Dispatcher.Lane != nil && *c.Dispatcher.Lane == "dead" {
 				since, ok := t.deadSince[ref]
 				if !ok {
 					since = doc.TS
