@@ -240,15 +240,16 @@ capture() {
 # `╌` rule, an optional description, the exact Tip, and the subagent header.
 # Sets F_AGENT, F_BLOCK1 (the command), F_BLOCK2 (the description, or empty),
 # F_NBLOCK, F_CD_SECS (the countdown's remaining seconds, or empty) and
-# FRAME_CMP (CAPTURE with only the countdown's time token fixed, so a ticking
-# countdown still compares equal across observations).
+# FRAME_CMP (the raw lines with only the countdown line's time token fixed, so
+# a ticking countdown still compares equal across observations).
 frame_parse() {
-  local lines=() ne=() line t
+  local lines=() ne=() ni=() line t i
   mapfile -t lines <<<"$CAPTURE"
-  for line in "${lines[@]}"; do
+  for i in "${!lines[@]}"; do
+    line=${lines[i]}
     t=${line#"${line%%[![:space:]]*}"}
     t=${t%"${t##*[![:space:]]}"}
-    [ -z "$t" ] || ne+=("$t")
+    [ -z "$t" ] || { ne+=("$t"); ni+=("$i"); }
   done
 
   local n=${#ne[@]}
@@ -275,19 +276,21 @@ frame_parse() {
   [[ ${ne[n - 4]} == "2. Yes, and always allow access to "*" from this project" ||
     ${ne[n - 4]} == "2. Yes, allow reading from "*" from this project" ]] ||
     refuse "frame: option 2 unrecognised"
+  [[ ${ne[n - 4]} != *⚠* ]] || refuse "frame: option 2 carries a countdown glyph"
   [ "${ne[n - 5]}" = "❯ 1. Yes" ] || refuse "frame: option 1 is not exactly Yes"
   [ "${ne[n - 6]}" = "Do you want to proceed?" ] || refuse "frame: question unrecognised"
   local k=$((n - 7))
   FRAME_CMP=$CAPTURE F_CD_SECS=""
   if [[ ${ne[k]} =~ $countdown_re ]]; then
     [ "$n" -ge 12 ] || refuse "frame: not a permission dialog"
-    local cd=${ne[k]} tok=${BASH_REMATCH[2]:-${BASH_REMATCH[3]}}
+    local tok=${BASH_REMATCH[2]:-${BASH_REMATCH[3]}}
     if [[ $tok =~ ^([0-9]+):([0-9]+)$ ]]; then
       F_CD_SECS=$((10#${BASH_REMATCH[1]} * 60 + 10#${BASH_REMATCH[2]}))
     elif [[ $tok =~ ^about\ ([0-9]+) ]]; then
       F_CD_SECS=$((10#${BASH_REMATCH[1]} * 60))
     fi
-    FRAME_CMP=${CAPTURE%"$cd"*}${cd/" in $tok, "/" in T, "}${CAPTURE##*"$cd"}
+    lines[ni[k]]=${lines[ni[k]]/" in $tok, "/" in T, "}
+    printf -v FRAME_CMP '%s\n' "${lines[@]}"
     k=$((k - 1))
   fi
   [[ ${ne[k]} =~ ^(╌)+$ ]] || refuse "frame: no rule above the options"
@@ -301,7 +304,7 @@ frame_parse() {
   # description are compared after trimming surrounding spaces to the
   # transcript's printable-ASCII-only call.
   local tip='Tip: auto mode handles these prompts for you — choose "switch to auto mode" below'
-  local i=$((k - 3))
+  i=$((k - 3))
   if [ "$i" -ge 0 ] && [ "${ne[i]}" != "$tip" ]; then
     F_BLOCK2=${ne[i]} F_NBLOCK=2
     i=$((i - 1))

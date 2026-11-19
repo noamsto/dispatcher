@@ -119,6 +119,23 @@ func (w *watch) d1() error {
 		}
 	}
 	if kind == "" {
+		if fd.d1At != 0 && !w.suppressed && frame.InterruptedAboveBox(w.text) {
+			switch fd.d1Kind {
+			case "autoblocked":
+				return nil
+			case "permission":
+				// Claude Code auto-blocked the dialog on timeout: nothing is left to
+				// answer, so the open prompt: block is replaced by a lead-idle one.
+				if err := w.clearPrompt(); err != nil {
+					return err
+				}
+				posted, err := w.postBlocked("prompt:", "prompt: permission auto-blocked — lead idle — pane "+w.cfg.pane)
+				if err == nil && posted {
+					fd.d1At, fd.d1Kind = w.now, "autoblocked"
+				}
+				return err
+			}
+		}
 		if fd.d1At != 0 {
 			if err := w.clearPrompt(); err != nil {
 				return err
