@@ -15,8 +15,10 @@ package crews
 import (
 	"context"
 	_ "embed"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"slices"
 	"strconv"
@@ -205,18 +207,56 @@ func crewDirs(paths bus.Paths) []string {
 }
 
 // RecordedLive is _recorded_pid_live: <pid> can still be the dispatcher
-// <pidfile> records — live and not a later-recycled pid (_pid_recycled): the
-// process now holding <pid> started after <pidfile> was last written (plus 2s
-// of slack for ps' second granularity). An unreadable timestamp, or a pidfile
-// that is not a regular file, says not-recycled, so a live process is never
-// judged dead.
+// <pidfile> records — live and not a later-recycled pid (_pid_recycled).
+//
+// When PidStartFile holds a token recorded for this very pid and the process's
+// current start is readable, identity is exact: the current start must equal
+// the recorded one. Otherwise (no sidecar, a blank or malformed one, one naming
+// another pid, or an unreadable current start — fail closed to the heuristic,
+// never to dead) the process now holding <pid> must not have
+// started after <pidfile> was last written (plus 2s of slack for ps' second
+// granularity). That heuristic says not-recycled on an unreadable timestamp or
+// a pidfile that is not a regular file, so a live process is never judged dead.
 func RecordedLive(t proc.Table, now time.Time, pid int, pidfile string) bool {
 	if !t.Alive(pid) {
 		return false
 	}
+	if data, err := os.ReadFile(PidStartFile(pidfile)); err == nil {
+		line, _, _ := strings.Cut(string(data), "\n")
+		recorded := strings.TrimRight(line, "\r ")
+		// Cut on the first space only: the macOS token itself contains spaces.
+		recPid, recTok, ok := strings.Cut(recorded, " ")
+		if ok && recPid == strconv.Itoa(pid) && recTok != "" {
+			if cur, ok := t.Start(pid); ok {
+				return cur == recTok
+			}
+		}
+	}
 	elapsed, ok := t.Elapsed(pid)
 	st, err := os.Stat(pidfile)
 	return !ok || err != nil || !st.Mode().IsRegular() || now.Unix()-elapsed <= st.ModTime().Unix()+2
+}
+
+// PidStartFile is the sidecar holding the start token of the process recorded
+// in <pidfile>.
+func PidStartFile(pidfile string) string { return pidfile + ".start" }
+
+// WritePidStart records "<pid> <token>" for the pid in pidText beside pidfile.
+// A sidecar pairs only with the pid it names, so any interleaving of the two
+// writes (or a crash between them) falls back to the heuristic instead of
+// reading a live dispatcher dead. With no valid pid or no readable start it
+// removes the sidecar instead.
+func WritePidStart(t proc.Table, pidfile, pidText string) error {
+	path := PidStartFile(pidfile)
+	if n, ok := validPid(pidText); ok {
+		if tok, ok := t.Start(n); ok {
+			return os.WriteFile(path, []byte(strconv.Itoa(n)+" "+tok+"\n"), 0o644)
+		}
+	}
+	if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	return nil
 }
 
 // PidAlive is the three-state liveness of the pid a crew's pidfile records,

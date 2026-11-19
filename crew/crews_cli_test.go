@@ -964,15 +964,29 @@ func TestPidFileSurvivesForeignCallers(t *testing.T) {
 		eq(t, "pid file", c.pidOf("c-eperm"), "1")
 	})
 
-	t.Run("register: a recorded pid recycled by a later process is replaced, not stranded (#450)", func(t *testing.T) {
+	t.Run("register: a recorded pid recycled by a later process is replaced, not stranded (#450) — no start token", func(t *testing.T) {
 		c := newCrewsCLI(t)
 		c.registerAs("c-rec", strconv.Itoa(livePid(t)))
 		old := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
 		if err := os.Chtimes(filepath.Join(c.crewDir("c-rec"), "pid"), old, old); err != nil {
 			t.Fatal(err)
 		}
+		if err := os.Remove(filepath.Join(c.crewDir("c-rec"), "pid.start")); err != nil {
+			t.Fatal(err)
+		}
 		c.mustRun("register", "4242")
 		eq(t, "pid file", c.pidOf("c-rec"), "4242")
+	})
+
+	t.Run("register: a recorded pid whose start token no longer matches is replaced (#1699)", func(t *testing.T) {
+		c := newCrewsCLI(t)
+		pid := strconv.Itoa(livePid(t))
+		c.registerAs("c-tok", pid)
+		if err := os.WriteFile(filepath.Join(c.crewDir("c-tok"), "pid.start"), []byte(pid+" linux:x:1\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		c.mustRun("register", "4242")
+		eq(t, "pid file", c.pidOf("c-tok"), "4242")
 	})
 
 	t.Run("crews: a live foreign-uid pid (kill EPERM) still lists as alive (#450)", func(t *testing.T) {

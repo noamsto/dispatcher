@@ -96,15 +96,55 @@ _ps_elapsed_s() {
   printf '%s' "$((10#$d * 86400 + 10#$h * 3600 + 10#$m * 60 + 10#$s))"
 }
 
-# _pid_recycled <pid> <pidfile> — 0 when the process now holding <pid> started
+# _proc_start <pid> — the process start token, byte-identical to the Go
+# proc.OS.Start: Linux `linux:<boot_id>:<stat field 22>`, else `lstart:<ps
+# lstart>`. Returns 1 when unreadable. The subshell keeps IFS and `set -f` local.
+_proc_start() (
+  IFS=$' \t\n'
+  pid="$1"
+  if [ -r /proc/self/stat ]; then
+    boot="$(cat /proc/sys/kernel/random/boot_id 2>/dev/null)" || return 1
+    line="$(cat "/proc/$pid/stat" 2>/dev/null)" || return 1
+    set -f
+    # shellcheck disable=SC2086
+    set -- ${boot}
+    [ "$#" -gt 0 ] || return 1
+    boot="$*"
+    # shellcheck disable=SC2086
+    set -- ${line##*)}
+    [ "$#" -ge 20 ] || return 1
+    ticks="${20}"
+    case "$ticks" in '' | *[!0-9]*) return 1 ;; esac
+    printf 'linux:%s:%s' "$boot" "$ticks"
+    return 0
+  fi
+  out="$(TZ=UTC0 LC_ALL=C ps -o lstart= -p "$pid" 2>/dev/null)" || return 1
+  set -f
+  # shellcheck disable=SC2086
+  set -- $out
+  [ "$#" -gt 0 ] || return 1
+  printf 'lstart:%s' "$*"
+)
+
+# _pid_recycled <pid> <pidfile> — 0 when <pid> now belongs to a different
+# process than <pidfile> records. A `<pidfile>.start` sidecar `<pid> <token>`
+# decides when it names this pid and the current token is readable; a sidecar
+# for another pid (or a blank one) is ignored. Otherwise 0 when the process started
 # after <pidfile> was last written (plus 2s of slack for ps' second
-# granularity), so it cannot be the dispatcher the file records: that process
-# existed when the file was written, and a later start inherited the number.
-# Returns 1 when either timestamp is unreadable, so a live process is never
-# judged dead; a coarse-mtime filesystem only errs the same, safe way.
+# granularity): it existed when the file was written, and a later start
+# inherited the number. Returns 1 when timestamps are unreadable, so a live
+# process is never judged dead; a coarse-mtime filesystem errs the same way.
 _pid_recycled() {
-  local pid="$1" file="$2" elapsed file_s
+  local pid="$1" file="$2" elapsed file_s rec rec_pid cur
   [ -f "$file" ] || return 1
+  if [ -s "$file.start" ]; then
+    rec_pid="" rec=""
+    { IFS=' ' read -r rec_pid rec <"$file.start"; } 2>/dev/null || :
+    if [ "$rec_pid" = "$pid" ] && [ -n "$rec" ] && cur="$(_proc_start "$pid")"; then
+      [ "$cur" != "$rec" ]
+      return $?
+    fi
+  fi
   elapsed="$(_ps_elapsed_s "$pid")" || return 1
   file_s="$(_file_mtime_s "$file")" || return 1
   case "$elapsed" in '' | *[!0-9]*) return 1 ;; esac

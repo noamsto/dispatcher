@@ -85,7 +85,12 @@ func reattach(ctx context.Context, req Request, paths bus.Paths, stderr io.Write
 		say(stderr, "crew: adopt: %v\n", err)
 		return exitFailure
 	}
+	if err := crews.WritePidStart(o.Proc, pidfile, newPID); err != nil {
+		say(stderr, "crew: adopt: %v\n", err)
+		return exitFailure
+	}
 	if err := os.WriteFile(pidfile, []byte(newPID+"\n"), 0o644); err != nil {
+		_ = os.Remove(crews.PidStartFile(pidfile))
 		say(stderr, "crew: adopt: %v\n", err)
 		return exitFailure
 	}
