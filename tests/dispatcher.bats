@@ -187,6 +187,24 @@ ROWS
   [ "$status" -eq 0 ]
 }
 
+@test "a long multi-line task names the session by its first line, capped at 40 characters" {
+  local long task
+  long=$(printf 'word %.0s' {1..40})
+  task="$long
+second line"
+  CREW_ID=c1 run_launcher "$task"
+  run grep -F -- '--name dispatcher: word word word word word word word word…' "$STUB_LOG"
+  [ "$status" -eq 0 ]
+}
+
+@test "the session name cuts multibyte task text on characters, not bytes" {
+  local task
+  task=$(printf 'é%.0s' {1..60})
+  CREW_ID=c1 run_launcher "$task"
+  run grep -F -- "--name dispatcher: $(printf 'é%.0s' {1..39})…" "$STUB_LOG"
+  [ "$status" -eq 0 ]
+}
+
 @test "a bare launch names the session by repo and launch minute" {
   CREW_ID=c1 run_launcher
   run grep -E -- "--name dispatcher · $(basename "$TEST_REPO") · [0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}( |$)" "$STUB_LOG"

@@ -248,6 +248,20 @@ if [ -n "$note_src" ]; then
   fi
 fi
 
+# _task_session_name <task> — the engine session name for a task launch: the
+# first line, whitespace collapsed, at most 40 characters. The engine draws the
+# name across the input box border, so a long or multi-line task would fill it.
+_task_session_name() {
+  local LC_ALL=C.utf8 line words
+  line=${1%%$'\n'*}
+  read -r -a words <<<"$line"
+  line="${words[*]}"
+  if [ "${#line}" -gt 40 ]; then
+    line="${line:0:39}…"
+  fi
+  printf 'dispatcher: %s' "$line"
+}
+
 # _store_note <dir> <crew> <src> — copy <src> to <dir>/<crew>.md through a temp
 # file, so a reader never sees a half-written note.
 _store_note() {
@@ -858,7 +872,7 @@ fi
 if [ "$overseer" = 1 ]; then
   session_name="overseer · $overseer_host · $(date '+%m-%d %H:%M')"
 elif [ -n "$task" ]; then
-  session_name="dispatcher: $task"
+  session_name=$(_task_session_name "$task")
 else
   session_name="dispatcher · $repo · $(date '+%m-%d %H:%M')"
 fi
