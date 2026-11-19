@@ -49,6 +49,7 @@ type AttentionItem struct {
 	Crew     string   `json:"crew"`
 	Branch   string   `json:"branch"`
 	Worker   string   `json:"worker"`
+	Tmux     *string  `json:"tmux,omitempty"`
 	Host     string   `json:"host"`
 	Origin   Origin   `json:"origin"`
 	Severity Severity `json:"severity"`
@@ -150,6 +151,7 @@ func attentionOf(w WorkerRow, kind Kind, sev Severity, key, msg, keep string) At
 		Crew:     w.Crew,
 		Branch:   w.Branch,
 		Worker:   w.display(),
+		Tmux:     w.Tmux,
 		Host:     w.Host,
 		Origin:   w.Origin,
 		Severity: sev,

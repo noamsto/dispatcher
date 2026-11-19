@@ -73,6 +73,7 @@ func stateColor(state string) lipgloss.Color {
 // same fixture against both.
 type cardFields struct {
 	head   string // "codename · #N"
+	tmux   *string
 	state  string
 	title  string
 	meta   string // "tier·engine·model"
@@ -141,6 +142,7 @@ func fieldsOf(w vm.WorkerRow) cardFields {
 	tier := oneLine(strOf(w.Tier))
 	c := cardFields{
 		head:   head,
+		tmux:   w.Tmux,
 		state:  strings.ReplaceAll(oneLine(w.State), "_", " "),
 		title:  oneLine(strOf(w.Title)),
 		tier:   tier,
@@ -197,7 +199,9 @@ func cardRows(c cardFields, stateSt lipgloss.Style) []string {
 	state := truncateLine(c.state, boardContent/2)
 	stateW := lipgloss.Width(state)
 	headW := max0(boardContent - stateW - 1)
-	head := padRight(truncateLine(c.head, headW), boardContent-stateW) + stateSt.Render(state)
+	headTxt := truncateLine(c.head, headW)
+	head := codenameStyle(c.tmux, lipgloss.NewStyle()).Render(headTxt) +
+		strings.Repeat(" ", max0(boardContent-stateW-lipgloss.Width(headTxt))) + stateSt.Render(state)
 
 	t1, rest := wrapWords(c.title, boardContent)
 

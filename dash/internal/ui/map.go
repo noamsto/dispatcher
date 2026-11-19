@@ -10,6 +10,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/noamsto/dispatcher/dash/internal/data"
 	"github.com/noamsto/dispatcher/dash/internal/kitty"
@@ -589,12 +590,25 @@ func (v mapView) infoLine() string {
 		return "worker not in roster: " + cleanText(v.sel.Branch)
 	}
 	var parts []string
-	for _, s := range []string{w.Name, w.Branch, w.State, prCell(w.PRURL)} {
+	for i, s := range []string{w.Name, w.Branch, w.State, prCell(w.PRURL)} {
 		if s = cleanText(s); s != "" {
+			if i == 0 {
+				s = codenameStyle(v.tmuxOf(w.Branch), lipgloss.NewStyle()).Render(s)
+			}
 			parts = append(parts, s)
 		}
 	}
 	return strings.Join(parts, " · ")
+}
+
+// tmuxOf is the tmux colour of the selected crew's worker on branch.
+func (v mapView) tmuxOf(branch string) *string {
+	for _, r := range v.workers {
+		if r.Crew == v.crewID && r.Branch == branch {
+			return r.Tmux
+		}
+	}
+	return nil
 }
 
 func (v mapView) countsLine() string {

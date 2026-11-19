@@ -60,6 +60,7 @@ type OverviewWorker struct {
 	Crew         string      `json:"crew"`
 	Branch       string      `json:"branch"`
 	Name         *string     `json:"name"`
+	Tmux         *string     `json:"tmux,omitempty"`
 	Host         string      `json:"host"`
 	Origin       Origin      `json:"origin"`
 	State        string      `json:"state"`
@@ -423,7 +424,7 @@ func BuildOverview(in Inputs) OverviewView {
 	for _, w := range rows {
 		d := in.Bus.Workers[data.WorkerKey{Crew: w.Crew, Branch: w.Branch}]
 		v.Workers = append(v.Workers, OverviewWorker{
-			Crew: w.Crew, Branch: w.Branch, Name: w.Name, Host: w.Host, Origin: w.Origin,
+			Crew: w.Crew, Branch: w.Branch, Name: w.Name, Tmux: w.Tmux, Host: w.Host, Origin: w.Origin,
 			State: w.State, Detail: w.Detail, Tier: w.Tier, Engine: w.Engine, Model: w.Model,
 			Title: w.Title, PRURL: w.PRURL, PR: w.PR, AgeSec: w.AgeS,
 			BlockedSince: w.BlockedSince, AnsweredAt: w.AnsweredAt,

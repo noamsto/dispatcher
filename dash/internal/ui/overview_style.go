@@ -174,6 +174,15 @@ func (s *spans) add(text string, st lipgloss.Style) *spans {
 	return s
 }
 
+// codename is the style for a worker codename on this row: its tmux colour,
+// except on a selected row (background set), where fallback keeps it readable.
+func (s *spans) codename(tmux *string, fallback lipgloss.Style) lipgloss.Style {
+	if _, plain := s.bg.(lipgloss.NoColor); !plain {
+		return fallback
+	}
+	return codenameStyle(tmux, fallback)
+}
+
 func (s *spans) col(text string, width int, st lipgloss.Style, right bool) *spans {
 	t := ansi.Truncate(cleanText(text), max0(width), "…")
 	pad := strings.Repeat(" ", max0(width-ansi.StringWidth(t)))

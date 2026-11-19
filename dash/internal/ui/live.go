@@ -865,22 +865,37 @@ func padCell(s string, w int, left bool) string {
 // -> lipgloss.Color("137")); a missing or malformed field is the default
 // style.
 func tmuxColorStyle(w vm.WorkerRow) lipgloss.Style {
-	if w.Tmux == nil {
-		return lipgloss.NewStyle()
+	st, _ := tmuxFg(w.Tmux)
+	return st
+}
+
+// tmuxFg is the foreground style for a "colourNN" tmux colour; ok is false
+// (and the style empty) when the field is missing or malformed.
+func tmuxFg(tmux *string) (lipgloss.Style, bool) {
+	if tmux == nil {
+		return lipgloss.NewStyle(), false
 	}
-	s := *w.Tmux
-	n := strings.TrimPrefix(s, "colour")
-	if n == s {
-		return lipgloss.NewStyle()
+	n, found := strings.CutPrefix(*tmux, "colour")
+	if !found {
+		return lipgloss.NewStyle(), false
 	}
 	idx, err := strconv.Atoi(n)
 	if err != nil {
-		return lipgloss.NewStyle()
+		return lipgloss.NewStyle(), false
 	}
 	if lightActive {
-		return lipgloss.NewStyle().Foreground(lipgloss.Color(darkenForLight(idx)))
+		return lipgloss.NewStyle().Foreground(lipgloss.Color(darkenForLight(idx))), true
 	}
-	return lipgloss.NewStyle().Foreground(lipgloss.Color(n))
+	return lipgloss.NewStyle().Foreground(lipgloss.Color(n)), true
+}
+
+// codenameStyle is the bold style for a worker codename: its tmux colour, or
+// fallback when the colour is missing or malformed.
+func codenameStyle(tmux *string, fallback lipgloss.Style) lipgloss.Style {
+	if st, ok := tmuxFg(tmux); ok {
+		return st.Bold(true)
+	}
+	return fallback
 }
 
 func holdLine(h vm.HoldRow) string {
