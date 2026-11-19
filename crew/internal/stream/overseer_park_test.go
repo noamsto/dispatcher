@@ -401,6 +401,27 @@ func TestOverseerParkKeepsDeadSinceAndPartnerAcrossParks(t *testing.T) {
 		t.Fatalf("first park exit = %d, want 0; stderr %q", rc, first.errb.str())
 	}
 
+	// Inject a pending streak of hostFlipStreak-1: the streak is part of the
+	// loaded memory, so park 2's one more failure completes the flip.
+	differ := filepath.Join(root, ovMe, differName)
+	raw, err := os.ReadFile(differ)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var mem differFile
+	if err := json.Unmarshal(raw, &mem); err != nil {
+		t.Fatal(err)
+	}
+	for i := range mem.Partners {
+		mem.Partners[i].Streak = hostFlipStreak - 1
+	}
+	if raw, err = json.Marshal(mem); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(differ, raw, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
 	r.docs = []fleetpkg.StatusDoc{withHosts(deadLane(ovStart+11*minute), downHost("mbp", ovStart, "ssh failed"))}
 	second := startParkIn(t, r, okRepos(), Request{Park: "270"}, root)
 	if rc := second.wait(); rc != 0 {
