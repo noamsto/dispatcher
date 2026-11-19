@@ -158,6 +158,9 @@ func (w *watch) d1() error {
 		fd.d1At = 0
 		fd.d1Hits = 0
 	}
+	if kind == "permission" && fd.d1At != 0 {
+		fd.d1Countdown = hasCountdown(w.text)
+	}
 	fd.d1Hits++
 	if fd.d1Hits < 2 || fd.d1At != 0 {
 		return nil
