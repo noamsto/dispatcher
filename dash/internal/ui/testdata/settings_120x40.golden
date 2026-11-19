@@ -11,12 +11,12 @@ layers: default <BASE>
   dashPlacement                       unset                                                                      default
   rosterDiagram.autoOpen              unset                                                                      default
   overseer.autoRelaunch               unset                                                                      default
+  overseer.autoStart                  unset                                                                      default
+  overseer.acceptTrust                unset                                                                      default
   openrouter.monthlyUsd               20                                                                         default
   orchestratorDefaults.claude.effort  high                                                                       default
   orchestratorDefaults.codex.effort   high                                                                       default
   orchestratorDefaults.pi.effort      high                                                                       default
-
-
 
 
 

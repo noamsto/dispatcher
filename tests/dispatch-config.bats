@@ -737,19 +737,25 @@ EOF
 @test "overseer defaults to no auto relaunch and a 4 h digest; the user layer overrides them" {
   run --separate-stderr "$CONFIG"
   [ "$status" -eq 0 ]
-  jq -e '.overseer == {"autoRelaunch": false, "digestEvery": 14400}' <<<"$output"
+  jq -e '.overseer == {"autoRelaunch": false, "autoStart": false, "acceptTrust": false, "digestEvery": 14400}' <<<"$output"
 
-  user_settings '{"overseer":{"autoRelaunch":true,"digestEvery":600}}'
+  user_settings '{"overseer":{"autoRelaunch":true,"autoStart":true,"acceptTrust":true,"digestEvery":600}}'
   run --separate-stderr "$CONFIG"
   [ "$status" -eq 0 ]
-  jq -e '.overseer == {"autoRelaunch": true, "digestEvery": 600}' <<<"$output"
+  jq -e '.overseer == {"autoRelaunch": true, "autoStart": true, "acceptTrust": true, "digestEvery": 600}' <<<"$output"
 }
 
-@test "a non-boolean overseer.autoRelaunch or a non-positive overseer.digestEvery is refused" {
+@test "a non-boolean overseer.autoRelaunch, autoStart or acceptTrust, or a non-positive overseer.digestEvery is refused" {
   user_settings '{"overseer":{"autoRelaunch":"yes"}}'
   run --separate-stderr "$CONFIG"
   [ "$status" -eq 1 ]
   [[ "$stderr" == *"overseer.autoRelaunch must be a boolean"* ]]
+  for key in autoStart acceptTrust; do
+    user_settings "{\"overseer\":{\"$key\":\"yes\"}}"
+    run --separate-stderr "$CONFIG"
+    [ "$status" -eq 1 ]
+    [[ "$stderr" == *"overseer.$key must be a boolean"* ]]
+  done
   for bad in 0 -5 2.5 '"x"'; do
     user_settings "{\"overseer\":{\"digestEvery\":$bad}}"
     run --separate-stderr "$CONFIG"

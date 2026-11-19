@@ -73,6 +73,8 @@ var quickKnobs = []knob{
 	{path: kpath("dashPlacement"), kind: knobEnum, choices: []string{"side", "float"}, def: "side"},
 	{path: kpath("rosterDiagram", "autoOpen"), kind: knobBool},
 	{path: kpath("overseer", "autoRelaunch"), kind: knobBool},
+	{path: kpath("overseer", "autoStart"), kind: knobBool},
+	{path: kpath("overseer", "acceptTrust"), kind: knobBool},
 	{path: kpath("openrouter", "monthlyUsd"), kind: knobNumber, min: 0},
 	{path: kpath("orchestratorDefaults", "*", "effort"), kind: knobEnum, choices: efforts},
 }

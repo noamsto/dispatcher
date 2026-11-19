@@ -179,6 +179,8 @@ let
     fleetHeadTimeout = 300;
     overseer = {
       autoRelaunch = true;
+      autoStart = true;
+      acceptTrust = true;
       digestEvery = 7200;
       root = "/a/repos";
     };
@@ -1135,7 +1137,7 @@ worktree_git_lib_crew_go_row() { # bin
   [ "$status" -eq 0 ]
   run jq -e '.full.locked.fleetHeadTimeout == 300' "$EVAL"
   [ "$status" -eq 0 ]
-  run jq -e '.full.locked.overseer == {"autoRelaunch": true, "digestEvery": 7200, "root": "/a/repos"}' "$EVAL"
+  run jq -e '.full.locked.overseer == {"autoRelaunch": true, "autoStart": true, "acceptTrust": true, "digestEvery": 7200, "root": "/a/repos"}' "$EVAL"
   [ "$status" -eq 0 ]
   run jq -e '.full.locked.engines == ["claude", "codex", "cursor", "pi"]' "$EVAL"
   [ "$status" -eq 0 ]
