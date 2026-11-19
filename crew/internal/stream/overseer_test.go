@@ -2261,3 +2261,93 @@ func TestOverseerFarUnlabeledHeadStuck(t *testing.T) {
 		}
 	}
 }
+
+func withPane(c fleetpkg.CrewStatus, state string) fleetpkg.CrewStatus {
+	c.Dispatcher.PaneState = &state
+	return c
+}
+
+func TestTransitionsDispatcherAwaiting(t *testing.T) {
+	w := func(state string) map[string]any { return ovWorker("worker:feat/a#s1-1", state) }
+	stale := func(state string) map[string]any {
+		r := w(state)
+		r["stale"] = true
+		return r
+	}
+	// pane "" is an unknown pane state (nil).
+	at := func(m int64, pane, lane string, ws ...map[string]any) fleetpkg.StatusDoc {
+		c := withLane(ovCrew("c1", "live", "attended", ws...), lane)
+		if pane != "" {
+			c = withPane(c, pane)
+		}
+		return ovDoc(ovStart+m*minute, ovRepo("alpha", c))
+	}
+	run := func(want map[int64][]string, docs ...fleetpkg.StatusDoc) {
+		t.Helper()
+		var w [][]string
+		for _, d := range docs {
+			w = append(w, want[(d.TS-ovStart)/minute])
+		}
+		wantSteps(t, steps(t, docs...), w...)
+	}
+	await, dead := evs("dispatcher_awaiting"), evs("lane_dead")
+
+	// A dialog waits on the human whatever the workers do.
+	tr := newTransitions()
+	var names [][]string
+	var fired map[string]any
+	for _, m := range []int64{0, 4, 5, 6, 30} {
+		var n []string
+		for _, l := range step(t, tr, at(m, "waiting", "alive", w("working"))) {
+			n = append(n, l["event"].(string))
+			fired = l
+		}
+		names = append(names, n)
+	}
+	wantSteps(t, names, none(), none(), await, none(), none())
+	want := map[string]any{"stream": "overseer", "event": "dispatcher_awaiting", "repo": "o/alpha", "crew": "c1",
+		"host": ovHost, "pane_state": "waiting", "pr_open": float64(0), "blocked": float64(0), "failed": float64(0),
+		"active": float64(1), "waited_s": float64(300), "ts": float64(ovStart + 5*minute + 1),
+		"summary": "o/alpha c1: dispatcher waiting, 0 pr_open, 0 blocked, 0 failed, 1 active"}
+	if !reflect.DeepEqual(fired, want) {
+		t.Errorf("dispatcher_awaiting line = %v, want %v", fired, want)
+	}
+
+	// Parked on a pr_open over a dead lane: awaiting, never lane_dead.
+	po := w("pr_open")
+	run(map[int64][]string{5: await}, at(0, "done", "dead", po), at(5, "done", "dead", po), at(10, "done", "dead", po),
+		at(11, "done", "dead", po), at(30, "done", "dead", po))
+
+	// Standby: the dispatcher waits on a working worker, not the human.
+	run(nil, at(0, "idle", "dead", w("working"), po), at(5, "idle", "dead", w("working"), po),
+		at(10, "idle", "dead", w("working"), po), at(20, "idle", "dead", w("working"), po))
+
+	// A busy dispatcher keeps today's lane_dead.
+	bl := blockedWorker("worker:feat/a#s1-1", ovStart, nil, "worker", true)
+	run(map[int64][]string{10: dead}, at(0, "processing", "dead", bl), at(9, "processing", "dead", bl), at(10, "processing", "dead", bl))
+
+	// An unknown pane state is today's rule exactly.
+	run(map[int64][]string{10: dead, 23: dead}, at(0, "", "dead", bl), at(9, "", "dead", bl), at(10, "", "dead", bl),
+		at(11, "", "dead", bl), at(12, "", "alive", bl), at(13, "", "dead", bl), at(22, "", "dead", bl), at(23, "", "dead", bl))
+
+	// Nothing held: a finished dispatcher is idle, not awaiting.
+	run(nil, at(0, "done", "alive"), at(5, "done", "alive"), at(10, "done", "alive"))
+	run(nil, at(0, "done", "alive", stale("pr_open")), at(5, "done", "alive", stale("pr_open")), at(10, "done", "alive", stale("pr_open")))
+	run(nil, at(0, "done", "dead", w("done")), at(5, "done", "dead", w("done")), at(10, "done", "dead", w("done")), at(20, "done", "dead", w("done")))
+
+	// A failed row is held work.
+	fl := w("failed")
+	run(map[int64][]string{5: await}, at(0, "done", "alive", fl), at(5, "done", "alive", fl), at(6, "done", "alive", fl))
+
+	// A dispatcher the human wakes does not inherit the parked lane_dead clock.
+	run(map[int64][]string{5: await, 31: dead}, at(0, "done", "dead", po), at(5, "done", "dead", po), at(20, "done", "dead", po),
+		at(21, "processing", "dead", po), at(30, "processing", "dead", po), at(31, "processing", "dead", po))
+
+	// An episode that drops re-arms, with the dwell restarted.
+	run(map[int64][]string{5: await, 12: await}, at(0, "done", "alive", po), at(5, "done", "alive", po), at(6, "processing", "alive", po),
+		at(7, "done", "alive", po), at(11, "done", "alive", po), at(12, "done", "alive", po))
+
+	// A dwell broken before it completes restarts.
+	run(map[int64][]string{9: await}, at(0, "waiting", "alive"), at(3, "processing", "alive"), at(4, "waiting", "alive"),
+		at(8, "waiting", "alive"), at(9, "waiting", "alive"))
+}
