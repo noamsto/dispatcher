@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { crewId, finishBody, nextRunId, postSubagent, spawnBody, splitModel, subagentLabel, type SpawnFn } from "./crewbus.ts";
+import { crewId, finishBody, finishOutcome, nextRunId, postSubagent, spawnBody, splitModel, subagentLabel, type SpawnFn } from "./crewbus.ts";
 
 function scratch(): string {
 	return fs.mkdtempSync(path.join(os.tmpdir(), "crewbus-"));
@@ -94,8 +94,16 @@ test("crewId falls back to CREW_ID, else undefined", () => {
 test("nextRunId is pid-scoped and increasing", () => {
 	const a = nextRunId();
 	const b = nextRunId();
-	assert.match(a, new RegExp(`^pi-${process.pid}-\\d+$`));
+	assert.match(a, new RegExp(`^pi-${process.pid}-[0-9a-f]{8}-\\d+$`));
 	assert.notEqual(a, b);
+});
+
+test("finishOutcome: aborted wins, unrecorded or failed is error, else ok", () => {
+	assert.equal(finishOutcome(true, true, false), "aborted");
+	assert.equal(finishOutcome(true, false, true), "aborted");
+	assert.equal(finishOutcome(false, false, false), "error");
+	assert.equal(finishOutcome(false, true, true), "error");
+	assert.equal(finishOutcome(false, true, false), "ok");
 });
 
 test("postSubagent spawns crew msg with exact argv and detaches", () => {

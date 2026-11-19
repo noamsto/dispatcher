@@ -41,10 +41,11 @@ import {
 import { Container, Markdown, Spacer, Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { type AgentConfig, type AgentScope, discoverAgents } from "./agents.ts";
+// dispatcher patch: crew-bus spawn/finish records live in a pi-free module so node:test can run them.
+import { finishBody, finishOutcome, nextRunId, postSubagent, spawnBody, splitModel, subagentLabel } from "./crewbus.ts";
 // dispatcher patch: the child's kill escalation and signal-exit classification live in
 // ./outcome.ts so the pi-subagent-behaviour check can run them without pi; on a re-pin,
 // port upstream's inline changes into that file rather than back into this one.
-import { finishBody, nextRunId, postSubagent, spawnBody, splitModel, subagentLabel } from "./crewbus.ts";
 import { type ProcessOutcome, KILL_GRACE_MS, isFailedResult, recordOutcome, terminateChild } from "./outcome.ts";
 
 const MAX_PARALLEL_TASKS = 8;
@@ -477,7 +478,7 @@ async function runSingleAgent(
 				defaultCwd,
 				finishBody({
 					id: runId,
-					outcome: wasAborted ? "aborted" : !recorded || isFailedResult(currentResult) ? "error" : "ok",
+					outcome: finishOutcome(wasAborted, recorded, recorded && isFailedResult(currentResult)),
 					...splitModel(currentResult.model),
 				}),
 			);

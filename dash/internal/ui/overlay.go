@@ -178,12 +178,16 @@ func detailLines(ov vm.OverviewView, wi, iw int) []string {
 				fg(colDim).Render(" "+cleanText(ovStr(r.Detail, ""))))
 		}
 		if len(a.Execute) == 0 {
-			out = append(out, "   "+fg(colDim).Render("execute subagents: none"))
+			out = append(out, "   "+fg(colDim).Render("execute subagents: "+executeEmpty(a)))
 			continue
 		}
 		out = append(out, "   "+fg(colDim).Render("execute subagents"))
-		for _, n := range a.Execute {
+		shown := subagentsShown(a.Execute)
+		for _, n := range shown {
 			out = append(out, subagentLine(n))
+		}
+		if more := len(a.Execute) - len(shown); more > 0 {
+			out = append(out, "     "+fg(colDim).Render(fmt.Sprintf("+%d more", more)))
 		}
 	}
 
@@ -264,6 +268,33 @@ func subagentState(state string) string {
 		return state
 	}
 	return "unknown"
+}
+
+// maxSubagentLines bounds the overlay's subagent list: the overlay does not
+// scroll, so an unbounded list pushes ATTENTION and RECENT EVENTS off it.
+const maxSubagentLines = 5
+
+// subagentsShown picks the nodes the overlay lists: running or unknown ones
+// first, then finished, each newest spawn first (Execute is in spawn order).
+func subagentsShown(execute []vm.AgentNode) []vm.AgentNode {
+	var live, fin []vm.AgentNode
+	for i := len(execute) - 1; i >= 0; i-- {
+		if n := execute[i]; n.State == "done" || n.State == "failed" {
+			fin = append(fin, n)
+		} else {
+			live = append(live, n)
+		}
+	}
+	return append(live, fin...)[:min(len(execute), maxSubagentLines)]
+}
+
+// executeEmpty says why a lead has no subagent rows: only local claude and pi
+// leads post them, so anything else has no data rather than no subagents.
+func executeEmpty(a vm.AgentRow) string {
+	if a.Roles != nil && a.Lead.Engine != nil && (*a.Lead.Engine == "claude" || *a.Lead.Engine == "pi") {
+		return "none"
+	}
+	return "not reported"
 }
 
 func subagentLine(n vm.AgentNode) string {

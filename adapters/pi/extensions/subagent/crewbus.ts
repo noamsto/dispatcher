@@ -3,6 +3,7 @@
 // the pi-subagent-behaviour check can run it under node's test runner.
 
 import { spawn, type ChildProcess, type SpawnOptions } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
@@ -93,10 +94,12 @@ export function crewId(env: NodeJS.ProcessEnv, cwd: string): string | undefined 
 export type SpawnFn = (command: string, args: string[], options: SpawnOptions) => Pick<ChildProcess, "on" | "unref">;
 
 let seq = 0;
+// pi can re-evaluate this module in one process (/reload), which restarts seq.
+const loadTag = randomUUID().slice(0, 8);
 
 export function nextRunId(): string {
 	seq += 1;
-	return `pi-${process.pid}-${seq}`;
+	return `pi-${process.pid}-${loadTag}-${seq}`;
 }
 
 /** Never awaits and never throws: a lost record must not disturb the subagent run. */
@@ -116,4 +119,9 @@ export function postSubagent(env: NodeJS.ProcessEnv, cwd: string, body: Subagent
 	} catch {
 		/* best effort */
 	}
+}
+
+export function finishOutcome(aborted: boolean, recorded: boolean, failed: boolean): "ok" | "error" | "aborted" {
+	if (aborted) return "aborted";
+	return !recorded || failed ? "error" : "ok";
 }

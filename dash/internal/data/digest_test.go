@@ -275,8 +275,12 @@ func TestScanSubagents(t *testing.T) {
 			sinkRow(at(2), w, sink, `{"subagent":"finish","id":"t1","outcome":"ok"}`),
 			sinkRow(at(3), w, sink, `{"subagent":"finish","id":"t1","outcome":"error","model":"late"}`),
 		}, []SubagentRun{{ID: "t1", Session: "s1", State: "done", StartTS: at(1), EndTS: at(2)}}},
-		{"unknown finish dropped", []string{
-			sinkRow(at(1), w, sink, `{"subagent":"finish","id":"nope"}`),
+		{"finish before spawn by id", []string{
+			sinkRow(at(1), w, sink, `{"subagent":"finish","id":"t1","agent_id":"a1","outcome":"error","model":"m"}`),
+			sinkRow(at(2), w, sink, `{"subagent":"spawn","id":"t1","label":"look"}`),
+		}, []SubagentRun{{ID: "t1", AgentID: "a1", Session: "s1", Label: "look", Model: "m", State: "failed", StartTS: at(1), EndTS: at(1)}}},
+		{"unknown agent_id-only finish dropped", []string{
+			sinkRow(at(1), w, sink, `{"subagent":"finish","agent_id":"a1"}`),
 		}, nil},
 		{"spawn without id dropped", []string{
 			sinkRow(at(1), w, sink, `{"subagent":"spawn","label":"x"}`),

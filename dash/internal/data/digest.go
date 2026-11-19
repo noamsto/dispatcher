@@ -296,14 +296,26 @@ func (s *BusScanner) applySubagent(key WorkerKey, session string, ts int64, body
 		return
 	}
 
-	if i < 0 || runs[i].State != "running" {
+	state := "done"
+	if outcome, _ := body["outcome"].(string); outcome == "error" || outcome == "aborted" {
+		state = "failed"
+	}
+	if i < 0 {
+		// A finish can reach the bus before its spawn: keep it, finished, for the
+		// late spawn to fill in. Without an id there is nothing to match it on.
+		if id == "" {
+			return
+		}
+		runs = appendRun(runs, SubagentRun{ID: id, AgentID: agentID, Session: session, Model: str("model", fieldMax),
+			State: state, StartTS: ts, EndTS: ts})
+		s.d.Subagents[key] = runs
+		return
+	}
+	if runs[i].State != "running" {
 		return
 	}
 	r := &runs[i]
-	r.State, r.EndTS = "done", ts
-	if outcome, _ := body["outcome"].(string); outcome == "error" || outcome == "aborted" {
-		r.State = "failed"
-	}
+	r.State, r.EndTS = state, ts
 	mergeNonEmpty(&r.Model, str("model", fieldMax))
 	mergeNonEmpty(&r.AgentID, agentID)
 }

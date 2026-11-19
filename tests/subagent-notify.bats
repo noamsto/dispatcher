@@ -178,7 +178,9 @@ no_rows() {
   run rows
   [ -n "$output" ]
   run --separate-stderr crew watch --since 0 --timeout 1 --interval 1
+  [ "$status" -eq 0 ]
   [ -z "$output" ]
+  [[ "$stderr" == *"no new events"* ]]
 }
 
 @test "hooks.json wires the four events to subagent-notify.sh with timeout 5" {
