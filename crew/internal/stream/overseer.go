@@ -806,7 +806,10 @@ type capacityLine struct {
 
 // transitions is the differ's memory between status documents: the level
 // conditions true at the last evaluation, the crews it reported down, and when
-// each live crew's lane was first seen dead.
+// each live crew's lane was first seen dead. awaitHeld is the held branches a
+// fired dispatcher_awaiting episode last reported, shrunk as later held
+// documents drop them; awaitNew is when held work outside that set was first
+// seen.
 type transitions struct {
 	seen       bool
 	on         map[condKey]bool
@@ -814,10 +817,12 @@ type transitions struct {
 	deadSince  map[crewRef]int64
 	awaitSince map[crewRef]int64
 	awaitOff   map[crewRef]int64
+	awaitHeld  map[crewRef][]string
+	awaitNew   map[crewRef]int64
 }
 
 func newTransitions() *transitions {
-	return &transitions{on: map[condKey]bool{}, down: map[crewRef]bool{}, deadSince: map[crewRef]int64{}, awaitSince: map[crewRef]int64{}, awaitOff: map[crewRef]int64{}}
+	return &transitions{on: map[condKey]bool{}, down: map[crewRef]bool{}, deadSince: map[crewRef]int64{}, awaitSince: map[crewRef]int64{}, awaitOff: map[crewRef]int64{}, awaitHeld: map[crewRef][]string{}, awaitNew: map[crewRef]int64{}}
 }
 
 type crewRef struct{ key, crew string }
@@ -851,6 +856,8 @@ type differMoves struct {
 	DeadSince  []deadEntry `json:"dead_since"`
 	AwaitSince []deadEntry `json:"await_since"`
 	AwaitOff   []deadEntry `json:"await_off"`
+	AwaitHeld  []heldEntry `json:"await_held"`
+	AwaitNew   []deadEntry `json:"await_new"`
 }
 
 type condEntry struct {
@@ -875,6 +882,12 @@ type deadEntry struct {
 	TS int64 `json:"ts"`
 }
 
+// heldEntry is one awaitHeld entry: the crew and the held branches, sorted.
+type heldEntry struct {
+	refEntry
+	Held []string `json:"held"`
+}
+
 // hostMoves is one partner host's memory: whether its last document was ok and
 // its transitions. Its misrouted count and throttle start empty on each park.
 type hostMoves struct {
@@ -890,7 +903,7 @@ type hostMoves struct {
 // snapshot is t as JSON may carry it: its maps as entries, in map order, which
 // a reader must not depend on.
 func (t *transitions) snapshot() differMoves {
-	m := differMoves{On: []condEntry{}, Down: []refEntry{}, DeadSince: []deadEntry{}, AwaitSince: []deadEntry{}, AwaitOff: []deadEntry{}}
+	m := differMoves{On: []condEntry{}, Down: []refEntry{}, DeadSince: []deadEntry{}, AwaitSince: []deadEntry{}, AwaitOff: []deadEntry{}, AwaitHeld: []heldEntry{}, AwaitNew: []deadEntry{}}
 	if t == nil {
 		return m
 	}
@@ -910,11 +923,18 @@ func (t *transitions) snapshot() differMoves {
 	for ref, ts := range t.awaitOff {
 		m.AwaitOff = append(m.AwaitOff, deadEntry{refEntry: refEntry{Key: ref.key, Crew: ref.crew}, TS: ts})
 	}
+	for ref, held := range t.awaitHeld {
+		m.AwaitHeld = append(m.AwaitHeld, heldEntry{refEntry: refEntry{Key: ref.key, Crew: ref.crew}, Held: held})
+	}
+	for ref, ts := range t.awaitNew {
+		m.AwaitNew = append(m.AwaitNew, deadEntry{refEntry: refEntry{Key: ref.key, Crew: ref.crew}, TS: ts})
+	}
 	return m
 }
 
 // transitions is the differ memory m describes. Stale entries are safe: next
-// rebuilds on, deadSince, awaitSince and awaitOff from what the document still holds.
+// rebuilds on, deadSince, awaitSince, awaitOff, awaitHeld and awaitNew from
+// what the document still holds.
 func (m differMoves) transitions() *transitions {
 	t := newTransitions()
 	t.seen = m.Seen
@@ -932,6 +952,12 @@ func (m differMoves) transitions() *transitions {
 	}
 	for _, e := range m.AwaitOff {
 		t.awaitOff[crewRef{key: e.Key, crew: e.Crew}] = e.TS
+	}
+	for _, e := range m.AwaitHeld {
+		t.awaitHeld[crewRef{key: e.Key, crew: e.Crew}] = e.Held
+	}
+	for _, e := range m.AwaitNew {
+		t.awaitNew[crewRef{key: e.Key, crew: e.Crew}] = e.TS
 	}
 	return t
 }
@@ -970,6 +996,18 @@ func (t *transitions) next(doc fleetpkg.StatusDoc, nowMS int64) []any {
 			awaitOff[ref] = ts
 		}
 	}
+	awaitHeld := map[crewRef][]string{}
+	for ref, h := range t.awaitHeld {
+		if !present[ref.key] {
+			awaitHeld[ref] = h
+		}
+	}
+	awaitNew := map[crewRef]int64{}
+	for ref, ts := range t.awaitNew {
+		if !present[ref.key] {
+			awaitNew[ref] = ts
+		}
+	}
 	var out []any
 	fire := func(k condKey, line any) bool {
 		if on[k] {
@@ -1002,7 +1040,7 @@ func (t *transitions) next(doc fleetpkg.StatusDoc, nowMS int64) []any {
 					t.down[ref] = true
 				}
 			}
-			n, held := awaiting(c.Dispatcher.PaneState, c.Workers)
+			n, cur, held := awaiting(c.Dispatcher.PaneState, c.Workers)
 			if c.Attention != "guest" && live {
 				awaitKey := condKey{event: "dispatcher_awaiting", key: r.Key, crew: c.CrewID}
 				// A parked dispatcher's own short wakes (heartbeat, hold_due, reap)
@@ -1016,6 +1054,12 @@ func (t *transitions) next(doc fleetpkg.StatusDoc, nowMS int64) []any {
 						on[awaitKey] = true
 						awaitSince[ref] = t.awaitSince[ref]
 						awaitOff[ref] = off
+						if h, ok := t.awaitHeld[ref]; ok {
+							awaitHeld[ref] = h
+						}
+						if ts, ok := t.awaitNew[ref]; ok {
+							awaitNew[ref] = ts
+						}
 					}
 				}
 				if held {
@@ -1024,7 +1068,27 @@ func (t *transitions) next(doc fleetpkg.StatusDoc, nowMS int64) []any {
 						since = doc.TS
 					}
 					awaitSince[ref] = since
-					if doc.TS-since >= awaitAfter.Milliseconds() {
+					awaitHeld[ref] = cur
+					prev, reported := t.awaitHeld[ref]
+					fresh := reported && t.on[awaitKey] && slices.ContainsFunc(cur, func(b string) bool { return !slices.Contains(prev, b) })
+					switch {
+					case fresh:
+						// Held work outside the reported set is a new ask. Its dwell
+						// has its own clock because the episode must stay on, so a
+						// short wake keeps its grace; the dwell exists because a live
+						// dispatcher may be about to wake on that new pr_open.
+						pend, ok := t.awaitNew[ref]
+						if !ok {
+							pend = doc.TS
+						}
+						on[awaitKey] = true
+						if doc.TS-pend >= awaitAfter.Milliseconds() {
+							out = append(out, n.line(head("dispatcher_awaiting"), *c.Dispatcher.PaneState, (doc.TS-pend)/1000, nowMS))
+						} else {
+							awaitHeld[ref] = prev
+							awaitNew[ref] = pend
+						}
+					case doc.TS-since >= awaitAfter.Milliseconds():
 						fire(awaitKey,
 							n.line(head("dispatcher_awaiting"), *c.Dispatcher.PaneState, (doc.TS-since)/1000, nowMS))
 					}
@@ -1123,7 +1187,7 @@ func (t *transitions) next(doc fleetpkg.StatusDoc, nowMS int64) []any {
 		}
 	}
 
-	t.on, t.deadSince, t.awaitSince, t.awaitOff, t.seen = on, deadSince, awaitSince, awaitOff, true
+	t.on, t.deadSince, t.awaitSince, t.awaitOff, t.awaitHeld, t.awaitNew, t.seen = on, deadSince, awaitSince, awaitOff, awaitHeld, awaitNew, true
 	return out
 }
 
@@ -1144,35 +1208,41 @@ func turnEnded(paneState *string) bool {
 }
 
 // awaiting is whether the dispatcher waits on the human, with the rows it
-// counted. Rows are non-stale and include remote-host ones: the condition is
-// the crew's, not a host's. A dialog (waiting) is the human's whatever the
-// workers do. A finished or idle pane is the human's only while work is held
+// counted and the sorted branches of the held ones. Rows are non-stale and
+// include remote-host ones: the condition is the crew's, not a host's. A dialog
+// (waiting) is the human's whatever the workers do. A finished or idle pane is the human's only while work is held
 // (pr_open, blocked, failed or exited) and none is active (working or
 // answered): with active workers the dispatcher is on standby for them, and
 // with nothing held it is idle, a state rather than an ask, which would
 // notify after every batch. done rows are neither: they wait only for a reap.
-func awaiting(paneState *string, workers []map[string]any) (awaitCounts, bool) {
+func awaiting(paneState *string, workers []map[string]any) (awaitCounts, []string, bool) {
 	var n awaitCounts
+	branches := []string{}
 	if !turnEnded(paneState) {
-		return n, false
+		return n, branches, false
 	}
 	for _, w := range workers {
 		if w["stale"] != false {
 			continue
 		}
+		branch, _ := w["branch"].(string)
 		switch w["state"] {
 		case "working", "answered":
 			n.active++
 		case "pr_open":
 			n.prOpen++
+			branches = append(branches, branch)
 		case "blocked":
 			n.blocked++
+			branches = append(branches, branch)
 		case "failed", "exited":
 			n.failed++
+			branches = append(branches, branch)
 		}
 	}
+	slices.Sort(branches)
 	held := n.prOpen + n.blocked + n.failed
-	return n, *paneState == "waiting" || (n.active == 0 && held > 0)
+	return n, branches, *paneState == "waiting" || (n.active == 0 && held > 0)
 }
 
 // strandsWork is whether a dead lane leaves work unread: a worker that is not
