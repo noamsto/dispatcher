@@ -515,3 +515,80 @@ func TestWriteReportsNotInForce(t *testing.T) {
 		t.Fatalf("Write = %v", err)
 	}
 }
+
+func TestListUnreadableDir(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root reads any dir")
+	}
+	e := setup(t)
+	e.set(t, "night", "go")
+	dir, _ := e.dir(t)
+	if err := os.Chmod(dir, 0o300); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+	if _, _, err := List(e.common, e.o); err == nil {
+		t.Fatal("List of an unreadable dir returned no error")
+	}
+	if code, stdout, stderr := e.run(t, Request{Action: "list"}); code != 1 || stdout != "" || !strings.Contains(stderr, "crew: policy: ") {
+		t.Fatalf("list = %d %q %q", code, stdout, stderr)
+	}
+}
+
+func TestListClearRefusedDir(t *testing.T) {
+	for _, tt := range []struct {
+		name, reason string
+		make         func(t *testing.T, dir string)
+	}{
+		{"symlink", "is a symlink", func(t *testing.T, dir string) {
+			if err := os.Symlink(t.TempDir(), dir); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{"regular file", "is not a directory", func(t *testing.T, dir string) {
+			if err := os.WriteFile(dir, nil, 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			e := setup(t)
+			dir, _ := e.dir(t)
+			if err := os.MkdirAll(filepath.Dir(dir), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			tt.make(t, dir)
+			code, stdout, stderr := e.run(t, Request{Action: "list"})
+			if code != 1 || stdout != "" || !strings.Contains(stderr, tt.reason) {
+				t.Errorf("list = %d %q %q", code, stdout, stderr)
+			}
+			code, stdout, stderr = e.run(t, Request{Action: "clear", Name: "night"})
+			if code != 1 || stdout != "" || !strings.Contains(stderr, "cannot clear standing policy night — ") || !strings.Contains(stderr, tt.reason) {
+				t.Errorf("clear = %d %q %q", code, stdout, stderr)
+			}
+		})
+	}
+}
+
+func TestClearRefusedFromStampedPane(t *testing.T) {
+	e := setup(t)
+	e.set(t, "night", "go")
+	e.o.Sender.Tmux = &tmuxtest.Fake{Out: map[string]string{"list-panes": "100\x1ffeat/x\x1flead\x1fc1\x1f@1\x1f%1\n"}}
+	code, _, stderr := e.run(t, Request{Action: "clear", Name: "night"})
+	want := "crew: policy: this is a crew pane (pane %1 is stamped as the lead of feat/x), and only the repo owner writes a standing policy, from their own terminal\n"
+	if code != 1 || stderr != want {
+		t.Fatalf("= %d %q", code, stderr)
+	}
+	if _, err := Load(e.common, "night", e.o); err != nil {
+		t.Fatalf("the refused clear removed the policy: %v", err)
+	}
+}
+
+func TestShowInvalidName(t *testing.T) {
+	e := setup(t)
+	code, stdout, stderr := e.run(t, Request{Action: "show", Name: "../x"})
+	want := "crew: policy: standing policy ../x is not in force — policy name \"../x\" must match ^[a-z0-9][a-z0-9-]{0,31}$\n"
+	if code != 1 || stdout != "" || stderr != want {
+		t.Fatalf("= %d %q %q", code, stdout, stderr)
+	}
+}

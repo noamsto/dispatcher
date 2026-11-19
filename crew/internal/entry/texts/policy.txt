@@ -10,8 +10,9 @@ crew-pane session, and any session without a terminal on stdin. show and list
 are open to anyone and only report a policy that is in force: a record that is
 not the owner's own, not for this repo or not a plain file is refused with its
 reason, and list names it on stderr.
-A record lives in ${XDG_STATE_HOME:-$HOME/.local/state}/crew/policy/<repo>/,
-outside the repo and its bus, one file per name. Set of a name again replaces it.
+A record lives in ${XDG_STATE_HOME:-$HOME/.local/state}/crew/policy/<id>/,
+outside the repo and its bus, where <id> is the sha256 of the repo's git common
+dir realpath. One <name>.json per policy; set of a name again replaces it.
 
   <name>   1-32 characters: a-z, 0-9 and -, starting with a letter or digit
   <text>   The policy in your words, one argument; kept verbatim

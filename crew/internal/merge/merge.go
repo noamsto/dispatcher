@@ -129,6 +129,9 @@ func Run(ctx context.Context, req Request, paths bus.Paths, stdout, stderr io.Wr
 	}
 	var provenance string
 	if req.Policy != "" {
+		if req.NoLedger || req.AllowNoCI {
+			return refuse("--policy never waives a gate: drop --no-ledger/--allow-no-ci, or merge on the human's own approval")
+		}
 		rec, err := loadPolicy(req.Policy, o)
 		if err != nil {
 			return refuse("standing policy '%s' is not in force: %s", plain(req.Policy), plain(err.Error()))

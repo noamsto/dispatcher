@@ -105,3 +105,16 @@ func TestPolicyReadsAndUsage(t *testing.T) {
 		t.Errorf("list --brief: code %d stdout %q stderr %q, want %q", code, out, errs, want)
 	}
 }
+
+func TestMergePolicyWiring(t *testing.T) {
+	_, runPolicy := policyRun(t)
+	// The policy refusal precedes any gh call, so no fake gh is needed.
+	out, errs, code := runPolicy("merge", "7", "--policy", "night")
+	if code != 1 || out != "" || !strings.Contains(errs, "standing policy 'night' is not in force") || !strings.Contains(errs, "no standing policy 'night' in this repo") {
+		t.Errorf("code %d stdout %q stderr %q", code, out, errs)
+	}
+	out, errs, code = runPolicy("merge", "7", "--policy", "")
+	if code != 1 || out != "" || !strings.Contains(errs, "usage: crew merge") {
+		t.Errorf("empty value: code %d stdout %q stderr %q", code, out, errs)
+	}
+}

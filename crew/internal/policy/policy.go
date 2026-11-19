@@ -258,12 +258,15 @@ func List(common string, o Options) (in []Record, refused []string, err error) {
 	} else if err != nil {
 		return nil, nil, err
 	}
-	files, err := filepath.Glob(filepath.Join(dir, "*.json"))
+	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, nil, err
 	}
-	for _, f := range files {
-		name := strings.TrimSuffix(filepath.Base(f), ".json")
+	for _, e := range entries {
+		name, ok := strings.CutSuffix(e.Name(), ".json")
+		if !ok || strings.HasPrefix(name, ".") {
+			continue
+		}
 		r, err := Load(common, name, o)
 		if err != nil {
 			refused = append(refused, notInForce(name, err))

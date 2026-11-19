@@ -11977,6 +11977,20 @@ _lead_uuid_re='[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
   [[ "$line" == *"--add-dir $T/repos/proj "* ]]
 }
 
+@test "add-dir: a grant inside or above the crew state dir is refused, an unrelated one under the same root is granted" {
+  stub_launch_bins
+  T="$(realpath "$BATS_TEST_TMPDIR")"
+  mkdir -p "$T/repos/state/crew/policy/x" "$T/repos/proj"
+  export DISPATCH_GRANT_ROOTS="$T/repos" XDG_STATE_HOME="$T/repos/state"
+  for d in "$T/repos/state/crew/policy/x" "$T/repos/state"; do
+    DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --add-dir "$d" --crew-id c1 42 "policy store"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"dispatch: --add-dir '$d' refused"* ]]
+  done
+  DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --add-dir "$T/repos/proj" --crew-id c1 42 "granted dir"
+  [ "$status" -eq 0 ]
+}
+
 @test "add-dir: a root child symlinked outside the roots is refused at its target" {
   stub_launch_bins
   T="$(realpath "$BATS_TEST_TMPDIR")"

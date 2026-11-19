@@ -394,15 +394,20 @@ func TestPolicy(t *testing.T) {
 		return func(string) (policy.Record, error) { return rec, err }
 	}
 	tests := []struct {
-		name    string
-		policy  func(string) (policy.Record, error)
-		dryRun  bool
-		code    int
-		stderr  string
-		stdout  string
-		noCalls bool
-		release string
+		name                string
+		policy              func(string) (policy.Record, error)
+		dryRun              bool
+		noLedger, allowNoCI bool
+		code                int
+		stderr              string
+		stdout              string
+		noCalls             bool
+		release             string
 	}{
+		{name: "no-ledger waiver", policy: load(rec, nil), noLedger: true, code: 1, noCalls: true,
+			stderr: "crew: merge: refusing PR 7 — --policy never waives a gate: drop --no-ledger/--allow-no-ci, or merge on the human's own approval\n"},
+		{name: "allow-no-ci waiver", policy: load(rec, nil), allowNoCI: true, code: 1, noCalls: true,
+			stderr: "crew: merge: refusing PR 7 — --policy never waives a gate: drop --no-ledger/--allow-no-ci, or merge on the human's own approval\n"},
 		{name: "missing", policy: load(policy.Record{}, fmt.Errorf("%w night in this repo", policy.ErrMissing)), code: 1, noCalls: true,
 			stderr: "crew: merge: refusing PR 7 — standing policy 'night' is not in force: no standing policy 'night' in this repo\n"},
 		{name: "refused", policy: load(policy.Record{}, errors.New("the file f is owned by uid 1, not this uid 2")), code: 1, noCalls: true,
@@ -421,7 +426,7 @@ func TestPolicy(t *testing.T) {
 			g := &ghtest.Fake{Out: map[string]string{viewIn: view("OPEN", "false", "MERGEABLE", okRoll), runsIn: okRuns, mergeG: "merged"}}
 			gt := &gittest.Fake{Func: func(string, []string) (string, error) { return "", nil }}
 			var stdout, stderr bytes.Buffer
-			code := merge.Run(context.Background(), merge.Request{PR: "7", Crew: "c1", Policy: "night", DryRun: tt.dryRun}, paths, &stdout, &stderr,
+			code := merge.Run(context.Background(), merge.Request{PR: "7", Crew: "c1", Policy: "night", DryRun: tt.dryRun, NoLedger: tt.noLedger, AllowNoCI: tt.allowNoCI}, paths, &stdout, &stderr,
 				merge.Options{GH: g, Git: gt, Dir: dir, Reply: reply.Options{Clock: clock.FromEnv()}, Policy: tt.policy})
 			if code != tt.code {
 				t.Fatalf("code = %d, want %d (stderr %q)", code, tt.code, stderr.String())
