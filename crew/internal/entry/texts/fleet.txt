@@ -122,10 +122,16 @@ as `crew fleet` finds them.
 
   --json   One document: {ts, host, machine, queue, repos[{repo, common,
            misrouted, crews[{crew_id, dispatcher{state, pid, pane, lane,
-           last_event_s}, attention, workers[], holds[], overseer_inbox[]}]}],
-           skipped[{path, status}]}. state is live, dead or closed (no pid
-           file); lane is the stream tick's alive, stale or dead, null when no
-           tick was written; attention is attended while the dispatcher is
+           last_event_s, pane_state}, attention, workers[], holds[],
+           overseer_inbox[]}]}], skipped[{path, status}]}. state is live,
+           dead or closed (no pid file); lane is the stream tick's alive,
+           stale or dead, null when no tick was written; pane_state is the
+           raw tmux-og hook state of a live dispatcher's pane (processing,
+           waiting, done, idle, compacting, denied or error; an Esc-interrupted
+           or stale turn still reads processing), null when unknown: no pane,
+           a dead dispatcher, a status dir not owned by you or open to others,
+           an agent_pid that is not the dispatcher's, or a dispatcher read from
+           another host; attention is attended while the dispatcher is
            live, else unattended or idle by whether the crew has live work or a
            hold. A worker
            is its roster row plus blocked {since, cycle, budget_left_s, source,

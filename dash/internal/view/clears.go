@@ -10,7 +10,7 @@ import (
 var AllKinds = []Kind{
 	KindBlocked, KindPrompt, KindStall, KindWatchdog, KindDead, KindFailed, KindStale,
 	KindRoleFailed, KindMergeReady, KindLaneDead, KindLaneStale, KindHoldMatured,
-	KindRelayLost, KindPeerStale, KindDispatcherGone, KindRemoteWatchDead,
+	KindRelayLost, KindPeerStale, KindDispatcherGone, KindDispatcherWaiting, KindRemoteWatchDead,
 }
 
 // clearsCtx is what clearsText may name. Keep is crew reap's reason for
@@ -58,6 +58,8 @@ func clearsText(kind Kind, c clearsCtx) string {
 		return "clears when the peer's next sync succeeds"
 	case KindDispatcherGone:
 		return "relaunch the dispatcher or finish its workers"
+	case KindDispatcherWaiting:
+		return "answer the dispatcher in its pane"
 	case KindRemoteWatchDead:
 		return "re-arm the remote watch for the host"
 	}

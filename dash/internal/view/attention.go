@@ -34,10 +34,11 @@ const (
 	KindLaneStale   Kind = "lane_stale"
 	KindHoldMatured Kind = "hold_matured"
 
-	KindRelayLost       Kind = "relay_lost"
-	KindPeerStale       Kind = "peer_stale"
-	KindDispatcherGone  Kind = "dispatcher_gone"
-	KindRemoteWatchDead Kind = "remote_watch_dead"
+	KindRelayLost         Kind = "relay_lost"
+	KindPeerStale         Kind = "peer_stale"
+	KindDispatcherGone    Kind = "dispatcher_gone"
+	KindDispatcherWaiting Kind = "dispatcher_waiting"
+	KindRemoteWatchDead   Kind = "remote_watch_dead"
 )
 
 // AttentionItem is one thing that needs the operator. Action is nil for peer

@@ -65,6 +65,8 @@ func newStatusFix(t *testing.T, lines ...string) *statusFix {
 	empty := t.TempDir()
 	f.env["HOME"], f.env["CREW_SWEEP_ROOTS"], f.env["XDG_STATE_HOME"] = empty, empty, filepath.Join(root, "state")
 	f.env["DISPATCH_LOADAVG_FILE"] = filepath.Join(root, "loadavg")
+	// A nonexistent dir: no test reads the machine's own pane state.
+	f.env["CLAUDE_STATUS_DIR"] = filepath.Join(root, "no-claude-status")
 	if err := os.WriteFile(f.env["DISPATCH_LOADAVG_FILE"], []byte("0.50 0 0 1/1 1\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -181,6 +183,87 @@ func TestStatusDispatcherState(t *testing.T) {
 			t.Errorf("%s pane = %v, want %q", tc.crew, d.Pane, tc.pane)
 		}
 	}
+}
+
+func TestStatusDispatcherPaneState(t *testing.T) {
+	paneState := func(d Dispatcher) string {
+		if d.PaneState == nil {
+			return ""
+		}
+		return *d.PaneState
+	}
+	setup := func(t *testing.T, mode os.FileMode) *statusFix {
+		t.Helper()
+		f := newStatusFix(t)
+		f.pidfile("c-live", "100")
+		f.pidfile("c-dead", "101")
+		f.crewFile("c-live", "pane", "%81\n")
+		f.crewFile("c-dead", "pane", "%81\n")
+		f.crewFile("c-closed", "pane", "%81\n")
+		f.env["CLAUDE_STATUS_DIR"] = paneDir(t, mode, "81", "state=waiting\n")
+		return f
+	}
+
+	t.Run("live dispatcher only", func(t *testing.T) {
+		doc := setup(t, 0o700).collect(StatusRequest{})
+		for crew, want := range map[string]string{"c-live": "waiting", "c-dead": "", "c-closed": ""} {
+			if got := paneState(doc.crew(t, crew).Dispatcher); got != want {
+				t.Errorf("%s pane_state = %q, want %q", crew, got, want)
+			}
+		}
+	})
+
+	t.Run("agent_pid under the dispatcher", func(t *testing.T) {
+		f := setup(t, 0o700)
+		f.procs.Procs[2403590] = proctest.Proc{Parent: 100}
+		f.env["CLAUDE_STATUS_DIR"] = paneDir(t, 0o700, "81", "state=waiting\nagent_pid=2403590\n")
+		if got := paneState(f.collect(StatusRequest{}).crew(t, "c-live").Dispatcher); got != "waiting" {
+			t.Errorf("pane_state = %q, want waiting", got)
+		}
+	})
+
+	t.Run("agent_pid of another tmux server", func(t *testing.T) {
+		f := setup(t, 0o700)
+		f.procs.Procs[2403590] = proctest.Proc{Parent: 102}
+		f.env["CLAUDE_STATUS_DIR"] = paneDir(t, 0o700, "81", "state=waiting\nagent_pid=2403590\n")
+		if got := f.collect(StatusRequest{}).crew(t, "c-live").Dispatcher.PaneState; got != nil {
+			t.Errorf("pane_state = %q, want nil", *got)
+		}
+	})
+
+	t.Run("untrusted dir", func(t *testing.T) {
+		doc := setup(t, 0o755).collect(StatusRequest{})
+		if got := doc.crew(t, "c-live").Dispatcher.PaneState; got != nil {
+			t.Errorf("pane_state = %q, want nil", *got)
+		}
+	})
+
+	t.Run("no pane file", func(t *testing.T) {
+		f := newStatusFix(t)
+		f.pidfile("c-live", "100")
+		f.env["CLAUDE_STATUS_DIR"] = paneDir(t, 0o700, "81", "state=waiting\n")
+		if got := f.collect(StatusRequest{}).crew(t, "c-live").Dispatcher.PaneState; got != nil {
+			t.Errorf("pane_state = %q, want nil", *got)
+		}
+	})
+
+	t.Run("served", func(t *testing.T) {
+		f := setup(t, 0o700)
+		ans, err := ServeFar(t.Context(), "halo", ago(1000), io.Discard, f.opts)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, r := range ans.Status.Repos {
+			for _, c := range r.Crews {
+				if c.Dispatcher.PaneState != nil {
+					t.Errorf("served %s pane_state = %q, want nil", c.CrewID, *c.Dispatcher.PaneState)
+				}
+			}
+		}
+		if len(ans.Status.Repos) == 0 {
+			t.Fatal("no served repos")
+		}
+	})
 }
 
 func TestStatusLaneStates(t *testing.T) {

@@ -33,11 +33,14 @@ type Cwd struct {
 // OS is the real process table.
 type OS struct{}
 
-// Ancestors is this process's parent chain, excluding itself. The walk is
-// bounded (`while [ "$depth" -lt 32 ]`) so a chain that cycles cannot spin it.
-func Ancestors(t Table) map[int]bool {
+// Ancestors is this process's parent chain, excluding itself.
+func Ancestors(t Table) map[int]bool { return AncestorsOf(t, os.Getpid()) }
+
+// AncestorsOf is pid's parent chain, excluding pid. The walk is bounded
+// (`while [ "$depth" -lt 32 ]`) so a chain that cycles cannot spin it.
+func AncestorsOf(t Table, pid int) map[int]bool {
 	set := map[int]bool{}
-	for cur, depth := os.Getpid(), 0; depth < 32; depth++ {
+	for cur, depth := pid, 0; depth < 32; depth++ {
 		parent, ok := t.Parent(cur)
 		if !ok {
 			break

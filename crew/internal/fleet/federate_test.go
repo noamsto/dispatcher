@@ -1369,8 +1369,8 @@ func typeLeaves(t reflect.Type, v any, have bool, path string, out map[string]bo
 		for f := range t.Fields() {
 			name, _, _ := strings.Cut(f.Tag.Get("json"), ",")
 			p := strings.TrimPrefix(path+"."+name, ".")
-			// peers and relays are local reads: no far wire carries them.
-			if name == "" || name == "-" || p == "status.hosts" || p == "status.repos[].peers" || p == "status.repos[].peers_error" || p == "status.repos[].crews[].relays" {
+			// peers, relays and pane state are local reads: no far wire carries them.
+			if name == "" || name == "-" || p == "status.hosts" || p == "status.repos[].peers" || p == "status.repos[].peers_error" || p == "status.repos[].crews[].relays" || p == "status.repos[].crews[].dispatcher.pane_state" {
 				continue
 			}
 			if e, ok := m[name]; ok || !have {
@@ -1496,6 +1496,33 @@ func maximalFar(t *testing.T) map[string]any {
 var projectedWorkerKeys = []string{
 	"age_s", "blocked", "branch", "detail", "finished_window", "from", "host", "live",
 	"name", "pr_candidate", "pr_url", "remote_unprobed", "source", "stale", "state", "ts",
+}
+
+// A far host's pane state is its own tmux's: the projection keeps none, even
+// from a host that sends one.
+func TestAdmitHostDropsPaneState(t *testing.T) {
+	a := maximalFar(t)
+	sent := 0
+	for _, r := range a["status"].(map[string]any)["repos"].([]any) {
+		for _, c := range r.(map[string]any)["crews"].([]any) {
+			c.(map[string]any)["dispatcher"].(map[string]any)["pane_state"] = "waiting"
+			sent++
+		}
+	}
+	if sent == 0 {
+		t.Fatal("the fixture serves no crew")
+	}
+	ans, err := AdmitHost(marshal(t, a), "mbp", "halo", ago(1000))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range ans.Status.Repos {
+		for _, c := range r.Crews {
+			if c.Dispatcher.PaneState != nil {
+				t.Errorf("crew %s kept pane_state %q", c.CrewID, *c.Dispatcher.PaneState)
+			}
+		}
+	}
 }
 
 func TestAdmitHostPoisonEveryLeaf(t *testing.T) {

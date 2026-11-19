@@ -225,6 +225,7 @@ type Dispatcher struct {
 	Lane       *string `json:"lane"`
 	LastEventS *int64  `json:"last_event_s"`
 	Home       *string `json:"home"`
+	PaneState  *string `json:"pane_state"`
 }
 
 type HoldStatus struct {
@@ -693,6 +694,9 @@ func (b *repoBuild) dispatcher(id string) Dispatcher {
 	}
 	if pane, _ := crews.PidFileText(filepath.Join(dir, "pane")); pane != "" {
 		d.Pane = &pane
+	}
+	if s.state == "live" && s.pid != nil && d.Pane != nil && b.o.Served == nil {
+		d.PaneState = readPaneState(b.o.Getenv, *d.Pane, b.o.Proc, *s.pid)
 	}
 	if last, ok := b.idx.last[id]; ok {
 		s := max((b.nowMS-last)/1000, 0)

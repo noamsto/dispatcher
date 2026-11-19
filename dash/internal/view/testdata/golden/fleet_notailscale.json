@@ -278,7 +278,8 @@
         "state": "live",
         "lane": "alive",
         "last_event_s": 4,
-        "pid": 4242
+        "pid": 4242,
+        "session": "unknown"
       },
       "attention_state": "attended",
       "workers": {
@@ -310,7 +311,8 @@
         "state": "live",
         "lane": "alive",
         "last_event_s": 4,
-        "pid": 4242
+        "pid": 4242,
+        "session": "unknown"
       },
       "attention_state": "attended",
       "workers": {
@@ -340,7 +342,8 @@
         "state": "live",
         "lane": "stale",
         "last_event_s": 20,
-        "pid": 5151
+        "pid": 5151,
+        "session": "unknown"
       },
       "attention_state": "attended",
       "workers": {
@@ -387,7 +390,8 @@
         "state": "dead",
         "lane": null,
         "last_event_s": 7200,
-        "pid": 999
+        "pid": 999,
+        "session": "unknown"
       },
       "attention_state": "unattended",
       "workers": {
