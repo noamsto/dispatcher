@@ -223,12 +223,12 @@ func RecordedLive(t proc.Table, now time.Time, pid int, pidfile string) bool {
 	}
 	if data, err := os.ReadFile(PidStartFile(pidfile)); err == nil {
 		line, _, _ := strings.Cut(string(data), "\n")
-		recorded := strings.TrimRight(line, "\r ")
-		// Cut on the first space only: the macOS token itself contains spaces.
-		recPid, recTok, ok := strings.Cut(recorded, " ")
-		if ok && recPid == strconv.Itoa(pid) && recTok != "" {
+		// Any run of space, tab or CR separates fields, like the shell reader;
+		// the macOS token itself contains spaces, so the rest is rejoined.
+		fields := strings.FieldsFunc(line, func(r rune) bool { return r == ' ' || r == '\t' || r == '\r' })
+		if len(fields) >= 2 && fields[0] == strconv.Itoa(pid) {
 			if cur, ok := t.Start(pid); ok {
-				return cur == recTok
+				return cur == strings.Join(fields[1:], " ")
 			}
 		}
 	}

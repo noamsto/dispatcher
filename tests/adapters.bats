@@ -3272,6 +3272,39 @@ _live() { # <pid> <pidfile>
   [ "$status" -eq 0 ]
 }
 
+@test ".start line shapes the Go reader accepts read live: CRLF, double space, leading space, tab" {
+  _start_sleeper
+  _backdate_hour "$PIDFILE"
+  local cur shape
+  cur="$(bash -c 'source "$1/adapters/core/launcher-common.sh"; _proc_start "$2"' _ "$ROOT" "$SLEEP_PID")"
+  for shape in '%s %s\r\n' '%s  %s\n' ' %s %s\n' '%s\t%s\n'; do
+    # shellcheck disable=SC2059
+    printf "$shape" "$SLEEP_PID" "$cur" >"$PIDFILE.start"
+    _live "$SLEEP_PID" "$PIDFILE"
+    [ "$status" -eq 0 ] || { _stop_sleeper; echo "shape $shape: status $status" >&2; return 1; }
+  done
+  _stop_sleeper
+}
+
+@test "a pid-only .start sidecar falls back to the mtime heuristic" {
+  _start_sleeper
+  printf '%s\n' "$SLEEP_PID" >"$PIDFILE.start"
+  _live "$SLEEP_PID" "$PIDFILE"
+  [ "$status" -eq 0 ]
+  _backdate_hour "$PIDFILE"
+  _live "$SLEEP_PID" "$PIDFILE"
+  _stop_sleeper
+  [ "$status" -eq 1 ]
+}
+
+@test "a multi-word .start token survives the split" {
+  _start_sleeper
+  _backdate_hour "$PIDFILE"
+  run bash -c 'source "$1/adapters/core/launcher-common.sh"; _proc_start() { printf "lstart:Mon Jan 1 00:00:00 2024"; }; printf "%s  lstart:Mon\tJan 1 00:00:00 2024\r\n" "$2" >"$3.start"; _recorded_pid_live "$2" "$3"' _ "$ROOT" "$SLEEP_PID" "$PIDFILE"
+  _stop_sleeper
+  [ "$status" -eq 0 ]
+}
+
 @test "a mismatched .start token marks the pid recycled despite a fresh pidfile" {
   _start_sleeper
   printf '%s linux:x:1\n' "$SLEEP_PID" >"$PIDFILE.start"

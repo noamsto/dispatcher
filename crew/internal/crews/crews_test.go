@@ -230,6 +230,11 @@ func TestTableRecordedStartToken(t *testing.T) {
 		{"g: blank sidecar → heuristic", "\n", proctest.Proc{Start: "tok-B", Elapsed: 10}, 0, "yes"},
 		{"h: trailing junk lines ignored", "7777 tok-A\njunk\n", proctest.Proc{Start: "tok-A", Elapsed: 10}, 100 * time.Second, "yes"},
 		{"i: CRLF line ending ignored", "7777 tok-A\r\n", proctest.Proc{Start: "tok-A", Elapsed: 10}, 100 * time.Second, "yes"},
+		{"j: double space after the pid", "7777  tok-A", proctest.Proc{Start: "tok-A", Elapsed: 10}, 100 * time.Second, "yes"},
+		{"k: leading space", " 7777 tok-A", proctest.Proc{Start: "tok-A", Elapsed: 10}, 100 * time.Second, "yes"},
+		{"l: tab separator", "7777\ttok-A", proctest.Proc{Start: "tok-A", Elapsed: 10}, 100 * time.Second, "yes"},
+		{"m: macOS multi-word token", "7777 lstart:Mon Jan 1 00:00:00 2024", proctest.Proc{Start: "lstart:Mon Jan 1 00:00:00 2024", Elapsed: 10}, 100 * time.Second, "yes"},
+		{"n: pid only is malformed, heuristic", "7777", proctest.Proc{Start: "tok-B", Elapsed: 10}, 0, "yes"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			p := fixture(t)

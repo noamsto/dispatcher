@@ -126,6 +126,27 @@ _proc_start() (
   printf 'lstart:%s' "$*"
 )
 
+# _pid_start_fields <sidecar> — prints "<pid> <token>" from the sidecar's first
+# line, split on any run of space, tab or CR (the token's own spaces collapse to
+# one); prints nothing when the line has fewer than two fields. Mirrors the Go
+# reader, crews.RecordedLive.
+_pid_start_fields() (
+  line=""
+  { IFS= read -r line <"$1"; } 2>/dev/null || :
+  # CR becomes a space first: only space and tab are IFS whitespace on every
+  # bash, so a CR run would otherwise split like a colon on 3.2.
+  line="${line//$'\r'/ }"
+  set -f
+  IFS=$' \t'
+  # shellcheck disable=SC2086
+  set -- $line
+  [ "$#" -ge 2 ] || exit 0
+  pid="$1"
+  shift
+  IFS=' '
+  printf '%s %s' "$pid" "$*"
+)
+
 # _pid_recycled <pid> <pidfile> — 0 when <pid> now belongs to a different
 # process than <pidfile> records. A `<pidfile>.start` sidecar `<pid> <token>`
 # decides when it names this pid and the current token is readable; a sidecar
@@ -135,11 +156,11 @@ _proc_start() (
 # inherited the number. Returns 1 when timestamps are unreadable, so a live
 # process is never judged dead; a coarse-mtime filesystem errs the same way.
 _pid_recycled() {
-  local pid="$1" file="$2" elapsed file_s rec rec_pid cur
+  local pid="$1" file="$2" elapsed file_s rec rec_pid cur norm
   [ -f "$file" ] || return 1
   if [ -s "$file.start" ]; then
-    rec_pid="" rec=""
-    { IFS=' ' read -r rec_pid rec <"$file.start"; } 2>/dev/null || :
+    rec_pid="" rec="" norm="$(_pid_start_fields "$file.start")"
+    case "$norm" in *' '*) rec_pid="${norm%% *}" rec="${norm#* }" ;; esac
     if [ "$rec_pid" = "$pid" ] && [ -n "$rec" ] && cur="$(_proc_start "$pid")"; then
       [ "$cur" != "$rec" ]
       return $?
