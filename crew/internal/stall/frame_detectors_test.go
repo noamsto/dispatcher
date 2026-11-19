@@ -204,6 +204,7 @@ func TestD1Prompt(t *testing.T) {
 	sel := fixture(t, "prompt_select.txt")
 	quota := fixture(t, "prompt_quota.txt")
 	perm := fixture(t, "permission_subagent.txt")
+	countdown := fixture(t, "permission_bash_guard.txt")
 	idle := "an idle shell"
 	interrupted := fixture(t, "nudge_interrupted.txt")
 	cases := []struct {
@@ -303,12 +304,12 @@ func TestD1Prompt(t *testing.T) {
 			end: 90,
 			frame: func(at int64) string {
 				if at < 30 {
-					return perm
+					return countdown
 				}
 				return interrupted
 			},
 			want: map[int64][]string{
-				15: {"blocked|" + subagentPermission},
+				15: {"blocked|" + guardPermission},
 				30: {"working|prompt: cleared", "blocked|" + autoBlocked},
 			},
 			check: func(t *testing.T, w *watch) {
@@ -322,21 +323,84 @@ func TestD1Prompt(t *testing.T) {
 			frame: func(at int64) string {
 				switch {
 				case at < 30:
-					return perm
+					return countdown
 				case at < 75:
 					return interrupted
 				}
 				return idle
 			},
 			want: map[int64][]string{
-				15: {"blocked|" + subagentPermission},
+				15: {"blocked|" + guardPermission},
 				30: {"working|prompt: cleared", "blocked|" + autoBlocked},
 				75: {"working|prompt: cleared"},
 			},
 			check: func(t *testing.T, w *watch) {
-				if w.fd.d1At != 0 || w.fd.d1Hits != 0 || w.fd.d1Kind != "" {
+				if w.fd.d1At != 0 || w.fd.d1Hits != 0 || w.fd.d1Kind != "" || w.fd.d1Countdown {
 					t.Errorf("state not reset: %+v", w.fd)
 				}
+			},
+		}},
+		{"the auto-blocked block clears when a new dialog appears", fdScript{
+			end: 120,
+			frame: func(at int64) string {
+				switch {
+				case at < 30:
+					return countdown
+				case at < 60:
+					return interrupted
+				}
+				return countdown
+			},
+			want: map[int64][]string{
+				15: {"blocked|" + guardPermission},
+				30: {"working|prompt: cleared", "blocked|" + autoBlocked},
+				60: {"working|prompt: cleared"},
+				75: {"blocked|" + guardPermission},
+			},
+		}},
+		{"a worker's own blocked row while interrupted posts nothing and resets", fdScript{
+			end: 60,
+			frame: func(at int64) string {
+				if at < 30 {
+					return countdown
+				}
+				return interrupted
+			},
+			bus: []fdBus{{30, 30, workerBlock}},
+			want: map[int64][]string{
+				15: {"blocked|" + guardPermission},
+			},
+			check: func(t *testing.T, w *watch) {
+				if w.fd.d1At != 0 || w.fd.d1Hits != 0 || w.fd.d1Kind != "" || w.fd.d1Countdown {
+					t.Errorf("state not reset: %+v", w.fd)
+				}
+			},
+		}},
+		{"a role pane's timed-out dialog only clears", fdScript{
+			id:  "role:feat/x:rev",
+			end: 60,
+			frame: func(at int64) string {
+				if at < 30 {
+					return countdown
+				}
+				return interrupted
+			},
+			want: map[int64][]string{
+				15: {"blocked|" + guardPermission},
+				30: {"working|prompt: cleared"},
+			},
+		}},
+		{"a permission dialog without the countdown only clears when interrupted", fdScript{
+			end: 60,
+			frame: func(at int64) string {
+				if at < 30 {
+					return perm
+				}
+				return interrupted
+			},
+			want: map[int64][]string{
+				15: {"blocked|" + subagentPermission},
+				30: {"working|prompt: cleared"},
 			},
 		}},
 		{"a meter vetoes the generic prompt", fdScript{

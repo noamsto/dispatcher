@@ -11,7 +11,8 @@ description: Use when a watchdog detail prefix, a prompt dialog or a role-pane w
   - **Tool-permission dialogs are answered only by `permission-check`.** For Claude's
     dialog (#435) the watchdog posts `prompt: permission — <tool>: <request> — pane <%id>`
     (one line, ≤160 chars: a relay hint, never the request).
-    `prompt: permission auto-blocked — lead idle — pane <%id>` means the dialog timed out and Claude Code blocked the call: the lead sits on `Interrupted` and nothing is left to answer, so never run `permission-check` on it. `crew nudge <lead>` (or `crew reply` with direction) wakes it; the block clears when the frame moves on.
+    `prompt: permission auto-blocked — lead idle — pane <%id>` means the dialog timed out and Claude Code blocked the call: the lead sits on `Interrupted` and nothing is left to answer, so never run `permission-check` on it. Post direction with `crew reply worker:<branch> "<what to do instead>"`, then `crew nudge <lead>` wakes it (a bare nudge refuses with nothing unread); the block clears when the frame moves on.
+    Posted only for the lead: a role pane's timed-out dialog keeps the role-pane rule (relay to the human).
     From the worker's repo, run `permission-check --pane <%id> --branch <branch> --answer`,
     with `<branch>` from your own `kind:"dispatch"` row whose `branch` matches the woken
     event's `worker:<branch>#…` id (match branch, not session: a resumed worker's
