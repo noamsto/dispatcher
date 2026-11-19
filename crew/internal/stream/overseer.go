@@ -18,6 +18,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"maps"
 	"os"
@@ -49,7 +50,10 @@ const (
 	// status's own gh timeout, well inside the tick age --status calls alive.
 	statusTimeout = 20 * time.Second
 
-	laneDeadAfter   = 10 * time.Minute
+	laneDeadAfter = 10 * time.Minute
+	// awaitAfter is the dwell before dispatcher_awaiting: a status document can
+	// sample a done pane beside a pr_open its live dispatcher is about to wake on.
+	awaitAfter      = 5 * time.Minute
 	blockedAgeAfter = 30 * time.Minute
 	budgetLowS      = 1800
 	headWaitS       = 1800
@@ -706,6 +710,18 @@ type laneDeadLine struct {
 	TS    int64 `json:"ts"`
 }
 
+type dispatcherAwaitingLine struct {
+	overseerHead
+	PaneState string `json:"pane_state"`
+	PROpen    int    `json:"pr_open"`
+	Blocked   int    `json:"blocked"`
+	Failed    int    `json:"failed"`
+	Active    int    `json:"active"`
+	WaitedS   int64  `json:"waited_s"`
+	Summary   string `json:"summary"`
+	TS        int64  `json:"ts"`
+}
+
 type blockedAgingLine struct {
 	overseerHead
 	Session     string `json:"session"`
@@ -735,14 +751,16 @@ type capacityLine struct {
 // conditions true at the last evaluation, the crews it reported down, and when
 // each live crew's lane was first seen dead.
 type transitions struct {
-	seen      bool
-	on        map[condKey]bool
-	down      map[crewRef]bool
-	deadSince map[crewRef]int64
+	seen       bool
+	on         map[condKey]bool
+	down       map[crewRef]bool
+	deadSince  map[crewRef]int64
+	awaitSince map[crewRef]int64
+	awaitOff   map[crewRef]int64
 }
 
 func newTransitions() *transitions {
-	return &transitions{on: map[condKey]bool{}, down: map[crewRef]bool{}, deadSince: map[crewRef]int64{}}
+	return &transitions{on: map[condKey]bool{}, down: map[crewRef]bool{}, deadSince: map[crewRef]int64{}, awaitSince: map[crewRef]int64{}, awaitOff: map[crewRef]int64{}}
 }
 
 type crewRef struct{ key, crew string }
@@ -770,10 +788,12 @@ const differVersion = 1
 // differMoves is transitions as JSON: its maps are keyed by structs, which JSON
 // cannot, so each goes out as an array of entries.
 type differMoves struct {
-	Seen      bool        `json:"seen"`
-	On        []condEntry `json:"on"`
-	Down      []refEntry  `json:"down"`
-	DeadSince []deadEntry `json:"dead_since"`
+	Seen       bool        `json:"seen"`
+	On         []condEntry `json:"on"`
+	Down       []refEntry  `json:"down"`
+	DeadSince  []deadEntry `json:"dead_since"`
+	AwaitSince []deadEntry `json:"await_since"`
+	AwaitOff   []deadEntry `json:"await_off"`
 }
 
 type condEntry struct {
@@ -813,7 +833,7 @@ type hostMoves struct {
 // snapshot is t as JSON may carry it: its maps as entries, in map order, which
 // a reader must not depend on.
 func (t *transitions) snapshot() differMoves {
-	m := differMoves{On: []condEntry{}, Down: []refEntry{}, DeadSince: []deadEntry{}}
+	m := differMoves{On: []condEntry{}, Down: []refEntry{}, DeadSince: []deadEntry{}, AwaitSince: []deadEntry{}, AwaitOff: []deadEntry{}}
 	if t == nil {
 		return m
 	}
@@ -827,11 +847,17 @@ func (t *transitions) snapshot() differMoves {
 	for ref, ts := range t.deadSince {
 		m.DeadSince = append(m.DeadSince, deadEntry{refEntry: refEntry{Key: ref.key, Crew: ref.crew}, TS: ts})
 	}
+	for ref, ts := range t.awaitSince {
+		m.AwaitSince = append(m.AwaitSince, deadEntry{refEntry: refEntry{Key: ref.key, Crew: ref.crew}, TS: ts})
+	}
+	for ref, ts := range t.awaitOff {
+		m.AwaitOff = append(m.AwaitOff, deadEntry{refEntry: refEntry{Key: ref.key, Crew: ref.crew}, TS: ts})
+	}
 	return m
 }
 
 // transitions is the differ memory m describes. Stale entries are safe: next
-// rebuilds on and deadSince from what the document still holds.
+// rebuilds on, deadSince, awaitSince and awaitOff from what the document still holds.
 func (m differMoves) transitions() *transitions {
 	t := newTransitions()
 	t.seen = m.Seen
@@ -843,6 +869,12 @@ func (m differMoves) transitions() *transitions {
 	}
 	for _, e := range m.DeadSince {
 		t.deadSince[crewRef{key: e.Key, crew: e.Crew}] = e.TS
+	}
+	for _, e := range m.AwaitSince {
+		t.awaitSince[crewRef{key: e.Key, crew: e.Crew}] = e.TS
+	}
+	for _, e := range m.AwaitOff {
+		t.awaitOff[crewRef{key: e.Key, crew: e.Crew}] = e.TS
 	}
 	return t
 }
@@ -867,6 +899,18 @@ func (t *transitions) next(doc fleetpkg.StatusDoc, nowMS int64) []any {
 	for ref, ts := range t.deadSince {
 		if !present[ref.key] {
 			deadSince[ref] = ts
+		}
+	}
+	awaitSince := map[crewRef]int64{}
+	for ref, ts := range t.awaitSince {
+		if !present[ref.key] {
+			awaitSince[ref] = ts
+		}
+	}
+	awaitOff := map[crewRef]int64{}
+	for ref, ts := range t.awaitOff {
+		if !present[ref.key] {
+			awaitOff[ref] = ts
 		}
 	}
 	var out []any
@@ -901,7 +945,41 @@ func (t *transitions) next(doc fleetpkg.StatusDoc, nowMS int64) []any {
 					t.down[ref] = true
 				}
 			}
-			if c.Attention != "guest" && live && c.Dispatcher.Lane != nil && *c.Dispatcher.Lane == "dead" {
+			n, held := awaiting(c.Dispatcher.PaneState, c.Workers)
+			if c.Attention != "guest" && live {
+				awaitKey := condKey{event: "dispatcher_awaiting", key: r.Key, crew: c.CrewID}
+				// A parked dispatcher's own short wakes (heartbeat, hold_due, reap)
+				// must not end a fired episode, or the same held work re-fires.
+				if !held && t.on[awaitKey] {
+					off, ok := t.awaitOff[ref]
+					if !ok {
+						off = doc.TS
+					}
+					if doc.TS-off < awaitAfter.Milliseconds() {
+						on[awaitKey] = true
+						awaitSince[ref] = t.awaitSince[ref]
+						awaitOff[ref] = off
+					}
+				}
+				if held {
+					since, ok := t.awaitSince[ref]
+					if !ok {
+						since = doc.TS
+					}
+					awaitSince[ref] = since
+					if doc.TS-since >= awaitAfter.Milliseconds() {
+						fire(awaitKey,
+							n.line(head("dispatcher_awaiting"), *c.Dispatcher.PaneState, (doc.TS-since)/1000, nowMS))
+					}
+				}
+			}
+			// A dispatcher parked on the human has not re-armed its lane because
+			// it waits, so its dead lane is not dead time; dispatcher_awaiting
+			// covers it. A standby one (turn ended, workers active) is deaf to
+			// them and still fires. Skipping the block also drops the clock,
+			// which a dispatcher the human wakes would otherwise trip on its
+			// first turn.
+			if c.Attention != "guest" && live && !held && c.Dispatcher.Lane != nil && *c.Dispatcher.Lane == "dead" {
 				since, ok := t.deadSince[ref]
 				if !ok {
 					since = doc.TS
@@ -988,8 +1066,56 @@ func (t *transitions) next(doc fleetpkg.StatusDoc, nowMS int64) []any {
 		}
 	}
 
-	t.on, t.deadSince, t.seen = on, deadSince, true
+	t.on, t.deadSince, t.awaitSince, t.awaitOff, t.seen = on, deadSince, awaitSince, awaitOff, true
 	return out
+}
+
+// awaitCounts are the non-stale worker rows of a crew by what they need.
+type awaitCounts struct{ prOpen, blocked, failed, active int }
+
+func (n awaitCounts) line(head overseerHead, pane string, waitedS, ts int64) dispatcherAwaitingLine {
+	return dispatcherAwaitingLine{overseerHead: head, PaneState: pane, PROpen: n.prOpen, Blocked: n.blocked, Failed: n.failed,
+		Active: n.active, WaitedS: waitedS, TS: ts,
+		Summary: fmt.Sprintf("%s %s: dispatcher %s, %d pr_open, %d blocked, %d failed, %d active",
+			head.Repo, head.Crew, pane, n.prOpen, n.blocked, n.failed, n.active)}
+}
+
+// turnEnded is whether the dispatcher's own turn is over: it is idle, finished
+// or at a dialog, so it will not re-arm its lane until something wakes it.
+func turnEnded(paneState *string) bool {
+	return paneState != nil && slices.Contains([]string{"done", "idle", "waiting"}, *paneState)
+}
+
+// awaiting is whether the dispatcher waits on the human, with the rows it
+// counted. Rows are non-stale and include remote-host ones: the condition is
+// the crew's, not a host's. A dialog (waiting) is the human's whatever the
+// workers do. A finished or idle pane is the human's only while work is held
+// (pr_open, blocked, failed or exited) and none is active (working or
+// answered): with active workers the dispatcher is on standby for them, and
+// with nothing held it is idle, a state rather than an ask, which would
+// notify after every batch. done rows are neither: they wait only for a reap.
+func awaiting(paneState *string, workers []map[string]any) (awaitCounts, bool) {
+	var n awaitCounts
+	if !turnEnded(paneState) {
+		return n, false
+	}
+	for _, w := range workers {
+		if w["stale"] != false {
+			continue
+		}
+		switch w["state"] {
+		case "working", "answered":
+			n.active++
+		case "pr_open":
+			n.prOpen++
+		case "blocked":
+			n.blocked++
+		case "failed", "exited":
+			n.failed++
+		}
+	}
+	held := n.prOpen + n.blocked + n.failed
+	return n, *paneState == "waiting" || (n.active == 0 && held > 0)
 }
 
 // strandsWork is whether a dead lane leaves work unread: a worker that is not

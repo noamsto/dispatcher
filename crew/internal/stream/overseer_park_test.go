@@ -338,6 +338,14 @@ func TestDifferMovesRoundTripThroughJSON(t *testing.T) {
 			{key: "k2", crew: "c8"}: ovStart + minute,
 			{key: "k5", crew: "c7"}: ovStart + 2*minute,
 		},
+		awaitOff: map[crewRef]int64{
+			{key: "k1", crew: "c1"}: ovStart + 5*minute,
+			{key: "k7", crew: "c7"}: ovStart + 6*minute,
+		},
+		awaitSince: map[crewRef]int64{
+			{key: "k1", crew: "c1"}: ovStart + 3*minute,
+			{key: "k6", crew: "c6"}: ovStart + 4*minute,
+		},
 	}
 	back := tr.snapshot().transitions()
 	if !back.seen {
@@ -351,6 +359,12 @@ func TestDifferMovesRoundTripThroughJSON(t *testing.T) {
 	}
 	if !reflect.DeepEqual(back.deadSince, tr.deadSince) {
 		t.Errorf("deadSince = %v, want %v", back.deadSince, tr.deadSince)
+	}
+	if !reflect.DeepEqual(back.awaitSince, tr.awaitSince) {
+		t.Errorf("awaitSince = %v, want %v", back.awaitSince, tr.awaitSince)
+	}
+	if !reflect.DeepEqual(back.awaitOff, tr.awaitOff) {
+		t.Errorf("awaitOff = %v, want %v", back.awaitOff, tr.awaitOff)
 	}
 
 	data, err := json.Marshal(differFile{Version: differVersion,
@@ -369,11 +383,11 @@ func TestDifferMovesRoundTripThroughJSON(t *testing.T) {
 		t.Errorf("partner = %+v, want host mbp seen and ok", g)
 	}
 	if round := got.Partners[0].Moves.transitions(); !round.seen ||
-		!reflect.DeepEqual(round.on, tr.on) || !reflect.DeepEqual(round.down, tr.down) || !reflect.DeepEqual(round.deadSince, tr.deadSince) {
+		!reflect.DeepEqual(round.on, tr.on) || !reflect.DeepEqual(round.down, tr.down) || !reflect.DeepEqual(round.deadSince, tr.deadSince) || !reflect.DeepEqual(round.awaitSince, tr.awaitSince) || !reflect.DeepEqual(round.awaitOff, tr.awaitOff) {
 		t.Errorf("partner moves = %+v, want the lane's own", round)
 	}
 	// The flattened deadEntry: refEntry's key/crew sit beside ts, not nested.
-	if !strings.Contains(string(data), `"dead_since"`) || !strings.Contains(string(data), `"ts"`) {
+	if !strings.Contains(string(data), `"dead_since"`) || !strings.Contains(string(data), `"await_since"`) || !strings.Contains(string(data), `"await_off"`) || !strings.Contains(string(data), `"ts"`) {
 		t.Errorf("differ JSON %s lacks the flattened dead_since entries", data)
 	}
 }
