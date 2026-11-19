@@ -667,3 +667,15 @@ func TestCollectRosterForeignCrewHomedHereIsNotListed(t *testing.T) {
 		t.Errorf("crews = %+v", sec.Crews)
 	}
 }
+
+func TestCollectRosterForeignLookupTimeout(t *testing.T) {
+	old := fleetStatusTimeout
+	fleetStatusTimeout = 20 * time.Millisecond
+	t.Cleanup(func() { fleetStatusTimeout = old })
+	r := foreignRunner(t)
+	r.Responses["crew fleet status --json"] = FakeResponse{Wait: make(chan struct{})}
+	sec := CollectRoster(context.Background(), r, baseConfig())
+	if sec.ForeignError == nil || *sec.ForeignError != "foreign crews: timed out after 20ms" {
+		t.Errorf("ForeignError = %v", sec.ForeignError)
+	}
+}

@@ -265,6 +265,9 @@ func (v *boardView) load(roster vm.RosterView) {
 	v.roster = roster
 	var items []boardItem
 	v.failed = nil
+	if roster.ForeignError != nil {
+		v.failed = append(v.failed, cleanText(*roster.ForeignError))
+	}
 	for _, c := range roster.Crews {
 		if c.WorkersError != nil {
 			v.failed = append(v.failed, "crew "+cleanText(c.ID)+": workers unavailable: "+cleanText(*c.WorkersError))
