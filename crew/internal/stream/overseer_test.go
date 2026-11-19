@@ -2471,7 +2471,7 @@ func TestOverseerGuestDemotionHonoursPartnerHysteresis(t *testing.T) {
 
 func TestOverseerUnattendedCrewWithoutPartnerHomeStillFires(t *testing.T) {
 	w := ovWorker("worker:feat/a#s1-1", "working")
-	for name, home := range map[string]*string{"no home": nil, "home is this host": new(string)} {
+	for name, home := range map[string]*string{"no home": nil, "home is no known partner": new(string)} {
 		t.Run(name, func(t *testing.T) {
 			c := func(state, attention string) fleetpkg.CrewStatus {
 				c := ovCrew("c1", state, attention, w)
@@ -2485,5 +2485,38 @@ func TestOverseerUnattendedCrewWithoutPartnerHomeStillFires(t *testing.T) {
 				t.Errorf("lines = %v, want dispatcher_down", got[1])
 			}
 		})
+	}
+}
+
+func TestOverseerPartnerCrewHomedOnHeldPartnerSurvivesOneDroppedProbe(t *testing.T) {
+	w := ovWorker("worker:feat/g#s1-1", "working")
+	crew := func(state, attention string) fleetpkg.CrewStatus {
+		return homed(ovCrew("g1", state, attention, w), "nas")
+	}
+	a := func(ts int64, state, attention string) fleetpkg.HostStatus {
+		return okHost("mbp", ts, ovRepo("beta", crew(state, attention)))
+	}
+	docs := []fleetpkg.StatusDoc{withHosts(ovDoc(ovStart), a(ovStart, "live", "attended"), okHost("nas", ovStart))}
+	for i, probe := range []fleetpkg.HostStatus{downHost("nas", ovStart, "ssh"), okHost("nas", ovStart+2*minute)} {
+		ts := ovStart + int64(i+1)*minute
+		docs = append(docs, withHosts(ovDoc(ts), a(ts, "dead", "unattended"), probe))
+	}
+	for i, step := range fedRun(t, fedOverseer(t), docs...) {
+		if len(step) != 0 {
+			t.Errorf("step %d printed %v, want none", i, step)
+		}
+	}
+}
+
+func TestOverseerUnprobedHomeDoesNotMuteGuest(t *testing.T) {
+	w := ovWorker("worker:feat/g#s1-1", "working")
+	g := func(ts int64, state, attention string) fleetpkg.StatusDoc {
+		return ovDoc(ts, ovRepo("alpha", homed(ovCrew("g1", state, attention, w), "mbp")))
+	}
+	got := fedRun(t, fedOverseer(t),
+		withHosts(g(ovStart, "live", "attended"), okHost("mbp", ovStart)),
+		g(ovStart+minute, "dead", "unattended"))
+	if len(ofEvent(got[1], "dispatcher_down")) != 1 {
+		t.Errorf("lines = %v, want dispatcher_down", got[1])
 	}
 }
