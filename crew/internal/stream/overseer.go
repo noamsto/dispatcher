@@ -931,7 +931,8 @@ func (t *transitions) snapshot() differMoves {
 }
 
 // transitions is the differ memory m describes. Stale entries are safe: next
-// rebuilds on, deadSince, awaitSince, awaitOff, awaitHeld and awaitNew from what the document still holds.
+// rebuilds on, deadSince, awaitSince, awaitOff, awaitHeld and awaitNew from
+// what the document still holds.
 func (m differMoves) transitions() *transitions {
 	t := newTransitions()
 	t.seen = m.Seen
@@ -1206,8 +1207,8 @@ func turnEnded(paneState *string) bool {
 
 // awaiting is whether the dispatcher waits on the human, with the rows it
 // counted and the sorted branches of the held ones. Rows are non-stale and
-// include remote-host ones: the condition is the crew's, not a host's. A dialog (waiting) is the human's whatever the
-// workers do. A finished or idle pane is the human's only while work is held
+// include remote-host ones: the condition is the crew's, not a host's. A dialog
+// (waiting) is the human's whatever the workers do. A finished or idle pane is the human's only while work is held
 // (pr_open, blocked, failed or exited) and none is active (working or
 // answered): with active workers the dispatcher is on standby for them, and
 // with nothing held it is idle, a state rather than an ask, which would

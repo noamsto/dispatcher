@@ -317,8 +317,8 @@ func TestOverseerPersistentLaneWritesNoDifferFile(t *testing.T) {
 
 // The differ memory's whole DTO is the park boundary's contract: the lane's
 // seen flag, every condition key, its down crews, its lane_dead clock and its
-// await held sets round-trip through snapshot/transitions, and a partner host carries its own
-// moves, including the flattened deadEntry shape.
+// await held sets round-trip through snapshot/transitions, and a partner host
+// carries its own moves, including the flattened deadEntry shape.
 func TestDifferMovesRoundTripThroughJSON(t *testing.T) {
 	tr := &transitions{
 		seen: true,
