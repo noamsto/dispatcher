@@ -20,11 +20,11 @@ Your five jobs:
 
 ## 2. Cold start
 
-On every open and every lane re-arm, in order, before anything else:
+On every open, and whenever your lane says a cold start is due (below), in order, before anything else:
 
 1. **Arm the lane.**
 <!-- only:claude -->
-   `crew fleet stream --overseer --status` reports the lane (`alive`, `stale`, `dead`; exit 0/1/2). `alive` → nothing, unless a previous session armed it, then `crew fleet stream --overseer --force`; `stale` → `--force`; `dead` → arm `crew fleet stream --overseer`. Arm it once, as its own persistent lane — `Monitor`, no timeout — and never two. Check `--status` before re-arming after a compaction, which loses your memory of arming but not the lane.
+   Arm `crew fleet stream --overseer --follow` as a `Monitor`. It ensures the host's one detached overseer daemon lane is running (starting it if dead) and prints the lane's lines from where the last follow stopped, so a re-arm never loses or repeats a line. It exits 0 by itself after 28 minutes, before the Monitor 30-minute cap; the daemon keeps running. Re-arm the same command each time it ends, never two at once. Its first line is a marker `{"stream":"follow","lane":"fresh"|"resume","reason":"started"|"restarted"|"first"|"gap"|"resume","pid":N,"offset":N,"ts":ms}`; a new marker also appears whenever it restarts the daemon mid-follow. `fresh` means a cold start is due (daemon (re)started, first follow ever, or `gap`: the follow fell behind the retained log); `resume` means the same daemon and nothing lost. On open, always run steps 2–5. On a re-arm, `fresh` → run steps 2–5; `resume` → skip them and keep handling wakes. A `fresh` marker mid-follow → run steps 2–5. `crew fleet stream --overseer --status` reports the lane (`alive`, `stale`, `dead`; exit 0/1/2) and adds `"mode":"daemon"` when the daemon holds it; a `stale` daemon → re-arm with `--follow --force`, which restarts the daemon. Use `--follow --force` after a crew upgrade too, so the daemon runs the new binary. A new follow takes over from an orphaned older one by itself.
 <!-- /only -->
 <!-- only:pi -->
    You have no `Monitor`, so you never arm a persistent lane. Your lane is a foreground park, entered after step 5: call `crew fleet stream --overseer --park 270` in the **foreground**. It returns after the first non-heartbeat line or after 270 s, whichever comes first, keeping the lane's overseer cursor (a msg it did not print is redelivered by the next park). Handle the output, then re-park: this **is** your loop. Always 270, drained or not: a longer park queues the human when only their input can arrive. A park that expires with empty stdout carries nothing to act on, but it is the pi lane's heartbeat: check the digest clock (§7) before re-parking. A park that exits 1 with `another stream is already running` means `stream.lock.d` is held: `crew fleet stream --overseer --status` reads `alive`/`stale`/`dead`; a `stale` or `dead` holder is a previous session's lane, so re-park once with `--force`; an `alive` holder is a live lane, so leave it and report to the human. Any other non-zero park exit is reported, never retried.
@@ -36,6 +36,9 @@ On every open and every lane re-arm, in order, before anything else:
 
 ## 3. Wake handling
 
+<!-- only:claude -->
+The follow also prints its `follow` marker lines (§2 step 1): `resume` needs nothing; `fresh` → run §2 steps 2–5.
+<!-- /only -->
 The lane prints one line per event (`{"stream":"overseer","event":…,"repo":…,"crew":…,…}`), batches of dispatcher msgs (`{"cursor":…,"events":[…],"repo":…,"host":…}`), and `heartbeat`/`error` lines. Every event line and msg batch carries `host`: this host's name for local events, the partner's for remote ones (`heartbeat` and `error` lines do not). Take the wake, handle the whole line in ONE turn, and report what you did in one line. A transition that a previous evaluation already turned on does not fire again until the condition clears; a lost transition costs nothing beyond the next cold start. An `error` line is a read the lane already retries; run `crew fleet status --json` if it concerns a crew. A `heartbeat` is near-silent: check the digest clock (§7).
 
 - **`dispatcher_down`** — `state`, `ts`. A crew left `live` while `attention` is `unattended`, or an `idle` crew turned unattended. Nothing waits on an idle crew, so it never fires for one. Flag the crew in Needs-you; relaunch per §6 only on the human's yes or `autoRelaunch`.
@@ -110,7 +113,12 @@ Live workers meanwhile keep running; their watchdogs keep sampling and a blocked
 
 **When.**
 
-- **Cold start** (every open, every lane re-arm): one digest.
+<!-- only:claude -->
+- **Cold start** (every open, every `fresh` follow marker): one digest.
+<!-- /only -->
+<!-- only:pi -->
+- **Cold start** (every open): one digest.
+<!-- /only -->
 - **Wake**: one line per event, plus what you did about it.
 - **On demand**: the human asks; rerun `crew fleet status --json --gh`.
 - **Periodic**: while open, a digest when the lane's heartbeat finds the last digest older than `overseer.digestEvery` (seconds, default 14400 = 4 h). The last-digest time is session memory; losing it only means the next digest comes early.

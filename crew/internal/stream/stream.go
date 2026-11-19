@@ -259,6 +259,7 @@ type statusLine struct {
 	Crew   string          `json:"crew"`
 	PID    json.RawMessage `json:"pid"`
 	AgeS   *int64          `json:"age_s"`
+	Mode   string          `json:"mode,omitempty"`
 }
 
 type heartbeatLine struct {
@@ -315,6 +316,10 @@ type reapLine struct {
 // call cannot shift the answer. A lock with no readable tick counts as `stale`,
 // the safe direction: the tick is written immediately on acquiring the lock.
 func status(cdir, crew string, stdout io.Writer, o Options) int {
+	return statusMode(cdir, crew, "", stdout, o)
+}
+
+func statusMode(cdir, crew, mode string, stdout io.Writer, o Options) int {
 	st, rc, pid, age := lanepkg.State(cdir, o.Proc, clockMS(o))
 	say(stdout, "%s\n", encode(statusLine{
 		Stream: "status",
@@ -322,6 +327,7 @@ func status(cdir, crew string, stdout io.Writer, o Options) int {
 		Crew:   crew,
 		PID:    pid,
 		AgeS:   age,
+		Mode:   mode,
 	}))
 	return rc
 }

@@ -67,7 +67,19 @@ var wakeStates = splitStates(defaultStates)
 // --states, --coalesce and --retry are checked but do not apply. An explicit
 // --park turns the lane into a one-shot park: it returns after the first
 // non-heartbeat line or when --park seconds have passed, whichever is first.
-func runOverseer(r Request, rediscover int64, stdout, stderr io.Writer, o FleetOptions) int {
+func runOverseer(fr FleetRequest, rediscover int64, stdout, stderr io.Writer, o FleetOptions) int {
+	r := fr.Request
+	switch {
+	case fr.Daemon && fr.Follow:
+		say(stderr, "crew: fleet stream: --daemon and --follow are exclusive\n")
+		return exitUsage
+	case fr.Daemon && r.Park != "":
+		say(stderr, "crew: fleet stream: --daemon and --park are exclusive\n")
+		return exitUsage
+	case (fr.Daemon || fr.Follow) && r.Status:
+		say(stderr, "crew: fleet stream: --daemon and --follow do not combine with --status\n")
+		return exitUsage
+	}
 	if r.Interval == "" {
 		r.Interval = strconv.Itoa(defaultOverseerInterval)
 	}
@@ -85,7 +97,10 @@ func runOverseer(r Request, rediscover int64, stdout, stderr io.Writer, o FleetO
 	c.crew = "overseer:" + host
 	lane := filepath.Join(o.LaneRoot, c.crew)
 	if c.statusMode {
-		return status(lane, c.crew, stdout, o.Options)
+		return overseerStatus(lane, c.crew, stdout, o.Options)
+	}
+	if fr.Follow {
+		return runFollow(fr, c, lane, stderr, o)
 	}
 	if err := os.MkdirAll(lane, 0o755); err != nil {
 		say(stderr, "crew: %v\n", err)
@@ -107,6 +122,14 @@ func runOverseer(r Request, rediscover int64, stdout, stderr io.Writer, o FleetO
 	tick := min(overseerPoll, c.interval, rediscover)
 	tickCall := c
 	tickCall.park = tick
+	var log *segLog
+	if fr.Daemon {
+		var ok bool
+		if log, ok = openDaemon(lane, lockd, o, stderr); !ok {
+			return 1
+		}
+		stdout = log
+	}
 	out := &laneWriter{w: stdout, now: o.Clock.Now, last: o.Clock.Now()}
 	var sink lineSink = out
 	if park {
@@ -136,7 +159,39 @@ func runOverseer(r Request, rediscover int64, stdout, stderr io.Writer, o FleetO
 		buses:      map[string]*follower{},
 	}
 	v.loadDiffer()
-	return v.run(ctx, sigs)
+	rc := v.run(ctx, sigs)
+	if log != nil {
+		log.Close()
+	}
+	return rc
+}
+
+// openDaemon opens the daemon lane's segment log and publishes daemon.json
+// with the log's end as the offset this run's lines start at. Either failing
+// releases the lock it was called under.
+func openDaemon(lane, lockd string, o FleetOptions, stderr io.Writer) (*segLog, bool) {
+	segBytes, keepSegs := o.segBytes, o.keepSegs
+	if segBytes == 0 {
+		segBytes = defaultSegBytes
+	}
+	if keepSegs == 0 {
+		keepSegs = defaultKeepSegs
+	}
+	log, err := openSegLog(filepath.Join(lane, logDirName), segBytes, keepSegs)
+	if err == nil {
+		err = writeDaemonInfo(filepath.Join(lane, daemonInfoName), daemonInfo{
+			PID: int64(os.Getpid()), StartedMS: clockMS(o.Options), StartOffset: log.end(),
+		})
+		if err != nil {
+			log.Close()
+		}
+	}
+	if err != nil {
+		say(stderr, "crew: fleet stream: daemon: %s\n", oneLine(err))
+		lock.Release(lockd)
+		return nil, false
+	}
+	return log, true
 }
 
 // overseer is the lane's one goroutine: it writes the tick, rediscovers, polls
@@ -1143,4 +1198,15 @@ func wholeNumber(v any) (int64, bool) {
 		return i, err == nil
 	}
 	return 0, false
+}
+
+// overseerStatus is status with the lane's mode: "daemon" when daemon.json
+// names the pid that holds the lane's lock.
+func overseerStatus(lane, crew string, stdout io.Writer, o Options) int {
+	mode := ""
+	holder, err := strconv.ParseInt(lock.Holder(filepath.Join(lane, "stream.lock.d")), 10, 64)
+	if d, ok := readDaemonInfo(filepath.Join(lane, daemonInfoName)); ok && err == nil && d.PID == holder {
+		mode = "daemon"
+	}
+	return statusMode(lane, crew, mode, stdout, o)
 }

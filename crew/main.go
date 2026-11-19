@@ -1316,7 +1316,7 @@ func runFleet(ctx context.Context, p crewArgs, stdout, stderr io.Writer, e env) 
 	// writes straight to stdout like stream.
 	if strings.HasPrefix(p.cmd, "fleet stream") {
 		s := p.typed.Fleet.Stream
-		req := stream.FleetRequest{Request: streamRequest(s.streamFlags, nil), Rediscover: str(s.Rediscover), Overseer: s.Overseer}
+		req := stream.FleetRequest{Request: streamRequest(s.streamFlags, nil), Rediscover: str(s.Rediscover), Overseer: s.Overseer, Daemon: s.Daemon, Follow: s.Follow}
 		return stream.RunFleet(req, stdout, stderr, stream.FleetOptions{
 			Options: stream.Options{Clock: clock.FromEnv(), Proc: e.proc},
 			Git:     git.Exec{},
