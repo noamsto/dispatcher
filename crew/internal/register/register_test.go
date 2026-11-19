@@ -228,7 +228,7 @@ func TestRegisterWritesPidStart(t *testing.T) {
 	if code, stderr := run("register", "888", p, w); code != 0 {
 		t.Fatalf("code=%d stderr=%q", code, stderr)
 	}
-	if got := readFile(t, crews.PidStartFile(p.CrewDir("c1")+"/pid")); got != "tok-R\n" {
+	if got := readFile(t, crews.PidStartFile(p.CrewDir("c1")+"/pid")); got != "888 tok-R\n" {
 		t.Errorf("start file = %q", got)
 	}
 }

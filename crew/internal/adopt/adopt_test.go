@@ -730,8 +730,8 @@ func TestRecordsTheDispatcherPane(t *testing.T) {
 	if got := run(t, s, p, Request{ID: "c-pane", PID: "123"}); got.code != 0 {
 		t.Fatalf("code = %d, stderr = %q", got.code, got.stderr)
 	}
-	if got, _ := os.ReadFile(crews.PidStartFile(p.CrewDir("c-pane") + "/pid")); string(got) != "tok-A\n" {
-		t.Errorf("start file = %q, want tok-A\n", got)
+	if got, _ := os.ReadFile(crews.PidStartFile(p.CrewDir("c-pane") + "/pid")); string(got) != "123 tok-A\n" {
+		t.Errorf("start file = %q, want 123 tok-A\n", got)
 	}
 	data, err := os.ReadFile(panePath(p, "c-pane"))
 	if err != nil || string(data) != "%42\n" {

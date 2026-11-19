@@ -212,8 +212,8 @@ func TestReattachWrites(t *testing.T) {
 			if pid := readPid(t, p, "c-re"); pid != "400" {
 				t.Errorf("pid file = %q, want the engine's 400", pid)
 			}
-			if st, _ := fileText(t, crews.PidStartFile(p.CrewDir("c-re")+"/pid")); st != "tok-E\n" {
-				t.Errorf("start file = %q, want tok-E\n", st)
+			if st, _ := fileText(t, crews.PidStartFile(p.CrewDir("c-re")+"/pid")); st != "400 tok-E\n" {
+				t.Errorf("start file = %q, want 400 tok-E\n", st)
 			}
 			if pane, _ := fileText(t, panePath(p, "c-re")); pane != "%7\n" {
 				t.Errorf("pane file = %q, want %%7\\n", pane)

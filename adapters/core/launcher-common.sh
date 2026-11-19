@@ -100,6 +100,7 @@ _ps_elapsed_s() {
 # proc.OS.Start: Linux `linux:<boot_id>:<stat field 22>`, else `lstart:<ps
 # lstart>`. Returns 1 when unreadable. The subshell keeps IFS and `set -f` local.
 _proc_start() (
+  IFS=$' \t\n'
   pid="$1"
   if [ -r /proc/self/stat ]; then
     boot="$(cat /proc/sys/kernel/random/boot_id 2>/dev/null)" || return 1
@@ -126,18 +127,20 @@ _proc_start() (
 )
 
 # _pid_recycled <pid> <pidfile> — 0 when <pid> now belongs to a different
-# process than <pidfile> records. A `<pidfile>.start` token decides when it and
-# the current token are both readable. Otherwise 0 when the process started
+# process than <pidfile> records. A `<pidfile>.start` sidecar `<pid> <token>`
+# decides when it names this pid and the current token is readable; a sidecar
+# for another pid (or a blank one) is ignored. Otherwise 0 when the process started
 # after <pidfile> was last written (plus 2s of slack for ps' second
 # granularity): it existed when the file was written, and a later start
 # inherited the number. Returns 1 when timestamps are unreadable, so a live
 # process is never judged dead; a coarse-mtime filesystem errs the same way.
 _pid_recycled() {
-  local pid="$1" file="$2" elapsed file_s rec cur
+  local pid="$1" file="$2" elapsed file_s rec rec_pid cur
   [ -f "$file" ] || return 1
   if [ -s "$file.start" ]; then
-    IFS= read -r rec <"$file.start" || [ -n "$rec" ]
-    if cur="$(_proc_start "$pid")"; then
+    rec_pid="" rec=""
+    { IFS=' ' read -r rec_pid rec <"$file.start"; } 2>/dev/null || :
+    if [ "$rec_pid" = "$pid" ] && [ -n "$rec" ] && cur="$(_proc_start "$pid")"; then
       [ "$cur" != "$rec" ]
       return $?
     fi

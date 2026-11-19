@@ -3264,7 +3264,7 @@ _live() { # <pid> <pidfile>
 
 @test "a matching .start token keeps an old pidfile's process live" {
   _start_sleeper
-  bash -c 'source "$1/adapters/core/launcher-common.sh"; _proc_start "$2"' _ "$ROOT" "$SLEEP_PID" >"$PIDFILE.start"
+  bash -c 'source "$1/adapters/core/launcher-common.sh"; printf "%s " "$2"; _proc_start "$2"' _ "$ROOT" "$SLEEP_PID" >"$PIDFILE.start"
   [ -s "$PIDFILE.start" ]
   _backdate_hour "$PIDFILE"
   _live "$SLEEP_PID" "$PIDFILE"
@@ -3274,10 +3274,35 @@ _live() { # <pid> <pidfile>
 
 @test "a mismatched .start token marks the pid recycled despite a fresh pidfile" {
   _start_sleeper
-  printf 'linux:x:1\n' >"$PIDFILE.start"
+  printf '%s linux:x:1\n' "$SLEEP_PID" >"$PIDFILE.start"
   _live "$SLEEP_PID" "$PIDFILE"
   _stop_sleeper
   [ "$status" -eq 1 ]
+}
+
+@test "a .start sidecar naming another pid falls back to the mtime heuristic" {
+  _start_sleeper
+  printf '%s linux:x:1\n' "$((SLEEP_PID + 1))" >"$PIDFILE.start"
+  _live "$SLEEP_PID" "$PIDFILE"
+  _stop_sleeper
+  [ "$status" -eq 0 ]
+}
+
+@test "a .start that is a directory does not abort a strict-mode caller" {
+  _start_sleeper
+  mkdir "$PIDFILE.start"
+  run bash -euo pipefail -c 'source "$1/adapters/core/launcher-common.sh"; _recorded_pid_live "$2" "$3"' _ "$ROOT" "$SLEEP_PID" "$PIDFILE"
+  _stop_sleeper
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+}
+
+@test "a blank .start sidecar falls back to the mtime heuristic" {
+  _start_sleeper
+  printf '\n' >"$PIDFILE.start"
+  _live "$SLEEP_PID" "$PIDFILE"
+  _stop_sleeper
+  [ "$status" -eq 0 ]
 }
 
 @test "without a .start token an old pidfile still reads as recycled" {

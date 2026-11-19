@@ -980,8 +980,9 @@ func TestPidFileSurvivesForeignCallers(t *testing.T) {
 
 	t.Run("register: a recorded pid whose start token no longer matches is replaced (#1699)", func(t *testing.T) {
 		c := newCrewsCLI(t)
-		c.registerAs("c-tok", strconv.Itoa(livePid(t)))
-		if err := os.WriteFile(filepath.Join(c.crewDir("c-tok"), "pid.start"), []byte("linux:x:1\n"), 0o644); err != nil {
+		pid := strconv.Itoa(livePid(t))
+		c.registerAs("c-tok", pid)
+		if err := os.WriteFile(filepath.Join(c.crewDir("c-tok"), "pid.start"), []byte(pid+" linux:x:1\n"), 0o644); err != nil {
 			t.Fatal(err)
 		}
 		c.mustRun("register", "4242")

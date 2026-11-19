@@ -215,24 +215,26 @@ func TestTableRecycledPidIsNotAlive(t *testing.T) {
 func TestTableRecordedStartToken(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
-		recorded string // "" writes no pid.start
+		recorded string // "" writes no pid.start; else its full text
 		proc     proctest.Proc
 		age      time.Duration // pidfile mtime age
 		want     string
 	}{
-		{"a: match, legacy heuristic would say recycled", "tok-A", proctest.Proc{Start: "tok-A", Elapsed: 10}, 100 * time.Second, "yes"},
-		{"b: mismatch, fresh mtime", "tok-A", proctest.Proc{Start: "tok-B", Elapsed: 10}, 0, "no"},
-		{"c: mismatch, elapsed unreadable", "tok-A", proctest.Proc{Start: "tok-B"}, 0, "no"},
+		{"a: match, legacy heuristic would say recycled", "7777 tok-A", proctest.Proc{Start: "tok-A", Elapsed: 10}, 100 * time.Second, "yes"},
+		{"b: mismatch, fresh mtime", "7777 tok-A", proctest.Proc{Start: "tok-B", Elapsed: 10}, 0, "no"},
+		{"c: mismatch, elapsed unreadable", "7777 tok-A", proctest.Proc{Start: "tok-B"}, 0, "no"},
 		{"d1: no token, recycled by heuristic", "", proctest.Proc{Start: "tok-B", Elapsed: 10}, 100 * time.Second, "no"},
 		{"d2: no token, fresh mtime", "", proctest.Proc{Start: "tok-B", Elapsed: 10}, 0, "yes"},
-		{"e: current start unreadable fails closed", "tok-A", proctest.Proc{Comm: "x"}, 0, "yes"},
+		{"e: current start unreadable fails closed", "7777 tok-A", proctest.Proc{Comm: "x"}, 0, "yes"},
+		{"f: token recorded for another pid → heuristic", "9999 tok-A", proctest.Proc{Start: "tok-B", Elapsed: 10}, 0, "yes"},
+		{"g: blank sidecar → heuristic", "\n", proctest.Proc{Start: "tok-B", Elapsed: 10}, 0, "yes"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			p := fixture(t)
 			crewDir(t, p, "c-rec", "7777\n")
 			pidfile := p.Dir + "/crews/c-rec/pid"
 			if tc.recorded != "" {
-				if err := os.WriteFile(pidfile+".start", []byte(tc.recorded+"\n"), 0o644); err != nil {
+				if err := os.WriteFile(pidfile+".start", []byte(strings.TrimSuffix(tc.recorded, "\n")+"\n"), 0o644); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -285,7 +287,7 @@ func TestRecordedLiveThreadID(t *testing.T) {
 	if err := os.WriteFile(pidfile, []byte(strconv.Itoa(tid)+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(pidfile+".start", []byte("linux:x:1\n"), 0o644); err != nil {
+	if err := os.WriteFile(pidfile+".start", []byte(strconv.Itoa(tid)+" linux:x:1\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	old := time.Now().Add(-30 * 24 * time.Hour)
