@@ -31,6 +31,7 @@ type followRig struct {
 	mu     sync.Mutex
 	spawns [][]string
 	spawn  func(args []string) error
+	binary func() (string, string)
 
 	daemon *followDaemon
 }
@@ -61,6 +62,7 @@ func (f *followRig) options() FleetOptions {
 	o := f.ovRig.options(f.discover)
 	o.LaneRoot = f.root
 	o.Proc = f.proc
+	o.Binary = f.binary
 	o.Spawn = func(args []string, stderrPath string) error {
 		if stderrPath != filepath.Join(f.lane, "daemon.err") {
 			f.t.Errorf("stderr path %q", stderrPath)
@@ -746,5 +748,18 @@ func TestOverseerFollowDaemonWithoutBinaryFieldRestartsOnce(t *testing.T) {
 	r.finish()
 	if f.spawnCount() != 1 {
 		t.Errorf("spawned again: %v", f.spawns)
+	}
+}
+
+func TestOverseerFollowUnnamedBinaryNeverForces(t *testing.T) {
+	f := newFollowRig(t)
+	f.fakeDaemon(ovStart, 0)
+	f.binary = func() (string, string) { return "", "" }
+	r := f.follow(Request{})
+	r.started()
+	wantMarker(t, r.markers()[0], "fresh", "first")
+	r.finish()
+	if f.spawnCount() != 0 {
+		t.Errorf("spawns %v", f.spawns)
 	}
 }

@@ -172,9 +172,13 @@ func dropStaleTakeover(takeover string) {
 }
 
 // binaryChanged is whether the daemon runs a different binary than this
-// follow: a replaced path or file, or a daemon too old to record one.
+// follow: a replaced path or file, or a daemon too old to record one. A follow
+// that cannot name its own binary never forces.
 func (f *follow) binaryChanged(info daemonInfo) bool {
 	exe, id := f.o.Binary()
+	if exe == "" {
+		return false
+	}
 	return info.Exe != exe || info.ExeID != id
 }
 
