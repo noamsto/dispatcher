@@ -946,15 +946,22 @@ _attach_validate() {
 }
 
 # _attach_copy <file> <n> <dir> — copy the bytes of one validated --attach file
-# into <dir> as <n>-<sanitized basename>, 0600. The path is opened once and
-# checked and read through that fd, so a swap to a symlink after validation is
-# caught; size and signature are re-checked on the copy, not the path.
+# into <dir> as <n>-<sanitized basename>, 0600, printing the byte count. The path
+# is opened once and checked and read through that fd, so a swap to a symlink
+# after validation is caught; size and signature are re-checked on the copy, not
+# the path. The temp file lives in $crew_dir/attach-tmp, never in <dir>, which the
+# worker can write.
 _attach_copy() {
-  local src=$1 n=$2 dir=$3 fd base tmp
+  local src=$1 n=$2 dir=$3 fd base tmp tmpdir="$crew_dir/attach-tmp" bytes
   base="$(printf '%s' "${src##*/}" | tr -c 'A-Za-z0-9._-' _)"
   base="${base#"${base%%[!.]*}"}"
   base="${base:0:64}"
   [ -n "$base" ] || base="file"
+  if [ -L "$tmpdir" ] || { [ -e "$tmpdir" ] && [ ! -d "$tmpdir" ]; }; then
+    echo "dispatch: $tmpdir is a symlink or not a directory — refusing to attach" >&2
+    return 1
+  fi
+  (umask 077 && mkdir -p -- "$tmpdir") || return 1
   if [ -L "$src" ] || [ ! -f "$src" ] || ! exec {fd}<"$src"; then
     echo "dispatch: --attach $src: changed while dispatching — not copying" >&2
     return 1
@@ -964,24 +971,38 @@ _attach_copy() {
     echo "dispatch: --attach $src: changed while dispatching — not copying" >&2
     return 1
   fi
-  tmp="$(umask 077 && mktemp "$dir/.attach.XXXXXX")"
-  head -c $((ATTACH_MAX_BYTES + 1)) <&"$fd" >"$tmp"
+  tmp="$(umask 077 && mktemp "$tmpdir/.attach.XXXXXX")" || {
+    exec {fd}<&-
+    return 1
+  }
+  head -c $((ATTACH_MAX_BYTES + 1)) <&"$fd" >"$tmp" || {
+    exec {fd}<&-
+    rm -f -- "$tmp"
+    return 1
+  }
   exec {fd}<&-
-  if [ "$(wc -c <"$tmp")" -gt "$ATTACH_MAX_BYTES" ] || ! _attach_image_ok "$tmp"; then
+  bytes="$(wc -c <"$tmp")"
+  if [ "$bytes" -gt "$ATTACH_MAX_BYTES" ] || ! _attach_image_ok "$tmp"; then
     rm -f -- "$tmp"
     echo "dispatch: --attach $src: changed while dispatching — not copying" >&2
     return 1
   fi
-  mv -fT -- "$tmp" "$dir/$n-$base"
+  mv -fT -- "$tmp" "$dir/$n-$base" || {
+    rm -f -- "$tmp"
+    return 1
+  }
+  printf '%s\n' "$((bytes))"
 }
 
-# _attach_names <dir> — the attachment copies in <dir>, numeric order: regular
-# non-symlink files named <n>-<name> only, so a stray file never gets listed.
+# _attach_names <dir> — the owner-supplied copies in <dir>, numeric order:
+# regular non-symlink image files named <1-4 digits>-<name> only, so a planted or
+# stray file never gets listed or numbered.
 _attach_names() {
   local f
   for f in "$1"/*; do
     [ -f "$f" ] && [ ! -L "$f" ] || continue
-    [[ ${f##*/} =~ ^([0-9]+)-[A-Za-z0-9._-]+$ ]] && printf '%s\t%s\n' "${BASH_REMATCH[1]}" "$f"
+    [[ ${f##*/} =~ ^([0-9]{1,4})-[A-Za-z0-9._-]{1,64}$ ]] || continue
+    if _attach_image_ok "$f"; then printf '%s\t%s\n' "${BASH_REMATCH[1]}" "$f"; fi
   done | sort -n | cut -f2-
 }
 

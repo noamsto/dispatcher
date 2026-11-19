@@ -1188,20 +1188,22 @@ _resolve_lane_profile() {
 }
 
 # _strip_attachments — drop the sentinel-bounded attachments block from stdin,
-# so a re-dispatch regenerates the list from the dir. An unpaired opener is kept.
+# so a re-dispatch regenerates the list from the dir. Like _strip_lane_notes the
+# closer pairs with the nearest opener above it whose next line is the heading, so
+# a quoted marker in the worker-writable body deletes nothing; unpaired markers
+# stay verbatim.
 _strip_attachments() {
   awk '
     { line[NR] = $0 }
     END {
-      for (i = 1; i <= NR; i++) {
-        if (line[i] == "<!-- attachments -->") {
-          for (j = i + 1; j <= NR && line[j] != "<!-- /attachments -->"; j++) {}
-          if (j <= NR) {
-            for (k = i; k <= j; k++) drop[k] = 1
-            if (i > 1 && line[i - 1] == "") drop[i - 1] = 1
-            i = j
-          }
-        }
+      for (cl = NR; cl >= 1 && line[cl] != "<!-- /attachments -->"; cl--) {}
+      s = 0
+      for (o = cl - 1; o >= 1; o--) {
+        if (line[o] == "<!-- attachments -->" && line[o + 1] == "## Attachments") { s = o; break }
+      }
+      if (s > 0) {
+        for (i = s; i <= cl; i++) drop[i] = 1
+        if (s > 1 && line[s - 1] == "") drop[s - 1] = 1
       }
       for (i = 1; i <= NR; i++) if (!drop[i]) print line[i]
     }'
@@ -5214,9 +5216,16 @@ if [ "${#attach_flags[@]}" -gt 0 ]; then
     attach_n_cur="${attach_n_cur%%-*}"
     [ $((10#$attach_n_cur)) -le "$attach_n" ] || attach_n=$((10#$attach_n_cur))
   done < <(_attach_names "$attach_dir")
+  attach_copied=0
   for attach_file in "${attach_flags[@]}"; do
     attach_n=$((attach_n + 1))
-    _attach_copy "$attach_file" "$attach_n" "$attach_dir" || exit 1
+    attach_bytes="$(_attach_copy "$attach_file" "$attach_n" "$attach_dir")" || exit 1
+    attach_copied=$((attach_copied + attach_bytes))
+    if [ "$attach_copied" -gt "$ATTACH_MAX_TOTAL" ]; then
+      rm -f -- "$attach_dir/$attach_n-"*
+      echo "dispatch: --attach: $attach_copied bytes copied in total exceeds the 25 MiB per-dispatch limit" >&2
+      exit 1
+    fi
   done
 fi
 
