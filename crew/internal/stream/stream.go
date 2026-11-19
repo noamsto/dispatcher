@@ -218,14 +218,13 @@ func acquire(lockd string, c call, o Options, stderr io.Writer) bool {
 	// process we can signal. Out-of-range is negative in disguise — syscall.Kill
 	// truncates its pid to pid_t, so 4294967295 arrives at the kernel as -1 — and
 	// it is what bash's own kill refused before the arm ever sent a TERM.
-	target, ok := signalTarget(holder)
-	if !ok {
+	valid, gone := reclaim(holder, o)
+	if !valid {
 		say(stderr, "crew: --force found no valid holder pid for crew (%s) stream lock (got '%s') — refusing to signal\n",
 			c.crew, orEmpty(holder))
 		return false
 	}
-	_ = syscall.Kill(target, syscall.SIGTERM)
-	if !cleared(target, o) {
+	if !gone {
 		say(stderr, "crew: --force sent TERM but pid %s for crew (%s) did not clear\n", holder, c.crew)
 		return false
 	}
@@ -234,6 +233,17 @@ func acquire(lockd string, c call, o Options, stderr io.Writer) bool {
 		return false
 	}
 	return true
+}
+
+// reclaim TERMs a lock holder and waits for it to go: valid is false when
+// holder is no pid it is safe to signal, gone whether it cleared in time.
+func reclaim(holder string, o Options) (valid, gone bool) {
+	target, ok := signalTarget(holder)
+	if !ok {
+		return false, false
+	}
+	_ = syscall.Kill(target, syscall.SIGTERM)
+	return true, cleared(target, o)
 }
 
 // cleared is the arm's bounded wait: bare `kill -0`, paired with the TERM
@@ -259,6 +269,7 @@ type statusLine struct {
 	Crew   string          `json:"crew"`
 	PID    json.RawMessage `json:"pid"`
 	AgeS   *int64          `json:"age_s"`
+	Mode   string          `json:"mode,omitempty"`
 }
 
 type heartbeatLine struct {
@@ -315,6 +326,10 @@ type reapLine struct {
 // call cannot shift the answer. A lock with no readable tick counts as `stale`,
 // the safe direction: the tick is written immediately on acquiring the lock.
 func status(cdir, crew string, stdout io.Writer, o Options) int {
+	return statusMode(cdir, crew, "", stdout, o)
+}
+
+func statusMode(cdir, crew, mode string, stdout io.Writer, o Options) int {
 	st, rc, pid, age := lanepkg.State(cdir, o.Proc, clockMS(o))
 	say(stdout, "%s\n", encode(statusLine{
 		Stream: "status",
@@ -322,6 +337,7 @@ func status(cdir, crew string, stdout io.Writer, o Options) int {
 		Crew:   crew,
 		PID:    pid,
 		AgeS:   age,
+		Mode:   mode,
 	}))
 	return rc
 }

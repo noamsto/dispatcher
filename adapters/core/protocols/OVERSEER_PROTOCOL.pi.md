@@ -20,7 +20,7 @@ Your five jobs:
 
 ## 2. Cold start
 
-On every open and every lane re-arm, in order, before anything else:
+On every open, in order, before anything else:
 
 1. **Arm the lane.**
    You have no `Monitor`, so you never arm a persistent lane. Your lane is a foreground park, entered after step 5: call `crew fleet stream --overseer --park 270` in the **foreground**. It returns after the first non-heartbeat line or after 270 s, whichever comes first, keeping the lane's overseer cursor (a msg it did not print is redelivered by the next park). Handle the output, then re-park: this **is** your loop. Always 270, drained or not: a longer park queues the human when only their input can arrive. A park that expires with empty stdout carries nothing to act on, but it is the pi lane's heartbeat: check the digest clock (§7) before re-parking. A park that exits 1 with `another stream is already running` means `stream.lock.d` is held: `crew fleet stream --overseer --status` reads `alive`/`stale`/`dead`; a `stale` or `dead` holder is a previous session's lane, so re-park once with `--force`; an `alive` holder is a live lane, so leave it and report to the human. Any other non-zero park exit is reported, never retried.
@@ -105,7 +105,7 @@ Live workers meanwhile keep running; their watchdogs keep sampling and a blocked
 
 **When.**
 
-- **Cold start** (every open, every lane re-arm): one digest.
+- **Cold start** (every open): one digest.
 - **Wake**: one line per event, plus what you did about it.
 - **On demand**: the human asks; rerun `crew fleet status --json --gh`.
 - **Periodic**: while open, a digest when the lane's heartbeat finds the last digest older than `overseer.digestEvery` (seconds, default 14400 = 4 h). The last-digest time is session memory; losing it only means the next digest comes early.

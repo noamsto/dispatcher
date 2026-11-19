@@ -194,6 +194,8 @@ type fleetStreamCmd struct {
 	streamFlags `embed:""`
 	Rediscover  *string `name:"rediscover"`
 	Overseer    bool    `name:"overseer"`
+	Daemon      bool    `name:"daemon"`
+	Follow      bool    `name:"follow"`
 	ReapEvery   *string `name:"reap-every" hidden:""`
 }
 
