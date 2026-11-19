@@ -2357,6 +2357,34 @@ func TestTransitionsDispatcherAwaiting(t *testing.T) {
 	run(map[int64][]string{5: await}, at(0, "done", "alive", po), at(5, "done", "alive", po), at(6, "processing", "alive", po),
 		at(7, "done", "alive", po), at(12, "done", "alive", po), at(30, "done", "alive", po))
 
+	poA := ovWorker("worker:feat/a#s1-1", "pr_open")
+	poB := ovWorker("worker:feat/b#s2-1", "pr_open")
+	blA := ovWorker("worker:feat/a#s1-1", "blocked")
+
+	// Held work moving from A to B across a short wake is new work: fires twice.
+	run(map[int64][]string{5: await, 12: await}, at(0, "done", "alive", poA), at(5, "done", "alive", poA), at(6, "processing", "alive", poA),
+		at(7, "done", "alive", poB), at(11, "done", "alive", poB), at(12, "done", "alive", poB), at(20, "done", "alive", poB))
+
+	// Held work swapping under a steady done pane fires again.
+	run(map[int64][]string{5: await, 11: await}, at(0, "done", "alive", poA), at(5, "done", "alive", poA), at(6, "done", "alive", poB),
+		at(10, "done", "alive", poB), at(11, "done", "alive", poB))
+
+	// Held work gaining a branch while A is still held fires again.
+	run(map[int64][]string{5: await, 12: await}, at(0, "done", "alive", poA), at(5, "done", "alive", poA), at(7, "done", "alive", poA, poB),
+		at(11, "done", "alive", poA, poB), at(12, "done", "alive", poA, poB))
+
+	// Held work shrinking does not re-fire.
+	run(map[int64][]string{5: await}, at(0, "done", "alive", poA, poB), at(5, "done", "alive", poA, poB), at(6, "processing", "alive", poA, poB),
+		at(7, "done", "alive", poA), at(20, "done", "alive", poA))
+
+	// The same branch changing state is not new work.
+	run(map[int64][]string{5: await}, at(0, "done", "alive", poA), at(5, "done", "alive", poA), at(6, "processing", "alive", poA),
+		at(7, "done", "alive", blA), at(20, "done", "alive", blA))
+
+	// A fired dialog episode gaining held work fires again.
+	run(map[int64][]string{5: await, 12: await}, at(0, "waiting", "alive"), at(5, "waiting", "alive"), at(7, "waiting", "alive", poA),
+		at(11, "waiting", "alive", poA), at(12, "waiting", "alive", poA))
+
 	// A dwell broken before it completes restarts.
 	run(map[int64][]string{9: await}, at(0, "waiting", "alive"), at(3, "processing", "alive"), at(4, "waiting", "alive"),
 		at(8, "waiting", "alive"), at(9, "waiting", "alive"))
