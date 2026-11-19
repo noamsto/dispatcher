@@ -279,6 +279,14 @@ func TestScanSubagents(t *testing.T) {
 			sinkRow(at(1), w, sink, `{"subagent":"finish","id":"t1","agent_id":"a1","outcome":"error","model":"m"}`),
 			sinkRow(at(2), w, sink, `{"subagent":"spawn","id":"t1","label":"look"}`),
 		}, []SubagentRun{{ID: "t1", AgentID: "a1", Session: "s1", Label: "look", Model: "m", State: "failed", StartTS: at(1), EndTS: at(1)}}},
+		{"late spawn keeps the finished model", []string{
+			sinkRow(at(1), w, sink, `{"subagent":"finish","id":"t1","outcome":"ok","model":"B"}`),
+			sinkRow(at(2), w, sink, `{"subagent":"spawn","id":"t1","model":"A","label":"look"}`),
+		}, []SubagentRun{{ID: "t1", Session: "s1", Label: "look", Model: "B", State: "done", StartTS: at(1), EndTS: at(1)}}},
+		{"spawn then finish records the finished model", []string{
+			sinkRow(at(1), w, sink, `{"subagent":"spawn","id":"t1","model":"A"}`),
+			sinkRow(at(2), w, sink, `{"subagent":"finish","id":"t1","outcome":"ok","model":"B"}`),
+		}, []SubagentRun{{ID: "t1", Session: "s1", Model: "B", State: "done", StartTS: at(1), EndTS: at(2)}}},
 		{"unknown agent_id-only finish dropped", []string{
 			sinkRow(at(1), w, sink, `{"subagent":"finish","agent_id":"a1"}`),
 		}, nil},

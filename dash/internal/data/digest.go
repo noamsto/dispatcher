@@ -286,12 +286,18 @@ func (s *BusScanner) applySubagent(key WorkerKey, session string, ts int64, body
 			i = len(runs) - 1
 		}
 		r := &runs[i]
-		mergeNonEmpty(&r.AgentID, agentID)
-		mergeNonEmpty(&r.Engine, str("engine", fieldMax))
-		mergeNonEmpty(&r.Label, str("label", labelMax))
-		mergeNonEmpty(&r.Agent, str("agent", fieldMax))
-		mergeNonEmpty(&r.Model, str("model", fieldMax))
-		mergeNonEmpty(&r.Effort, str("effort", fieldMax))
+		// A finished run got there first: its fields are the ones actually used
+		// (the spawn row carries the configured model), so the spawn only fills gaps.
+		merge := mergeNonEmpty
+		if r.State != "running" {
+			merge = fillEmpty
+		}
+		merge(&r.AgentID, agentID)
+		merge(&r.Engine, str("engine", fieldMax))
+		merge(&r.Label, str("label", labelMax))
+		merge(&r.Agent, str("agent", fieldMax))
+		merge(&r.Model, str("model", fieldMax))
+		merge(&r.Effort, str("effort", fieldMax))
 		s.d.Subagents[key] = runs
 		return
 	}
@@ -333,6 +339,12 @@ func appendRun(runs []SubagentRun, r SubagentRun) []SubagentRun {
 
 func mergeNonEmpty(dst *string, v string) {
 	if v != "" {
+		*dst = v
+	}
+}
+
+func fillEmpty(dst *string, v string) {
+	if *dst == "" {
 		*dst = v
 	}
 }
