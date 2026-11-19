@@ -863,6 +863,16 @@ small again. With no launcher left, `CREW_ID=<id> dispatcher --fresh` restarts t
 crew from its stored note. See `DISPATCHER_PROTOCOL.md` → "Hand off to a fresh
 session".
 
+Before an unattended run the owner can leave a standing policy from their terminal, e.g.
+`crew policy set night 'merge when green and reviewed; then start the next issue by
+priority'`. `set`/`clear` refuse worker, role, overseer and dispatcher sessions and any
+stdin-less session; records live outside the repo under
+`${XDG_STATE_HOME:-~/.local/state}/crew/policy/`, with who, when and the verbatim text.
+A handoff relaunch (`--fresh`, or a crash's `--fresh --no-note`) carries policies in
+force into its first prompt, and a crash takes its queue from them; `crew merge <N>
+--policy <name>` records the policy a merge relied on. Scope and limits (never
+force-push, deploy, close or owner-auth): skill `standing-policy`.
+
 From inside a dispatcher session:
 
 ```bash

@@ -4,12 +4,12 @@ usage: crew policy set <name> <text>
        crew policy list [--json | --brief]
 
 A standing policy is the repo owner's own words, kept for an unattended
-dispatcher to act on while they are away (see DISPATCHER_PROTOCOL.md "Standing
-policy"). set and clear are the owner's alone: they refuse a worker, role,
-overseer, launcher or crew-pane session, and any session without a terminal on
-stdin. show and list are open to anyone and only report a policy that is in
-force: a record that is not the owner's own, not for this repo or not a plain
-file is refused with its reason, and list names it on stderr.
+dispatcher to act on while they are away (skill standing-policy). set and clear
+are the owner's alone: they refuse a worker, role, overseer, launcher or
+crew-pane session, and any session without a terminal on stdin. show and list
+are open to anyone and only report a policy that is in force: a record that is
+not the owner's own, not for this repo or not a plain file is refused with its
+reason, and list names it on stderr.
 A record lives in ${XDG_STATE_HOME:-$HOME/.local/state}/crew/policy/<repo>/,
 outside the repo and its bus, one file per name. Set of a name again replaces it.
 
