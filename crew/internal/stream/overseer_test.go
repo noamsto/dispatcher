@@ -501,7 +501,7 @@ func TestOverseerDiffDropsADocumentPastItsTimeout(t *testing.T) {
 		return ovDoc(ovStart+minute, ovRepo("alpha", ovCrew("c1", "dead", "unattended", w)))
 	})
 	v.timeout = 10 * time.Millisecond
-	v.moves.next(ovDoc(ovStart, ovRepo("alpha", ovCrew("c1", "live", "attended", w))), ovStart)
+	v.moves.next(ovDoc(ovStart, ovRepo("alpha", ovCrew("c1", "live", "attended", w))), ovStart, nil)
 	v.diff(t.Context())
 	want := map[string]any{"stream": "error", "crew": ovMe, "rc": float64(1),
 		"detail": "status: no document within 10ms", "ts": float64(ovStart)}
@@ -812,7 +812,7 @@ func withQueue(d fleetpkg.StatusDoc, q fleetpkg.QueueStatus, budget, weight int)
 func step(t *testing.T, tr *transitions, d fleetpkg.StatusDoc) []map[string]any {
 	t.Helper()
 	var out []map[string]any
-	for _, line := range tr.next(d, d.TS+1) {
+	for _, line := range tr.next(d, d.TS+1, nil) {
 		var m map[string]any
 		if err := json.Unmarshal([]byte(encode(line)), &m); err != nil {
 			t.Fatalf("line %v: %v", line, err)
@@ -2428,4 +2428,62 @@ func TestTransitionsDispatcherAwaiting(t *testing.T) {
 	// A dwell broken before it completes restarts.
 	run(map[int64][]string{9: await}, at(0, "waiting", "alive"), at(3, "processing", "alive"), at(4, "waiting", "alive"),
 		at(8, "waiting", "alive"), at(9, "waiting", "alive"))
+}
+
+func homed(c fleetpkg.CrewStatus, home string) fleetpkg.CrewStatus {
+	c.Dispatcher.Home = &home
+	return c
+}
+
+func TestOverseerGuestDemotionHonoursPartnerHysteresis(t *testing.T) {
+	w := ovWorker("worker:feat/g#s1-1", "working")
+	guest := func(ts int64, state, attention string) fleetpkg.StatusDoc {
+		return ovDoc(ts, ovRepo("alpha", homed(ovCrew("g1", state, attention, w), "mbp")))
+	}
+	good := func(ts int64) fleetpkg.HostStatus { return okHost("mbp", ts) }
+	bad := func(ts int64) fleetpkg.HostStatus { return downHost("mbp", ovStart, "ssh: timeout") }
+	run := func(probes ...func(int64) fleetpkg.HostStatus) [][]map[string]any {
+		docs := []fleetpkg.StatusDoc{withHosts(guest(ovStart, "live", "attended"), good(ovStart))}
+		for i, probe := range probes {
+			ts := ovStart + int64(i+1)*minute
+			docs = append(docs, withHosts(guest(ts, "dead", "unattended"), probe(ts)))
+		}
+		return fedRun(t, fedOverseer(t), docs...)
+	}
+
+	for i, step := range run(bad, good, good) {
+		if len(step) != 0 {
+			t.Errorf("one dropped probe: step %d printed %v, want none", i, step)
+		}
+	}
+
+	got := run(bad, bad, bad, bad)
+	if len(got[1])+len(got[2]) != 0 {
+		t.Errorf("below the streak printed %v / %v, want none", got[1], got[2])
+	}
+	if ev := ofEvent(got[3], "host_unreachable"); len(ev) != 1 {
+		t.Errorf("third failure lines = %v, want host_unreachable", got[3])
+	}
+	if ev := ofEvent(got[4], "dispatcher_down"); len(ev) != 1 {
+		t.Errorf("after the flip lines = %v, want dispatcher_down", got[4])
+	}
+}
+
+func TestOverseerUnattendedCrewWithoutPartnerHomeStillFires(t *testing.T) {
+	w := ovWorker("worker:feat/a#s1-1", "working")
+	for name, home := range map[string]*string{"no home": nil, "home is this host": new(string)} {
+		t.Run(name, func(t *testing.T) {
+			c := func(state, attention string) fleetpkg.CrewStatus {
+				c := ovCrew("c1", state, attention, w)
+				c.Dispatcher.Home = home
+				return c
+			}
+			got := fedRun(t, fedOverseer(t),
+				ovDoc(ovStart, ovRepo("alpha", c("live", "attended"))),
+				ovDoc(ovStart+minute, ovRepo("alpha", c("dead", "unattended"))))
+			if len(ofEvent(got[1], "dispatcher_down")) != 1 {
+				t.Errorf("lines = %v, want dispatcher_down", got[1])
+			}
+		})
+	}
 }
