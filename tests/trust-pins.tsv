@@ -27,8 +27,8 @@ H2	adapters/core/dispatch.sh	_wt_trusted_cwd "${crew_dir%/crew}" || exit 1	1	tru
 R1	adapters/core/dispatch.sh	_wt_trusted_cwd "${crew_dir%/crew}" || exit 1	2	true	tests/dispatch.bats	^dispatch --host refuses from a worker worktree whose .git is already a standalone repo	inside the worker worktree
 R2	adapters/core/dispatch.sh	_wt_trusted_cwd "${crew_dir%/crew}" || exit 1	2	true	tests/dispatch.bats	^trust pin: R2 	redirects the git common dir
 F1	adapters/core/launcher-common.sh	_artifacts_dir_bad "$2"	1	false	tests/dispatch.bats	^add-dir: a symlinked artifacts parent of a slashed branch is not granted	not granting
-F2	adapters/core/dispatch.sh	_artifacts_dir_bad "$branch"	3	false	tests/dispatch.bats	^roles.json: a symlinked artifacts parent is refused and its target left empty	"$status" -eq 1
-MG1	adapters/core/dispatch.sh	_artifacts_dir_bad "$branch"	2	false	tests/dispatch-migrate.bats	^a migrated worker.s symlinked artifacts parent is refused and its target left empty	"$status" -eq 1
+F2	adapters/core/dispatch.sh	_artifacts_dir_bad "$branch"	4	false	tests/dispatch.bats	^roles.json: a symlinked artifacts parent is refused and its target left empty	"$status" -eq 1
+MG1	adapters/core/dispatch.sh	_artifacts_dir_bad "$branch"	3	false	tests/dispatch-migrate.bats	^a migrated worker.s symlinked artifacts parent is refused and its target left empty	"$status" -eq 1
 F3	adapters/core/dispatch.sh	_artifacts_dir_bad "$branch"	1	false	tests/dispatch.bats	^roles.json: --spawn-role refuses a symlinked artifacts parent	refusing to use roles.json
 F6	adapters/core/dispatch.sh	"$(_protocol_dirs_record_bad)"	2	"$(false)"	tests/dispatch.bats	^(protocol-dirs record: a symlink planted at the record path is refused|a symlinked protocol-dirs parent or worktrees dir is not written through)	"$status" -eq 1
 F7	adapters/core/dispatch.sh	"$(_protocol_dirs_record_bad)"	1	"$(false)"	tests/dispatch.bats	^spawn-role: record — a symlinked record is refused before any split	"$status" -eq 1
@@ -93,3 +93,10 @@ F22	crew/internal/rolewatch/rolewatch.go	if wRole != w.role {	1	if false {	crew/
 F22	crew/internal/rolewatch/rolewatch.go	; b != branch {	1	; false {	crew/rolewatch_script_test.go	^TestRoleWatchScripts$/^refusals$	unexpected command success
 F23	crew/internal/rolewatch/loop.go	if !w.stamped() {	2	if false {	crew/rolewatch_script_test.go	^TestRoleWatchScripts$/^restamp_no_paste$	unexpected match for `^(capture-pane|send-keys|load-buffer|paste-buffer)` found in tmux.log: capture-pane
 F24	crew/internal/rolewatch/loop.go	if !w.stamped() {	1	if false {	crew/rolewatch_script_test.go	^TestRoleWatchScripts$/^stamp_flip_after_enter$	matches for `^send-keys -t %6 Enter$`, want 1
+ATT1	adapters/core/dispatch.sh	_artifacts_dir_bad "$branch"	2	false	tests/dispatch.bats	^attach: a symlinked artifacts parent is refused and its target stays empty	"$status" -eq 1
+ATT2	adapters/core/dispatch.sh	if [ -L "$attach_dir" ] || { [ -e "$attach_dir" ] && [ ! -d "$attach_dir" ]; }; then	1	if false; then	tests/dispatch.bats	^attach: a symlinked attachments dir is refused and its target stays empty	"$status" -eq 1
+ATT3	adapters/core/launcher-common.sh	if [ -L "$f" ]; then	1	if false; then	tests/dispatch.bats	^attach: a symlink is refused before anything is scaffolded	"symlink"
+ATT4	adapters/core/launcher-common.sh	if ! _attach_image_ok "$f"; then	1	if false; then	tests/dispatch.bats	^attach: a text file named .png is refused by its magic bytes	not a png, jpeg
+@grouped	ATT5
+ATT5	adapters/core/launcher-common.sh	if [ -L "$src" ] || [ ! -f "$src" ]	1	if false || [ ! -f "$src" ]	tests/dispatch.bats	^attach: _attach_copy refuses a symlink and a path that is not a regular file	_attach_copy
+ATT5	adapters/core/launcher-common.sh	if [ -L "$src" ] || [ ! -f "/dev/fd/$fd" ]	1	if false || [ ! -f "/dev/fd/$fd" ]	tests/dispatch.bats	^attach: _attach_copy refuses a symlink and a path that is not a regular file	_attach_copy

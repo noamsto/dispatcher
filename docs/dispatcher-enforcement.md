@@ -295,6 +295,21 @@ wait for its `failed`, then re-dispatch onto its branch with `--add-dir
   <narrowest dir>`: the re-dispatch records the grant, and the new session
 gets it.
 
+`dispatch --attach FILE` (repeatable) hands a worker an image without a grant
+root: each FILE must be a regular, non-symlink png, jpeg, gif or webp (magic bytes,
+not the extension), at most 10 MiB each, 25 MiB and 10 files per dispatch, and is
+refused before any label, branch, worktree or window exists. The copy runs as the
+dispatcher, opened once and checked and read through that fd, re-validated on the
+copied bytes, written 0600 as `<n>-<sanitized basename>` into
+`$crew_dir/artifacts/<branch>/attachments/` (a symlinked path component is refused),
+and listed under `## Attachments` in `WORKER_TASK.md`; a re-dispatch keeps the
+earlier copies and continues the numbering. Every engine reads that dir without a
+prompt: claude `--add-dir`s its artifacts dir, codex runs sandbox-bypassed, cursor
+runs `--force`, and pi has no path-permission layer. `--attach` is refused with
+`--host`: the remote half re-parses argv against another filesystem, so a local
+path would dangle and copying needs a new upload verb on the remote-run transport.
+`dispatch migrate` does not carry attachments.
+
 ## U5: Trust boundary (worker-controlled inputs)
 
 Protocol rule now:

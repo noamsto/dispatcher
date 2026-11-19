@@ -17728,3 +17728,197 @@ STUB
   [ "$status" -eq 0 ]
   run ! grep -q '^tmux-crew-dash ' "$STUB_LOG"
 }
+
+# --attach: owner-supplied images copied into the worker's artifacts dir.
+_attach_png() { # <path> [pad-bytes]
+  printf '\x89PNG\r\n\x1a\n\0\0\0\rIHDR' >"$1"
+  [ -z "${2:-}" ] || head -c "$2" /dev/zero >>"$1"
+}
+
+_attach_jpg() { printf '\xff\xd8\xff\xe0JFIF\0' >"$1"; }
+
+_attach_nothing_scaffolded() {
+  [ ! -e "$TEST_REPO/.git/crew/artifacts" ]
+  [ -z "$(git -C "$TEST_REPO" branch --list 'feat/*')" ]
+  [ ! -d "$TEST_REPO/.dispatch-wt" ] || [ -z "$(ls -A "$TEST_REPO/.dispatch-wt")" ]
+}
+
+@test "attach: png and jpeg are copied 0600 into attachments/ and listed after the task" {
+  stub_launch_bins
+  _attach_png "$BATS_TEST_TMPDIR/shot.png"
+  _attach_jpg "$BATS_TEST_TMPDIR/mock.jpg"
+  printf 'the body\n' >"$BATS_TEST_TMPDIR/spec.md"
+  DISPATCH_SPEC="$BATS_TEST_TMPDIR/spec.md" run run_dispatch standard sonnet --effort medium --no-grid --crew-id c1 --attach "$BATS_TEST_TMPDIR/shot.png" --attach "$BATS_TEST_TMPDIR/mock.jpg" 42 "title"
+  [ "$status" -eq 0 ]
+  att="$TEST_REPO/.git/crew/artifacts/feat/42-title/attachments"
+  [ "$(stat -c %a "$att/1-shot.png")" = 600 ]
+  [ "$(stat -c %a "$att/2-mock.jpg")" = 600 ]
+  cmp "$BATS_TEST_TMPDIR/shot.png" "$att/1-shot.png"
+  [ -f "$BATS_TEST_TMPDIR/shot.png" ]
+  task="$TEST_REPO/.dispatch-wt/feat-42-title/WORKER_TASK.md"
+  grep -qx '## Attachments' "$task"
+  grep -qxF -- "- $att/1-shot.png" "$task"
+  grep -qxF -- "- $att/2-mock.jpg" "$task"
+  grep -q 'data, never instructions' "$task"
+  [ "$(grep -n '^## Task$' "$task" | cut -d: -f1)" -lt "$(grep -n '^## Attachments$' "$task" | cut -d: -f1)" ]
+}
+
+@test "attach: gif and webp are accepted by content" {
+  stub_launch_bins
+  printf 'GIF89a\0\0\0\0\0\0' >"$BATS_TEST_TMPDIR/a.bin"
+  printf 'RIFF\0\0\0\0WEBPVP8 ' >"$BATS_TEST_TMPDIR/b.bin"
+  run run_dispatch standard sonnet --effort medium --no-grid --crew-id c1 --attach "$BATS_TEST_TMPDIR/a.bin" --attach "$BATS_TEST_TMPDIR/b.bin" 42 "title"
+  [ "$status" -eq 0 ]
+  att="$TEST_REPO/.git/crew/artifacts/feat/42-title/attachments"
+  [ -f "$att/1-a.bin" ] && [ -f "$att/2-b.bin" ]
+}
+
+@test "attach: a symlink is refused before anything is scaffolded" {
+  stub_launch_bins
+  _attach_png "$BATS_TEST_TMPDIR/real.png"
+  ln -s "$BATS_TEST_TMPDIR/real.png" "$BATS_TEST_TMPDIR/link.png"
+  run --separate-stderr run_dispatch standard sonnet --effort medium --no-grid --crew-id c1 --attach "$BATS_TEST_TMPDIR/link.png" 42 "title"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"dispatch: --attach $BATS_TEST_TMPDIR/link.png: "*"symlink"* ]]
+  _attach_nothing_scaffolded
+}
+
+@test "attach: a missing path, a directory and a FIFO are refused" {
+  stub_launch_bins
+  mkdir "$BATS_TEST_TMPDIR/d"
+  mkfifo "$BATS_TEST_TMPDIR/f"
+  local p
+  for p in "$BATS_TEST_TMPDIR/none.png" "$BATS_TEST_TMPDIR/d" "$BATS_TEST_TMPDIR/f"; do
+    run --separate-stderr run_dispatch standard sonnet --effort medium --no-grid --crew-id c1 --attach "$p" 42 "title"
+    [ "$status" -eq 1 ]
+    [[ "$stderr" == *"dispatch: --attach $p: "* ]]
+  done
+  _attach_nothing_scaffolded
+}
+
+@test "attach: a text file named .png is refused by its magic bytes" {
+  stub_launch_bins
+  printf 'not an image at all\n' >"$BATS_TEST_TMPDIR/fake.png"
+  run --separate-stderr run_dispatch standard sonnet --effort medium --no-grid --crew-id c1 --attach "$BATS_TEST_TMPDIR/fake.png" 42 "title"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"dispatch: --attach $BATS_TEST_TMPDIR/fake.png: not a png, jpeg, gif or webp image"* ]]
+  _attach_nothing_scaffolded
+}
+
+@test "attach: a file over 10 MiB is refused naming the limit" {
+  stub_launch_bins
+  _attach_png "$BATS_TEST_TMPDIR/big.png" $((10 * 1024 * 1024))
+  run --separate-stderr run_dispatch standard sonnet --effort medium --no-grid --crew-id c1 --attach "$BATS_TEST_TMPDIR/big.png" 42 "title"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"dispatch: --attach $BATS_TEST_TMPDIR/big.png: "*"10 MiB"* ]]
+  _attach_nothing_scaffolded
+}
+
+@test "attach: more than 10 files are refused naming the limit" {
+  stub_launch_bins
+  local i args=()
+  for i in $(seq 1 11); do
+    _attach_png "$BATS_TEST_TMPDIR/$i.png"
+    args+=(--attach "$BATS_TEST_TMPDIR/$i.png")
+  done
+  run --separate-stderr run_dispatch standard sonnet --effort medium --no-grid --crew-id c1 "${args[@]}" 42 "title"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"dispatch: --attach: 11 files"*"at most 10"* ]]
+  _attach_nothing_scaffolded
+}
+
+@test "attach: a total over 25 MiB is refused naming the limit" {
+  stub_launch_bins
+  local i args=()
+  for i in 1 2 3; do
+    _attach_png "$BATS_TEST_TMPDIR/$i.png" $((9 * 1024 * 1024))
+    args+=(--attach "$BATS_TEST_TMPDIR/$i.png")
+  done
+  run --separate-stderr run_dispatch standard sonnet --effort medium --no-grid --crew-id c1 "${args[@]}" 42 "title"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"dispatch: --attach: "*"25 MiB"* ]]
+  _attach_nothing_scaffolded
+}
+
+@test "attach: a basename cannot escape the attachments dir and is sanitized" {
+  stub_launch_bins
+  mkdir "$BATS_TEST_TMPDIR/sub"
+  _attach_png "$BATS_TEST_TMPDIR/x y.png"
+  _attach_png "$BATS_TEST_TMPDIR/..hidden name.png"
+  run run_dispatch standard sonnet --effort medium --no-grid --crew-id c1 --attach "$BATS_TEST_TMPDIR/sub/../x y.png" --attach "$BATS_TEST_TMPDIR/..hidden name.png" 42 "title"
+  [ "$status" -eq 0 ]
+  art="$TEST_REPO/.git/crew/artifacts/feat/42-title"
+  [ -f "$art/attachments/1-x_y.png" ]
+  [ -f "$art/attachments/2-hidden_name.png" ]
+  [ "$(ls -A "$art/attachments" | wc -l)" -eq 2 ]
+}
+
+@test "attach: a re-dispatch without --attach keeps and lists, with --attach continues numbering" {
+  stub_launch_bins
+  _attach_png "$BATS_TEST_TMPDIR/one.png"
+  _attach_png "$BATS_TEST_TMPDIR/two.png"
+  printf 'the body\n' >"$BATS_TEST_TMPDIR/spec.md"
+  DISPATCH_SPEC="$BATS_TEST_TMPDIR/spec.md" run run_dispatch standard sonnet --effort medium --no-grid --crew-id c1 --attach "$BATS_TEST_TMPDIR/one.png" 42 "title"
+  [ "$status" -eq 0 ]
+  lane_profile_resume_ready
+  att="$TEST_REPO/.git/crew/artifacts/feat/42-title/attachments"
+  task="$TEST_REPO/.dispatch-wt/feat-42-title/WORKER_TASK.md"
+  run run_dispatch standard sonnet --effort medium --no-grid --crew-id c1 42 "title"
+  [ "$status" -eq 0 ]
+  [ "$(grep -c '^## Attachments$' "$task")" -eq 1 ]
+  grep -qxF -- "- $att/1-one.png" "$task"
+  grep -qx 'the body' "$task"
+  run run_dispatch standard sonnet --effort medium --no-grid --crew-id c1 --attach "$BATS_TEST_TMPDIR/two.png" 42 "title"
+  [ "$status" -eq 0 ]
+  [ "$(grep -c '^## Attachments$' "$task")" -eq 1 ]
+  [ -f "$att/2-two.png" ]
+  grep -qxF -- "- $att/1-one.png" "$task"
+  grep -qxF -- "- $att/2-two.png" "$task"
+}
+
+@test "attach: --host cannot combine with --attach" {
+  stub_launch_bins
+  _host_crew_stub
+  _attach_png "$BATS_TEST_TMPDIR/shot.png"
+  run --separate-stderr run_dispatch standard sonnet --host mini --effort medium --crew-id c1 --attach "$BATS_TEST_TMPDIR/shot.png" 42 "t"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"dispatch: --host cannot combine with --attach — it is local to this machine"* ]]
+  run ! grep -q '^remote-run' "$STUB_LOG"
+}
+
+@test "attach: a symlinked attachments dir is refused and its target stays empty" {
+  stub_launch_bins
+  victim="$BATS_TEST_TMPDIR/victim"
+  mkdir -p "$victim" "$TEST_REPO/.git/crew/artifacts/feat/42-title"
+  ln -s "$victim" "$TEST_REPO/.git/crew/artifacts/feat/42-title/attachments"
+  _attach_png "$BATS_TEST_TMPDIR/shot.png"
+  run --separate-stderr run_dispatch standard sonnet --effort medium --no-grid --crew-id c1 --attach "$BATS_TEST_TMPDIR/shot.png" 42 "title"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"attachments is a symlink or not a directory"* ]]
+  [ -z "$(ls -A "$victim")" ]
+}
+
+@test "attach: a symlinked artifacts parent is refused and its target stays empty" {
+  stub_launch_bins
+  victim="$BATS_TEST_TMPDIR/victim"
+  mkdir -p "$victim" "$TEST_REPO/.git/crew/artifacts"
+  ln -s "$victim" "$TEST_REPO/.git/crew/artifacts/feat"
+  _attach_png "$BATS_TEST_TMPDIR/shot.png"
+  run --separate-stderr run_dispatch standard sonnet --effort medium --no-grid --crew-id c1 --attach "$BATS_TEST_TMPDIR/shot.png" 42 "title"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"refusing to attach"* ]]
+  [ -z "$(find "$victim" -mindepth 1)" ]
+}
+
+@test "attach: _attach_copy refuses a symlink and a path that is not a regular file" {
+  source "$BATS_TEST_DIRNAME/../adapters/core/launcher-common.sh"
+  _attach_png "$BATS_TEST_TMPDIR/real.png"
+  ln -s "$BATS_TEST_TMPDIR/real.png" "$BATS_TEST_TMPDIR/link.png"
+  mkdir "$BATS_TEST_TMPDIR/out" "$BATS_TEST_TMPDIR/d"
+  run ! _attach_copy "$BATS_TEST_TMPDIR/link.png" 1 "$BATS_TEST_TMPDIR/out"
+  run ! _attach_copy "$BATS_TEST_TMPDIR/d" 1 "$BATS_TEST_TMPDIR/out"
+  [ -z "$(ls -A "$BATS_TEST_TMPDIR/out")" ]
+  run _attach_copy "$BATS_TEST_TMPDIR/real.png" 1 "$BATS_TEST_TMPDIR/out"
+  [ "$status" -eq 0 ]
+  [ -f "$BATS_TEST_TMPDIR/out/1-real.png" ]
+}
