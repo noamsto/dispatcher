@@ -238,8 +238,7 @@ func CollectRoster(ctx context.Context, r Runner, cfg Config) RosterSection {
 	rows := parseCrewRows(out)
 	var candidates []crewRow
 	for _, row := range rows {
-		switch {
-		case row.alive != "yes" && row.workers > 0:
+		if row.alive != "yes" && row.workers > 0 {
 			candidates = append(candidates, row)
 		}
 	}
