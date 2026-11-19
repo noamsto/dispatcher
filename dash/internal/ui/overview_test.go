@@ -1432,8 +1432,24 @@ func TestDetailOverlayBoundsSubagents(t *testing.T) {
 			t.Errorf("detail lacks %q:\n%s", want, got)
 		}
 	}
-	if strings.Contains(got, "sub15") && !strings.Contains(got, "sub15 ") {
-		t.Errorf("unexpected subagent listing:\n%s", got)
+	// Running first (newest spawn first), then the newest finished one.
+	shown := []string{"sub12 ", "sub8 ", "sub4 ", "sub0 ", "sub15 "}
+	last := -1
+	for _, label := range shown {
+		idx := strings.Index(got, label)
+		if idx < 0 {
+			t.Errorf("detail lacks subagent %q:\n%s", label, got)
+			continue
+		}
+		if idx < last {
+			t.Errorf("subagent %q out of order:\n%s", label, got)
+		}
+		last = idx
+	}
+	for _, label := range []string{"sub1 ", "sub13 ", "sub14 "} {
+		if strings.Contains(got, label) {
+			t.Errorf("detail lists unshown subagent %q:\n%s", label, got)
+		}
 	}
 }
 

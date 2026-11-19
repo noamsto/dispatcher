@@ -301,8 +301,9 @@ func (s *BusScanner) applySubagent(key WorkerKey, session string, ts int64, body
 		state = "failed"
 	}
 	if i < 0 {
-		// A finish can reach the bus before its spawn: keep it, finished, for the
-		// late spawn to fill in. Without an id there is nothing to match it on.
+		// A finish can reach the bus before its spawn: keep it, finished, so the
+		// late spawn merges its non-empty fields into it. Without an id there is
+		// nothing to match it on.
 		if id == "" {
 			return
 		}
