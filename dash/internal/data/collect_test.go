@@ -679,3 +679,14 @@ func TestCollectRosterForeignLookupTimeout(t *testing.T) {
 		t.Errorf("ForeignError = %v", sec.ForeignError)
 	}
 }
+
+func TestCollectRosterForeignLookupParentCancelIsNotTimeout(t *testing.T) {
+	r := foreignRunner(t)
+	r.Responses["crew fleet status --json"] = FakeResponse{Wait: make(chan struct{})}
+	ctx, cancel := context.WithCancel(context.Background())
+	time.AfterFunc(20*time.Millisecond, cancel)
+	sec := CollectRoster(ctx, r, baseConfig())
+	if sec.ForeignError == nil || strings.Contains(*sec.ForeignError, "timed out") {
+		t.Errorf("ForeignError = %v, want a non-timeout message", sec.ForeignError)
+	}
+}
