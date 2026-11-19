@@ -903,6 +903,109 @@ _artifacts_dir_bad() {
   return 1
 }
 
+ATTACH_MAX_BYTES=$((10 * 1024 * 1024))
+# shellcheck disable=SC2034 # read by dispatch.sh, which sources this file
+ATTACH_MAX_TOTAL=$((25 * 1024 * 1024))
+# shellcheck disable=SC2034 # read by dispatch.sh, which sources this file
+ATTACH_MAX_FILES=10
+
+# _attach_image_ok <file> — succeed when the first bytes are a png, jpeg, gif or
+# webp signature. The extension is never consulted.
+_attach_image_ok() {
+  local hex
+  hex="$(od -An -tx1 -N12 "$1" | tr -d ' \n')"
+  case "${hex:0:16}" in 89504e470d0a1a0a) return 0 ;; esac
+  case "${hex:0:6}" in ffd8ff) return 0 ;; esac
+  case "${hex:0:12}" in 474946383761 | 474946383961) return 0 ;; esac
+  [ "${hex:0:8}" = 52494646 ] && [ "${hex:16:8}" = 57454250 ]
+}
+
+# _attach_validate <file> — pure check of one --attach path; prints the size in
+# bytes, or the refusal (naming the file and the limit it broke) on stderr.
+_attach_validate() {
+  local f=$1 size
+  if [ -L "$f" ]; then
+    echo "dispatch: --attach $f: a symlink (only a regular image file is attached)" >&2
+    return 1
+  fi
+  if [ ! -f "$f" ]; then
+    echo "dispatch: --attach $f: not an existing regular file (no directory, device or FIFO)" >&2
+    return 1
+  fi
+  size="$(wc -c <"$f")" || return 1
+  size=$((size))
+  if [ "$size" -gt "$ATTACH_MAX_BYTES" ]; then
+    echo "dispatch: --attach $f: $size bytes exceeds the 10 MiB per-file limit" >&2
+    return 1
+  fi
+  if ! _attach_image_ok "$f"; then
+    echo "dispatch: --attach $f: not a png, jpeg, gif or webp image (checked by content)" >&2
+    return 1
+  fi
+  printf '%s\n' "$size"
+}
+
+# _attach_copy <file> <n> <dir> — copy the bytes of one validated --attach file
+# into <dir> as <n>-<sanitized basename>, 0600, printing the byte count. The path
+# is opened once and checked and read through that fd, so a swap to a symlink
+# after validation is caught; size and signature are re-checked on the copy, not
+# the path. The temp file lives in $crew_dir/attach-tmp, never in <dir>, which the
+# worker can write.
+_attach_copy() {
+  local src=$1 n=$2 dir=$3 fd base tmp tmpdir="$crew_dir/attach-tmp" bytes
+  base="$(printf '%s' "${src##*/}" | tr -c 'A-Za-z0-9._-' _)"
+  base="${base#"${base%%[!.]*}"}"
+  base="${base:0:64}"
+  [ -n "$base" ] || base="file"
+  if [ -L "$tmpdir" ] || { [ -e "$tmpdir" ] && [ ! -d "$tmpdir" ]; }; then
+    echo "dispatch: $tmpdir is a symlink or not a directory — refusing to attach" >&2
+    return 1
+  fi
+  (umask 077 && mkdir -p -- "$tmpdir") || return 1
+  if [ -L "$src" ] || [ ! -f "$src" ] || ! exec {fd}<"$src"; then
+    echo "dispatch: --attach $src: changed while dispatching — not copying" >&2
+    return 1
+  fi
+  if [ -L "$src" ] || [ ! -f "/dev/fd/$fd" ] || [ ! "$src" -ef "/dev/fd/$fd" ]; then
+    exec {fd}<&-
+    echo "dispatch: --attach $src: changed while dispatching — not copying" >&2
+    return 1
+  fi
+  tmp="$(umask 077 && mktemp "$tmpdir/.attach.XXXXXX")" || {
+    exec {fd}<&-
+    return 1
+  }
+  head -c $((ATTACH_MAX_BYTES + 1)) <&"$fd" >"$tmp" || {
+    exec {fd}<&-
+    rm -f -- "$tmp"
+    return 1
+  }
+  exec {fd}<&-
+  bytes="$(wc -c <"$tmp")"
+  if [ "$bytes" -gt "$ATTACH_MAX_BYTES" ] || ! _attach_image_ok "$tmp"; then
+    rm -f -- "$tmp"
+    echo "dispatch: --attach $src: changed while dispatching — not copying" >&2
+    return 1
+  fi
+  mv -fT -- "$tmp" "$dir/$n-$base" || {
+    rm -f -- "$tmp"
+    return 1
+  }
+  printf '%s\n' "$((bytes))"
+}
+
+# _attach_names <dir> — the owner-supplied copies in <dir>, numeric order:
+# regular non-symlink image files named <1-4 digits>-<name> only. Non-images and
+# malformed names are excluded; a valid planted image is still listed and numbered.
+_attach_names() {
+  local f
+  for f in "$1"/*; do
+    [ -f "$f" ] && [ ! -L "$f" ] || continue
+    [[ ${f##*/} =~ ^([0-9]{1,4})-[A-Za-z0-9._-]{1,64}$ ]] || continue
+    if _attach_image_ok "$f"; then printf '%s\t%s\n' "${BASH_REMATCH[1]}" "$f"; fi
+  done | sort -n | cut -f2-
+}
+
 # _protocol_dirs_record_bad — succeed, printing the first offender, when
 # $crew_dir/protocol-dirs, a dir above a slashed branch's leaf, or the record
 # itself is a symlink or the wrong type (mkdir/mv/reads follow a planted link).
