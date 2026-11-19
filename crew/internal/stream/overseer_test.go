@@ -2332,6 +2332,11 @@ func TestTransitionsDispatcherAwaiting(t *testing.T) {
 		at(31, "idle", "alive", poX, po), at(36, "idle", "alive", poX, po), at(37, "idle", "dead", poX, po),
 		at(50, "idle", "dead", poX, po))
 
+	// A dialog after a fired lane_dead is still the human's: awaiting fires.
+	run(map[int64][]string{10: dead, 16: await},
+		at(0, "idle", "dead", w("working"), po), at(10, "idle", "dead", w("working"), po),
+		at(11, "waiting", "dead", poX, po), at(16, "waiting", "dead", poX, po))
+
 	// A busy dispatcher keeps today's lane_dead.
 	bl := blockedWorker("worker:feat/a#s1-1", ovStart, nil, "worker", true)
 	run(map[int64][]string{10: dead}, at(0, "processing", "dead", bl), at(9, "processing", "dead", bl), at(10, "processing", "dead", bl))

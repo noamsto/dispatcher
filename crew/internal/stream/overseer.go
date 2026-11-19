@@ -1044,8 +1044,9 @@ func (t *transitions) next(doc fleetpkg.StatusDoc, nowMS int64) []any {
 			laneDeadKey := condKey{event: "lane_dead", key: r.Key, crew: c.CrewID}
 			laneDead := c.Dispatcher.Lane != nil && *c.Dispatcher.Lane == "dead"
 			// A fired lane_dead outlives its last active worker reaching
-			// pr_open: the dispatcher is still deaf, not awaiting the human.
-			keepDead := held && t.on[laneDeadKey] && laneDead
+			// pr_open: the dispatcher is still deaf, not awaiting the human. A dialog
+			// is the human's whatever the lane does.
+			keepDead := held && *c.Dispatcher.PaneState != "waiting" && t.on[laneDeadKey] && laneDead
 			if c.Attention != "guest" && live && !keepDead {
 				awaitKey := condKey{event: "dispatcher_awaiting", key: r.Key, crew: c.CrewID}
 				// A parked dispatcher's own short wakes (heartbeat, hold_due, reap)
