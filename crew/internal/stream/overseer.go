@@ -519,11 +519,18 @@ func (v *overseer) diff(ctx context.Context) bool {
 	}
 	v.sup.clear("status")
 	now := clockMS(v.o.Options)
-	for _, line := range v.moves.next(doc, now) {
+	// Only a host probed in this document has live hysteresis; a dropped host
+	// keeps its saved ok forever and must not mute its guests.
+	probed := map[string]bool{}
+	for _, h := range doc.Hosts {
+		probed[h.Host] = true
+	}
+	homeHeld := func(home string) bool { p := v.partners[home]; return probed[home] && p != nil && p.ok }
+	for _, line := range v.moves.next(doc, now, homeHeld) {
 		say(v.out, "%s\n", encode(line))
 	}
 	for _, h := range doc.Hosts {
-		if v.federate(h, now) {
+		if v.federate(h, now, homeHeld) {
 			return true
 		}
 	}
@@ -550,7 +557,7 @@ type partner struct {
 // federate folds one partner's view into the lane: the host's reachability
 // edge, its conditions while it is ok (an unreachable host's are carried, not
 // cleared), and the replies it holds for the overseer.
-func (v *overseer) federate(h fleetpkg.HostStatus, now int64) bool {
+func (v *overseer) federate(h fleetpkg.HostStatus, now int64, homeHeld func(string) bool) bool {
 	p := v.partners[h.Host]
 	if p == nil {
 		p = &partner{moves: newTransitions()}
@@ -579,7 +586,7 @@ func (v *overseer) federate(h fleetpkg.HostStatus, now int64) bool {
 		return v.parkWoke()
 	}
 	doc := fleetpkg.StatusDoc{TS: *h.TS, Host: h.Host, Machine: h.Machine, Queue: h.Queue, Repos: h.Repos}
-	for _, line := range p.moves.next(doc, now) {
+	for _, line := range p.moves.next(doc, now, homeHeld) {
 		say(v.out, "%s\n", encode(line))
 	}
 	return v.remote(h, p, now)
@@ -966,8 +973,11 @@ func (m differMoves) transitions() *transitions {
 // condition that turned true; one that turned false re-arms. The first
 // document is the baseline and returns none. A repo missing from doc was
 // skipped, not cleared, so its keys carry forward unchanged. Conditions read
-// doc's own ts; nowMS only stamps the lines.
-func (t *transitions) next(doc fleetpkg.StatusDoc, nowMS int64) []any {
+// doc's own ts; nowMS only stamps the lines. homeHeld reports whether the
+// overseer's hysteresis still holds a partner host reachable (nil: none does).
+// The hysteresis lags the document by one tick, so for the lane's own crews
+// dispatcher_down follows host_unreachable by one interval.
+func (t *transitions) next(doc fleetpkg.StatusDoc, nowMS int64, homeHeld func(string) bool) []any {
 	present := map[string]bool{}
 	for _, r := range doc.Repos {
 		present[r.Key] = true
@@ -1034,7 +1044,10 @@ func (t *transitions) next(doc fleetpkg.StatusDoc, nowMS int64) []any {
 			}
 			// A crew going idle never fires: nothing waits on it. An idle one
 			// gaining work again does.
-			if !live && c.Attention == "unattended" {
+			// An unattended crew whose home partner the hysteresis still holds
+			// reachable is a guest whose demotion rode a single dropped probe.
+			heldGuest := c.Dispatcher.Home != nil && homeHeld != nil && homeHeld(*c.Dispatcher.Home)
+			if !live && c.Attention == "unattended" && !heldGuest {
 				k := condKey{event: "dispatcher_down", key: r.Key, crew: c.CrewID}
 				if fire(k, downLine{overseerHead: head("dispatcher_down"), State: senderText(c.Dispatcher.State), TS: nowMS}) {
 					t.down[ref] = true
