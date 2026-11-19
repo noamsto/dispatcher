@@ -5374,7 +5374,12 @@ if [ -n "$migrate_dir" ]; then
       # crew migrate snapshot force-adds the gitignored root scaffold docs, so the patch may carry them.
       mapfile -t mig_scaf < <(_wt_git "$wt_admin" "$wt_path" diff-tree -r --name-only --diff-filter=d "$mig_tip" "$mig_tree" |
         grep -xE '(SPEC|PLAN|DECOMPOSITION|REVIEW_NOTES|PLAN_ROUND[0-9]+)\.md' || true)
-      [ "${#mig_scaf[@]}" -eq 0 ] || GIT_INDEX_FILE="$mig_idx" _wt_git "$wt_admin" "$wt_path" add -f -- "${mig_scaf[@]}"
+      # A name the retry worktree lacks would fail add -f on its pathspec; leaving it out makes the tree comparison refuse instead.
+      mig_present=()
+      for n in "${mig_scaf[@]}"; do
+        if [ -f "$wt_path/$n" ] && [ ! -L "$wt_path/$n" ]; then mig_present+=("$n"); fi
+      done
+      [ "${#mig_present[@]}" -eq 0 ] || GIT_INDEX_FILE="$mig_idx" _wt_git "$wt_admin" "$wt_path" add -f -- "${mig_present[@]}"
       if [ "$(GIT_INDEX_FILE="$mig_idx" _wt_git "$wt_admin" "$wt_path" write-tree)" != "$mig_tree" ]; then
         rm -rf -- "$mig_idx_dir"
         printf '%s\n' "$mig_out" >&2
