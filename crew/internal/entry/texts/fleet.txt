@@ -126,11 +126,12 @@ as `crew fleet` finds them.
            overseer_inbox[]}]}], skipped[{path, status}]}. state is live,
            dead or closed (no pid file); lane is the stream tick's alive,
            stale or dead, null when no tick was written; pane_state is the
-           tmux-og hook state of a live dispatcher's pane (processing,
-           waiting, done, idle, compacting, denied, error or interrupted),
-           null when unknown: no pane, a dead dispatcher, a status dir not
-           owned by you or open to others, or a dispatcher read from another
-           host; attention is attended while the dispatcher is
+           raw tmux-og hook state of a live dispatcher's pane (processing,
+           waiting, done, idle, compacting, denied or error; an Esc-interrupted
+           or stale turn still reads processing), null when unknown: no pane,
+           a dead dispatcher, a status dir not owned by you or open to others,
+           an agent_pid that is not the dispatcher's, or a dispatcher read from
+           another host; attention is attended while the dispatcher is
            live, else unattended or idle by whether the crew has live work or a
            hold. A worker
            is its roster row plus blocked {since, cycle, budget_left_s, source,

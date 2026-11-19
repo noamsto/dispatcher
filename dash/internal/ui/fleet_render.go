@@ -453,20 +453,38 @@ func fleetLayout(w, h int, fv vm.FleetView, st fleetState) fleetRects {
 	return r
 }
 
+// sessionW is the session column's width whenever it is shown: the widest
+// label, fixed so a pane-state change never shifts the counts column.
+const sessionW = len("awaiting you")
+
 // fleetCols are the Crews panel's column widths, sized to every visible row
 // so scrolling never shifts them.
 type fleetCols struct{ label, lane, session, counts int }
 
 func crewCols(fv vm.FleetView, ix fleetIndex, iw int) fleetCols {
 	var c fleetCols
+	tail := 0
 	for _, i := range ix.visible() {
 		row := fv.Crews[i]
 		c.label = max(c.label, ansi.StringWidth(crewLabel(row, ix.tree[i])))
 		c.lane = max(c.lane, ansi.StringWidth(crewLane(row)))
-		c.session = max(c.session, ansi.StringWidth(crewSession(row)))
+		if crewSession(row) != "" {
+			c.session = sessionW
+		}
 		c.counts = max(c.counts, ansi.StringWidth(workerCounts(row.Workers.ByState)))
+		w := 0
+		for _, m := range crewMarks(row) {
+			w += ansi.StringWidth(m.text)
+		}
+		tail = max(tail, w)
 	}
-	c.label = min(c.label, max(8, iw/2))
+	// The label gives way so the columns after it and every row's trailing
+	// marks stay on screen: margin, glyph and space lead, then the label.
+	rest := 1 + c.lane + 1 + c.counts + tail
+	if c.session > 0 {
+		rest += c.session + 1
+	}
+	c.label = min(c.label, max(8, min(iw/2, iw-3-rest)))
 	return c
 }
 
@@ -867,16 +885,30 @@ func (fr fleetRow) crewLine(idx int, s *spans) string {
 		s.col(label, fr.cols.session, st, false).add(" ", lipgloss.NewStyle())
 	}
 	s.col(workerCounts(c.Workers.ByState), fr.cols.counts, counts, false)
-	if c.Attention > 0 {
-		s.add(fmt.Sprintf(" %d!", c.Attention), fg(colAmber).Bold(true))
-	}
-	if c.Orphaned {
-		s.add(" orphaned", fg(colRed).Bold(true))
-	}
-	if c.IdleRepos > 0 {
-		s.add(fmt.Sprintf(" +%d idle repos", c.IdleRepos), fg(colDim))
+	for _, m := range crewMarks(c) {
+		s.add(m.text, m.st)
 	}
 	return s.String()
+}
+
+type crewMark struct {
+	text string
+	st   lipgloss.Style
+}
+
+// crewMarks are the spans after the counts: attention, orphaned, idle repos.
+func crewMarks(c vm.FleetCrewRow) []crewMark {
+	var ms []crewMark
+	if c.Attention > 0 {
+		ms = append(ms, crewMark{fmt.Sprintf(" %d!", c.Attention), fg(colAmber).Bold(true)})
+	}
+	if c.Orphaned {
+		ms = append(ms, crewMark{" orphaned", fg(colRed).Bold(true)})
+	}
+	if c.IdleRepos > 0 {
+		ms = append(ms, crewMark{fmt.Sprintf(" +%d idle repos", c.IdleRepos), fg(colDim)})
+	}
+	return ms
 }
 
 func weightLine(c vm.FleetCapacity, s *spans, iw int) string {

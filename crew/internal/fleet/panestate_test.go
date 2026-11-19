@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/noamsto/dispatcher/crew/internal/proc/proctest"
 )
 
 // paneDir is a status dir of the given mode holding panes/<id> = text.
@@ -25,6 +27,14 @@ func paneDir(t *testing.T, mode os.FileMode, id, text string) string {
 	return dir
 }
 
+// dispatcherPID is the launcher pid the agent_pid cases are judged against;
+// agent 300 runs under it through shell 200, 400 is alive elsewhere.
+const dispatcherPID = 100
+
+func paneProcs() *proctest.Table {
+	return proctest.New(map[int]bool{dispatcherPID: true, 400: true}, map[int]int{200: dispatcherPID, 300: 200})
+}
+
 func TestReadPaneState(t *testing.T) {
 	envDir := func(dir string) func(string) string {
 		return func(k string) string {
@@ -34,18 +44,38 @@ func TestReadPaneState(t *testing.T) {
 			return ""
 		}
 	}
-	for _, state := range []string{"processing", "waiting", "done", "idle", "compacting", "denied", "error", "interrupted"} {
+	for _, state := range []string{"processing", "waiting", "done", "idle", "compacting", "denied", "error"} {
 		t.Run(state, func(t *testing.T) {
 			dir := paneDir(t, 0o700, "81", "state="+state+"\nts=1\n")
-			if got := readPaneState(envDir(dir), "%81"); got == nil || *got != state {
+			if got := readPaneState(envDir(dir), "%81", paneProcs(), dispatcherPID); got == nil || *got != state {
 				t.Errorf("got %v, want %q", got, state)
 			}
 		})
 	}
 
+	for _, tc := range []struct{ name, text string }{
+		{"agent_pid is a descendant", "state=waiting\nagent_pid=300\n"},
+		{"agent_pid is the dispatcher", "agent_pid=100\nstate=waiting\n"},
+		{"agent_pid absent", "state=waiting\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := paneDir(t, 0o700, "81", tc.text)
+			if got := readPaneState(envDir(dir), "%81", paneProcs(), dispatcherPID); got == nil || *got != "waiting" {
+				t.Errorf("got %v, want waiting", got)
+			}
+		})
+	}
+
+	t.Run("agent_pid with no dispatcher pid", func(t *testing.T) {
+		dir := paneDir(t, 0o700, "81", "state=waiting\nagent_pid=300\n")
+		if got := readPaneState(envDir(dir), "%81", paneProcs(), 0); got != nil {
+			t.Errorf("got %q, want nil", *got)
+		}
+	})
+
 	t.Run("state among other keys", func(t *testing.T) {
 		dir := paneDir(t, 0o700, "81", "ts=1\nstate=waiting\nmsg=a=b\n")
-		if got := readPaneState(envDir(dir), "%81"); got == nil || *got != "waiting" {
+		if got := readPaneState(envDir(dir), "%81", paneProcs(), dispatcherPID); got == nil || *got != "waiting" {
 			t.Errorf("got %v", got)
 		}
 	})
@@ -93,12 +123,19 @@ func TestReadPaneState(t *testing.T) {
 		{"bare number", func(t *testing.T) string { return paneDir(t, 0o700, "81", "state=waiting\n") }, "81"},
 		{"empty pane", func(t *testing.T) string { return paneDir(t, 0o700, "81", "state=waiting\n") }, ""},
 		{"trailing newline pane", func(t *testing.T) string { return paneDir(t, 0o700, "81", "state=waiting\n") }, "%81\n"},
+		{"interrupted is derived, never written", func(t *testing.T) string { return paneDir(t, 0o700, "81", "state=interrupted\n") }, "%81"},
+		{"agent_pid outside the dispatcher", func(t *testing.T) string { return paneDir(t, 0o700, "81", "state=waiting\nagent_pid=400\n") }, "%81"},
+		{"agent_pid dead", func(t *testing.T) string { return paneDir(t, 0o700, "81", "state=waiting\nagent_pid=999\n") }, "%81"},
+		{"agent_pid zero", func(t *testing.T) string { return paneDir(t, 0o700, "81", "state=waiting\nagent_pid=0\n") }, "%81"},
+		{"agent_pid negative", func(t *testing.T) string { return paneDir(t, 0o700, "81", "state=waiting\nagent_pid=-1\n") }, "%81"},
+		{"agent_pid garbage", func(t *testing.T) string { return paneDir(t, 0o700, "81", "state=waiting\nagent_pid=abc\n") }, "%81"},
+		{"agent_pid empty", func(t *testing.T) string { return paneDir(t, 0o700, "81", "state=waiting\nagent_pid=\n") }, "%81"},
 		{"oversized file", func(t *testing.T) string {
 			return paneDir(t, 0o700, "81", strings.Repeat("x=y\n", 4096)+"state=waiting\n")
 		}, "%81"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := readPaneState(envDir(tc.dir(t)), tc.pane); got != nil {
+			if got := readPaneState(envDir(tc.dir(t)), tc.pane, paneProcs(), dispatcherPID); got != nil {
 				t.Errorf("got %q, want nil", *got)
 			}
 		})
@@ -106,7 +143,7 @@ func TestReadPaneState(t *testing.T) {
 
 	t.Run("missing dir is not created", func(t *testing.T) {
 		dir := filepath.Join(t.TempDir(), "absent")
-		if got := readPaneState(envDir(dir), "%81"); got != nil {
+		if got := readPaneState(envDir(dir), "%81", paneProcs(), dispatcherPID); got != nil {
 			t.Errorf("got %q, want nil", *got)
 		}
 		if _, err := os.Lstat(dir); !os.IsNotExist(err) {

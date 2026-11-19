@@ -213,6 +213,24 @@ func TestStatusDispatcherPaneState(t *testing.T) {
 		}
 	})
 
+	t.Run("agent_pid under the dispatcher", func(t *testing.T) {
+		f := setup(t, 0o700)
+		f.procs.Procs[2403590] = proctest.Proc{Parent: 100}
+		f.env["CLAUDE_STATUS_DIR"] = paneDir(t, 0o700, "81", "state=waiting\nagent_pid=2403590\n")
+		if got := paneState(f.collect(StatusRequest{}).crew(t, "c-live").Dispatcher); got != "waiting" {
+			t.Errorf("pane_state = %q, want waiting", got)
+		}
+	})
+
+	t.Run("agent_pid of another tmux server", func(t *testing.T) {
+		f := setup(t, 0o700)
+		f.procs.Procs[2403590] = proctest.Proc{Parent: 102}
+		f.env["CLAUDE_STATUS_DIR"] = paneDir(t, 0o700, "81", "state=waiting\nagent_pid=2403590\n")
+		if got := f.collect(StatusRequest{}).crew(t, "c-live").Dispatcher.PaneState; got != nil {
+			t.Errorf("pane_state = %q, want nil", *got)
+		}
+	})
+
 	t.Run("untrusted dir", func(t *testing.T) {
 		doc := setup(t, 0o755).collect(StatusRequest{})
 		if got := doc.crew(t, "c-live").Dispatcher.PaneState; got != nil {

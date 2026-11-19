@@ -1,0 +1,30 @@
+╭ ▸ ATTENTION ──────────────────────────────────────────────────────────────────── 10 need action ─╮
+│▌1 ✗ @tp relay to tp lost (1 remote workers)                             2h                       │
+│ 2 ✗ c3  dispatcher gone, 2 workers                                      2h → relaunch dispatcher │
+│ 3 ✗ w-b reviewer: role reviewer engine exited (pane %9)                 6m → peek                │
+│ 4 ✗ far far on far: ssh: connect to host far port 22: timed out        10s → peek                │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭ CREWS ──────────────────────────── 7 crews · 13 workers ─╮╭ CAPACITY ─────────────────── 3 free ─╮
+│ ● c1 @workstati… alive needs you    3w 1pr 1? 5!         ││ weight      ██████████░░░░░░ 5/8 (+1)│
+│ ●   ╰─ noamsto/… alive              1pr                  ││ load        1.5/8                    │
+│ ● c5 @workstati… stale standby      1b        2!         ││ qwen        1/2                      │
+│ ✗ c3 @workstati… —                  1w 1pr    1! orphaned││ BUDGET ──────────────────────────────│
+│ PEERS ───────────────────────────────────────────────────││ claude 5h   ██░░░░░░░░░░░░░░░░  10%  │
+│ ○ @box p2                           1w                   ││ claude 7d   ███████████░░░░░░░  62% ↑│
+│ ○ @box p3                           1pr                  │╰──────────────────────────────────────╯
+│ ○ @mbp p1                           1?                   │╭ HOLDS ───────────────────── 4 holds ─╮
+│ ○ @mbp p2                           1?                   ││ high   a/feat/q1 due              15m│
+│                                                          ││ quota  noamsto/… due               2m│
+│                                                          ││ normal b/feat/q2 waiting:load      3m│
+│                                                          ││ low    b/feat/q3 parked:oversize  16m│
+│                                                          │╰──────────────────────────────────────╯
+│                                                          │╭ HOSTS ──────────── 3 unhealthy of 4 ─╮
+│                                                          ││ box  ○ ts  relay idle sync ok 5s     │
+│                                                          ││ halo ● ts  relay up   sync —         │
+│                                                          ││ mbp  ● ts  relay idle sync failed 10m│
+│                                                          ││ tp   ○ ts  relay down sync —         │
+│                                                          ││ suggested (not admitted) ────────────│
+│                                                          ││ evilhost online                      │
+│                                                          ││ phone    offline                     │
+│ w work · b block · f fail · pr pr · N! attn              ││                                      │
+╰──────────────────────────────────────────────────────────╯╰──────────────────────────────────────╯
