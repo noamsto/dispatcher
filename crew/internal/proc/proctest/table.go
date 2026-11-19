@@ -18,6 +18,7 @@ type Proc struct {
 	Args    string
 	Cwd     string
 	Elapsed int64 // seconds
+	Start   string
 }
 
 // Table is a scripted proc.Table: a pid is alive when it is a key of Procs,
@@ -46,6 +47,8 @@ func New(live map[int]bool, parents map[int]int) *Table {
 func (t *Table) Alive(pid int) bool { _, ok := t.Procs[pid]; return ok }
 
 func (t *Table) Elapsed(pid int) (int64, bool) { e := t.Procs[pid].Elapsed; return e, e != 0 }
+
+func (t *Table) Start(pid int) (string, bool) { s := t.Procs[pid].Start; return s, s != "" }
 
 func (t *Table) Parent(pid int) (int, bool) { p := t.Procs[pid].Parent; return p, p != 0 }
 

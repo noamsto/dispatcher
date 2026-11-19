@@ -197,6 +197,7 @@ func TestReattachWrites(t *testing.T) {
 			// A claim this crew still holds: reattaching must not release it.
 			writeLog(t, p, claimRow("c-re", "83", "feat/83-foo", 100))
 			s := reattachWorld()
+			s.start = map[int]string{400: "tok-E"}
 			if tc.world != nil {
 				tc.world(s)
 			}
@@ -210,6 +211,9 @@ func TestReattachWrites(t *testing.T) {
 			}
 			if pid := readPid(t, p, "c-re"); pid != "400" {
 				t.Errorf("pid file = %q, want the engine's 400", pid)
+			}
+			if st, _ := fileText(t, crews.PidStartFile(p.CrewDir("c-re")+"/pid")); st != "tok-E\n" {
+				t.Errorf("start file = %q, want tok-E\n", st)
 			}
 			if pane, _ := fileText(t, panePath(p, "c-re")); pane != "%7\n" {
 				t.Errorf("pane file = %q, want %%7\\n", pane)

@@ -15,8 +15,10 @@ package crews
 import (
 	"context"
 	_ "embed"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"slices"
 	"strconv"
@@ -205,18 +207,50 @@ func crewDirs(paths bus.Paths) []string {
 }
 
 // RecordedLive is _recorded_pid_live: <pid> can still be the dispatcher
-// <pidfile> records — live and not a later-recycled pid (_pid_recycled): the
-// process now holding <pid> started after <pidfile> was last written (plus 2s
-// of slack for ps' second granularity). An unreadable timestamp, or a pidfile
-// that is not a regular file, says not-recycled, so a live process is never
-// judged dead.
+// <pidfile> records — live and not a later-recycled pid (_pid_recycled).
+//
+// When PidStartFile holds a start token and the process's current start is
+// readable, identity is exact: the current start must equal the recorded one.
+// Otherwise (no recorded token, or an unreadable current start — fail closed
+// to the heuristic, never to dead) the process now holding <pid> must not have
+// started after <pidfile> was last written (plus 2s of slack for ps' second
+// granularity). That heuristic says not-recycled on an unreadable timestamp or
+// a pidfile that is not a regular file, so a live process is never judged dead.
 func RecordedLive(t proc.Table, now time.Time, pid int, pidfile string) bool {
 	if !t.Alive(pid) {
 		return false
 	}
+	if data, err := os.ReadFile(PidStartFile(pidfile)); err == nil {
+		if recorded := strings.TrimRight(string(data), "\n "); recorded != "" {
+			if cur, ok := t.Start(pid); ok {
+				return cur == recorded
+			}
+		}
+	}
 	elapsed, ok := t.Elapsed(pid)
 	st, err := os.Stat(pidfile)
 	return !ok || err != nil || !st.Mode().IsRegular() || now.Unix()-elapsed <= st.ModTime().Unix()+2
+}
+
+// PidStartFile is the sidecar holding the start token of the process recorded
+// in <pidfile>.
+func PidStartFile(pidfile string) string { return pidfile + ".start" }
+
+// WritePidStart records the start token of the pid in pidText beside pidfile.
+// Call it before writing the pidfile so a reader never pairs a new pid with an
+// old token. With no valid pid or no readable start it removes the token
+// instead: a stale one would read the new pid dead.
+func WritePidStart(t proc.Table, pidfile, pidText string) error {
+	path := PidStartFile(pidfile)
+	if n, ok := validPid(pidText); ok {
+		if tok, ok := t.Start(n); ok {
+			return os.WriteFile(path, []byte(tok+"\n"), 0o644)
+		}
+	}
+	if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	return nil
 }
 
 // PidAlive is the three-state liveness of the pid a crew's pidfile records,

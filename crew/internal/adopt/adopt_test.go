@@ -37,6 +37,7 @@ type stub struct {
 	parent map[int]int
 	comm   map[int]string
 	cwd    map[int]string
+	start  map[int]string
 	args   string
 	now    time.Time
 }
@@ -51,6 +52,11 @@ func (s *stub) procs() *proctest.Table {
 	for pid, d := range s.cwd {
 		pr := t.Procs[pid]
 		pr.Cwd = d
+		t.Procs[pid] = pr
+	}
+	for pid, st := range s.start {
+		pr := t.Procs[pid]
+		pr.Start = st
 		t.Procs[pid] = pr
 	}
 	ppid := t.Procs[4241]
@@ -720,9 +726,12 @@ func panePath(p bus.Paths, id string) string { return p.CrewDir(id) + "/pane" }
 func TestRecordsTheDispatcherPane(t *testing.T) {
 	p := testPaths(t)
 	registerCrew(t, p, "c-pane", "4321")
-	s := &stub{now: time.Unix(1700000000, 0), env: map[string]string{"TMUX_PANE": "%42"}}
+	s := &stub{now: time.Unix(1700000000, 0), env: map[string]string{"TMUX_PANE": "%42"}, start: map[int]string{123: "tok-A"}}
 	if got := run(t, s, p, Request{ID: "c-pane", PID: "123"}); got.code != 0 {
 		t.Fatalf("code = %d, stderr = %q", got.code, got.stderr)
+	}
+	if got, _ := os.ReadFile(crews.PidStartFile(p.CrewDir("c-pane") + "/pid")); string(got) != "tok-A\n" {
+		t.Errorf("start file = %q, want tok-A\n", got)
 	}
 	data, err := os.ReadFile(panePath(p, "c-pane"))
 	if err != nil || string(data) != "%42\n" {

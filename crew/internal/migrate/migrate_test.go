@@ -120,6 +120,7 @@ type dyingTable struct{ f *fx }
 
 func (d dyingTable) Alive(pid int) bool                  { return d.f.procs.Alive(pid) }
 func (d dyingTable) Elapsed(pid int) (int64, bool)       { return d.f.procs.Elapsed(pid) }
+func (d dyingTable) Start(pid int) (string, bool)        { return d.f.procs.Start(pid) }
 func (d dyingTable) Parent(pid int) (int, bool)          { return d.f.procs.Parent(pid) }
 func (d dyingTable) Comm(pid int) (string, bool)         { return d.f.procs.Comm(pid) }
 func (d dyingTable) Args(pid int) string                 { return d.f.procs.Args(pid) }

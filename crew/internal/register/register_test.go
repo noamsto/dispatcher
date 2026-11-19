@@ -18,6 +18,7 @@ type world struct {
 	alive  map[int]bool
 	parent map[int]int
 	comm   map[int]string
+	start  map[int]string
 	env    map[string]string
 }
 
@@ -27,6 +28,11 @@ func (w *world) procs() *proctest.Table {
 	t := proctest.New(w.alive, w.parent)
 	for pid, c := range w.comm {
 		t.Procs[pid] = proctest.Proc{Parent: t.Procs[pid].Parent, Comm: c}
+	}
+	for pid, s := range w.start {
+		pr := t.Procs[pid]
+		pr.Start = s
+		t.Procs[pid] = pr
 	}
 	ppid := t.Procs[4241]
 	ppid.Args = "claude --resume"
@@ -212,6 +218,35 @@ func TestRegisterDefaultsToOwnerPID(t *testing.T) {
 	}
 	if got := readFile(t, p.CrewDir("c1")+"/pid"); got != "4000\n" {
 		t.Errorf("pid file = %q", got)
+	}
+}
+
+func TestRegisterWritesPidStart(t *testing.T) {
+	p := testPaths(t)
+	w := newWorld("c1")
+	w.start = map[int]string{888: "tok-R"}
+	if code, stderr := run("register", "888", p, w); code != 0 {
+		t.Fatalf("code=%d stderr=%q", code, stderr)
+	}
+	if got := readFile(t, crews.PidStartFile(p.CrewDir("c1")+"/pid")); got != "tok-R\n" {
+		t.Errorf("start file = %q", got)
+	}
+}
+
+func TestRegisterDropsAStaleStart(t *testing.T) {
+	p := testPaths(t)
+	seed(t, p, "c1", "777")
+	startFile := crews.PidStartFile(p.CrewDir("c1") + "/pid")
+	if err := os.WriteFile(startFile, []byte("old\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	w := newWorld("c1")
+	w.alive[777] = false
+	if code, stderr := run("register", "888", p, w); code != 0 {
+		t.Fatalf("code=%d stderr=%q", code, stderr)
+	}
+	if _, err := os.Stat(startFile); !os.IsNotExist(err) {
+		t.Errorf("start file survived: err=%v", err)
 	}
 }
 
