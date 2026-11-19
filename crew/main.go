@@ -43,6 +43,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/overseer"
 	"github.com/noamsto/dispatcher/crew/internal/peer"
 	"github.com/noamsto/dispatcher/crew/internal/piagentdir"
+	"github.com/noamsto/dispatcher/crew/internal/policy"
 	"github.com/noamsto/dispatcher/crew/internal/proc"
 	"github.com/noamsto/dispatcher/crew/internal/prwatch"
 	"github.com/noamsto/dispatcher/crew/internal/queue"
@@ -121,6 +122,10 @@ func routeHelp(sub string, args []string, stdout, stderr io.Writer) (int, bool) 
 		if slices.Contains([]string{"stream", "load", "status", "queue", "prio"}, arg(args, 1)) && isHelpFlag(arg(args, 2)) {
 			return entry.RunHelp([]string{"fleet"}, stdout, stderr), true
 		}
+	case "policy":
+		if isHelpFlag(arg(args, 2)) {
+			return entry.RunHelp([]string{"policy"}, stdout, stderr), true
+		}
 	case "queue":
 		if isHelpFlag(arg(args, 2)) {
 			return entry.RunHelp([]string{"queue"}, stdout, stderr), true
@@ -168,7 +173,7 @@ var subcommands = []string{
 	"where", "identity", "resolve-target", "crews", "register", "deregister", "log", "sessions", "inbox",
 	"roster", "report", "retro", "rate", "fleet", "stack", "roster-render", "pi-agent-dir",
 	"adopt", "await", "dash", "git-baseline", "merge",
-	"git-guard", "help", "hold", "msg", "nudge", "queue",
+	"git-guard", "help", "hold", "msg", "nudge", "queue", "policy",
 	"pr-watch", "reap", "reap-autosweep",
 	"relay", "reply", "role-watch", "stall-watch", "status", "stream", "watch",
 	"remote-run", "remote-exec", "dispatch-row", "peer-sync", "peer-claims", "decide", "decisions", "spec-lint", "followups", "class", "overseer", "migrate", "completion",
@@ -182,7 +187,7 @@ var typedSubcommands = map[string]bool{
 	"deregister": true, "log": true, "sessions": true, "inbox": true,
 	"roster": true, "report": true, "retro": true, "rate": true, "fleet": true,
 	"stack": true, "roster-render": true, "pi-agent-dir": true,
-	"status": true, "msg": true, "reply": true, "hold": true, "queue": true,
+	"status": true, "msg": true, "reply": true, "hold": true, "queue": true, "policy": true,
 	"nudge": true, "await": true, "watch": true, "relay": true, "stream": true,
 	"git-guard": true, "git-baseline": true, "reap": true, "reap-autosweep": true,
 	"adopt": true, "merge": true, "pr-watch": true, "role-watch": true, "stall-watch": true, "help": true,
@@ -242,6 +247,7 @@ type root struct {
 	Reply  replyCmd  `cmd:"" name:"reply" help:"Answer a worker as the dispatcher."`
 	Hold   holdCmd   `cmd:"" name:"hold" help:"Queued dispatches waiting on a quota window."`
 	Queue  queueCmd  `cmd:"" name:"queue" help:"Filed tasks not yet dispatched."`
+	Policy policyCmd `cmd:"" name:"policy" help:"Standing per-repo owner policy for unattended runs."`
 	Nudge  nudgeCmd  `cmd:"" name:"nudge" help:"Type into a lead's pane."`
 	Await  awaitCmd  `cmd:"" name:"await" help:"Block until a msg answers an agent."`
 	Watch  watchCmd  `cmd:"" name:"watch" help:"Park until a worker event qualifies."`
@@ -378,6 +384,8 @@ func refusalKey(args []string) string {
 			return "hold " + args[1]
 		case args[0] == "queue" && slices.Contains([]string{"add", "list", "drop"}, args[1]):
 			return "queue " + args[1]
+		case args[0] == "policy" && slices.Contains([]string{"set", "clear", "show", "list"}, args[1]):
+			return "policy " + args[1]
 		case args[0] == "overseer" && slices.Contains([]string{"msg", "status", "deliver"}, args[1]):
 			return "overseer " + args[1]
 		case args[0] == "migrate" && slices.Contains([]string{"stop", "snapshot", "mark"}, args[1]):
@@ -420,6 +428,23 @@ func holdRequest(p crewArgs) hold.Request {
 		return hold.Request{Action: action, Crew: str(h.Park.Crew), Default: h.Park.Default}
 	default:
 		return hold.Request{Action: action, Crew: str(h.Release.Crew), ID: h.Release.ID}
+	}
+}
+
+// policyRequest is the typed policy call: the action is the word after
+// `policy` in the command kong selected.
+func policyRequest(p crewArgs) policy.Request {
+	c := p.typed.Policy
+	action := strings.Fields(p.cmd)[1]
+	switch action {
+	case "set":
+		return policy.Request{Action: action, Name: c.Set.Name, Text: c.Set.Text}
+	case "clear":
+		return policy.Request{Action: action, Name: c.Clear.Name}
+	case "show":
+		return policy.Request{Action: action, Name: c.Show.Name, JSON: c.Show.JSON}
+	default:
+		return policy.Request{Action: action, JSON: c.List.JSON, Brief: c.List.Brief}
 	}
 }
 
@@ -977,6 +1002,12 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 		})
 	}
 
+	if sub == "policy" {
+		o := policy.DefaultOptions()
+		o.Sender = senderProbes(e.proc)
+		return policy.Run(ctx, policyRequest(parsed), paths.Common, stdout, stderr, o)
+	}
+
 	// retro folds the whole bus with no crew filter, and prints the TSV rows, the
 	// padded report or one JSON object, so it owns its run like hold does. --draft
 	// is the one crew-filtered shape, and it reads its codenames off the roster's
@@ -1061,7 +1092,15 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 	}
 	if sub == "merge" {
 		c := parsed.typed.Merge
-		return merge.Run(ctx, merge.Request{PR: c.PR, DryRun: c.DryRun, AllowNoCI: c.AllowNoCI, NoLedger: c.NoLedger, Crew: str(c.Crew)}, paths, stdout, stderr, merge.Options{GH: gh.Exec{}, Git: git.Exec{}, Dir: cwd, Reply: reply.Options{Clock: clock.FromEnv(), Proc: e.proc, Sender: senderProbes(e.proc)}})
+		return merge.Run(ctx, merge.Request{PR: c.PR, DryRun: c.DryRun, AllowNoCI: c.AllowNoCI, NoLedger: c.NoLedger, Crew: str(c.Crew), Policy: str(c.Policy)}, paths, stdout, stderr, merge.Options{
+			GH: gh.Exec{}, Git: git.Exec{}, Dir: cwd,
+			Reply: reply.Options{Clock: clock.FromEnv(), Proc: e.proc, Sender: senderProbes(e.proc)},
+			Policy: func(name string) (policy.Record, error) {
+				o := policy.DefaultOptions()
+				o.Sender = senderProbes(e.proc)
+				return policy.Load(paths.Common, name, o)
+			},
+		})
 	}
 	if sub == "where" {
 		w := parsed.typed.Where

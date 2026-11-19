@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -23,6 +24,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/invisible"
 	"github.com/noamsto/dispatcher/crew/internal/ledger"
 	"github.com/noamsto/dispatcher/crew/internal/marks"
+	"github.com/noamsto/dispatcher/crew/internal/policy"
 	"github.com/noamsto/dispatcher/crew/internal/reply"
 	"github.com/noamsto/dispatcher/crew/internal/sender"
 	"github.com/noamsto/dispatcher/crew/internal/sessions"
@@ -30,7 +32,7 @@ import (
 )
 
 // Usage is the one-line signature.
-const Usage = "usage: crew merge <N> [--dry-run] [--allow-no-ci] [--no-ledger] [--crew ID]"
+const Usage = "usage: crew merge <N> [--dry-run] [--allow-no-ci] [--no-ledger] [--crew ID] [--policy NAME]"
 
 const exitFailure = 1
 
@@ -42,6 +44,8 @@ type Options struct {
 	Dir string
 	// Reply posts the release to the merged PR's worker.
 	Reply reply.Options
+	// Policy loads the standing policy --policy names; nil refuses every name.
+	Policy func(name string) (policy.Record, error)
 }
 
 // Request is the parsed command line.
@@ -49,6 +53,7 @@ type Request struct {
 	PR                          string
 	DryRun, AllowNoCI, NoLedger bool
 	Crew                        string
+	Policy                      string
 }
 
 type pr struct {
@@ -122,9 +127,23 @@ func Run(ctx context.Context, req Request, paths bus.Paths, stdout, stderr io.Wr
 		say(stderr, "crew: merge: refusing PR %d — %s\n", n, fmt.Sprintf(format, args...))
 		return exitFailure
 	}
+	var provenance string
+	if req.Policy != "" {
+		if req.NoLedger || req.AllowNoCI {
+			return refuse("--policy never waives a gate: drop --no-ledger/--allow-no-ci, or merge on the human's own approval")
+		}
+		rec, err := loadPolicy(req.Policy, o)
+		if err != nil {
+			return refuse("standing policy '%s' is not in force: %s", plain(req.Policy), plain(err.Error()))
+		}
+		provenance = fmt.Sprintf("'%s' set by %s@%s at %s: \"%s\"", plain(rec.Name), plain(rec.By), plain(rec.Host), plain(rec.At), plain(rec.Text))
+	}
 	var report []string
 	var opened *statusRow
 	pass := func(format string, args ...any) { report = append(report, fmt.Sprintf(format, args...)) }
+	if provenance != "" {
+		pass("policy: %s", provenance)
+	}
 
 	out, err := o.GH.Run(ctx, "pr", "view", req.PR, "--json", "state,isDraft,mergeable,headRefOid,baseRefName,url,statusCheckRollup")
 	if err != nil {
@@ -235,10 +254,26 @@ func Run(ctx context.Context, req Request, paths bus.Paths, stdout, stderr io.Wr
 	if err != nil {
 		return refuse("gh pr merge failed: %v", err)
 	}
+	if provenance != "" {
+		say(stdout, "merged under standing policy %s\n", provenance)
+	}
 	if opened != nil {
-		release(ctx, n, *opened, paths, stdout, stderr, o)
+		release(ctx, n, req.Policy, *opened, paths, stdout, stderr, o)
 	}
 	return 0
+}
+
+// loadPolicy reads the named policy through the injected loader, so a missing
+// or refused one is never taken for in force.
+func loadPolicy(name string, o Options) (policy.Record, error) {
+	if o.Policy == nil {
+		return policy.Record{}, errors.New("no policy loader")
+	}
+	rec, err := o.Policy(name)
+	if errors.Is(err, policy.ErrMissing) {
+		return policy.Record{}, fmt.Errorf("no standing policy '%s' in this repo", name)
+	}
+	return rec, err
 }
 
 // neverStarted reports whether the Actions job behind a failed base check run
@@ -281,7 +316,7 @@ func actionsJobID(detailsURL string) string {
 // release tells a worker still holding at pr_open that its PR merged, so it
 // posts done instead of holding its slot for the dispatcher. The merge already
 // happened, so a failed reply only warns.
-func release(ctx context.Context, n int, opened statusRow, paths bus.Paths, stdout, stderr io.Writer, o Options) {
+func release(ctx context.Context, n int, policyName string, opened statusRow, paths bus.Paths, stdout, stderr io.Writer, o Options) {
 	data, err := os.ReadFile(paths.Log)
 	if err != nil {
 		say(stderr, "crew: merge: could not release %s: %v\n", opened.From, err)
@@ -298,6 +333,9 @@ func release(ctx context.Context, n int, opened statusRow, paths bus.Paths, stdo
 		return
 	}
 	body := fmt.Sprintf("approved — PR #%d is merged; post done", n)
+	if policyName != "" {
+		body = fmt.Sprintf("approved — PR #%d is merged under standing policy '%s'; post done", n, policyName)
+	}
 	var rerr bytes.Buffer
 	if reply.Run(ctx, reply.Request{Crew: opened.CrewID, To: opened.From, Body: body}, paths, &rerr, o.Reply) != 0 {
 		say(stderr, "crew: merge: PR merged, but could not release %s: %s\n", opened.From, strings.TrimSpace(rerr.String()))

@@ -1450,6 +1450,8 @@ _pidfile_log_path() {
 # working and one done worker, and `inbox dispatcher:*` holds one question from
 # the blocked worker. HANDOFF_ROSTER=fail makes `roster` exit 3;
 # HANDOFF_INBOX=torn prints the question then exits 5, =fail exits 5 bare.
+# `policy` prints $HANDOFF_POLICY; HANDOFF_POLICY=fail makes it exit 4;
+# HANDOFF_POLICY_ERR is printed to its stderr.
 stub_crew_handoff() {
   export HANDOFF_QUESTION='rebase feat/12-x onto main, or merge it?'
   cat >"$STUB_DIR/crew" <<'EOF'
@@ -1469,6 +1471,11 @@ crews)
 roster)
   [ "${HANDOFF_ROSTER:-}" != fail ] || exit 3
   printf '%s\n' '[{"name":"fern","branch":"feat/12-x","state":"blocked"},{"name":"oak","branch":"feat/13-y","state":"working"},{"name":"ash","branch":"feat/14-z","state":"done"}]'
+  ;;
+policy)
+  [ -z "${HANDOFF_POLICY_ERR:-}" ] || printf '%s\n' "$HANDOFF_POLICY_ERR" >&2
+  [ "${HANDOFF_POLICY:-}" != fail ] || exit 4
+  [ -z "${HANDOFF_POLICY:-}" ] || printf '%s\n' "$HANDOFF_POLICY"
   ;;
 inbox)
   [ "${HANDOFF_INBOX:-}" != fail ] || exit 5
@@ -2015,6 +2022,80 @@ date +%s >\"\$DISPATCHER_HANDOFF_DIR/\$CREW_ID.\$DISPATCHER_LAUNCHER_PID.restart
   [[ "$stderr" == *"no handoff note"* ]]
 }
 
+@test "1679: --no-note with a standing policy takes the queue from it" {
+  _handoff_setup
+  _engine_stub claude
+  HANDOFF_POLICY="'drain' set by noams@box from /dev/pts/3 at 2026-11-19T10:00:00Z: \"merge green PRs\"" \
+    CREW_ID=c1 run --separate-stderr run_launcher --fresh --no-note
+  [ "$status" -eq 0 ]
+  prompt=$(cat "$STUB_DIR/last.1")
+  [[ "$prompt" == *"no handoff note was written; its queue comes from the standing policy below"* ]]
+  [[ "$prompt" == *"5) tell the human one line, then take the queue from the standing policy below, plus overseer request rows with existing issue refs only when its words admit them, instead of waiting for the human."* ]]
+  [[ "$prompt" == *"verbatim: 'drain' set by noams@box from /dev/pts/3 at 2026-11-19T10:00:00Z: \"merge green PRs\". Load the standing-policy skill"* ]]
+  [[ "$prompt" == *"never force-push, deploy, close issues or PRs by hand, or an owner-auth class."* ]]
+  [[ "$prompt" != *"confirm the queue"* && "$prompt" != *"are unknown"* ]]
+  [[ "$stderr" == *"standing policy in force: 'drain' set by noams@box"* ]]
+}
+
+@test "1679: several policy lines are joined with a semicolon" {
+  _handoff_setup
+  _engine_stub claude
+  HANDOFF_POLICY=$'\'a\' one\n\'b\' two' CREW_ID=c1 run --separate-stderr run_launcher --fresh --no-note
+  [ "$status" -eq 0 ]
+  [[ "$(cat "$STUB_DIR/last.1")" == *"verbatim: 'a' one; 'b' two. Load"* ]]
+}
+
+@test "1679: a note handoff with a standing policy keeps resume the queue and adds the policy" {
+  _handoff_setup
+  _engine_stub claude
+  mkdir -p "$HANDOFF"
+  printf 'queue: #12\n' >"$HANDOFF/c1.md"
+  HANDOFF_POLICY="'drain' set by noams@box: \"merge green PRs\"" CREW_ID=c1 run run_launcher --fresh
+  [ "$status" -eq 0 ]
+  prompt=$(cat "$STUB_DIR/last.1")
+  [[ "$prompt" == *"5) tell the human one line, then resume the queue. Standing policy in force"* ]]
+  [[ "$prompt" == *"verbatim: 'drain' set by noams@box: \"merge green PRs\". Load the standing-policy skill"* ]]
+}
+
+@test "1679: with no standing policy the prompts carry no policy text" {
+  _handoff_setup
+  _engine_stub claude
+  mkdir -p "$HANDOFF"
+  printf 'queue: #12\n' >"$HANDOFF/c1.md"
+  CREW_ID=c1 run run_launcher --fresh
+  [ "$status" -eq 0 ]
+  [[ "$(cat "$STUB_DIR/last.1")" != *"tanding policy"* ]]
+  [[ "$(cat "$STUB_DIR/last.1")" == *"then resume the queue." ]]
+  rm "$STUB_DIR/registered.pid"
+  CREW_ID=c1 run run_launcher --fresh --no-note
+  [ "$status" -eq 0 ]
+  [[ "$(cat "$STUB_DIR/last.2")" != *"tanding policy"* ]]
+}
+
+@test "1679: a failing crew policy list is named on stderr and adds no policy block" {
+  _handoff_setup
+  _engine_stub claude
+  HANDOFF_POLICY=fail CREW_ID=c1 run --separate-stderr run_launcher --fresh --no-note
+  [ "$status" -eq 0 ]
+  [[ "$stderr" == *"dispatcher: crew policy list failed — no standing policy carried into this handoff"* ]]
+  prompt=$(cat "$STUB_DIR/last.1")
+  [[ "$prompt" != *"tanding policy"* ]]
+  [[ "$prompt" == *"queue and standing instructions are unknown"* ]]
+  [[ "$prompt" == *"crew policy list reported a problem at launch (a failed read or a refused record) — run it before waiting for the human." ]]
+}
+
+@test "1679: a refused record keeps the in-force block and adds the problem note" {
+  _handoff_setup
+  _engine_stub claude
+  HANDOFF_POLICY="'drain' set by noams@box: \"merge green PRs\"" HANDOFF_POLICY_ERR="crew: policy 'bad' refused" \
+    CREW_ID=c1 run --separate-stderr run_launcher --fresh --no-note
+  [ "$status" -eq 0 ]
+  [[ "$stderr" == *"crew: policy 'bad' refused"* ]]
+  prompt=$(cat "$STUB_DIR/last.1")
+  [[ "$prompt" == *"Standing policy in force"* ]]
+  [[ "$prompt" == *"or an owner-auth class. crew policy list reported a problem at launch"* ]]
+}
+
 @test "1420: --fresh --no-note offers a stored note with its age, as stale data" {
   _handoff_setup
   _engine_stub claude
@@ -2311,6 +2392,7 @@ _want_new_window_argv() { # wt
   [ "${got[*]:9:10}" = "env -u CREW_OVERSEER dispatcher --agent cursor --model kimi-k3-high --autocompact auto" ]
   [ "${#got[@]}" -eq 20 ]
   [[ "${got[19]}" == *"relaunched after a crash"* && "${got[19]}" == *"crew roster"* ]]
+  [[ "${got[19]}" == *"unless crew policy list shows a standing policy in force: then load the standing-policy skill and take the queue from it."* ]]
   _assert_clean_argv
   _assert_kept_then_respawned
   grep -qx 'set-option -p -t %9 remain-on-exit off' "$STUB_LOG"
