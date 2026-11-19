@@ -895,7 +895,8 @@
       ],
       "workers_error": null,
       "holds_error": null,
-      "lane": "alive"
+      "lane": "alive",
+      "dispatcher": null
     },
     {
       "id": "c2",
@@ -988,7 +989,8 @@
       "holds": [],
       "workers_error": null,
       "holds_error": null,
-      "lane": "dead"
+      "lane": "dead",
+      "dispatcher": null
     }
   ],
   "peers": [

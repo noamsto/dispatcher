@@ -234,7 +234,26 @@ func CollectRoster(ctx context.Context, r Runner, cfg Config) RosterSection {
 		return RosterSection{Crews: []RosterCrew{}, Error: &msg}
 	}
 
-	ids := aliveCrewIDs(out)
+	rows := parseCrewRows(out)
+	var candidates []crewRow
+	for _, row := range rows {
+		switch {
+		case row.alive != "yes" && row.workers > 0:
+			candidates = append(candidates, row)
+		}
+	}
+	elsewhere := foreignCrews(ctx, r, cfg, candidates)
+	var ids []string
+	locs := map[string]*DispatcherLoc{}
+	for _, row := range rows {
+		if row.alive == "yes" {
+			ids = append(ids, row.id)
+			locs[row.id] = &DispatcherLoc{Where: "here"}
+		} else if loc, ok := elsewhere[row.id]; ok {
+			ids = append(ids, row.id)
+			locs[row.id] = loc
+		}
+	}
 	crews := make([]RosterCrew, len(ids))
 	peerRows := make([][]map[string]any, len(ids))
 	var wg sync.WaitGroup
@@ -242,11 +261,52 @@ func CollectRoster(ctx context.Context, r Runner, cfg Config) RosterSection {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			crews[i], peerRows[i] = collectCrew(ctx, r, cfg, id)
+			crews[i], peerRows[i] = collectCrew(ctx, r, cfg, id, locs[id])
 		}()
 	}
 	wg.Wait()
 	return RosterSection{Crews: crews, Peers: mergePeers(peerRows), Error: nil}
+}
+
+// foreignCrews finds the candidates whose dispatcher is live in another repo's
+// bus: crews with workers on this bus but no live pid here, not homed here,
+// that `crew fleet status` lists under a repo with a live dispatcher. Either
+// lookup failing drops the candidates, as before.
+func foreignCrews(ctx context.Context, r Runner, cfg Config, candidates []crewRow) map[string]*DispatcherLoc {
+	if len(candidates) == 0 {
+		return nil
+	}
+	out, _, err := r.Run(ctx, cfg.Crew[0], crewArgs(cfg, "crews", "--home")...)
+	if exitCode(err) != 0 {
+		return nil
+	}
+	homed := map[string]bool{}
+	for _, row := range parseCrewRows(out) {
+		homed[row.id] = true
+	}
+	var pending []string
+	for _, c := range candidates {
+		if !homed[c.id] {
+			pending = append(pending, c.id)
+		}
+	}
+	if len(pending) == 0 {
+		return nil
+	}
+	st, errMsg := CollectFleetStatus(ctx, r, cfg)
+	if errMsg != nil {
+		return nil
+	}
+	found := map[string]*DispatcherLoc{}
+	for _, repo := range st.Repos {
+		for _, c := range repo.Crews {
+			if _, done := found[c.CrewID]; done || c.Dispatcher.State != "live" || !slices.Contains(pending, c.CrewID) {
+				continue
+			}
+			found[c.CrewID] = &DispatcherLoc{Where: "elsewhere", Repo: &repo.Repo, Common: &repo.Common}
+		}
+	}
+	return found
 }
 
 // mergePeers dedupes peer rows (every crew's roster repeats them) by
@@ -279,20 +339,25 @@ func peerKey(row map[string]any) string {
 
 // collectCrew runs one crew's roster, hold list and lane probe concurrently.
 // The roster's peer rows come back separately from the crew's own workers.
-func collectCrew(ctx context.Context, r Runner, cfg Config, id string) (RosterCrew, []map[string]any) {
+// A crew whose dispatcher lives elsewhere skips the lane probe: this bus has no
+// pid for it, so the probe would read a false dead lane.
+func collectCrew(ctx context.Context, r Runner, cfg Config, id string, loc *DispatcherLoc) (RosterCrew, []map[string]any) {
 	var holds []map[string]any
 	var hErr *string
 	var lane *LaneStatus
 	var wg sync.WaitGroup
-	wg.Add(2)
+	wg.Add(1)
 	go func() {
 		defer wg.Done()
 		holds, hErr = fetchRosterList(ctx, r, cfg, crewArgs(cfg, "hold", "list", "--crew", id, "--json"))
 	}()
-	go func() {
-		defer wg.Done()
-		lane = probeLane(ctx, r, cfg, id)
-	}()
+	if loc.Where == "here" {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			lane = probeLane(ctx, r, cfg, id)
+		}()
+	}
 	rows, wErr := fetchRosterList(ctx, r, cfg, crewArgs(cfg, "roster", id, "--peers"))
 	wg.Wait()
 
@@ -311,7 +376,7 @@ func collectCrew(ctx context.Context, r Runner, cfg Config, id string) (RosterCr
 	if holds == nil {
 		holds = []map[string]any{}
 	}
-	return RosterCrew{ID: id, Workers: workers, Holds: holds, WorkersError: wErr, HoldsError: hErr, Lane: lane}, peers
+	return RosterCrew{ID: id, Workers: workers, Holds: holds, WorkersError: wErr, HoldsError: hErr, Lane: lane, Dispatcher: loc}, peers
 }
 
 // probeLane reads `crew stream --crew <id> --status`. The command exits 2 for
@@ -358,10 +423,17 @@ func firstLineOrExit(errb []byte, rc int) string {
 	return first
 }
 
-// aliveCrewIDs parses `crew crews`' TSV (header + crew_id/last/first/
-// workers/pid/alive rows), returning the ids with alive == "yes".
-func aliveCrewIDs(out []byte) []string {
-	var ids []string
+// crewRow is one `crew crews` TSV row.
+type crewRow struct {
+	id      string
+	workers int
+	alive   string
+}
+
+// parseCrewRows parses `crew crews`' TSV (header + crew_id/last/first/
+// workers/pid/alive rows) in order.
+func parseCrewRows(out []byte) []crewRow {
+	var rows []crewRow
 	for i, line := range strings.Split(string(out), "\n") {
 		if i == 0 || line == "" {
 			continue
@@ -370,9 +442,8 @@ func aliveCrewIDs(out []byte) []string {
 		if len(fields) < 6 {
 			continue
 		}
-		if fields[5] == "yes" {
-			ids = append(ids, fields[0])
-		}
+		workers, _ := strconv.Atoi(fields[3])
+		rows = append(rows, crewRow{id: fields[0], workers: workers, alive: fields[5]})
 	}
-	return ids
+	return rows
 }

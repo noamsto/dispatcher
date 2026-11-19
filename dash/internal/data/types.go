@@ -232,4 +232,14 @@ type RosterCrew struct {
 	WorkersError *string          `json:"workers_error"`
 	HoldsError   *string          `json:"holds_error"`
 	Lane         *LaneStatus      `json:"-"`
+	Dispatcher   *DispatcherLoc   `json:"-"`
+}
+
+// DispatcherLoc says where a crew's dispatcher lives relative to the bus the
+// roster was read from: here, in another repo (Repo/Common name it), or
+// nowhere live. Nil means unknown. Like Lane it is json:"-".
+type DispatcherLoc struct {
+	Where  string
+	Repo   *string
+	Common *string
 }

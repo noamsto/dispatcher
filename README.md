@@ -1002,6 +1002,14 @@ live; Fleet loads on first activation (see below):
 is the same struct the TUI renders. `--view fleet` collects only what the fleet
 needs, not the per-crew roster.
 
+`overview` and `roster` list a crew whose dispatcher lives on another local bus
+(for example a dispatcher in repo A that dispatches into repo B) when it has
+workers on this bus and `crew fleet status` shows a live dispatcher for it; a
+crew with no live dispatcher anywhere stays omitted. Each overview worker and
+roster crew carries `dispatcher: {where, repo, common}`, where `where` is
+`here`, `elsewhere` (`repo` and `common` name the repo with the live
+dispatcher) or `none`; it is `null` for peer rows.
+
 `--watch` (every view) also fires on relayed remote-worker batches (relay
 cursors under `crew/crews/*/relay/`) and peer syncs (`crew/peers/*.link` and
 `*.roster`), polled every second. For `fleet`, it also emits a full document

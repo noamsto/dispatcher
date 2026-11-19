@@ -3,6 +3,8 @@ package view
 import (
 	"fmt"
 	"math"
+
+	"github.com/noamsto/dispatcher/dash/internal/data"
 )
 
 // RosterView is what Live and Board read: every crew's workers and holds
@@ -17,12 +19,29 @@ type RosterView struct {
 }
 
 type CrewRow struct {
-	ID           string      `json:"id"`
-	Workers      []WorkerRow `json:"workers"`
-	Holds        []HoldRow   `json:"holds"`
-	WorkersError *string     `json:"workers_error"`
-	HoldsError   *string     `json:"holds_error"`
-	Lane         *string     `json:"lane"`
+	ID           string            `json:"id"`
+	Workers      []WorkerRow       `json:"workers"`
+	Holds        []HoldRow         `json:"holds"`
+	WorkersError *string           `json:"workers_error"`
+	HoldsError   *string           `json:"holds_error"`
+	Lane         *string           `json:"lane"`
+	Dispatcher   *WorkerDispatcher `json:"dispatcher"`
+}
+
+// WorkerDispatcher says where a crew's dispatcher lives relative to the bus
+// the rows were read from: here, elsewhere (Repo/Common name the repo whose
+// dispatcher is live) or none.
+type WorkerDispatcher struct {
+	Where  string  `json:"where"`
+	Repo   *string `json:"repo"`
+	Common *string `json:"common"`
+}
+
+func dispatcherOf(loc *data.DispatcherLoc) *WorkerDispatcher {
+	if loc == nil {
+		return nil
+	}
+	return &WorkerDispatcher{Where: loc.Where, Repo: loc.Repo, Common: loc.Common}
 }
 
 type WorkerRow struct {
@@ -222,6 +241,7 @@ func BuildRoster(in Inputs) RosterView {
 			Holds:        make([]HoldRow, 0, len(c.Holds)),
 			WorkersError: c.WorkersError,
 			HoldsError:   c.HoldsError,
+			Dispatcher:   dispatcherOf(c.Dispatcher),
 		}
 		for _, h := range c.Holds {
 			row.Holds = append(row.Holds, HoldRowOf(h, now))
