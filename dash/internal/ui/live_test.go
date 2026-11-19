@@ -872,3 +872,19 @@ func TestLiveSelectedPaneDroppedAtTinyHeight(t *testing.T) {
 		t.Fatalf("pane should be dropped at 8 lines:\n%s", out)
 	}
 }
+
+func TestLiveForeignErrorShown(t *testing.T) {
+	asciiProfile(t)
+	foreign := "foreign crews: timed out after 10s"
+	snap := boardSnapshot()
+	snap.Roster.ForeignError = &foreign
+	m := sized(testModel(snap), 120, 40)
+	if out := m.View(); !strings.Contains(out, foreign) {
+		t.Errorf("foreign error missing with crews:\n%s", out)
+	}
+	snap.Roster.Crews = nil
+	m = sized(testModel(snap), 120, 40)
+	if out := m.View(); !strings.Contains(out, foreign) || !strings.Contains(out, "no active crew") {
+		t.Errorf("foreign error missing on the empty roster:\n%s", out)
+	}
+}

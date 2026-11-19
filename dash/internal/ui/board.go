@@ -265,9 +265,6 @@ func (v *boardView) load(roster vm.RosterView) {
 	v.roster = roster
 	var items []boardItem
 	v.failed = nil
-	if roster.ForeignError != nil {
-		v.failed = append(v.failed, cleanText(*roster.ForeignError))
-	}
 	for _, c := range roster.Crews {
 		if c.WorkersError != nil {
 			v.failed = append(v.failed, "crew "+cleanText(c.ID)+": workers unavailable: "+cleanText(*c.WorkersError))
@@ -476,16 +473,22 @@ func (v boardView) View(w, h int) string {
 	for _, f := range v.failed {
 		top = append(top, truncateLine(warnStyle.Render(f), w))
 	}
+	// A failed foreign lookup says nothing about the local crews, so it sits
+	// outside the crew-failure count and does not hide "no workers".
+	var foreign []string
+	if e := v.roster.ForeignError; e != nil {
+		foreign = append(foreign, truncateLine(warnStyle.Render(cleanText(*e)), w))
+	}
 	// Keep the info/prompt line and a card line on screen.
-	if limit := max(h-2, 1); len(top) > limit {
+	if limit := max(h-2-len(foreign), 1); len(top) > limit {
 		more := truncateLine(warnStyle.Render("+"+strconv.Itoa(len(top)-limit+1)+" more crews: workers unavailable"), w)
 		top = append(top[:limit-1], more)
 	}
 	switch {
 	case len(v.items) == 0 && len(top) == 0:
-		return truncateLine("no workers", w)
+		return strings.Join(append(foreign, truncateLine("no workers", w)), "\n")
 	case len(v.items) == 0:
-		return strings.Join(top, "\n")
+		return strings.Join(append(foreign, top...), "\n")
 	case w < boardCardW:
 		return truncateLine("terminal too narrow for the board", w)
 	}
@@ -520,6 +523,7 @@ func (v boardView) View(w, h int) string {
 		}
 	}
 
+	top = append(foreign, top...)
 	room := max0(h - 1 - len(top))
 	if len(body) > room {
 		off := clamp(selEnd-room, 0, selStart)
