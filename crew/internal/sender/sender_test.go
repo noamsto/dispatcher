@@ -282,3 +282,29 @@ func TestWatch(t *testing.T) {
 		t.Errorf("Watch with zero Probes = %q, want empty", got)
 	}
 }
+
+func TestCrewPane(t *testing.T) {
+	tests := []struct {
+		name string
+		f    fixture
+		want string
+	}{
+		{"lead pane", fixture{panes: pane("100", "feat/x", "lead", "c1", "@1", "%1")}, "pane %1 is stamped as the lead of feat/x"},
+		{"empty role is lead", fixture{panes: pane("100", "feat/x", "", "c1", "@1", "%1")}, "pane %1 is stamped as the lead of feat/x"},
+		{"role pane", fixture{panes: pane("100", "feat/x", "reviewer", "c1", "@1", "%1")}, "pane %1 is stamped as role:feat/x:reviewer"},
+		{"overseer pane", fixture{panes: pane("100", "", "overseer", "", "@1", "%1")}, "pane %1 is stamped as the overseer's"},
+		{"unstamped pane", fixture{panes: pane("100", "", "", "", "@1", "%1")}, ""},
+		{"nearest unstamped pane hides outer stamp", fixture{panes: pane("100", "feat/x", "lead", "c1", "@1", "%1") + pane("200", "", "", "", "@1", "%2")}, ""},
+		{"no pane in ancestry", fixture{panes: pane("999", "feat/x", "lead", "c1", "@1", "%1")}, ""},
+		{"panes error", fixture{panes: pane("100", "feat/x", "lead", "c1", "@1", "%1"), panesErr: true}, ""},
+		{"no tmux", fixture{noPanes: true}, ""},
+		{"no ancestry", fixture{panes: pane("100", "feat/x", "lead", "c1", "@1", "%1"), noParent: true}, ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := CrewPane(t.Context(), tc.f.probes()); got != tc.want {
+				t.Errorf("CrewPane = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
