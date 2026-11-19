@@ -138,7 +138,7 @@ func takeFollow(lockd string, o Options, stderr io.Writer) bool {
 	pid := strconv.Itoa(os.Getpid())
 	takeover := filepath.Join(filepath.Dir(lockd), takeoverName)
 	if lock.Acquire(lockd, pid) {
-		_ = os.Remove(takeover)
+		dropStaleTakeover(takeover)
 		return true
 	}
 	holder := lock.Holder(lockd)
@@ -148,11 +148,20 @@ func takeFollow(lockd string, o Options, stderr io.Writer) bool {
 		}
 	}
 	if valid, gone := reclaim(holder, o); valid && gone && lock.Acquire(lockd, pid) {
-		_ = os.Remove(takeover)
+		dropStaleTakeover(takeover)
 		return true
 	}
 	say(stderr, "crew: fleet stream: could not take over the overseer follow from pid %s\n", orUnknown(holder))
 	return false
+}
+
+// dropStaleTakeover removes a takeover marker unless it names this process: a
+// concurrent newer follow may have just named this holder before TERMing it.
+func dropStaleTakeover(takeover string) {
+	if takenOver(filepath.Dir(takeover), os.Getpid()) {
+		return
+	}
+	_ = os.Remove(takeover)
 }
 
 func (f *follow) infoPath() string { return filepath.Join(f.lane, daemonInfoName) }

@@ -485,6 +485,30 @@ func TestOverseerFollowTakesOverWritesTheMarker(t *testing.T) {
 	r.finish()
 }
 
+func TestOverseerFollowKeepsAMarkerNamingItself(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		pid  int
+		kept bool
+	}{
+		{"self", os.Getpid(), true},
+		{"other", os.Getpid() + 1, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			lane := t.TempDir()
+			marker := filepath.Join(lane, takeoverName)
+			writeFile(t, marker, fmt.Sprint(tc.pid))
+			if !takeFollow(filepath.Join(lane, "follow.lock.d"), Options{}, io.Discard) {
+				t.Fatal("takeFollow failed on a free lock")
+			}
+			_, err := os.Stat(marker)
+			if kept := err == nil; kept != tc.kept {
+				t.Errorf("marker kept %v, want %v", kept, tc.kept)
+			}
+		})
+	}
+}
+
 // term TERMs this process, which only the running follow has subscribed to.
 func (r *followRun) term() int {
 	r.f.t.Helper()
