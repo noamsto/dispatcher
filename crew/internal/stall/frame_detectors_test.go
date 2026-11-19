@@ -318,6 +318,38 @@ func TestD1Prompt(t *testing.T) {
 				}
 			},
 		}},
+		{"a countdown that first appears after the post still reads as auto-blocked", fdScript{
+			end: 90,
+			frame: func(at int64) string {
+				switch {
+				case at < 30:
+					return perm
+				case at < 45:
+					return countdown
+				}
+				return interrupted
+			},
+			want: map[int64][]string{
+				15: {"blocked|" + subagentPermission},
+				45: {"working|prompt: cleared", "blocked|" + autoBlocked},
+			},
+		}},
+		{"a countdown-less dialog after a countdown one is not auto-blocked", fdScript{
+			end: 90,
+			frame: func(at int64) string {
+				switch {
+				case at < 30:
+					return countdown
+				case at < 45:
+					return perm
+				}
+				return interrupted
+			},
+			want: map[int64][]string{
+				15: {"blocked|" + guardPermission},
+				45: {"working|prompt: cleared"},
+			},
+		}},
 		{"the auto-blocked block clears when the frame moves on", fdScript{
 			end: 120,
 			frame: func(at int64) string {

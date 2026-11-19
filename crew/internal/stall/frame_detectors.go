@@ -18,7 +18,7 @@ type frameDet struct {
 
 	d1At, d1Hits int64
 	d1Kind       string // what was actually posted, for the mid-episode flip
-	d1Countdown  bool   // the posted permission frame carried the auto-deny countdown
+	d1Countdown  bool   // the latest permission frame of the open episode carried the auto-deny countdown
 
 	d1bAt, d1bHits int64
 
@@ -128,7 +128,7 @@ func (w *watch) d1() error {
 				if !fd.d1Countdown {
 					break
 				}
-				// The posted dialog showed the auto-deny countdown, so the interrupt
+				// The dialog last on screen showed the auto-deny countdown, so the interrupt
 				// is Claude Code timing it out: nothing is left to answer, and the
 				// open prompt: block is replaced by a lead-idle one.
 				if err := w.clearPrompt(); err != nil {
@@ -157,6 +157,9 @@ func (w *watch) d1() error {
 		}
 		fd.d1At = 0
 		fd.d1Hits = 0
+	}
+	if kind == "permission" && fd.d1At != 0 {
+		fd.d1Countdown = hasCountdown(w.text)
 	}
 	fd.d1Hits++
 	if fd.d1Hits < 2 || fd.d1At != 0 {
