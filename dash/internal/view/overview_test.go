@@ -449,3 +449,15 @@ func TestOverviewDispatcherLocation(t *testing.T) {
 		t.Errorf("roster crew dispatchers = %+v %+v", rv.Crews[1].Dispatcher, rv.Crews[2].Dispatcher)
 	}
 }
+
+func TestRosterViewCarriesForeignError(t *testing.T) {
+	in := viewtest.Inputs()
+	if got := view.BuildRoster(in).ForeignError; got != nil {
+		t.Fatalf("ForeignError = %q, want nil", *got)
+	}
+	msg := "foreign crews: boom"
+	in.Snap.Roster.ForeignError = &msg
+	if got := view.BuildRoster(in).ForeignError; got == nil || *got != msg {
+		t.Errorf("ForeignError = %v, want %q", got, msg)
+	}
+}

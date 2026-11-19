@@ -555,10 +555,13 @@ func rosterPane(snap data.Snapshot) []line {
 	if r.Error != nil {
 		return []line{{style: "n", text: "unavailable: " + cleanText(*r.Error)}}
 	}
-	if len(r.Crews) == 0 {
-		return []line{{style: "n", text: "no active crew"}}
-	}
 	var out []line
+	if r.ForeignError != nil {
+		out = append(out, line{style: "n", text: "unavailable: " + cleanText(*r.ForeignError)})
+	}
+	if len(r.Crews) == 0 {
+		return append(out, line{style: "n", text: "no active crew"})
+	}
 	for _, c := range r.Crews {
 		out = append(out, rosterCrewLines(c)...)
 	}

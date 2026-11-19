@@ -371,3 +371,31 @@ func TestMigratedIsDoneDimArrow(t *testing.T) {
 		t.Errorf("legend lacks migrated: %q", fleetLegends[0])
 	}
 }
+
+func TestBoardForeignErrorShownBesideCrewFailures(t *testing.T) {
+	asciiProfile(t)
+	snap := boardSnapshot()
+	foreign := "foreign crews: timed out after 10s"
+	snap.Roster.ForeignError = &foreign
+	m := sized(testModel(snap), 120, 40)
+	m.active = goldenTabBoard
+	if out := m.View(); !strings.Contains(out, foreign) || !strings.Contains(out, "basil") {
+		t.Errorf("foreign error missing beside loaded crews:\n%s", out)
+	}
+	boom := "boom"
+	for i := range snap.Roster.Crews {
+		snap.Roster.Crews[i].WorkersError = &boom
+	}
+	m = sized(testModel(snap), 120, 8)
+	m.active = goldenTabBoard
+	out := m.views[boardTab].View(120, 3)
+	if !strings.Contains(out, foreign) || strings.Contains(out, "+3 more") {
+		t.Errorf("foreign error lost or miscounted as a crew failure:\n%s", out)
+	}
+	snap.Roster.Crews = nil
+	m = sized(testModel(snap), 120, 40)
+	m.active = goldenTabBoard
+	if out := m.views[boardTab].View(120, 10); !strings.Contains(out, foreign) || !strings.Contains(out, "no workers") {
+		t.Errorf("foreign error should sit beside the empty state:\n%s", out)
+	}
+}

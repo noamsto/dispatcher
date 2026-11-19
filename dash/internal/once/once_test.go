@@ -291,3 +291,17 @@ func TestRawFieldsInjectionAreCleaned(t *testing.T) {
 		}
 	}
 }
+
+// TestRosterForeignErrorShown checks both renderers show a failed
+// foreign-crew lookup; ForeignError is json:"-", so the golden snapshot
+// cannot carry it.
+func TestRosterForeignErrorShown(t *testing.T) {
+	snap := loadSnapshot(t)
+	msg := "foreign crews: boom"
+	snap.Roster.ForeignError = &msg
+	for _, color := range []bool{false, true} {
+		if got := Render(snap, color); !strings.Contains(got, "unavailable: foreign crews: boom") {
+			t.Errorf("color=%v: foreign error missing:\n%s", color, got)
+		}
+	}
+}

@@ -416,6 +416,7 @@ func (v liveView) tableView(w, h int) string {
 		top = append(top, truncateLine("roster unavailable: "+cleanText(*roster.Error), w))
 		return strings.Join(top, "\n")
 	case len(roster.Crews) == 0:
+		top = append(top, v.foreignLines(w)...)
 		top = append(top, truncateLine("no active crew", w))
 		return strings.Join(top, "\n")
 	}
@@ -500,7 +501,15 @@ func (v liveView) attentionLines(w int) []string {
 			out = append(out, truncateLine(warnStyle.Render("crew "+id+": holds unavailable: "+cleanText(*c.HoldsError)), w))
 		}
 	}
-	return out
+	return append(out, v.foreignLines(w)...)
+}
+
+// foreignLines is the one-line warning for a failed foreign-crew lookup.
+func (v liveView) foreignLines(w int) []string {
+	if v.roster.ForeignError == nil {
+		return nil
+	}
+	return []string{truncateLine(warnStyle.Render(cleanText(*v.roster.ForeignError)), w)}
 }
 
 // selectedPane is the rule plus four lines about the selected worker: where

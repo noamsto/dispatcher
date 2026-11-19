@@ -14,6 +14,7 @@ type RosterView struct {
 	View          string      `json:"view"`
 	Loaded        bool        `json:"loaded"`
 	Error         *string     `json:"error"`
+	ForeignError  *string     `json:"foreign_error,omitempty"`
 	Crews         []CrewRow   `json:"crews"`
 	Peers         []WorkerRow `json:"peers"`
 }
@@ -231,6 +232,7 @@ func BuildRoster(in Inputs) RosterView {
 		View:          "roster",
 		Loaded:        in.Loaded.Roster,
 		Error:         in.Snap.Roster.Error,
+		ForeignError:  in.Snap.Roster.ForeignError,
 		Crews:         make([]CrewRow, 0, len(in.Snap.Roster.Crews)),
 		Peers:         make([]WorkerRow, 0, len(in.Snap.Roster.Peers)),
 	}

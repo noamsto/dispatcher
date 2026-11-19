@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"math"
 	"slices"
 	"sort"
@@ -270,7 +271,7 @@ func CollectRoster(ctx context.Context, r Runner, cfg Config) RosterSection {
 
 // fleetStatusTimeout bounds the fleet-status lookup so a stuck call cannot
 // stall every roster refresh.
-const fleetStatusTimeout = 10 * time.Second
+var fleetStatusTimeout = 10 * time.Second
 
 // foreignCrews finds the candidates whose dispatcher is live in another repo's
 // bus: crews with workers on this bus but no live pid here, not homed here,
@@ -303,6 +304,9 @@ func foreignCrews(ctx context.Context, r Runner, cfg Config, candidates []crewRo
 	st, errMsg := CollectFleetStatus(fleetCtx, r, cfg)
 	if errMsg != nil {
 		msg := "foreign crews: " + *errMsg
+		if ctx.Err() == nil && errors.Is(fleetCtx.Err(), context.DeadlineExceeded) {
+			msg = "foreign crews: timed out after " + fleetStatusTimeout.String()
+		}
 		return nil, &msg
 	}
 	found := map[string]*DispatcherLoc{}
