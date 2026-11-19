@@ -197,10 +197,16 @@ second line"
   [ "$status" -eq 0 ]
 }
 
+@test "a multi-line task names the session by its first line only" {
+  CREW_ID=c1 run_launcher "$(printf 'fix it\nmore detail')"
+  run grep -F -- '--name dispatcher: fix it --' "$STUB_LOG"
+  [ "$status" -eq 0 ]
+}
+
 @test "the session name cuts multibyte task text on characters, not bytes" {
   local task
   task=$(printf 'é%.0s' {1..60})
-  CREW_ID=c1 run_launcher "$task"
+  LC_ALL=C.UTF-8 CREW_ID=c1 run_launcher "$task"
   run grep -F -- "--name dispatcher: $(printf 'é%.0s' {1..39})…" "$STUB_LOG"
   [ "$status" -eq 0 ]
 }

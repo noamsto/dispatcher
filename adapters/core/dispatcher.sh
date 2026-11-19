@@ -249,12 +249,12 @@ if [ -n "$note_src" ]; then
 fi
 
 # _task_session_name <task> — the engine session name for a task launch: the
-# first line, whitespace collapsed, at most 40 characters. The engine draws the
-# name across the input box border, so a long or multi-line task would fill it.
+# first line, whitespace collapsed, at most 40 characters (characters, so the
+# caller's UTF-8 locale must apply). The engine draws the name across the input
+# box border, so a long or multi-line task would fill it.
 _task_session_name() {
-  local LC_ALL=C.utf8 line words
-  line=${1%%$'\n'*}
-  read -r -a words <<<"$line"
+  local line words
+  read -r -a words <<<"$1"
   line="${words[*]}"
   if [ "${#line}" -gt 40 ]; then
     line="${line:0:39}…"
