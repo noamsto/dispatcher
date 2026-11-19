@@ -185,8 +185,6 @@ func (w *watch) d1() error {
 	return nil
 }
 
-// hasCountdown reports whether the frame carries the permission auto-deny
-// countdown line.
 func hasCountdown(text string) bool {
 	return slices.ContainsFunc(strings.Split(text, "\n"), rePermCountdown.MatchString)
 }
