@@ -58,13 +58,38 @@ func IsAncestor(t Table, pid int) bool { return Ancestors(t)[pid] }
 // Alive is _pid_alive under any uid: a failed signal is not proof of
 // death — another uid's process answers EPERM, and the signal merely being
 // refused proves it exists. `ps -p` is the fallback for any other error,
-// exit status only, as the bash arm discards its output.
+// exit status only, as the bash arm discards its output. On Linux kill(2)
+// also succeeds for a non-leader thread id, which is no process: /proc names
+// its thread group, and a Tgid other than pid reads dead. A status file that
+// cannot be read leaves the signal's answer standing.
 func (OS) Alive(pid int) bool {
+	if tgid, ok := threadGroup(pid); ok && tgid != pid {
+		return false
+	}
 	err := syscall.Kill(pid, 0)
 	if err == nil || errors.Is(err, syscall.EPERM) {
 		return true
 	}
 	return exec.Command("ps", "-p", strconv.Itoa(pid), "-o", "pid=").Run() == nil
+}
+
+// threadGroup is the Tgid line of /proc/<pid>/status.
+func threadGroup(pid int) (int, bool) {
+	b, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/status")
+	if err != nil {
+		return 0, false
+	}
+	return parseTgid(string(b))
+}
+
+func parseTgid(status string) (int, bool) {
+	for line := range strings.SplitSeq(status, "\n") {
+		if v, ok := strings.CutPrefix(line, "Tgid:"); ok {
+			n, err := strconv.Atoi(strings.TrimSpace(v))
+			return n, err == nil
+		}
+	}
+	return 0, false
 }
 
 // Elapsed is _ps_elapsed_s: `etimes` is exact where the platform has it;
