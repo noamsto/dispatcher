@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -249,5 +250,51 @@ func TestOSStartDeadPid(t *testing.T) {
 	}
 	if tok, ok := (OS{}).Start(cmd.Process.Pid); ok {
 		t.Errorf("Start(reaped pid) = %q, want unreadable", tok)
+	}
+}
+
+func TestParseTgid(t *testing.T) {
+	if n, ok := parseTgid("Name:\tx\nTgid:\t42\nPid:\t43\n"); !ok || n != 42 {
+		t.Errorf("parseTgid = %d, %v; want 42, true", n, ok)
+	}
+	for _, s := range []string{"", "Name:\tx\n", "Tgid:\tabc\n"} {
+		if _, ok := parseTgid(s); ok {
+			t.Errorf("parseTgid(%q) ok; want false", s)
+		}
+	}
+}
+
+// A non-leader thread id answers kill(tid, 0) but is not a process: a recorded
+// pid the kernel reused as one must not read live.
+func TestOSAliveThreadID(t *testing.T) {
+	if _, err := os.Stat("/proc/self/status"); err != nil {
+		t.Skip("no procfs")
+	}
+	tasks, err := os.ReadDir("/proc/self/task")
+	if err != nil {
+		t.Fatal(err)
+	}
+	thread := 0
+	for _, e := range tasks {
+		if n, err := strconv.Atoi(e.Name()); err == nil && n != os.Getpid() {
+			thread = n
+			break
+		}
+	}
+	if thread == 0 {
+		t.Fatal("the Go runtime has only the leader thread")
+	}
+	if (OS{}).Alive(thread) {
+		t.Errorf("Alive(non-leader thread %d) = true; want false", thread)
+	}
+	if !(OS{}).Alive(os.Getpid()) {
+		t.Error("Alive(own pid) = false; want true")
+	}
+	cmd := exec.Command("true")
+	if err := cmd.Run(); err != nil {
+		t.Fatal(err)
+	}
+	if (OS{}).Alive(cmd.Process.Pid) {
+		t.Error("Alive(reaped pid) = true; want false")
 	}
 }
