@@ -1,0 +1,16 @@
+direction: down
+
+plan: "WORKER_PLAN.md (Diagrams)\ndraft issue.d2 + plan.d2\nin <crew_dir>/artifacts"
+ship: "WORKER_SHIP.md\nPR body contract\nDiagrams bullet"
+body: "PR body\nfenced d2 block"
+gh: "GitHub markdown\nno d2 fence renderer"
+seen: "reviewer reads raw d2 text\nthe diagram is never drawn"
+ref: "PR #1659 (docs only)\ncommitted .d2 + light/dark SVG\n<picture> at a pinned SHA"
+docs: "docs/superpowers/diagrams/\nsix files, renders in both themes"
+
+plan -> ship: "issue.d2, plan.d2"
+ship -> body: "paste both sources" {style.stroke-width: 4}
+body -> gh: "one code block" {style.stroke-width: 4}
+gh -> seen: "never rendered" {style.stroke-width: 4}
+ref -> docs: "the pattern that works"
+ship - ref: "the protocol never uses it" {style.stroke-dash: 3}

@@ -1,0 +1,17 @@
+direction: down
+
+draft: "artifacts/<branch>/\nissue.d2, plan.d2"
+render: "d2 --theme 0 and --theme 200\nlight and dark SVG"
+docs: "docs/superpowers/diagrams/\n<date>-<slug>-{issue,plan}\n.d2 + .svg + -dark.svg"
+push: "git push\ncarries the pair with the work"
+ship: "WORKER_SHIP.md\n<picture>: dark <source>\nplus light <img> at <sha>"
+priv: "private repo\nblob/<sha>/<path>?raw=true"
+guard: "d2 missing or a render fails\none fix attempt, then\nfenced d2 plus a note"
+
+draft -> render: "at ship time"
+render -> docs: "commit the pair and its source"
+docs -> push: "the two final diagrams only"
+push -> ship: "raw URL pinned to the SHA"
+ship -> priv: "where raw URLs do not render" {style.stroke-dash: 3}
+render -> guard: "cost guardrail kept" {style.stroke-dash: 3}
+guard -> ship: "never blocks pr_open" {style.stroke-dash: 3}
