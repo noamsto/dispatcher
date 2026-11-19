@@ -68,12 +68,12 @@ misrouted_msg to one line per repo. It prints `crew watch` batches
 cursor kept per bus under ${XDG_STATE_HOME:-~/.local/state}/crew/overseer/buses/
 and never a crew's own, and {"stream":"overseer","event":...} lines for
 dispatcher_down, dispatcher_up, lane_dead, dispatcher_awaiting, blocked_aging,
-abandoned, capacity_stuck and misrouted_msg, plus heartbeat and error lines. A status read
-with no document within 20 s is dropped, with one error line per --heartbeat.
-It never reaps and never runs holds; --states, --coalesce and --retry are
-accepted and do nothing here. An explicit --park S makes the lane one-shot: it
-returns after its first non-heartbeat line or after S seconds, whichever is
-first.
+abandoned, capacity_stuck, host_unreachable, host_reachable and misrouted_msg,
+plus heartbeat and error lines. A status read with no document within 20 s is
+dropped, with one error line per --heartbeat. It never reaps and never runs
+holds; --states, --coalesce and --retry are accepted and do nothing here. An
+explicit --park S makes the lane one-shot: it returns after its first
+non-heartbeat line or after S seconds, whichever is first.
 
 The overseer lane starts silent: a bus with no overseer cursor is read from the
 lane's start, and its first completed status read is a baseline that wakes

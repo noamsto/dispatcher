@@ -754,10 +754,11 @@ type transitions struct {
 	down       map[crewRef]bool
 	deadSince  map[crewRef]int64
 	awaitSince map[crewRef]int64
+	awaitOff   map[crewRef]int64
 }
 
 func newTransitions() *transitions {
-	return &transitions{on: map[condKey]bool{}, down: map[crewRef]bool{}, deadSince: map[crewRef]int64{}, awaitSince: map[crewRef]int64{}}
+	return &transitions{on: map[condKey]bool{}, down: map[crewRef]bool{}, deadSince: map[crewRef]int64{}, awaitSince: map[crewRef]int64{}, awaitOff: map[crewRef]int64{}}
 }
 
 type crewRef struct{ key, crew string }
@@ -790,6 +791,7 @@ type differMoves struct {
 	Down       []refEntry  `json:"down"`
 	DeadSince  []deadEntry `json:"dead_since"`
 	AwaitSince []deadEntry `json:"await_since"`
+	AwaitOff   []deadEntry `json:"await_off"`
 }
 
 type condEntry struct {
@@ -829,7 +831,7 @@ type hostMoves struct {
 // snapshot is t as JSON may carry it: its maps as entries, in map order, which
 // a reader must not depend on.
 func (t *transitions) snapshot() differMoves {
-	m := differMoves{On: []condEntry{}, Down: []refEntry{}, DeadSince: []deadEntry{}, AwaitSince: []deadEntry{}}
+	m := differMoves{On: []condEntry{}, Down: []refEntry{}, DeadSince: []deadEntry{}, AwaitSince: []deadEntry{}, AwaitOff: []deadEntry{}}
 	if t == nil {
 		return m
 	}
@@ -846,11 +848,14 @@ func (t *transitions) snapshot() differMoves {
 	for ref, ts := range t.awaitSince {
 		m.AwaitSince = append(m.AwaitSince, deadEntry{refEntry: refEntry{Key: ref.key, Crew: ref.crew}, TS: ts})
 	}
+	for ref, ts := range t.awaitOff {
+		m.AwaitOff = append(m.AwaitOff, deadEntry{refEntry: refEntry{Key: ref.key, Crew: ref.crew}, TS: ts})
+	}
 	return m
 }
 
 // transitions is the differ memory m describes. Stale entries are safe: next
-// rebuilds on, deadSince and awaitSince from what the document still holds.
+// rebuilds on, deadSince, awaitSince and awaitOff from what the document still holds.
 func (m differMoves) transitions() *transitions {
 	t := newTransitions()
 	t.seen = m.Seen
@@ -865,6 +870,9 @@ func (m differMoves) transitions() *transitions {
 	}
 	for _, e := range m.AwaitSince {
 		t.awaitSince[crewRef{key: e.Key, crew: e.Crew}] = e.TS
+	}
+	for _, e := range m.AwaitOff {
+		t.awaitOff[crewRef{key: e.Key, crew: e.Crew}] = e.TS
 	}
 	return t
 }
@@ -895,6 +903,12 @@ func (t *transitions) next(doc fleetpkg.StatusDoc, nowMS int64) []any {
 	for ref, ts := range t.awaitSince {
 		if !present[ref.key] {
 			awaitSince[ref] = ts
+		}
+	}
+	awaitOff := map[crewRef]int64{}
+	for ref, ts := range t.awaitOff {
+		if !present[ref.key] {
+			awaitOff[ref] = ts
 		}
 	}
 	var out []any
@@ -930,14 +944,29 @@ func (t *transitions) next(doc fleetpkg.StatusDoc, nowMS int64) []any {
 				}
 			}
 			if c.Attention != "guest" && live {
-				if n, ok := awaiting(c.Dispatcher.PaneState, c.Workers); ok {
+				awaitKey := condKey{event: "dispatcher_awaiting", key: r.Key, crew: c.CrewID}
+				n, held := awaiting(c.Dispatcher.PaneState, c.Workers)
+				// A parked dispatcher's own short wakes (heartbeat, hold_due, reap)
+				// must not end a fired episode, or the same held work re-fires.
+				if !held && t.on[awaitKey] {
+					off, ok := t.awaitOff[ref]
+					if !ok {
+						off = doc.TS
+					}
+					if doc.TS-off < awaitAfter.Milliseconds() {
+						on[awaitKey] = true
+						awaitSince[ref] = t.awaitSince[ref]
+						awaitOff[ref] = off
+					}
+				}
+				if held {
 					since, ok := t.awaitSince[ref]
 					if !ok {
 						since = doc.TS
 					}
 					awaitSince[ref] = since
 					if doc.TS-since >= awaitAfter.Milliseconds() {
-						fire(condKey{event: "dispatcher_awaiting", key: r.Key, crew: c.CrewID},
+						fire(awaitKey,
 							n.line(head("dispatcher_awaiting"), *c.Dispatcher.PaneState, (doc.TS-since)/1000, nowMS))
 					}
 				}
@@ -1033,7 +1062,7 @@ func (t *transitions) next(doc fleetpkg.StatusDoc, nowMS int64) []any {
 		}
 	}
 
-	t.on, t.deadSince, t.awaitSince, t.seen = on, deadSince, awaitSince, true
+	t.on, t.deadSince, t.awaitSince, t.awaitOff, t.seen = on, deadSince, awaitSince, awaitOff, true
 	return out
 }
 

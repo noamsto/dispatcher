@@ -2343,9 +2343,13 @@ func TestTransitionsDispatcherAwaiting(t *testing.T) {
 	run(map[int64][]string{5: await, 31: dead}, at(0, "done", "dead", po), at(5, "done", "dead", po), at(20, "done", "dead", po),
 		at(21, "processing", "dead", po), at(30, "processing", "dead", po), at(31, "processing", "dead", po))
 
-	// An episode that drops re-arms, with the dwell restarted.
-	run(map[int64][]string{5: await, 12: await}, at(0, "done", "alive", po), at(5, "done", "alive", po), at(6, "processing", "alive", po),
-		at(7, "done", "alive", po), at(11, "done", "alive", po), at(12, "done", "alive", po))
+	// An episode that drops for a full grace re-arms, with the dwell restarted.
+	run(map[int64][]string{5: await, 17: await}, at(0, "done", "alive", po), at(5, "done", "alive", po), at(6, "processing", "alive", po),
+		at(11, "processing", "alive", po), at(12, "done", "alive", po), at(16, "done", "alive", po), at(17, "done", "alive", po))
+
+	// A short wake of a parked dispatcher keeps its episode: no re-fire.
+	run(map[int64][]string{5: await}, at(0, "done", "alive", po), at(5, "done", "alive", po), at(6, "processing", "alive", po),
+		at(7, "done", "alive", po), at(12, "done", "alive", po), at(30, "done", "alive", po))
 
 	// A dwell broken before it completes restarts.
 	run(map[int64][]string{9: await}, at(0, "waiting", "alive"), at(3, "processing", "alive"), at(4, "waiting", "alive"),
