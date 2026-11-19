@@ -11,8 +11,8 @@
 ╰───────────────────│   ○ spec ○ plan ○ execute ○ gate ○ review ○ ship                                                           │───────────────────╯
 ╭ ▸ CHECKLISTS ─────│ ACCEPTANCE —                                                                                               │────── 11 watched ─╮
 │ ● otter standard  │ AGENTS                                                                                                     │───────────────────│
-│   ●─●─◉─○─○─○ exec│   lead sonnet standard failed                                                                              │▁▁▁▁▁▁█▁ ok 45s    │
-│ ● heron standard  │   execute subagents: not reported                                                                          │▁▁▁▁▁▁▁▁ ok 10m    │
+│   ●─●─◉─○─○─○ exec│   lead sonnet standard failed                                                                              │▁▁▁▁▁▁█▄ ok 45s    │
+│ ● heron standard  │   execute subagents: none                                                                                  │▁▁▁▁▁▁▁▁ ok 10m    │
 │   ●─●─●─●─●─● pr_o│ ATTENTION                                                                                                  │▁▁▁▁▁▁▁▁ ok 5m     │
 │ ● feat/c standard │   ✗ exit 1 after test failure → crew where --crew c1 -- feat/h                                             │▁▁▁▁▁▁▁▁ prompt 3m │
 │   ○─○─○─○─○─○ bloc│     To clear: reaped once its PR merges/closes or its issue closes (crew reap), or re-dispatch             │▁▁▁▁▁▁▁▁ stall 4m  │

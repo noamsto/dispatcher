@@ -384,8 +384,14 @@ func TestJSONViewOverview(t *testing.T) {
 	if v.SchemaVersion != 1 || v.View != "overview" || v.GeneratedAt != 1790000000 {
 		t.Errorf("schema_version/view/generated_at = %d/%q/%d", v.SchemaVersion, v.View, v.GeneratedAt)
 	}
-	if want := bytes.Count(bus, []byte("\n")); len(v.Events) != want {
-		t.Errorf("events = %d, want %d (one per bus line)", len(v.Events), want)
+	want := 0
+	for _, l := range bytes.Split(bus, []byte("\n")) {
+		if len(l) > 0 && !bytes.Contains(l, []byte(`"to":"subagent:`)) {
+			want++
+		}
+	}
+	if len(v.Events) != want {
+		t.Errorf("events = %d, want %d (one per bus line, subagent sink rows excluded)", len(v.Events), want)
 	}
 	if len(v.Errors) != 0 {
 		t.Errorf("errors = %q, want none", v.Errors)

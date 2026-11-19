@@ -843,6 +843,17 @@ func agentLines(ov vm.OverviewView, it placed, line func() *spans, narrow bool) 
 		l2.add(stateGlyph(state), fg(glyphColor(state))).
 			add(" "+ansi.Truncate(name, 3, "")+" ", fg(colDim))
 	}
+	running := 0
+	for _, n := range a.Execute {
+		if n.State == "running" {
+			running++
+		}
+	}
+	if running > 0 {
+		l2.add("  sub ", fg(colDim)).
+			add(stateGlyph("working"), fg(glyphColor("working"))).
+			add(fmt.Sprint(running), fg(colText))
+	}
 	return []string{l1.String(), l2.String()}
 }
 

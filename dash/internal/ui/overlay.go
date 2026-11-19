@@ -177,7 +177,18 @@ func detailLines(ov vm.OverviewView, wi, iw int) []string {
 			out = append(out, "   "+fg(glyphColor(st)).Render(stateGlyph(st))+" "+cleanText(ovStr(r.Role, "?")+" "+r.State)+
 				fg(colDim).Render(" "+cleanText(ovStr(r.Detail, ""))))
 		}
-		out = append(out, "   "+fg(colDim).Render("execute subagents: not reported"))
+		if len(a.Execute) == 0 {
+			out = append(out, "   "+fg(colDim).Render("execute subagents: "+executeEmpty(a)))
+			continue
+		}
+		out = append(out, "   "+fg(colDim).Render("execute subagents"))
+		shown := subagentsShown(a.Execute)
+		for _, n := range shown {
+			out = append(out, subagentLine(n))
+		}
+		if more := len(a.Execute) - len(shown); more > 0 {
+			out = append(out, "     "+fg(colDim).Render(fmt.Sprintf("+%d more", more)))
+		}
 	}
 
 	out = append(out, section("ATTENTION"))
@@ -245,4 +256,57 @@ func eventOf(from, branch string) bool {
 
 func phaseGlyph(status string) string {
 	return phaseCells(&vm.Phase{Steps: []vm.PhaseStep{{Status: status}}})[0].glyph
+}
+
+// subagentState maps a subagent node state onto the lead-state vocabulary the
+// shared glyph and colour helpers speak.
+func subagentState(state string) string {
+	switch state {
+	case "running":
+		return "working"
+	case "done", "failed":
+		return state
+	}
+	return "unknown"
+}
+
+// maxSubagentLines bounds the overlay's subagent list: the overlay does not
+// scroll, so an unbounded list pushes ATTENTION and RECENT EVENTS off it.
+const maxSubagentLines = 5
+
+// subagentsShown picks the nodes the overlay lists: running or unknown ones
+// first, then finished, each newest spawn first (Execute is in spawn order).
+func subagentsShown(execute []vm.AgentNode) []vm.AgentNode {
+	var live, fin []vm.AgentNode
+	for i := len(execute) - 1; i >= 0; i-- {
+		if n := execute[i]; n.State == "done" || n.State == "failed" {
+			fin = append(fin, n)
+		} else {
+			live = append(live, n)
+		}
+	}
+	return append(live, fin...)[:min(len(execute), maxSubagentLines)]
+}
+
+// executeEmpty says why a lead has no subagent rows: only local claude and pi
+// leads post them, so anything else has no data rather than no subagents.
+func executeEmpty(a vm.AgentRow) string {
+	if a.Roles != nil && a.Lead.Engine != nil && (*a.Lead.Engine == "claude" || *a.Lead.Engine == "pi") {
+		return "none"
+	}
+	return "not reported"
+}
+
+func subagentLine(n vm.AgentNode) string {
+	st := subagentState(n.State)
+	parts := []string{}
+	for _, f := range []string{ovStr(n.Label, ""), ovStr(n.Model, ""), ovStr(n.Effort, ""), n.State} {
+		if f = cleanText(f); f != "" {
+			parts = append(parts, f)
+		}
+	}
+	if n.AgeSec != nil {
+		parts = append(parts, ovAge(*n.AgeSec))
+	}
+	return "     " + fg(glyphColor(st)).Render(stateGlyph(st)) + " " + strings.Join(parts, " ")
 }

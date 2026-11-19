@@ -41,6 +41,8 @@ import {
 import { Container, Markdown, Spacer, Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { type AgentConfig, type AgentScope, discoverAgents } from "./agents.ts";
+// dispatcher patch: crew-bus spawn/finish records live in a pi-free module so node:test can run them.
+import { finishBody, finishOutcome, nextRunId, postSubagent, spawnBody, splitModel, subagentLabel } from "./crewbus.ts";
 // dispatcher patch: the child's kill escalation and signal-exit classification live in
 // ./outcome.ts so the pi-subagent-behaviour check can run them without pi; on a re-pin,
 // port upstream's inline changes into that file rather than back into this one.
@@ -341,6 +343,11 @@ async function runSingleAgent(
 		}
 	};
 
+	const runId = nextRunId();
+	let posted = false;
+	let recorded = false;
+	let wasAborted = false;
+
 	try {
 		if (agent.systemPrompt.trim()) {
 			const tmp = await writePromptToTempFile(agent.name, agent.systemPrompt);
@@ -350,10 +357,21 @@ async function runSingleAgent(
 		}
 
 		args.push(`Task: ${task}`);
-		let wasAborted = false;
 
 		const outcome = await new Promise<ProcessOutcome>((resolve) => {
 			const invocation = getPiInvocation(args);
+			postSubagent(
+				process.env,
+				defaultCwd,
+				spawnBody({
+					id: runId,
+					engine: "pi",
+					label: subagentLabel(agentName, task, step === undefined ? undefined : step - 1),
+					agent: agentName,
+					...splitModel(model, inheritsDispatchConfig ? dispatchDefaults.thinkingLevel : undefined),
+				}),
+			);
+			posted = true;
 			const proc = spawn(invocation.command, invocation.args, {
 				cwd: cwd ?? defaultCwd,
 				shell: false,
@@ -450,9 +468,21 @@ async function runSingleAgent(
 		});
 
 		recordOutcome(currentResult, outcome);
+		recorded = true;
 		if (wasAborted) throw new Error("Subagent was aborted");
 		return currentResult;
 	} finally {
+		if (posted) {
+			postSubagent(
+				process.env,
+				defaultCwd,
+				finishBody({
+					id: runId,
+					outcome: finishOutcome(wasAborted, recorded, recorded && isFailedResult(currentResult)),
+					...splitModel(currentResult.model),
+				}),
+			);
+		}
 		if (tmpPromptPath)
 			try {
 				fs.unlinkSync(tmpPromptPath);

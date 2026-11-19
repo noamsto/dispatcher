@@ -105,5 +105,7 @@ tests/secret-read-guard.bats	secret-read-guard	!timing	327738
 tests/secret-read-guard.bats	secret-read-guard	timing	79342
 tests/secret-read-guard.bats	secret-read-guard (merged)	!timing	34400
 tests/smoke.bats	*	!timing	1220
+tests/subagent-notify.bats	*	!timing	12000
+tests/subagent-notify.bats	no post	!timing	900
 tests/worktree-git.bats	*	!timing	259229
 tests/worktree-git.bats	deleting the baseline is the recovery	!timing	8074

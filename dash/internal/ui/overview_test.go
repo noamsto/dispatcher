@@ -587,7 +587,7 @@ func TestDetailOverlay(t *testing.T) {
 	v, _ = ovKeys(v, "enter")
 	got := stripped(v.View(150, 40))
 	for _, want := range []string{"DETAIL", "otter", "feat/a", "PHASE", "execute", "ACCEPTANCE",
-		"execute subagents: not reported", "plan-critic", "reviewer", "crew where --crew c1 -- feat/a", "RECENT EVENTS"} {
+		"execute subagents", "step 2", "plan-critic", "reviewer", "crew where --crew c1 -- feat/a", "RECENT EVENTS"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("detail lacks %q", want)
 		}
@@ -1377,3 +1377,112 @@ func TestDetailOverlayStaleWorkerAgents(t *testing.T) {
 		t.Errorf("detail lacks %q:\n%s", want, got)
 	}
 }
+
+func TestDetailOverlaySubagents(t *testing.T) {
+	asciiProfile(t)
+	v, _ := ovFixture(t, 150, 40, false, nil)
+	v.View(150, 40)
+	selectBranch(t, &v, "feat/a")
+	card := stripped(v.View(150, 40))
+	if !strings.Contains(card, "sub ●1") {
+		t.Errorf("card lacks running subagent count:\n%s", card)
+	}
+	v, _ = ovKeys(v, "enter")
+	got := stripped(v.View(150, 40))
+	for _, want := range []string{"✓ step 1", "● step 2"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("detail lacks %q:\n%s", want, got)
+		}
+	}
+	v, _ = ovKeys(v, "j")
+	if got := stripped(v.View(150, 40)); !strings.Contains(got, "execute subagents: none") {
+		t.Errorf("feat/b detail lacks none line:\n%s", got)
+	}
+}
+
+func agentIndex(t *testing.T, v overviewView, branch string) int {
+	t.Helper()
+	for i, a := range v.model.Agents {
+		if a.Branch == branch {
+			return i
+		}
+	}
+	t.Fatalf("no agent row for %s", branch)
+	return -1
+}
+
+func TestDetailOverlayBoundsSubagents(t *testing.T) {
+	v, _ := ovFixture(t, 80, 24, false, nil)
+	row := &v.model.Agents[agentIndex(t, v, "feat/a")]
+	row.Roles = nil
+	row.Execute = nil
+	v.model.Attention = slices.DeleteFunc(v.model.Attention, func(a vm.AttentionItem) bool { return a.Branch == "feat/a" })
+	for i := range 16 {
+		state := "done"
+		if i%4 == 0 {
+			state = "running"
+		}
+		row.Execute = append(row.Execute, vm.AgentNode{Kind: "subagent", State: state, Label: ptr("sub" + strconv.Itoa(i))})
+	}
+	selectBranch(t, &v, "feat/a")
+	v, _ = ovKeys(v, "enter")
+	got := stripped(v.View(80, 24))
+	for _, want := range []string{"ATTENTION", "RECENT EVENTS", "+11 more", "sub12", "sub0 "} {
+		if !strings.Contains(got, want) {
+			t.Errorf("detail lacks %q:\n%s", want, got)
+		}
+	}
+	// Running first (newest spawn first), then the newest finished one.
+	shown := []string{"sub12 ", "sub8 ", "sub4 ", "sub0 ", "sub15 "}
+	last := -1
+	for _, label := range shown {
+		idx := strings.Index(got, label)
+		if idx < 0 {
+			t.Errorf("detail lacks subagent %q:\n%s", label, got)
+			continue
+		}
+		if idx < last {
+			t.Errorf("subagent %q out of order:\n%s", label, got)
+		}
+		last = idx
+	}
+	for _, label := range []string{"sub1 ", "sub13 ", "sub14 "} {
+		if strings.Contains(got, label) {
+			t.Errorf("detail lists unshown subagent %q:\n%s", label, got)
+		}
+	}
+}
+
+func TestDetailOverlayExecuteEmpty(t *testing.T) {
+	cases := []struct {
+		name   string
+		engine string
+		local  bool
+		want   string
+	}{
+		{"local claude", "claude", true, "execute subagents: none"},
+		{"local pi", "pi", true, "execute subagents: none"},
+		{"local codex", "codex", true, "execute subagents: not reported"},
+		{"remote claude", "claude", false, "execute subagents: not reported"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			v, _ := ovFixture(t, 150, 40, false, nil)
+			row := &v.model.Agents[agentIndex(t, v, "feat/a")]
+			row.Execute = nil
+			row.Lead.Engine = ptr(c.engine)
+			if !c.local {
+				row.Roles = nil
+			} else if row.Roles == nil {
+				row.Roles = []vm.AgentNode{}
+			}
+			selectBranch(t, &v, "feat/a")
+			v, _ = ovKeys(v, "enter")
+			if got := stripped(v.View(150, 40)); !strings.Contains(got, c.want) {
+				t.Errorf("detail lacks %q:\n%s", c.want, got)
+			}
+		})
+	}
+}
+
+func ptr[T any](v T) *T { return &v }

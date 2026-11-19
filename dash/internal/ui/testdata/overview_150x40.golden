@@ -9,9 +9,9 @@
 │ 8 ! feat/d prompt: permission dialog — answer the prompt in pane (crew where feat/d)                                                  3m → peek    │
 │ 9 ! feat/f runaway: 900 tool calls in 10m — clears when the worker emits output or `crew nudge` wakes it                              2m → peek    │
 ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
-╭ CHECKLISTS ─────────────────────────────── 0 of 13 done ─╮╭ AGENTS ─────────────────────── 16 agents ─╮╭ MONITORS ──────────────────── 11 watched ─╮
+╭ CHECKLISTS ─────────────────────────────── 0 of 13 done ─╮╭ AGENTS ─────────────────────── 17 agents ─╮╭ MONITORS ──────────────────── 11 watched ─╮
 │ ● otter standard                                     AC —││ ● otter sonnet standard                   ││ WATCHDOG ─────────────────────────────────│
-│   ●─●─◉─○─○─○ execute                                    ││   roles ● pla ✗ rev                       ││ otter      ▁█▁▁▁▁▁▁▁▁▁█▁▁▁▁▁▁█▁ ok 45s    │
+│   ●─●─◉─○─○─○ execute                                    ││   roles ● pla ✗ rev   sub ●1              ││ otter      ▁▄▁▁▁▁▁▁▁▁▁▄▁▁▁▁▁▁█▄ ok 45s    │
 │ ● heron standard                                   AC 5/5││ ● heron sonnet standard                   ││ heron      ▁▁█▁▁▁█▁█▁▁▁▁▁▁▁▁▁▁▁ ok 10m    │
 │   ●─●─●─●─●─● pr_open                                    ││   roles —                                 ││ feat/c     ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁ ok 5m     │
 │ ● feat/c standard                                    AC —││ ● feat/c sonnet standard                  ││ feat/d     ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁ prompt 3m │

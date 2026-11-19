@@ -82,9 +82,11 @@ type OverviewWorker struct {
 
 type AgentNode struct {
 	Kind   string  `json:"kind"`
+	Label  *string `json:"label,omitempty"`
 	Role   *string `json:"role"`
 	Engine *string `json:"engine"`
 	Model  *string `json:"model"`
+	Effort *string `json:"effort,omitempty"`
 	Tier   *string `json:"tier"`
 	State  string  `json:"state"`
 	Detail *string `json:"detail"`
@@ -92,8 +94,8 @@ type AgentNode struct {
 }
 
 // AgentRow is one lead with its role panes. Roles is null when unknown (remote
-// and peer leads); Execute is always empty because execute subagents leave no
-// bus trace.
+// and peer leads); Execute is the lead's recent subagents from the bus and is
+// empty for remote and peer leads.
 type AgentRow struct {
 	Crew    string      `json:"crew"`
 	Branch  string      `json:"branch"`
@@ -277,7 +279,39 @@ func agentRow(w WorkerRow, in Inputs, now int64) AgentRow {
 		}
 		row.Roles = append(row.Roles, node)
 	}
+	key := data.WorkerKey{Crew: w.Crew, Branch: w.Branch}
+	var session string
+	if d := in.Bus.Workers[key]; d != nil {
+		session = d.Session
+	}
+	for _, r := range in.Bus.Subagents[key] {
+		row.Execute = append(row.Execute, subagentNode(r, w, session, now))
+	}
 	return row
+}
+
+// subagentNode shows a still-running run as unknown when its lead can no longer
+// be finishing it: the lead is terminal, or a resumed session replaced the one
+// that spawned it.
+func subagentNode(r data.SubagentRun, w WorkerRow, session string, now int64) AgentNode {
+	node := AgentNode{Kind: "subagent", State: r.State, Label: nonEmpty(r.Label), Role: nonEmpty(r.Agent),
+		Engine: nonEmpty(r.Engine), Model: nonEmpty(r.Model), Effort: nonEmpty(r.Effort)}
+	if r.State == "running" && (isTerminal(w.State) || (r.Session != "" && session != "" && r.Session != session)) {
+		node.State = "unknown"
+	}
+	since := r.StartTS
+	if node.State == "done" || node.State == "failed" {
+		since = r.EndTS
+	}
+	node.AgeSec = sinceSec(now, since)
+	return node
+}
+
+func nonEmpty(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
 }
 
 func activityOf(d *data.WorkerDigest, now int64) []int {
@@ -435,6 +469,11 @@ func BuildOverview(in Inputs) OverviewView {
 			agent := agentRow(w, in, now)
 			v.Agents = append(v.Agents, agent)
 			v.Summary.Agents += 1 + len(agent.Roles)
+			for _, n := range agent.Execute {
+				if n.State == "running" {
+					v.Summary.Agents++
+				}
+			}
 		}
 		if w.State == "" {
 			v.Summary.ByState["unknown"]++
