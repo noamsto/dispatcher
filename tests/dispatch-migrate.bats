@@ -429,6 +429,32 @@ EOF
   [ "$(local_dispatch_rows | wc -l)" -eq 1 ]
 }
 
+@test "a migrate-in retry whose dirty worktree lacks a scaffold file the patch carries refuses cleanly" {
+  seed_pushed_branch
+  printf 'PLAN.md\n' >>"$TEST_REPO/.git/info/exclude"
+  printf 'plan\n' >"$LWT/PLAN.md"
+  TREE="$(scratch_tree "$LWT" "$TIP" PLAN.md)"
+  git -C "$LWT" diff --binary "$TIP" "$TREE" >"$PATCH"
+  printf 'PLAN.md\n' >>"$REMOTE_CLONE/.git/info/exclude"
+  make_bundle
+  fail_remote_window_once
+
+  migrate_dispatch
+  [ "$status" -ne 0 ]
+  wt="$(remote_wt "$BRANCH")"
+  [ -f "$wt/PLAN.md" ]
+  rm "$wt/PLAN.md"
+
+  export TMPDIR="$BATS_TEST_TMPDIR/private-tmp"
+  mkdir -p "$TMPDIR"
+  write_remote_env
+  migrate_dispatch
+  [ "$status" -eq 1 ]
+  [[ $stderr == *"does not apply to $wt — nothing was applied"* ]]
+  [[ $stderr != *pathspec* ]]
+  [ -z "$(find "$TMPDIR" -mindepth 1 -maxdepth 1 -name 'tmp.*')" ]
+}
+
 @test "a migrate-in onto a branch checked out in a worktree dispatch did not build is refused" {
   seed_pushed_branch
   make_bundle
