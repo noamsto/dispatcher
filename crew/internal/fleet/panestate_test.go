@@ -81,6 +81,7 @@ func TestReadPaneState(t *testing.T) {
 		{"server garbage", "state=waiting\nserver=abc\n", false},
 		{"server zero", "state=waiting\nserver=0\n", false},
 		{"server empty", "state=waiting\nserver=\n", false},
+		{"failing agent_pid is not rescued by own server", "state=waiting\nagent_pid=400\nserver=50\n", false},
 		{"agent_pid wins over a foreign server", "state=waiting\nagent_pid=300\nserver=500\n", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

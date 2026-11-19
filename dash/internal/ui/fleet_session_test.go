@@ -224,6 +224,9 @@ func TestFleetIdleReposDoesNotShrinkLabels(t *testing.T) {
 	if len(rowsBase) != len(rowsIdle) {
 		t.Fatalf("row count %d vs %d", len(rowsBase), len(rowsIdle))
 	}
+	if !strings.Contains(rowsIdle[0], "+") {
+		t.Errorf("idle-repos hint vanished: %q", rowsIdle[0])
+	}
 	for i := 1; i < len(rowsBase); i++ {
 		if rowsBase[i] != rowsIdle[i] {
 			t.Errorf("row %d changed with an idle-repos hint:\n%q\n%q", i, rowsBase[i], rowsIdle[i])

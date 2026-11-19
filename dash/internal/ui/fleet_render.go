@@ -457,6 +457,9 @@ func fleetLayout(w, h int, fv vm.FleetView, st fleetState) fleetRects {
 // label, fixed so a pane-state change never shifts the counts column.
 const sessionW = len("awaiting you")
 
+// hintStubW is the width kept for a truncatable mark so it never vanishes.
+const hintStubW = 4
+
 // fleetCols are the Crews panel's column widths, sized to every visible row
 // so scrolling never shifts them.
 type fleetCols struct{ label, lane, session, counts int }
@@ -476,6 +479,8 @@ func crewCols(fv vm.FleetView, ix fleetIndex, iw int) fleetCols {
 		for _, m := range crewMarks(row) {
 			if m.reserved {
 				w += ansi.StringWidth(m.text)
+			} else {
+				w += min(ansi.StringWidth(m.text), hintStubW)
 			}
 		}
 		tail = max(tail, w)
