@@ -108,7 +108,10 @@ a `pr-watch` MERGED/CLOSED, so a quiet crew still cleans up. Reaping a finished 
 outcome into the ratings store (`~/.local/share/crew/ratings.jsonl`, read with
 `crew rate --report`); `CREW_RATE_AUTOSWEEP=0` disables it. That sweep runs
 detached, so its outcome (started, skipped because another sweep held the lock,
-failed) goes to `~/.local/share/crew/autosweep.log`; `crew rate --sweep-all`
+failed) goes to `~/.local/share/crew/autosweep.log`. The same detached child then
+runs `priors import` (when `priors` is on `PATH`) to sweep agents' native memories
+into the priors fact store, at most once an hour machine-wide; its output goes to
+that log too, between `priors import start` and `done rc=N` lines. `crew rate --sweep-all`
 backfills every repo with a crew bus under `$HOME` (`--root DIR`, repeatable,
 replaces that default) plus any repo swept before. And `stall-watch`
 exists because a wedged worker never reports anything at all: it watches pane

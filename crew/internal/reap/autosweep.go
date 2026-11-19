@@ -121,7 +121,8 @@ func (r *run) sweepAsync() {
 // async`, whose stdout and stderr are already the autosweep log. It ignores
 // SIGHUP, as the arm's subshell did (it trapped HUP to the empty action), and
 // SIGINT and SIGQUIT, as bash ignores them for an asynchronous command
-// without job control. Its status is never read.
+// without job control. After the ratings sweep it runs the rate-limited
+// `priors import`. Its status is never read.
 func RunAutosweep(paths bus.Paths, cwd string, o Options) int {
 	signal.Ignore(syscall.SIGHUP, syscall.SIGINT, syscall.SIGQUIT)
 	store := storeDir(o.Probes.Getenv)
@@ -143,6 +144,7 @@ func RunAutosweep(paths bus.Paths, cwd string, o Options) int {
 	} else {
 		_, _ = fmt.Fprintf(os.Stdout, "%s a ratings sweep is already running — skipped\n", o.stamp())
 	}
+	importPriors(store, o, os.Stdout, os.Stderr)
 	trimLog(sweeplog, autosweepKeep)
 	return 0
 }
