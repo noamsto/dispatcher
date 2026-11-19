@@ -29,7 +29,6 @@ const (
 	exitTyped        = 3 // typed, and the dialog is still shown
 	exitNoticeFailed = 4 // typed and the dialog cleared, but the notice failed
 
-	// trustFormat is the pane's id, command, cwd and stamps, \x1f-separated.
 	trustFormat = "#{pane_id}\x1f#{pane_current_command}\x1f#{pane_current_path}\x1f#{@crew_role}\x1f#{@crew_id}"
 	// trustPoll × trustPolls is how long the dialog has to clear after the Enter.
 	trustPoll  = "0.5"
