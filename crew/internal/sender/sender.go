@@ -111,6 +111,26 @@ func Watch(ctx context.Context, from, crew, pane string, p Probes) string {
 	return target.refuse(from, crew, subject)
 }
 
+// CrewPane describes the crew-stamped pane the caller sits in (a lead or role
+// window, or the overseer's pane), or "" when it sits in none or the stamps
+// cannot be read.
+func CrewPane(ctx context.Context, p Probes) string {
+	rows, _ := p.rows(ctx)
+	s, ok, _ := p.anchor(rows)
+	switch {
+	case !ok:
+		return ""
+	case s.overseer():
+		return "pane " + s.pane + " is stamped as the overseer's"
+	case s.branch == "":
+		return ""
+	case s.role == "" || s.role == "lead":
+		return "pane " + s.pane + " is stamped as the lead of " + s.branch
+	default:
+		return "pane " + s.pane + " is stamped as role:" + s.branch + ":" + s.role
+	}
+}
+
 // paneID: % followed by digits with no leading zero, as tmux prints #{pane_id}.
 func paneID(s string) bool {
 	d, ok := strings.CutPrefix(s, "%")

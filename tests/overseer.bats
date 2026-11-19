@@ -34,6 +34,29 @@ teardown() {
     kill "$pid" 2>/dev/null || true
     wait "$pid" 2>/dev/null || true
   done
+  # The follow's daemon is detached; TERM only the pids its lane recorded.
+  local pids=() f
+  if [ -n "${LANE_DIR:-}" ]; then
+    for f in "$LANE_DIR/daemon.json" "$LANE_DIR/stream.lock.d/pid"; do
+      [ -f "$f" ] || continue
+      case "$f" in
+      *.json) pid="$(jq -r '.pid // empty' "$f" 2>/dev/null || true)" ;;
+      *) pid="$(cat "$f" 2>/dev/null || true)" ;;
+      esac
+      [ -n "$pid" ] && pids+=("$pid")
+    done
+  fi
+  [ -n "${first:-}" ] && pids+=("$first")
+  for pid in "${pids[@]}"; do
+    kill "$pid" 2>/dev/null || true
+  done
+  local i
+  for pid in "${pids[@]}"; do
+    for i in $(seq 50); do
+      kill -0 "$pid" 2>/dev/null || break
+      sleep 0.1
+    done
+  done
   teardown_repo
 }
 
@@ -152,4 +175,28 @@ lane_said_down() { jq -e 'select(.event == "dispatcher_down")' "$BATS_TEST_TMPDI
   jq -e --arg repo "$repo" 'select(.event == "dispatcher_down")
     | .stream == "overseer" and .repo == $repo and .crew == "c1" and .state == "dead"' \
     "$BATS_TEST_TMPDIR/lane.out"
+}
+
+daemon_pid() { jq -r .pid "$LANE_DIR/daemon.json"; }
+
+@test "fleet stream --overseer --follow: starts a detached daemon, resumes, --force restarts it" {
+  LANE_DIR="$XDG_STATE_HOME/crew/fleet-stream/overseer:$HOST"
+
+  "$CREW" fleet stream --overseer --follow --park 3 >"$BATS_TEST_TMPDIR/f1.out" 2>"$BATS_TEST_TMPDIR/f1.err" 3>&-
+  jq -e -s '.[0] | .stream == "follow" and .lane == "fresh" and .reason == "started"' "$BATS_TEST_TMPDIR/f1.out"
+  first="$(daemon_pid)"
+  kill -0 "$first"
+
+  run "$CREW" fleet stream --overseer --status
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'"mode":"daemon"'* ]]
+
+  "$CREW" fleet stream --overseer --follow --park 2 >"$BATS_TEST_TMPDIR/f2.out" 2>"$BATS_TEST_TMPDIR/f2.err" 3>&-
+  jq -e -s '.[0] | .stream == "follow" and .lane == "resume"' "$BATS_TEST_TMPDIR/f2.out"
+  [ "$(daemon_pid)" = "$first" ]
+
+  "$CREW" fleet stream --overseer --follow --force --park 2 >"$BATS_TEST_TMPDIR/f3.out" 2>"$BATS_TEST_TMPDIR/f3.err" 3>&-
+  jq -e -s '.[0] | .lane == "fresh" and .reason == "started"' "$BATS_TEST_TMPDIR/f3.out"
+  [ "$(daemon_pid)" != "$first" ]
+  poll_for 50 bash -c '! kill -0 "$1" 2>/dev/null' _ "$first"
 }

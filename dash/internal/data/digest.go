@@ -15,6 +15,9 @@ import (
 const (
 	activityWindowMS = 3600000
 	recentCap        = 50
+	subagentCap      = 16
+	labelMax         = 80
+	fieldMax         = 64
 )
 
 var (
@@ -36,6 +39,15 @@ type WorkerDigest struct {
 	Ledger   string
 	LedgerTS int64
 	Activity []int64
+	// Session is the session suffix of the worker's latest non-watchdog status row.
+	Session string
+}
+
+// SubagentRun is one execute-phase subagent run reported by its lead.
+// State is running, done or failed.
+type SubagentRun struct {
+	ID, AgentID, Session, Engine, Label, Agent, Model, Effort, State string
+	StartTS, EndTS                                                   int64
 }
 
 type RoleDigest struct {
@@ -65,8 +77,10 @@ type BusDigest struct {
 	Workers map[WorkerKey]*WorkerDigest
 	Roles   map[RoleKey]*RoleDigest
 	PRs     map[int]*PRWatch
-	Recent  []RecentEvent
-	Err     *string
+	// Subagents holds each worker's runs in spawn order.
+	Subagents map[WorkerKey][]SubagentRun
+	Recent    []RecentEvent
+	Err       *string
 }
 
 // BusScanner folds events.jsonl incrementally: it keeps a byte offset and only
@@ -88,10 +102,11 @@ func NewBusScanner(path string) *BusScanner {
 func (s *BusScanner) reset() {
 	s.off = 0
 	s.d = BusDigest{
-		Workers: map[WorkerKey]*WorkerDigest{},
-		Roles:   map[RoleKey]*RoleDigest{},
-		PRs:     map[int]*PRWatch{},
-		Recent:  []RecentEvent{},
+		Workers:   map[WorkerKey]*WorkerDigest{},
+		Roles:     map[RoleKey]*RoleDigest{},
+		PRs:       map[int]*PRWatch{},
+		Subagents: map[WorkerKey][]SubagentRun{},
+		Recent:    []RecentEvent{},
 	}
 	s.lastState = map[WorkerKey]string{}
 }
@@ -153,19 +168,27 @@ func (s *BusScanner) apply(ev Event) {
 
 	state, _ := body["state"].(string)
 	detail, _ := body["detail"].(string)
-	summary := detail
-	if str, ok := ev["body"].(string); ok && kind != "status" {
-		summary = str
-	}
-	s.d.Recent = append(s.d.Recent, RecentEvent{TS: ts, From: from, Kind: kind, State: state, Detail: summary, Ev: ev})
-	if len(s.d.Recent) > recentCap {
-		s.d.Recent = slices.Clone(s.d.Recent[len(s.d.Recent)-recentCap:])
+	to, _ := ev["to"].(string)
+	sink := kind == "msg" && crew != "" && to == "subagent:"+crew && strings.HasPrefix(from, "worker:")
+	if !sink {
+		summary := detail
+		if str, ok := ev["body"].(string); ok && kind != "status" {
+			summary = str
+		}
+		s.d.Recent = append(s.d.Recent, RecentEvent{TS: ts, From: from, Kind: kind, State: state, Detail: summary, Ev: ev})
+		if len(s.d.Recent) > recentCap {
+			s.d.Recent = slices.Clone(s.d.Recent[len(s.d.Recent)-recentCap:])
+		}
 	}
 
 	switch {
 	case strings.HasPrefix(from, "worker:"):
-		branch, _, _ := strings.Cut(strings.TrimPrefix(from, "worker:"), "#")
-		s.applyWorker(WorkerKey{crew, branch}, ts, kind, state, detail, body["source"] == "watchdog")
+		branch, session, _ := strings.Cut(strings.TrimPrefix(from, "worker:"), "#")
+		key := WorkerKey{crew, branch}
+		s.applyWorker(key, session, ts, kind, state, detail, body["source"] == "watchdog")
+		if sink {
+			s.applySubagent(key, session, ts, body)
+		}
 	case strings.HasPrefix(from, "role:"):
 		rest := strings.TrimPrefix(from, "role:")
 		i := strings.LastIndex(rest, ":")
@@ -203,7 +226,7 @@ func (s *BusScanner) apply(ev Event) {
 	}
 }
 
-func (s *BusScanner) applyWorker(key WorkerKey, ts int64, kind, state, detail string, watchdog bool) {
+func (s *BusScanner) applyWorker(key WorkerKey, session string, ts int64, kind, state, detail string, watchdog bool) {
 	if watchdog {
 		return
 	}
@@ -216,6 +239,7 @@ func (s *BusScanner) applyWorker(key WorkerKey, ts int64, kind, state, detail st
 	if kind != "status" {
 		return
 	}
+	w.Session = session
 
 	if state == "pr_open" {
 		w.Ledger, w.LedgerTS = detail, ts
@@ -228,6 +252,7 @@ func (s *BusScanner) applyWorker(key WorkerKey, ts int64, kind, state, detail st
 					delete(s.d.Roles, k)
 				}
 			}
+			delete(s.d.Subagents, key)
 		}
 		if n := len(w.Stages); n == 0 || w.Stages[n-1].Name != detail {
 			w.Stages = append(w.Stages, StageMark{Name: detail, TS: ts})
@@ -236,18 +261,118 @@ func (s *BusScanner) applyWorker(key WorkerKey, ts int64, kind, state, detail st
 	s.lastState[key] = state
 }
 
+func (s *BusScanner) applySubagent(key WorkerKey, session string, ts int64, body map[string]any) {
+	phase, _ := body["subagent"].(string)
+	if phase != "spawn" && phase != "finish" {
+		return
+	}
+	str := func(name string, max int) string { return clipRunes(body[name], max) }
+	id, agentID := str("id", fieldMax), str("agent_id", fieldMax)
+	runs := s.d.Subagents[key]
+	i := -1
+	if id != "" {
+		i = slices.IndexFunc(runs, func(r SubagentRun) bool { return r.ID == id })
+	}
+	if i < 0 && agentID != "" {
+		i = slices.IndexFunc(runs, func(r SubagentRun) bool { return r.AgentID == agentID })
+	}
+
+	if phase == "spawn" {
+		if i < 0 {
+			if id == "" {
+				return
+			}
+			runs = appendRun(runs, SubagentRun{ID: id, Session: session, State: "running", StartTS: ts})
+			i = len(runs) - 1
+		}
+		r := &runs[i]
+		// A finished run got there first: its fields are the ones actually used
+		// (the spawn row carries the configured model), so the spawn only fills gaps.
+		merge := mergeNonEmpty
+		if r.State != "running" {
+			merge = fillEmpty
+		}
+		merge(&r.AgentID, agentID)
+		merge(&r.Engine, str("engine", fieldMax))
+		merge(&r.Label, str("label", labelMax))
+		merge(&r.Agent, str("agent", fieldMax))
+		merge(&r.Model, str("model", fieldMax))
+		merge(&r.Effort, str("effort", fieldMax))
+		s.d.Subagents[key] = runs
+		return
+	}
+
+	state := "done"
+	if outcome, _ := body["outcome"].(string); outcome == "error" || outcome == "aborted" {
+		state = "failed"
+	}
+	if i < 0 {
+		// A finish can reach the bus before its spawn: keep it, finished, so the
+		// late spawn only fills the fields it left empty. Without an id there is
+		// nothing to match it on.
+		if id == "" {
+			return
+		}
+		runs = appendRun(runs, SubagentRun{ID: id, AgentID: agentID, Session: session, Model: str("model", fieldMax),
+			State: state, StartTS: ts, EndTS: ts})
+		s.d.Subagents[key] = runs
+		return
+	}
+	if runs[i].State != "running" {
+		return
+	}
+	r := &runs[i]
+	r.State, r.EndTS = state, ts
+	mergeNonEmpty(&r.Model, str("model", fieldMax))
+	mergeNonEmpty(&r.AgentID, agentID)
+}
+
+// appendRun adds r, first evicting the oldest finished run (else the oldest
+// run) once the worker is at subagentCap.
+func appendRun(runs []SubagentRun, r SubagentRun) []SubagentRun {
+	if len(runs) >= subagentCap {
+		evict := slices.IndexFunc(runs, func(x SubagentRun) bool { return x.State != "running" })
+		runs = slices.Delete(runs, max(evict, 0), max(evict, 0)+1)
+	}
+	return append(runs, r)
+}
+
+func mergeNonEmpty(dst *string, v string) {
+	if v != "" {
+		*dst = v
+	}
+}
+
+func fillEmpty(dst *string, v string) {
+	if *dst == "" {
+		*dst = v
+	}
+}
+
+func clipRunes(v any, n int) string {
+	s, _ := v.(string)
+	if r := []rune(s); len(r) > n {
+		return string(r[:n])
+	}
+	return s
+}
+
 func (d BusDigest) clone() BusDigest {
 	out := BusDigest{
-		Workers: make(map[WorkerKey]*WorkerDigest, len(d.Workers)),
-		Roles:   make(map[RoleKey]*RoleDigest, len(d.Roles)),
-		PRs:     make(map[int]*PRWatch, len(d.PRs)),
-		Recent:  append([]RecentEvent{}, d.Recent...),
+		Workers:   make(map[WorkerKey]*WorkerDigest, len(d.Workers)),
+		Roles:     make(map[RoleKey]*RoleDigest, len(d.Roles)),
+		PRs:       make(map[int]*PRWatch, len(d.PRs)),
+		Subagents: make(map[WorkerKey][]SubagentRun, len(d.Subagents)),
+		Recent:    append([]RecentEvent{}, d.Recent...),
 	}
 	for k, w := range d.Workers {
 		c := *w
 		c.Stages = append([]StageMark{}, w.Stages...)
 		c.Activity = append([]int64{}, w.Activity...)
 		out.Workers[k] = &c
+	}
+	for k, runs := range d.Subagents {
+		out.Subagents[k] = slices.Clone(runs)
 	}
 	for k, r := range d.Roles {
 		c := *r

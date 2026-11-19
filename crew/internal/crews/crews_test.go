@@ -6,7 +6,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -207,6 +209,95 @@ func TestTableRecycledPidIsNotAlive(t *testing.T) {
 	}
 	if !strings.Contains(out, "c-rec\t—\t—\t0\t7777\tno\n") {
 		t.Errorf("recycled pid must read no: %q", out)
+	}
+}
+
+func TestTableRecordedStartToken(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		recorded string // "" writes no pid.start; else its full text
+		proc     proctest.Proc
+		age      time.Duration // pidfile mtime age
+		want     string
+	}{
+		{"a: match, legacy heuristic would say recycled", "7777 tok-A", proctest.Proc{Start: "tok-A", Elapsed: 10}, 100 * time.Second, "yes"},
+		{"b: mismatch, fresh mtime", "7777 tok-A", proctest.Proc{Start: "tok-B", Elapsed: 10}, 0, "no"},
+		{"c: mismatch, elapsed unreadable", "7777 tok-A", proctest.Proc{Start: "tok-B"}, 0, "no"},
+		{"d1: no token, recycled by heuristic", "", proctest.Proc{Start: "tok-B", Elapsed: 10}, 100 * time.Second, "no"},
+		{"d2: no token, fresh mtime", "", proctest.Proc{Start: "tok-B", Elapsed: 10}, 0, "yes"},
+		{"e: current start unreadable fails closed", "7777 tok-A", proctest.Proc{Comm: "x"}, 0, "yes"},
+		{"f: token recorded for another pid → heuristic", "9999 tok-A", proctest.Proc{Start: "tok-B", Elapsed: 10}, 0, "yes"},
+		{"g: blank sidecar → heuristic", "\n", proctest.Proc{Start: "tok-B", Elapsed: 10}, 0, "yes"},
+		{"h: trailing junk lines ignored", "7777 tok-A\njunk\n", proctest.Proc{Start: "tok-A", Elapsed: 10}, 100 * time.Second, "yes"},
+		{"i: CRLF line ending ignored", "7777 tok-A\r\n", proctest.Proc{Start: "tok-A", Elapsed: 10}, 100 * time.Second, "yes"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := fixture(t)
+			crewDir(t, p, "c-rec", "7777\n")
+			pidfile := p.Dir + "/crews/c-rec/pid"
+			if tc.recorded != "" {
+				if err := os.WriteFile(pidfile+".start", []byte(strings.TrimSuffix(tc.recorded, "\n")+"\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			mtime := fakeNow().Add(-tc.age)
+			if err := os.Chtimes(pidfile, mtime, mtime); err != nil {
+				t.Fatal(err)
+			}
+			o := Options{Clock: clock.Clock{Now: fakeNow}, Proc: &proctest.Table{Procs: map[int]proctest.Proc{7777: tc.proc}}}
+			out, _, code := run(t, p, o)
+			if code != 0 {
+				t.Fatalf("code %d", code)
+			}
+			if want := "c-rec\t—\t—\t0\t7777\t" + tc.want + "\n"; !strings.Contains(out, want) {
+				t.Errorf("want %q in %q", want, out)
+			}
+		})
+	}
+}
+
+func TestRecordedLiveThreadID(t *testing.T) {
+	if _, err := os.Stat("/proc/self/task"); err != nil {
+		t.Skip("needs /proc/self/task")
+	}
+	stop := make(chan struct{})
+	t.Cleanup(func() { close(stop) })
+	go func() {
+		runtime.LockOSThread()
+		<-stop
+	}()
+	tid := 0
+	for deadline := time.Now().Add(5 * time.Second); tid == 0 && time.Now().Before(deadline); {
+		ents, err := os.ReadDir("/proc/self/task")
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, e := range ents {
+			if n, err := strconv.Atoi(e.Name()); err == nil && n != os.Getpid() {
+				tid = n
+				break
+			}
+		}
+		if tid == 0 {
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+	if tid == 0 {
+		t.Fatal("no non-leader thread found")
+	}
+	pidfile := filepath.Join(t.TempDir(), "pid")
+	if err := os.WriteFile(pidfile, []byte(strconv.Itoa(tid)+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(pidfile+".start", []byte(strconv.Itoa(tid)+" linux:x:1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-30 * 24 * time.Hour)
+	if err := os.Chtimes(pidfile, old, old); err != nil {
+		t.Fatal(err)
+	}
+	if RecordedLive(proc.OS{}, time.Now(), tid, pidfile) {
+		t.Errorf("thread id %d must not read live", tid)
 	}
 }
 

@@ -96,15 +96,55 @@ _ps_elapsed_s() {
   printf '%s' "$((10#$d * 86400 + 10#$h * 3600 + 10#$m * 60 + 10#$s))"
 }
 
-# _pid_recycled <pid> <pidfile> — 0 when the process now holding <pid> started
+# _proc_start <pid> — the process start token, byte-identical to the Go
+# proc.OS.Start: Linux `linux:<boot_id>:<stat field 22>`, else `lstart:<ps
+# lstart>`. Returns 1 when unreadable. The subshell keeps IFS and `set -f` local.
+_proc_start() (
+  IFS=$' \t\n'
+  pid="$1"
+  if [ -r /proc/self/stat ]; then
+    boot="$(cat /proc/sys/kernel/random/boot_id 2>/dev/null)" || return 1
+    line="$(cat "/proc/$pid/stat" 2>/dev/null)" || return 1
+    set -f
+    # shellcheck disable=SC2086
+    set -- ${boot}
+    [ "$#" -gt 0 ] || return 1
+    boot="$*"
+    # shellcheck disable=SC2086
+    set -- ${line##*)}
+    [ "$#" -ge 20 ] || return 1
+    ticks="${20}"
+    case "$ticks" in '' | *[!0-9]*) return 1 ;; esac
+    printf 'linux:%s:%s' "$boot" "$ticks"
+    return 0
+  fi
+  out="$(TZ=UTC0 LC_ALL=C ps -o lstart= -p "$pid" 2>/dev/null)" || return 1
+  set -f
+  # shellcheck disable=SC2086
+  set -- $out
+  [ "$#" -gt 0 ] || return 1
+  printf 'lstart:%s' "$*"
+)
+
+# _pid_recycled <pid> <pidfile> — 0 when <pid> now belongs to a different
+# process than <pidfile> records. A `<pidfile>.start` sidecar `<pid> <token>`
+# decides when it names this pid and the current token is readable; a sidecar
+# for another pid (or a blank one) is ignored. Otherwise 0 when the process started
 # after <pidfile> was last written (plus 2s of slack for ps' second
-# granularity), so it cannot be the dispatcher the file records: that process
-# existed when the file was written, and a later start inherited the number.
-# Returns 1 when either timestamp is unreadable, so a live process is never
-# judged dead; a coarse-mtime filesystem only errs the same, safe way.
+# granularity): it existed when the file was written, and a later start
+# inherited the number. Returns 1 when timestamps are unreadable, so a live
+# process is never judged dead; a coarse-mtime filesystem errs the same way.
 _pid_recycled() {
-  local pid="$1" file="$2" elapsed file_s
+  local pid="$1" file="$2" elapsed file_s rec rec_pid cur
   [ -f "$file" ] || return 1
+  if [ -s "$file.start" ]; then
+    rec_pid="" rec=""
+    { IFS=' ' read -r rec_pid rec <"$file.start"; } 2>/dev/null || :
+    if [ "$rec_pid" = "$pid" ] && [ -n "$rec" ] && cur="$(_proc_start "$pid")"; then
+      [ "$cur" != "$rec" ]
+      return $?
+    fi
+  fi
   elapsed="$(_ps_elapsed_s "$pid")" || return 1
   file_s="$(_file_mtime_s "$file")" || return 1
   case "$elapsed" in '' | *[!0-9]*) return 1 ;; esac
@@ -901,6 +941,109 @@ _artifacts_dir_bad() {
     fi
   done
   return 1
+}
+
+ATTACH_MAX_BYTES=$((10 * 1024 * 1024))
+# shellcheck disable=SC2034 # read by dispatch.sh, which sources this file
+ATTACH_MAX_TOTAL=$((25 * 1024 * 1024))
+# shellcheck disable=SC2034 # read by dispatch.sh, which sources this file
+ATTACH_MAX_FILES=10
+
+# _attach_image_ok <file> — succeed when the first bytes are a png, jpeg, gif or
+# webp signature. The extension is never consulted.
+_attach_image_ok() {
+  local hex
+  hex="$(od -An -tx1 -N12 "$1" | tr -d ' \n')"
+  case "${hex:0:16}" in 89504e470d0a1a0a) return 0 ;; esac
+  case "${hex:0:6}" in ffd8ff) return 0 ;; esac
+  case "${hex:0:12}" in 474946383761 | 474946383961) return 0 ;; esac
+  [ "${hex:0:8}" = 52494646 ] && [ "${hex:16:8}" = 57454250 ]
+}
+
+# _attach_validate <file> — pure check of one --attach path; prints the size in
+# bytes, or the refusal (naming the file and the limit it broke) on stderr.
+_attach_validate() {
+  local f=$1 size
+  if [ -L "$f" ]; then
+    echo "dispatch: --attach $f: a symlink (only a regular image file is attached)" >&2
+    return 1
+  fi
+  if [ ! -f "$f" ]; then
+    echo "dispatch: --attach $f: not an existing regular file (no directory, device or FIFO)" >&2
+    return 1
+  fi
+  size="$(wc -c <"$f")" || return 1
+  size=$((size))
+  if [ "$size" -gt "$ATTACH_MAX_BYTES" ]; then
+    echo "dispatch: --attach $f: $size bytes exceeds the 10 MiB per-file limit" >&2
+    return 1
+  fi
+  if ! _attach_image_ok "$f"; then
+    echo "dispatch: --attach $f: not a png, jpeg, gif or webp image (checked by content)" >&2
+    return 1
+  fi
+  printf '%s\n' "$size"
+}
+
+# _attach_copy <file> <n> <dir> — copy the bytes of one validated --attach file
+# into <dir> as <n>-<sanitized basename>, 0600, printing the byte count. The path
+# is opened once and checked and read through that fd, so a swap to a symlink
+# after validation is caught; size and signature are re-checked on the copy, not
+# the path. The temp file lives in $crew_dir/attach-tmp, never in <dir>, which the
+# worker can write.
+_attach_copy() {
+  local src=$1 n=$2 dir=$3 fd base tmp tmpdir="$crew_dir/attach-tmp" bytes
+  base="$(printf '%s' "${src##*/}" | tr -c 'A-Za-z0-9._-' _)"
+  base="${base#"${base%%[!.]*}"}"
+  base="${base:0:64}"
+  [ -n "$base" ] || base="file"
+  if [ -L "$tmpdir" ] || { [ -e "$tmpdir" ] && [ ! -d "$tmpdir" ]; }; then
+    echo "dispatch: $tmpdir is a symlink or not a directory — refusing to attach" >&2
+    return 1
+  fi
+  (umask 077 && mkdir -p -- "$tmpdir") || return 1
+  if [ -L "$src" ] || [ ! -f "$src" ] || ! exec {fd}<"$src"; then
+    echo "dispatch: --attach $src: changed while dispatching — not copying" >&2
+    return 1
+  fi
+  if [ -L "$src" ] || [ ! -f "/dev/fd/$fd" ] || [ ! "$src" -ef "/dev/fd/$fd" ]; then
+    exec {fd}<&-
+    echo "dispatch: --attach $src: changed while dispatching — not copying" >&2
+    return 1
+  fi
+  tmp="$(umask 077 && mktemp "$tmpdir/.attach.XXXXXX")" || {
+    exec {fd}<&-
+    return 1
+  }
+  head -c $((ATTACH_MAX_BYTES + 1)) <&"$fd" >"$tmp" || {
+    exec {fd}<&-
+    rm -f -- "$tmp"
+    return 1
+  }
+  exec {fd}<&-
+  bytes="$(wc -c <"$tmp")"
+  if [ "$bytes" -gt "$ATTACH_MAX_BYTES" ] || ! _attach_image_ok "$tmp"; then
+    rm -f -- "$tmp"
+    echo "dispatch: --attach $src: changed while dispatching — not copying" >&2
+    return 1
+  fi
+  mv -fT -- "$tmp" "$dir/$n-$base" || {
+    rm -f -- "$tmp"
+    return 1
+  }
+  printf '%s\n' "$((bytes))"
+}
+
+# _attach_names <dir> — the owner-supplied copies in <dir>, numeric order:
+# regular non-symlink image files named <1-4 digits>-<name> only. Non-images and
+# malformed names are excluded; a valid planted image is still listed and numbered.
+_attach_names() {
+  local f
+  for f in "$1"/*; do
+    [ -f "$f" ] && [ ! -L "$f" ] || continue
+    [[ ${f##*/} =~ ^([0-9]{1,4})-[A-Za-z0-9._-]{1,64}$ ]] || continue
+    if _attach_image_ok "$f"; then printf '%s\t%s\n' "${BASH_REMATCH[1]}" "$f"; fi
+  done | sort -n | cut -f2-
 }
 
 # _protocol_dirs_record_bad — succeed, printing the first offender, when

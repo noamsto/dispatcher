@@ -1439,23 +1439,49 @@ func TestOverseerHomeCrewRemoteRowFiresNoWorkerEvent(t *testing.T) {
 func TestOverseerHostUnreachableThenReachable(t *testing.T) {
 	w := ovWorker("worker:feat/a#s1-1", "working")
 	good := func(ts int64) fleetpkg.HostStatus {
-		return okHost("mbp", ts, ovRepo("beta", ovCrew("c9", "dead", "unattended", w)))
+		return okHost("mbp", ts, ovRepo("beta", ovCrew("c9", "live", "attended", w)))
+	}
+	// Recovering docs carry a new condition: it must wait for host_reachable.
+	withBeta := func(h fleetpkg.HostStatus) fleetpkg.HostStatus {
+		return okHost("mbp", *h.TS, ovRepo("beta", ovCrew("c9", "dead", "unattended", w)))
 	}
 	got := fedRun(t, fedOverseer(t),
 		withHosts(ovDoc(ovStart), good(ovStart)),
-		withHosts(ovDoc(ovStart+minute), downHost("mbp", ovStart, "ssh: timeout")),
-		withHosts(ovDoc(ovStart+2*minute), downHost("mbp", ovStart, "ssh: timeout")),
-		withHosts(ovDoc(ovStart+3*minute), good(ovStart+3*minute)))
-	if len(got[0]) != 0 || len(got[2]) != 0 {
-		t.Errorf("baseline %v / repeat-down %v printed lines", got[0], got[2])
+		withHosts(ovDoc(ovStart+minute), downHost("mbp", ovStart, "ssh: first")),
+		withHosts(ovDoc(ovStart+2*minute), downHost("mbp", ovStart+minute, "ssh: second")),
+		withHosts(ovDoc(ovStart+3*minute), downHost("mbp", ovStart+2*minute, "ssh: timeout")),
+		withHosts(ovDoc(ovStart+4*minute), downHost("mbp", ovStart+2*minute, "ssh: timeout")),
+		withHosts(ovDoc(ovStart+5*minute), withBeta(good(ovStart+5*minute))),
+		withHosts(ovDoc(ovStart+6*minute), withBeta(good(ovStart+6*minute))),
+		withHosts(ovDoc(ovStart+7*minute), withBeta(good(ovStart+7*minute))))
+	for _, i := range []int{0, 1, 2, 4, 5, 6} {
+		if len(got[i]) != 0 {
+			t.Errorf("step %d printed %v, want none", i, got[i])
+		}
 	}
 	want := map[string]any{"stream": "overseer", "event": "host_unreachable", "repo": "", "crew": "", "host": "mbp",
-		"error": "ssh: timeout", "last_ok_ts": float64(ovStart), "ts": float64(ovStart)}
-	if len(got[1]) != 1 || !reflect.DeepEqual(got[1][0], want) {
-		t.Errorf("down lines = %v, want [%v]", got[1], want)
+		"error": "ssh: timeout", "last_ok_ts": float64(ovStart + 2*minute), "ts": float64(ovStart)}
+	if len(got[3]) != 1 || !reflect.DeepEqual(got[3][0], want) {
+		t.Errorf("down lines = %v, want [%v]", got[3], want)
 	}
-	if len(got[3]) != 1 || got[3][0]["event"] != "host_reachable" || got[3][0]["host"] != "mbp" {
-		t.Errorf("recovery lines = %v, want only host_reachable (dispatcher_down was carried)", got[3])
+	if len(got[7]) != 2 || ofEvent(got[7], "host_reachable")[0]["host"] != "mbp" || len(ofEvent(got[7], "dispatcher_down")) != 1 {
+		t.Errorf("recovery lines = %v, want host_reachable and the held dispatcher_down", got[7])
+	}
+}
+
+func TestOverseerHostFlappingProbesPrintNothing(t *testing.T) {
+	good := func(ts int64) fleetpkg.HostStatus { return okHost("mbp", ts) }
+	bad := func(ts int64) fleetpkg.HostStatus { return downHost("mbp", ovStart, "ssh: timeout") }
+	probes := []func(int64) fleetpkg.HostStatus{good, bad, good, bad, good, bad, bad, good, bad, bad, good, good, bad, good}
+	var docs []fleetpkg.StatusDoc
+	for i, probe := range probes {
+		ts := ovStart + int64(i)*minute
+		docs = append(docs, withHosts(ovDoc(ts), probe(ts)))
+	}
+	for i, step := range fedRun(t, fedOverseer(t), docs...) {
+		if len(step) != 0 {
+			t.Errorf("step %d printed %v, want none (no streak of %d)", i, step, hostFlipStreak)
+		}
 	}
 }
 
@@ -2234,4 +2260,104 @@ func TestOverseerFarUnlabeledHeadStuck(t *testing.T) {
 			t.Errorf("%q reached the wire:\n%s", bad, raw)
 		}
 	}
+}
+
+func withPane(c fleetpkg.CrewStatus, state string) fleetpkg.CrewStatus {
+	c.Dispatcher.PaneState = &state
+	return c
+}
+
+func TestTransitionsDispatcherAwaiting(t *testing.T) {
+	w := func(state string) map[string]any { return ovWorker("worker:feat/a#s1-1", state) }
+	stale := func(state string) map[string]any {
+		r := w(state)
+		r["stale"] = true
+		return r
+	}
+	// pane "" is an unknown pane state (nil).
+	at := func(m int64, pane, lane string, ws ...map[string]any) fleetpkg.StatusDoc {
+		c := withLane(ovCrew("c1", "live", "attended", ws...), lane)
+		if pane != "" {
+			c = withPane(c, pane)
+		}
+		return ovDoc(ovStart+m*minute, ovRepo("alpha", c))
+	}
+	run := func(want map[int64][]string, docs ...fleetpkg.StatusDoc) {
+		t.Helper()
+		var w [][]string
+		for _, d := range docs {
+			w = append(w, want[(d.TS-ovStart)/minute])
+		}
+		wantSteps(t, steps(t, docs...), w...)
+	}
+	await, dead := evs("dispatcher_awaiting"), evs("lane_dead")
+
+	// A dialog waits on the human whatever the workers do.
+	tr := newTransitions()
+	var names [][]string
+	var fired map[string]any
+	for _, m := range []int64{0, 4, 5, 6, 30} {
+		var n []string
+		for _, l := range step(t, tr, at(m, "waiting", "alive", w("working"))) {
+			n = append(n, l["event"].(string))
+			fired = l
+		}
+		names = append(names, n)
+	}
+	wantSteps(t, names, none(), none(), await, none(), none())
+	want := map[string]any{"stream": "overseer", "event": "dispatcher_awaiting", "repo": "o/alpha", "crew": "c1",
+		"host": ovHost, "pane_state": "waiting", "pr_open": float64(0), "blocked": float64(0), "failed": float64(0),
+		"active": float64(1), "waited_s": float64(300), "ts": float64(ovStart + 5*minute + 1),
+		"summary": "o/alpha c1: dispatcher waiting, 0 pr_open, 0 blocked, 0 failed, 1 active"}
+	if !reflect.DeepEqual(fired, want) {
+		t.Errorf("dispatcher_awaiting line = %v, want %v", fired, want)
+	}
+
+	// Parked on a pr_open over a dead lane: awaiting, never lane_dead.
+	po := w("pr_open")
+	run(map[int64][]string{5: await}, at(0, "done", "dead", po), at(5, "done", "dead", po), at(10, "done", "dead", po),
+		at(11, "done", "dead", po), at(30, "done", "dead", po))
+
+	// Standby: the dispatcher waits on a working worker, not the human, and a
+	// dead lane leaves it deaf to that worker: lane_dead, never awaiting.
+	run(map[int64][]string{10: dead}, at(0, "idle", "dead", w("working"), po), at(5, "idle", "dead", w("working"), po),
+		at(10, "idle", "dead", w("working"), po), at(20, "idle", "dead", w("working"), po))
+
+	// A busy dispatcher keeps today's lane_dead.
+	bl := blockedWorker("worker:feat/a#s1-1", ovStart, nil, "worker", true)
+	run(map[int64][]string{10: dead}, at(0, "processing", "dead", bl), at(9, "processing", "dead", bl), at(10, "processing", "dead", bl))
+
+	// An unknown pane state is today's rule exactly.
+	run(map[int64][]string{10: dead, 23: dead}, at(0, "", "dead", bl), at(9, "", "dead", bl), at(10, "", "dead", bl),
+		at(11, "", "dead", bl), at(12, "", "alive", bl), at(13, "", "dead", bl), at(22, "", "dead", bl), at(23, "", "dead", bl))
+
+	// Nothing held: a finished dispatcher is idle, not awaiting.
+	run(nil, at(0, "done", "alive"), at(5, "done", "alive"), at(10, "done", "alive"))
+	run(nil, at(0, "done", "alive", stale("pr_open")), at(5, "done", "alive", stale("pr_open")), at(10, "done", "alive", stale("pr_open")))
+	// A done row is a wake state the dead lane strands, so lane_dead keeps firing.
+	run(map[int64][]string{10: dead}, at(0, "done", "dead", w("done")), at(5, "done", "dead", w("done")), at(10, "done", "dead", w("done")), at(20, "done", "dead", w("done")))
+
+	// A failed row is held work.
+	fl := w("failed")
+	run(map[int64][]string{5: await}, at(0, "done", "alive", fl), at(5, "done", "alive", fl), at(6, "done", "alive", fl))
+
+	// A dispatcher the human wakes does not inherit the parked lane_dead clock.
+	run(map[int64][]string{5: await, 31: dead}, at(0, "done", "dead", po), at(5, "done", "dead", po), at(20, "done", "dead", po),
+		at(21, "processing", "dead", po), at(30, "processing", "dead", po), at(31, "processing", "dead", po))
+
+	// An episode that drops for a full grace re-arms, with the dwell restarted.
+	run(map[int64][]string{5: await, 17: await}, at(0, "done", "alive", po), at(5, "done", "alive", po), at(6, "processing", "alive", po),
+		at(11, "processing", "alive", po), at(12, "done", "alive", po), at(16, "done", "alive", po), at(17, "done", "alive", po))
+
+	// A repo skipped mid-grace keeps its grace start.
+	run(map[int64][]string{5: await, 17: await}, at(0, "done", "alive", po), at(5, "done", "alive", po), at(6, "processing", "alive", po),
+		ovDoc(ovStart+9*minute), at(11, "processing", "alive", po), at(12, "done", "alive", po), at(16, "done", "alive", po), at(17, "done", "alive", po))
+
+	// A short wake of a parked dispatcher keeps its episode: no re-fire.
+	run(map[int64][]string{5: await}, at(0, "done", "alive", po), at(5, "done", "alive", po), at(6, "processing", "alive", po),
+		at(7, "done", "alive", po), at(12, "done", "alive", po), at(30, "done", "alive", po))
+
+	// A dwell broken before it completes restarts.
+	run(map[int64][]string{9: await}, at(0, "waiting", "alive"), at(3, "processing", "alive"), at(4, "waiting", "alive"),
+		at(8, "waiting", "alive"), at(9, "waiting", "alive"))
 }

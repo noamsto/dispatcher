@@ -304,3 +304,77 @@ func TestOverviewInputsDir(t *testing.T) {
 	in.Dir = &dir
 	check(view.BuildOverview(in), &dir)
 }
+
+func TestAgentExecute(t *testing.T) {
+	run := func(id, state, session string, start, end int64) data.SubagentRun {
+		return data.SubagentRun{ID: id, Label: "step " + id, Agent: "general-purpose", Engine: "claude",
+			Model: "sonnet", Effort: "low", State: state, Session: session, StartTS: start, EndTS: end}
+	}
+	agentOf := func(v view.OverviewView, branch string) view.AgentRow {
+		t.Helper()
+		for _, a := range v.Agents {
+			if a.Branch == branch {
+				return a
+			}
+		}
+		t.Fatalf("no agent row %q", branch)
+		return view.AgentRow{}
+	}
+	in := viewtest.Inputs()
+	now := in.NowMS
+	a := data.WorkerKey{Crew: "c1", Branch: "feat/a"}
+	in.Bus.Workers[a].Session = "s1"
+	in.Bus.Subagents = map[data.WorkerKey][]data.SubagentRun{
+		a: {
+			run("r", "running", "s1", now-30000, 0),
+			run("d", "done", "s1", now-90000, now-60000),
+			run("f", "failed", "s1", now-90000, now-10000),
+			run("old", "running", "s0", now-30000, 0),
+		},
+		{Crew: "c1", Branch: "feat/g"}: {run("x", "running", "", now-30000, 0)},
+		{Crew: "c1", Branch: "feat/p"}: {run("p", "running", "", now-30000, 0)},
+	}
+	noSubs := viewtest.Inputs()
+	noSubs.Bus.Subagents = nil
+	base := view.BuildOverview(noSubs)
+	v := view.BuildOverview(in)
+
+	got := agentOf(v, "feat/a").Execute
+	wantStates := []string{"running", "done", "failed", "unknown"}
+	wantAge := []int64{30, 60, 10, 30}
+	if len(got) != len(wantStates) {
+		t.Fatalf("execute = %+v", got)
+	}
+	for i, n := range got {
+		if n.Kind != "subagent" || n.State != wantStates[i] || *n.AgeSec != wantAge[i] {
+			t.Errorf("node %d = %+v age %d", i, n, *n.AgeSec)
+		}
+	}
+	first := got[0]
+	if *first.Label != "step r" || *first.Role != "general-purpose" || *first.Engine != "claude" ||
+		*first.Model != "sonnet" || *first.Effort != "low" {
+		t.Errorf("first = %+v", first)
+	}
+	if n := agentOf(v, "feat/a").Execute[0]; n.Detail != nil || n.Tier != nil {
+		t.Errorf("unexpected detail/tier: %+v", n)
+	}
+	if st := agentOf(v, "feat/g").Execute[0].State; st != "unknown" {
+		t.Errorf("terminal lead: state = %s", st)
+	}
+	if ex := agentOf(v, "feat/p").Execute; ex == nil || len(ex) != 0 {
+		t.Errorf("peer execute = %#v", ex)
+	}
+	if want := base.Summary.Agents + 1; v.Summary.Agents != want {
+		t.Errorf("Summary.Agents = %d, want %d (one running node)", v.Summary.Agents, want)
+	}
+}
+
+func TestAgentNodeOmitsEmptyLabelAndEffort(t *testing.T) {
+	b, err := json.Marshal(view.AgentNode{Kind: "role"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), "label") || strings.Contains(string(b), "effort") {
+		t.Errorf("json = %s", b)
+	}
+}

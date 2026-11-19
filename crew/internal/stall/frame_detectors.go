@@ -18,6 +18,7 @@ type frameDet struct {
 
 	d1At, d1Hits int64
 	d1Kind       string // what was actually posted, for the mid-episode flip
+	d1Countdown  bool   // the latest permission frame of the open episode carried the auto-deny countdown
 
 	d1bAt, d1bHits int64
 
@@ -119,6 +120,27 @@ func (w *watch) d1() error {
 		}
 	}
 	if kind == "" {
+		if fd.d1At != 0 && !w.suppressed && !w.cfg.roleMode && frame.InterruptedAboveBox(w.text) {
+			switch fd.d1Kind {
+			case "autoblocked":
+				return nil
+			case "permission":
+				if !fd.d1Countdown {
+					break
+				}
+				// The dialog last on screen showed the auto-deny countdown, so the interrupt
+				// is Claude Code timing it out: nothing is left to answer, and the
+				// open prompt: block is replaced by a lead-idle one.
+				if err := w.clearPrompt(); err != nil {
+					return err
+				}
+				posted, err := w.postBlocked("prompt:", "prompt: permission auto-blocked — lead idle — pane "+w.cfg.pane)
+				if err == nil && posted {
+					fd.d1At, fd.d1Kind = w.now, "autoblocked"
+				}
+				return err
+			}
+		}
 		if fd.d1At != 0 {
 			if err := w.clearPrompt(); err != nil {
 				return err
@@ -126,7 +148,7 @@ func (w *watch) d1() error {
 			fd.d1At = 0
 		}
 		fd.d1Hits = 0
-		fd.d1Kind = ""
+		fd.d1Kind, fd.d1Countdown = "", false
 		return nil
 	}
 	if fd.d1At != 0 && kind != fd.d1Kind {
@@ -135,6 +157,9 @@ func (w *watch) d1() error {
 		}
 		fd.d1At = 0
 		fd.d1Hits = 0
+	}
+	if kind == "permission" && fd.d1At != 0 {
+		fd.d1Countdown = hasCountdown(w.text)
 	}
 	fd.d1Hits++
 	if fd.d1Hits < 2 || fd.d1At != 0 {
@@ -159,7 +184,12 @@ func (w *watch) d1() error {
 		return err
 	}
 	fd.d1At, fd.d1Kind = w.now, kind
+	fd.d1Countdown = kind == "permission" && hasCountdown(w.text)
 	return nil
+}
+
+func hasCountdown(text string) bool {
+	return slices.ContainsFunc(strings.Split(text, "\n"), rePermCountdown.MatchString)
 }
 
 func (w *watch) clearPrompt() error {

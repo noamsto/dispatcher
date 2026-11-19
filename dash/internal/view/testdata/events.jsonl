@@ -17,3 +17,6 @@
 {"ts":1794800300000,"crew_id":"c1","from":"worker:feat/d#s1","to":"dispatcher:c1","kind":"status","body":{"state":"blocked","detail":"prompt: permission dialog","source":"watchdog"}}
 {"ts":1794800350000,"crew_id":"c2","from":"worker:feat/j#s1","to":"dispatcher:c2","kind":"status","body":{"state":"working","detail":"execute"}}
 {"ts":1794800500000,"crew_id":"c1","from":"worker:feat/a#s1","to":"dispatcher:c1","kind":"status","body":{"state":"working","detail":"execute"}}
+{"ts":1794800510000,"crew_id":"c1","from":"worker:feat/a#s1","to":"subagent:c1","kind":"msg","body":"{\"subagent\":\"spawn\",\"id\":\"t1\",\"engine\":\"claude\",\"label\":\"step 1\",\"agent\":\"general-purpose\",\"model\":\"sonnet\",\"effort\":\"medium\"}"}
+{"ts":1794800520000,"crew_id":"c1","from":"worker:feat/a#s1","to":"subagent:c1","kind":"msg","body":"{\"subagent\":\"spawn\",\"id\":\"t2\",\"engine\":\"claude\",\"label\":\"step 2\",\"model\":\"haiku\"}"}
+{"ts":1794800560000,"crew_id":"c1","from":"worker:feat/a#s1","to":"subagent:c1","kind":"msg","body":"{\"subagent\":\"finish\",\"id\":\"t1\",\"outcome\":\"ok\"}"}

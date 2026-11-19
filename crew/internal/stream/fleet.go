@@ -65,6 +65,12 @@ type FleetOptions struct {
 	// Flush puts the overseer lane's stdout on the wire before a msg cursor
 	// moves past the batch it printed. nil is an unbuffered stdout.
 	Flush func() error
+	// Spawn starts a detached `crew fleet stream` with args, its stderr
+	// appended to stderrPath. nil execs o.Self detached.
+	Spawn func(args []string, stderrPath string) error
+
+	segBytes int64
+	keepSegs int
 }
 
 func (o FleetOptions) withDefaults() FleetOptions {
@@ -115,6 +121,8 @@ type FleetRequest struct {
 	Request
 	Rediscover string
 	Overseer   bool
+	Daemon     bool
+	Follow     bool
 }
 
 // RunFleet is `crew fleet stream`. --crew is required: the lane spans repos,
@@ -131,12 +139,16 @@ func RunFleet(r FleetRequest, stdout, stderr io.Writer, opts FleetOptions) int {
 		say(stderr, "crew: --rediscover must be a positive integer number of seconds\n")
 		return exitUsage
 	}
+	if (r.Daemon || r.Follow) && !r.Overseer {
+		say(stderr, "crew: fleet stream: --daemon and --follow need --overseer\n")
+		return exitUsage
+	}
 	if r.Overseer {
 		if r.Crew != "" {
 			say(stderr, "crew: fleet stream: --overseer and --crew are exclusive\n")
 			return exitUsage
 		}
-		return runOverseer(r.Request, rediscover, stdout, stderr, o)
+		return runOverseer(r, rediscover, stdout, stderr, o)
 	}
 	if r.Crew == "" {
 		say(stderr, "crew: fleet stream: --crew ID is required\n")

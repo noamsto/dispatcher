@@ -17,6 +17,7 @@ import (
 type Table interface {
 	Alive(pid int) bool             // a process with this pid exists, under any uid
 	Elapsed(pid int) (int64, bool)  // the process's age in seconds
+	Start(pid int) (string, bool)   // the process's start token, comparable across reads
 	Parent(pid int) (int, bool)     // the pid's parent
 	Comm(pid int) (string, bool)    // the pid's command name
 	Args(pid int) string            // the pid's command line, "" when unknown
@@ -76,6 +77,45 @@ func (OS) Elapsed(pid int) (int64, bool) {
 		return n, err == nil
 	}
 	return parseEtime(psField("-o", "etime=", "-p", strconv.Itoa(pid)))
+}
+
+// Start is the token a pid's identity is judged by: on Linux the boot id and
+// the boot-relative start tick (immune to wall-clock changes, and readable for
+// a thread id, whose tick differs from any process's); elsewhere ps' lstart,
+// pinned to UTC so a zone change cannot turn a live process into a mismatch.
+func (OS) Start(pid int) (string, bool) {
+	if _, err := os.Stat("/proc/self/stat"); err == nil {
+		boot, err := os.ReadFile("/proc/sys/kernel/random/boot_id")
+		line, err2 := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/stat")
+		ticks, ok := parseStatStart(string(line))
+		boot = []byte(strings.TrimSpace(string(boot)))
+		if err != nil || err2 != nil || !ok || len(boot) == 0 {
+			return "", false
+		}
+		return "linux:" + string(boot) + ":" + ticks, true
+	}
+	cmd := exec.Command("ps", "-o", "lstart=", "-p", strconv.Itoa(pid))
+	cmd.Env = append(os.Environ(), "TZ=UTC0", "LC_ALL=C")
+	out, err := cmd.Output()
+	if err != nil {
+		return "", false
+	}
+	s := strings.Join(strings.Fields(string(out)), " ")
+	return "lstart:" + s, s != ""
+}
+
+// parseStatStart is field 22 (starttime) of a /proc/<pid>/stat line. The comm
+// field may hold spaces and parens, so fields count from after the last ')'.
+func parseStatStart(line string) (string, bool) {
+	i := strings.LastIndex(line, ")")
+	if i < 0 {
+		return "", false
+	}
+	f := strings.Fields(line[i+1:])
+	if len(f) < 20 || !ascii.IsDigits(f[19]) {
+		return "", false
+	}
+	return f[19], true
 }
 
 // parseEtime reads the [[dd-]hh:]mm:ss of ps' etime.

@@ -211,3 +211,25 @@ func TestFleetSessionGolden(t *testing.T) {
 	fv := vm.BuildFleet(longLabelInputs(true))
 	checkGolden(t, "fleet_session_100x30.golden", fleetSessionView(fv, 100, 30), 100, 30)
 }
+
+// An idle-repos hint is a truncatable tail: it must not shrink the labels of
+// the other rows.
+func TestFleetIdleReposDoesNotShrinkLabels(t *testing.T) {
+	asciiProfile(t)
+	base := vm.BuildFleet(longLabelInputs(true))
+	idle := vm.BuildFleet(longLabelInputs(true))
+	idle.Crews[0].IdleRepos = 7
+	rowsBase := crewsPanelRows(t, fleetSessionView(base, 100, 30))
+	rowsIdle := crewsPanelRows(t, fleetSessionView(idle, 100, 30))
+	if len(rowsBase) != len(rowsIdle) {
+		t.Fatalf("row count %d vs %d", len(rowsBase), len(rowsIdle))
+	}
+	if !strings.Contains(rowsIdle[0], "+") {
+		t.Errorf("idle-repos hint vanished: %q", rowsIdle[0])
+	}
+	for i := 1; i < len(rowsBase); i++ {
+		if rowsBase[i] != rowsIdle[i] {
+			t.Errorf("row %d changed with an idle-repos hint:\n%q\n%q", i, rowsBase[i], rowsIdle[i])
+		}
+	}
+}

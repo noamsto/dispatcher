@@ -58,6 +58,7 @@ Remote hosts:
 Holds:
   hold            Park a queued dispatch on a quota window
   queue           Record a filed task not yet dispatched
+  policy          Standing per-repo owner policy for unattended runs
 
 Maintenance:
   merge           Merge a PR only when head, base and ledger are green

@@ -2,7 +2,9 @@ package proc
 
 import (
 	"os"
+	"os/exec"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -212,5 +214,40 @@ func TestParseEtime(t *testing.T) {
 		if got, ok := parseEtime(in); ok {
 			t.Errorf("parseEtime(%q) = %d, true; want false", in, got)
 		}
+	}
+}
+
+func TestParseStatStart(t *testing.T) {
+	line := "123 (a) b) (c) S 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 987654 23 24"
+	if got, ok := parseStatStart(line); !ok || got != "987654" {
+		t.Errorf("parseStatStart = %q, %v; want 987654", got, ok)
+	}
+	for _, bad := range []string{"", "1 (a) S 1 2", "1 (a) S 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 x 23"} {
+		if got, ok := parseStatStart(bad); ok {
+			t.Errorf("parseStatStart(%q) = %q, want unreadable", bad, got)
+		}
+	}
+}
+
+func TestOSStart(t *testing.T) {
+	if _, err := os.Stat("/proc/self/stat"); err != nil {
+		t.Skip("no /proc")
+	}
+	first, ok := OS{}.Start(os.Getpid())
+	if !ok || !strings.HasPrefix(first, "linux:") {
+		t.Fatalf("Start(self) = %q, %v; want a linux: token", first, ok)
+	}
+	if again, _ := (OS{}).Start(os.Getpid()); again != first {
+		t.Errorf("Start(self) unstable: %q then %q", first, again)
+	}
+}
+
+func TestOSStartDeadPid(t *testing.T) {
+	cmd := exec.Command("true")
+	if err := cmd.Run(); err != nil {
+		t.Fatal(err)
+	}
+	if tok, ok := (OS{}).Start(cmd.Process.Pid); ok {
+		t.Errorf("Start(reaped pid) = %q, want unreadable", tok)
 	}
 }

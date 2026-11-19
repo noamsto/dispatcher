@@ -81,7 +81,12 @@ func Run(sub, pid string, paths bus.Paths, stderr io.Writer, o Options) int {
 			say(stderr, "crew: register: %v\n", err)
 			return exitFailure
 		}
+		if err := crews.WritePidStart(o.Proc, pidfile, pid); err != nil {
+			say(stderr, "crew: register: %v\n", err)
+			return exitFailure
+		}
 		if err := os.WriteFile(pidfile, []byte(pid+"\n"), 0o644); err != nil {
+			_ = os.Remove(crews.PidStartFile(pidfile))
 			say(stderr, "crew: register: %v\n", err)
 			return exitFailure
 		}

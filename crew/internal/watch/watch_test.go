@@ -194,6 +194,16 @@ func TestMsgToDispatcherAndStarWake(t *testing.T) {
 	}
 }
 
+// `subagent:` is a synthetic sink: a msg addressed to it wakes no park.
+func TestSubagentSinkMsgDoesNotWake(t *testing.T) {
+	p := fixture(t)
+	writeLog(t, p, msg(1785951264000, "worker:feat/x#s1", "subagent:c1"))
+	stdout, stderr, code, _ := run(t, p, Request{Since: since("0"), Timeout: "1", Interval: "1"})
+	if code != 0 || stdout != "" || stderr != "crew: watch park ended after 1s — no new events (cursor 0)\n" {
+		t.Fatalf("code %d stdout %q stderr %q", code, stdout, stderr)
+	}
+}
+
 func TestStatesNarrowTheWakeSet(t *testing.T) {
 	row := status(1785951264000, "worker:feat/x#s1-1", "working", "", "")
 

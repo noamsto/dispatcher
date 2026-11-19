@@ -90,11 +90,11 @@ teardown() {
 # the single-definition guarantee the byte-compares used to supply: a stray
 # copy in any launcher would fork a fix again.
 @test "the shared launcher helpers are defined only in launcher-common.sh" {
-  for fn in _bus_append engine_path _pid_alive _file_mtime_s _ps_elapsed_s _pid_recycled _recorded_pid_live _pane_client _remote_session_ok _remote_target_session _remote_worker_session _remote_window _uuid _lead_record_safe _record_lead_session _github_ssh_host _tracker_slug_from_path _origin_slug _resolve_dir engine_cli engine_enabled _settings_load _glob_match _exact_match _model_class _class_item _escalation_hop _class_sigil _worker_protocol_files _require_protocol_files _check_protocol_rev theme_colour state_glyph grid_lead_format _ensure_roster_render shell_quote write_launch_script _artifacts_dir_bad _protocol_dirs_record_bad _settings_env_names _settings_env_json _record_protocol_dirs claude_lean_env claude_subagent_effort_env _claude_pretrust launch_dir_args pi_skill_args _prior_failed_model _prior_failed_escalation_available _child_on_chain; do
-    run grep -q "^${fn}() {" "$ROOT/adapters/core/launcher-common.sh"
+  for fn in _bus_append engine_path _pid_alive _file_mtime_s _ps_elapsed_s _proc_start _pid_recycled _recorded_pid_live _pane_client _remote_session_ok _remote_target_session _remote_worker_session _remote_window _uuid _lead_record_safe _record_lead_session _github_ssh_host _tracker_slug_from_path _origin_slug _resolve_dir engine_cli engine_enabled _settings_load _glob_match _exact_match _model_class _class_item _escalation_hop _class_sigil _worker_protocol_files _require_protocol_files _check_protocol_rev theme_colour state_glyph grid_lead_format _ensure_roster_render shell_quote write_launch_script _artifacts_dir_bad _protocol_dirs_record_bad _settings_env_names _settings_env_json _record_protocol_dirs claude_lean_env claude_subagent_effort_env _claude_pretrust launch_dir_args pi_skill_args _prior_failed_model _prior_failed_escalation_available _child_on_chain; do
+    run grep -q "^${fn}() [{(]" "$ROOT/adapters/core/launcher-common.sh"
     [ "$status" -eq 0 ]
     for f in dispatch dispatch-resume dispatcher lead-launcher; do
-      run grep -q "^${fn}() {" "$ROOT/adapters/core/$f.sh"
+      run grep -q "^${fn}() [{(]" "$ROOT/adapters/core/$f.sh"
       [ "$status" -ne 0 ]
     done
   done
@@ -3236,4 +3236,91 @@ _phase_stems() {
 
 @test "dispatcher protocol tells the dispatcher to consult crew rate --advise" {
   grep -qF 'crew rate --advise <engine> <tier>' "$ROOT/adapters/core/protocols/DISPATCHER_PROTOCOL.md"
+}
+
+# The start token in <pidfile>.start settles pid reuse where the mtime heuristic
+# cannot: a sleep started after the pidfile's mtime looks recycled to it.
+_start_sleeper() {
+  sleep 30 >/dev/null 2>&1 3>&- &
+  SLEEP_PID=$!
+  PIDFILE="$BATS_TEST_TMPDIR/pid"
+  printf '%s\n' "$SLEEP_PID" >"$PIDFILE"
+}
+
+_stop_sleeper() {
+  kill "$SLEEP_PID" 2>/dev/null || true
+  wait "$SLEEP_PID" 2>/dev/null || true
+}
+
+_backdate_hour() { # <file>
+  local t
+  t="$(date -d '1 hour ago' +%Y%m%d%H%M 2>/dev/null || date -v-1H +%Y%m%d%H%M)"
+  touch -t "$t" "$1"
+}
+
+_live() { # <pid> <pidfile>
+  run bash -c 'source "$1/adapters/core/launcher-common.sh"; _recorded_pid_live "$2" "$3"' _ "$ROOT" "$1" "$2"
+}
+
+@test "a matching .start token keeps an old pidfile's process live" {
+  _start_sleeper
+  bash -c 'source "$1/adapters/core/launcher-common.sh"; printf "%s " "$2"; _proc_start "$2"' _ "$ROOT" "$SLEEP_PID" >"$PIDFILE.start"
+  [ -s "$PIDFILE.start" ]
+  _backdate_hour "$PIDFILE"
+  _live "$SLEEP_PID" "$PIDFILE"
+  _stop_sleeper
+  [ "$status" -eq 0 ]
+}
+
+@test "a mismatched .start token marks the pid recycled despite a fresh pidfile" {
+  _start_sleeper
+  printf '%s linux:x:1\n' "$SLEEP_PID" >"$PIDFILE.start"
+  _live "$SLEEP_PID" "$PIDFILE"
+  _stop_sleeper
+  [ "$status" -eq 1 ]
+}
+
+@test "a .start sidecar naming another pid falls back to the mtime heuristic" {
+  _start_sleeper
+  printf '%s linux:x:1\n' "$((SLEEP_PID + 1))" >"$PIDFILE.start"
+  _live "$SLEEP_PID" "$PIDFILE"
+  _stop_sleeper
+  [ "$status" -eq 0 ]
+}
+
+@test "a .start that is a directory does not abort a strict-mode caller" {
+  _start_sleeper
+  mkdir "$PIDFILE.start"
+  run bash -euo pipefail -c 'source "$1/adapters/core/launcher-common.sh"; _recorded_pid_live "$2" "$3"' _ "$ROOT" "$SLEEP_PID" "$PIDFILE"
+  _stop_sleeper
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+}
+
+@test "a blank .start sidecar falls back to the mtime heuristic" {
+  _start_sleeper
+  printf '\n' >"$PIDFILE.start"
+  _live "$SLEEP_PID" "$PIDFILE"
+  _stop_sleeper
+  [ "$status" -eq 0 ]
+}
+
+@test "without a .start token an old pidfile still reads as recycled" {
+  _start_sleeper
+  _backdate_hour "$PIDFILE"
+  _live "$SLEEP_PID" "$PIDFILE"
+  _stop_sleeper
+  [ "$status" -eq 1 ]
+}
+
+@test "crew register's pid.start token matches the shell _proc_start" {
+  setup_repo
+  _start_sleeper
+  CREW_ID=c-start "$CREW" register "$SLEEP_PID"
+  pidfile="$(git rev-parse --path-format=absolute --git-common-dir)/crew/crews/c-start/pid"
+  [ -s "$pidfile.start" ]
+  _backdate_hour "$pidfile"
+  _live "$SLEEP_PID" "$pidfile"
+  _stop_sleeper
+  [ "$status" -eq 0 ]
 }

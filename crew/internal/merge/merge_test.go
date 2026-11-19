@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"cmp"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -16,6 +17,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/git/gittest"
 	"github.com/noamsto/dispatcher/crew/internal/marks"
 	"github.com/noamsto/dispatcher/crew/internal/merge"
+	"github.com/noamsto/dispatcher/crew/internal/policy"
 	"github.com/noamsto/dispatcher/crew/internal/reply"
 	"github.com/noamsto/dispatcher/crew/internal/sender"
 )
@@ -382,5 +384,90 @@ func TestUnreadDirectives(t *testing.T) {
 				t.Errorf("merged = %v, want %v (calls %v)", merged, tt.merged, g.Calls())
 			}
 		})
+	}
+}
+
+func TestPolicy(t *testing.T) {
+	rec := policy.Record{Name: "night", Text: "merge when green", By: "owner", Host: "h1", At: "2026-11-19T01:02:03Z"}
+	const prov = `'night' set by owner@h1 at 2026-11-19T01:02:03Z: "merge when green"`
+	load := func(rec policy.Record, err error) func(string) (policy.Record, error) {
+		return func(string) (policy.Record, error) { return rec, err }
+	}
+	tests := []struct {
+		name                string
+		policy              func(string) (policy.Record, error)
+		dryRun              bool
+		noLedger, allowNoCI bool
+		code                int
+		stderr              string
+		stdout              string
+		noCalls             bool
+		release             string
+	}{
+		{name: "no-ledger waiver", policy: load(rec, nil), noLedger: true, code: 1, noCalls: true,
+			stderr: "crew: merge: refusing PR 7 — --policy never waives a gate: drop --no-ledger/--allow-no-ci, or merge on the human's own approval\n"},
+		{name: "allow-no-ci waiver", policy: load(rec, nil), allowNoCI: true, code: 1, noCalls: true,
+			stderr: "crew: merge: refusing PR 7 — --policy never waives a gate: drop --no-ledger/--allow-no-ci, or merge on the human's own approval\n"},
+		{name: "missing", policy: load(policy.Record{}, fmt.Errorf("%w night in this repo", policy.ErrMissing)), code: 1, noCalls: true,
+			stderr: "crew: merge: refusing PR 7 — standing policy 'night' is not in force: no standing policy 'night' in this repo\n"},
+		{name: "refused", policy: load(policy.Record{}, errors.New("the file f is owned by uid 1, not this uid 2")), code: 1, noCalls: true,
+			stderr: "standing policy 'night' is not in force: the file f is owned by uid 1, not this uid 2"},
+		{name: "no loader", code: 1, noCalls: true, stderr: "standing policy 'night' is not in force"},
+		{name: "dry run", policy: load(rec, nil), dryRun: true, stdout: "  policy: " + prov + "\n"},
+		{name: "merge", policy: load(rec, nil), stdout: "merged under standing policy " + prov + "\n", release: "approved — PR #7 is merged under standing policy 'night'; post done"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			paths := bus.Paths{Common: dir, Dir: dir, Log: filepath.Join(dir, "events.jsonl")}
+			if err := os.WriteFile(paths.Log, []byte(okRow+"\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			g := &ghtest.Fake{Out: map[string]string{viewIn: view("OPEN", "false", "MERGEABLE", okRoll), runsIn: okRuns, mergeG: "merged"}}
+			gt := &gittest.Fake{Func: func(string, []string) (string, error) { return "", nil }}
+			var stdout, stderr bytes.Buffer
+			code := merge.Run(context.Background(), merge.Request{PR: "7", Crew: "c1", Policy: "night", DryRun: tt.dryRun, NoLedger: tt.noLedger, AllowNoCI: tt.allowNoCI}, paths, &stdout, &stderr,
+				merge.Options{GH: g, Git: gt, Dir: dir, Reply: reply.Options{Clock: clock.FromEnv()}, Policy: tt.policy})
+			if code != tt.code {
+				t.Fatalf("code = %d, want %d (stderr %q)", code, tt.code, stderr.String())
+			}
+			if !strings.Contains(stderr.String(), tt.stderr) || (tt.stderr == "" && stderr.Len() != 0) {
+				t.Errorf("stderr = %q, want it to contain %q", stderr.String(), tt.stderr)
+			}
+			if !strings.Contains(stdout.String(), tt.stdout) {
+				t.Errorf("stdout = %q, want it to contain %q", stdout.String(), tt.stdout)
+			}
+			if tt.noCalls && len(g.Calls()) != 0 {
+				t.Errorf("gh calls = %v, want none", g.Calls())
+			}
+			data, err := os.ReadFile(paths.Log)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := strings.Contains(string(data), tt.release); tt.release != "" && !got {
+				t.Errorf("bus lacks the release %q:\n%s", tt.release, data)
+			}
+		})
+	}
+}
+
+func TestReleaseBodyWithoutPolicyIsUnchanged(t *testing.T) {
+	dir := t.TempDir()
+	paths := bus.Paths{Common: dir, Dir: dir, Log: filepath.Join(dir, "events.jsonl")}
+	if err := os.WriteFile(paths.Log, []byte(okRow+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	g := &ghtest.Fake{Out: map[string]string{viewIn: view("OPEN", "false", "MERGEABLE", okRoll), runsIn: okRuns, mergeG: "merged"}}
+	gt := &gittest.Fake{Func: func(string, []string) (string, error) { return "", nil }}
+	var stdout, stderr bytes.Buffer
+	if code := merge.Run(context.Background(), merge.Request{PR: "7", Crew: "c1"}, paths, &stdout, &stderr, merge.Options{GH: g, Git: gt, Dir: dir, Reply: reply.Options{Clock: clock.FromEnv()}}); code != 0 {
+		t.Fatalf("code %d stderr %q", code, stderr.String())
+	}
+	data, err := os.ReadFile(paths.Log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "approved — PR #7 is merged; post done") || strings.Contains(stdout.String(), "standing policy") {
+		t.Errorf("stdout %q, bus %s", stdout.String(), data)
 	}
 }

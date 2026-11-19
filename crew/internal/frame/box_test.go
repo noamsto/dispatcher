@@ -117,3 +117,27 @@ func TestInterruptedAboveBox(t *testing.T) {
 		})
 	}
 }
+
+func TestAgentFinishedAboveBox(t *testing.T) {
+	agent := fixture(t, "nudge_agent_finished.txt")
+	row := `● Agent "Plan critic" finished · 5m 8s`
+	cases := []struct {
+		name string
+		text string
+		want bool
+	}{
+		{"agent finished frame", agent, true},
+		{"no blank row between", strings.Replace(agent, row+"\n\n", row+"\n", 1), true},
+		{"finished turn", fixture(t, "done_idle.txt"), false},
+		{"interrupted", fixture(t, "nudge_interrupted.txt"), false},
+		{"spinner after the row", strings.Replace(agent, row+"\n", row+"\n✻ Churning… (2s)\n", 1), false},
+		{"altered text", strings.Replace(agent, "finished", "started", 1), false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := AgentFinishedAboveBox(tc.text); got != tc.want {
+				t.Errorf("AgentFinishedAboveBox = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}

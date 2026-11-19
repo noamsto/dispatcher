@@ -174,6 +174,9 @@ const (
 	wdBlock     = `{"state":"blocked","detail":"%s","source":"watchdog"}`
 )
 
+// autoBlocked is the lead-idle row after Claude Code blocked the dialog itself.
+const autoBlocked = "prompt: permission auto-blocked — lead idle — pane %1"
+
 // subagentPermission is permission_subagent.txt's relay row.
 const subagentPermission = "prompt: permission — Bash command: bats --filter grant tests/dispatch-resume.bats 2>&1 | tail -30 — pane %1"
 
@@ -201,7 +204,9 @@ func TestD1Prompt(t *testing.T) {
 	sel := fixture(t, "prompt_select.txt")
 	quota := fixture(t, "prompt_quota.txt")
 	perm := fixture(t, "permission_subagent.txt")
+	countdown := fixture(t, "permission_bash_guard.txt")
 	idle := "an idle shell"
+	interrupted := fixture(t, "nudge_interrupted.txt")
 	cases := []struct {
 		name string
 		s    fdScript
@@ -294,6 +299,141 @@ func TestD1Prompt(t *testing.T) {
 				return sel
 			},
 			want: map[int64][]string{15: {"blocked|" + subagentPermission}, 30: {"working|prompt: cleared"}, 45: {promptDetail}},
+		}},
+		{"an auto-blocked permission dialog swaps to a lead-idle block, once", fdScript{
+			end: 90,
+			frame: func(at int64) string {
+				if at < 30 {
+					return countdown
+				}
+				return interrupted
+			},
+			want: map[int64][]string{
+				15: {"blocked|" + guardPermission},
+				30: {"working|prompt: cleared", "blocked|" + autoBlocked},
+			},
+			check: func(t *testing.T, w *watch) {
+				if w.fd.d1Kind != "autoblocked" || w.fd.d1At == 0 {
+					t.Errorf("state %+v, want autoblocked held", w.fd)
+				}
+			},
+		}},
+		{"a countdown that first appears after the post still reads as auto-blocked", fdScript{
+			end: 90,
+			frame: func(at int64) string {
+				switch {
+				case at < 30:
+					return perm
+				case at < 45:
+					return countdown
+				}
+				return interrupted
+			},
+			want: map[int64][]string{
+				15: {"blocked|" + subagentPermission},
+				45: {"working|prompt: cleared", "blocked|" + autoBlocked},
+			},
+		}},
+		{"a countdown-less dialog after a countdown one is not auto-blocked", fdScript{
+			end: 90,
+			frame: func(at int64) string {
+				switch {
+				case at < 30:
+					return countdown
+				case at < 45:
+					return perm
+				}
+				return interrupted
+			},
+			want: map[int64][]string{
+				15: {"blocked|" + guardPermission},
+				45: {"working|prompt: cleared"},
+			},
+		}},
+		{"the auto-blocked block clears when the frame moves on", fdScript{
+			end: 120,
+			frame: func(at int64) string {
+				switch {
+				case at < 30:
+					return countdown
+				case at < 75:
+					return interrupted
+				}
+				return idle
+			},
+			want: map[int64][]string{
+				15: {"blocked|" + guardPermission},
+				30: {"working|prompt: cleared", "blocked|" + autoBlocked},
+				75: {"working|prompt: cleared"},
+			},
+			check: func(t *testing.T, w *watch) {
+				if w.fd.d1At != 0 || w.fd.d1Hits != 0 || w.fd.d1Kind != "" || w.fd.d1Countdown {
+					t.Errorf("state not reset: %+v", w.fd)
+				}
+			},
+		}},
+		{"the auto-blocked block clears when a new dialog appears", fdScript{
+			end: 120,
+			frame: func(at int64) string {
+				switch {
+				case at < 30:
+					return countdown
+				case at < 60:
+					return interrupted
+				}
+				return countdown
+			},
+			want: map[int64][]string{
+				15: {"blocked|" + guardPermission},
+				30: {"working|prompt: cleared", "blocked|" + autoBlocked},
+				60: {"working|prompt: cleared"},
+				75: {"blocked|" + guardPermission},
+			},
+		}},
+		{"a worker's own blocked row while interrupted posts nothing and resets", fdScript{
+			end: 60,
+			frame: func(at int64) string {
+				if at < 30 {
+					return countdown
+				}
+				return interrupted
+			},
+			bus: []fdBus{{30, 30, workerBlock}},
+			want: map[int64][]string{
+				15: {"blocked|" + guardPermission},
+			},
+			check: func(t *testing.T, w *watch) {
+				if w.fd.d1At != 0 || w.fd.d1Hits != 0 || w.fd.d1Kind != "" || w.fd.d1Countdown {
+					t.Errorf("state not reset: %+v", w.fd)
+				}
+			},
+		}},
+		{"a role pane's timed-out dialog only clears", fdScript{
+			id:  "role:feat/x:rev",
+			end: 60,
+			frame: func(at int64) string {
+				if at < 30 {
+					return countdown
+				}
+				return interrupted
+			},
+			want: map[int64][]string{
+				15: {"blocked|" + guardPermission},
+				30: {"working|prompt: cleared"},
+			},
+		}},
+		{"a permission dialog without the countdown only clears when interrupted", fdScript{
+			end: 60,
+			frame: func(at int64) string {
+				if at < 30 {
+					return perm
+				}
+				return interrupted
+			},
+			want: map[int64][]string{
+				15: {"blocked|" + subagentPermission},
+				30: {"working|prompt: cleared"},
+			},
 		}},
 		{"a meter vetoes the generic prompt", fdScript{
 			end:   60,

@@ -19,6 +19,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/merge"
 	"github.com/noamsto/dispatcher/crew/internal/nudge"
 	"github.com/noamsto/dispatcher/crew/internal/overseer"
+	"github.com/noamsto/dispatcher/crew/internal/policy"
 	"github.com/noamsto/dispatcher/crew/internal/queue"
 	"github.com/noamsto/dispatcher/crew/internal/rate"
 	"github.com/noamsto/dispatcher/crew/internal/resolve"
@@ -194,6 +195,8 @@ type fleetStreamCmd struct {
 	streamFlags `embed:""`
 	Rediscover  *string `name:"rediscover"`
 	Overseer    bool    `name:"overseer"`
+	Daemon      bool    `name:"daemon"`
+	Follow      bool    `name:"follow"`
 	ReapEvery   *string `name:"reap-every" hidden:""`
 }
 
@@ -319,6 +322,32 @@ type queueCmd struct {
 	Add  queueAddCmd  `cmd:"" name:"add"`
 	List queueListCmd `cmd:"" name:"list"`
 	Drop queueDropCmd `cmd:"" name:"drop"`
+}
+
+type policySetCmd struct {
+	Name string `arg:"" optional:"" name:"name"`
+	Text string `arg:"" optional:"" name:"text"`
+}
+
+type policyClearCmd struct {
+	Name string `arg:"" optional:"" name:"name"`
+}
+
+type policyShowCmd struct {
+	JSON bool   `name:"json"`
+	Name string `arg:"" optional:"" name:"name"`
+}
+
+type policyListCmd struct {
+	JSON  bool `name:"json"`
+	Brief bool `name:"brief"`
+}
+
+type policyCmd struct {
+	Set   policySetCmd   `cmd:"" name:"set"`
+	Clear policyClearCmd `cmd:"" name:"clear"`
+	Show  policyShowCmd  `cmd:"" name:"show"`
+	List  policyListCmd  `cmd:"" name:"list"`
 }
 
 type nudgeCmd struct {
@@ -491,6 +520,7 @@ type mergeCmd struct {
 	AllowNoCI bool    `name:"allow-no-ci"`
 	NoLedger  bool    `name:"no-ledger"`
 	Crew      *string `name:"crew"`
+	Policy    *string `name:"policy"`
 	PR        string  `arg:"" optional:"" name:"pr"`
 }
 
@@ -707,8 +737,13 @@ var wordings = map[string]wording{
 		},
 		code: exitFailure,
 	},
-	"queue list": {all: queue.ListUsage, code: exitFailure},
-	"queue drop": {all: queue.DropUsage, code: exitFailure},
+	"queue list":   {all: queue.ListUsage, code: exitFailure},
+	"queue drop":   {all: queue.DropUsage, code: exitFailure},
+	"policy":       {all: policy.Usage, code: exitFailure},
+	"policy set":   {all: policy.SetUsage, code: exitFailure},
+	"policy clear": {all: policy.ClearUsage, code: exitFailure},
+	"policy show":  {all: policy.ShowUsage, code: exitFailure},
+	"policy list":  {all: policy.ListUsage, code: exitFailure},
 	"nudge": {
 		unknownFlag: func(f string) string {
 			return fmt.Sprintf("crew: nudge: unknown flag '%s' (usage: %s)", f, nudge.Usage)
@@ -1151,6 +1186,22 @@ func validate(sub string, r *root) *refusal {
 		if given(crew) {
 			return fail("crew: --crew needs a value")
 		}
+	case "policy set":
+		if c := r.Policy.Set; c.Name == "" || c.Text == "" {
+			return fail(policy.SetUsage)
+		}
+	case "policy clear":
+		if r.Policy.Clear.Name == "" {
+			return fail(policy.ClearUsage)
+		}
+	case "policy show":
+		if r.Policy.Show.Name == "" {
+			return fail(policy.ShowUsage)
+		}
+	case "policy list":
+		if c := r.Policy.List; c.JSON && c.Brief {
+			return fail(policy.ListUsage)
+		}
 	case "rate":
 		if !r.Rate.Advise && len(r.Rate.Args) > 0 {
 			return fail(rate.Usage)
@@ -1213,7 +1264,7 @@ func validate(sub string, r *root) *refusal {
 		}
 	case "merge":
 		c := r.Merge
-		if c.PR == "" || given(c.Crew) {
+		if c.PR == "" || given(c.Crew) || given(c.Policy) {
 			return fail(merge.Usage)
 		}
 	case "overseer msg":

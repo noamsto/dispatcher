@@ -55,6 +55,7 @@ complete -c dispatch -n 'not __fish_seen_subcommand_from resume migrate' -l revi
 complete -c dispatch -n 'not __fish_seen_subcommand_from resume migrate' -l draft -d 'Open the PR as a draft'
 complete -c dispatch -n 'not __fish_seen_subcommand_from resume migrate' -l no-draft -d 'Ready for review'
 complete -c dispatch -n 'not __fish_seen_subcommand_from resume migrate' -l add-dir -r -F -d 'Grant read access to a directory'
+complete -c dispatch -n 'not __fish_seen_subcommand_from resume migrate' -l attach -r -F -d 'Copy an image into the worker artifacts dir'
 complete -c dispatch -n 'not __fish_seen_subcommand_from resume migrate' -l owner-auth -r -f -d "The owner's words authorizing a gated action"
 complete -c dispatch -n 'not __fish_seen_subcommand_from resume migrate' -l ignore-budget -d 'Spend past the quota stop'
 complete -c dispatch -n 'not __fish_seen_subcommand_from resume migrate' -l fleet-hold -r -f -d 'The fleet hold this dispatch takes'

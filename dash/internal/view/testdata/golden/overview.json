@@ -12,7 +12,7 @@
       "working": 2
     },
     "attention": 12,
-    "agents": 16,
+    "agents": 17,
     "prs_watched": 1
   },
   "attention": [
@@ -1540,7 +1540,31 @@
           "age_sec": 400
         }
       ],
-      "execute": []
+      "execute": [
+        {
+          "kind": "subagent",
+          "label": "step 1",
+          "role": "general-purpose",
+          "engine": "claude",
+          "model": "sonnet",
+          "effort": "medium",
+          "tier": null,
+          "state": "done",
+          "detail": null,
+          "age_sec": 40
+        },
+        {
+          "kind": "subagent",
+          "label": "step 2",
+          "role": null,
+          "engine": "claude",
+          "model": "haiku",
+          "tier": null,
+          "state": "running",
+          "detail": null,
+          "age_sec": 80
+        }
+      ]
     },
     {
       "crew": "c1",
@@ -1808,8 +1832,8 @@
           0,
           0,
           0,
-          1,
-          0
+          3,
+          1
         ]
       },
       {

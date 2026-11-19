@@ -21,6 +21,8 @@ description: Use when a watchdog detail prefix, a prompt dialog or a role-pane w
     `human: <reason>` or any non-zero exit: relay the exact captured request and reason. Never answer a dialog any other way (not
     from the detail or your own reading of a frame; never option 2 "don't ask again",
     option 3 or `Esc`); never override a refusal.
+    `prompt: permission auto-blocked — lead idle — pane <%id>` means the dialog timed out and Claude Code blocked the call: the lead sits on `Interrupted` and nothing is left to answer, so never run `permission-check` on it. Post direction with `crew reply worker:<branch> "<what to do instead>"`, then `crew nudge <lead>` wakes it (a bare nudge refuses with nothing unread); the block clears when the frame moves on.
+    Posted only for the lead: a role pane's timed-out dialog keeps the role-pane rule (relay to the human).
     **Classifier escalations always go to the human**: the `│` "Auto mode classifier requires confirmation"
     frame; answering pre-empts the classifier, which `dispatcher:blocked-replies` says the
     harness never does. The checker trusts the session transcript's exact bytes, never

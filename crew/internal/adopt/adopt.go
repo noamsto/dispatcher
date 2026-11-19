@@ -166,7 +166,12 @@ func Run(ctx context.Context, req Request, paths bus.Paths, stdout, stderr io.Wr
 		say(stderr, "crew: adopt: %v\n", err)
 		return exitFailure
 	}
+	if err := crews.WritePidStart(o.Proc, pidfile, pidText); err != nil {
+		say(stderr, "crew: adopt: %v\n", err)
+		return exitFailure
+	}
 	if err := os.WriteFile(pidfile, []byte(pidText+"\n"), 0o644); err != nil {
+		_ = os.Remove(crews.PidStartFile(pidfile))
 		say(stderr, "crew: adopt: %v\n", err)
 		return exitFailure
 	}

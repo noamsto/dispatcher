@@ -1336,6 +1336,24 @@ pane_countdown() {
   no_send_keys
 }
 
+@test "permission-check: an option-2 directory line carrying the countdown glyph goes to the human" {
+  pending_bash "cat $WT/README.md"
+  FRAME_COUNTDOWN=$CD_DENY frame "cat $WT/README.md"
+  sed -i "s|^   2\\. Yes, and always allow access to .* from|   2. Yes, and always allow access to $CD_DENY from|" "$FRAME"
+  pane --answer
+  assert_refused "frame: option 2 carries a countdown glyph"
+  no_send_keys
+}
+
+@test "permission-check: a ticked countdown with trailing spaces on a line below it at the settle goes to the human" {
+  pane_countdown "$CD_DENY" "${CD_DENY/1:30/1:20}"
+  sed -i 's|^ Do you want to proceed?$|& |' "$PANE_FRAME_ALT"
+  export PANE_FRAME_ALT_AT=2
+  pane --answer
+  assert_refused "settle: the frame changed"
+  no_send_keys
+}
+
 @test "permission-check: a countdown too close to auto-block goes to the human" {
   pane_countdown "${CD_DENY/1:30/0:09}" "${CD_DENY/1:30/0:09}"
   pane --answer

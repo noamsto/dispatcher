@@ -26,6 +26,7 @@ type probeDet struct {
 	d6Src                           string
 	nudgedTS                        int64
 	nudgeOff                        bool
+	agent                           nudge.AgentSample // D6's stability sample across ticks
 }
 
 // loadRe is D4's parse contract for a `_load_read` line, "load1 nproc".
@@ -435,7 +436,7 @@ func (w *watch) autoNudge() (bool, error) {
 	}
 	out, rc, err := w.nudgeCall(nudge.PaneRequest{
 		Pane: w.cfg.pane, Engine: w.cfg.engine, Session: w.cfg.fromID,
-		Crew: w.cfg.crew, Actor: "watchdog", MsgTS: f[0],
+		Crew: w.cfg.crew, Actor: "watchdog", MsgTS: f[0], Agent: &pd.agent,
 	})
 	if err != nil {
 		return false, err

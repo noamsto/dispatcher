@@ -18,6 +18,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"maps"
 	"os"
@@ -49,7 +50,10 @@ const (
 	// status's own gh timeout, well inside the tick age --status calls alive.
 	statusTimeout = 20 * time.Second
 
-	laneDeadAfter   = 10 * time.Minute
+	laneDeadAfter = 10 * time.Minute
+	// awaitAfter is the dwell before dispatcher_awaiting: a status document can
+	// sample a done pane beside a pr_open its live dispatcher is about to wake on.
+	awaitAfter      = 5 * time.Minute
 	blockedAgeAfter = 30 * time.Minute
 	budgetLowS      = 1800
 	headWaitS       = 1800
@@ -63,7 +67,19 @@ var wakeStates = splitStates(defaultStates)
 // --states, --coalesce and --retry are checked but do not apply. An explicit
 // --park turns the lane into a one-shot park: it returns after the first
 // non-heartbeat line or when --park seconds have passed, whichever is first.
-func runOverseer(r Request, rediscover int64, stdout, stderr io.Writer, o FleetOptions) int {
+func runOverseer(fr FleetRequest, rediscover int64, stdout, stderr io.Writer, o FleetOptions) int {
+	r := fr.Request
+	switch {
+	case fr.Daemon && fr.Follow:
+		say(stderr, "crew: fleet stream: --daemon and --follow are exclusive\n")
+		return exitUsage
+	case fr.Daemon && r.Park != "":
+		say(stderr, "crew: fleet stream: --daemon and --park are exclusive\n")
+		return exitUsage
+	case (fr.Daemon || fr.Follow) && r.Status:
+		say(stderr, "crew: fleet stream: --daemon and --follow do not combine with --status\n")
+		return exitUsage
+	}
 	if r.Interval == "" {
 		r.Interval = strconv.Itoa(defaultOverseerInterval)
 	}
@@ -81,7 +97,10 @@ func runOverseer(r Request, rediscover int64, stdout, stderr io.Writer, o FleetO
 	c.crew = "overseer:" + host
 	lane := filepath.Join(o.LaneRoot, c.crew)
 	if c.statusMode {
-		return status(lane, c.crew, stdout, o.Options)
+		return overseerStatus(lane, c.crew, stdout, o.Options)
+	}
+	if fr.Follow {
+		return runFollow(fr, c, lane, stdout, stderr, o)
 	}
 	if err := os.MkdirAll(lane, 0o755); err != nil {
 		say(stderr, "crew: %v\n", err)
@@ -103,6 +122,14 @@ func runOverseer(r Request, rediscover int64, stdout, stderr io.Writer, o FleetO
 	tick := min(overseerPoll, c.interval, rediscover)
 	tickCall := c
 	tickCall.park = tick
+	var log *segLog
+	if fr.Daemon {
+		var ok bool
+		if log, ok = openDaemon(lane, lockd, o, stderr); !ok {
+			return 1
+		}
+		stdout = log
+	}
 	out := &laneWriter{w: stdout, now: o.Clock.Now, last: o.Clock.Now()}
 	var sink lineSink = out
 	if park {
@@ -132,7 +159,39 @@ func runOverseer(r Request, rediscover int64, stdout, stderr io.Writer, o FleetO
 		buses:      map[string]*follower{},
 	}
 	v.loadDiffer()
-	return v.run(ctx, sigs)
+	rc := v.run(ctx, sigs)
+	if log != nil {
+		_ = log.Close()
+	}
+	return rc
+}
+
+// openDaemon opens the daemon lane's segment log and publishes daemon.json
+// with the log's end as the offset this run's lines start at. Either failing
+// releases the lock it was called under.
+func openDaemon(lane, lockd string, o FleetOptions, stderr io.Writer) (*segLog, bool) {
+	segBytes, keepSegs := o.segBytes, o.keepSegs
+	if segBytes == 0 {
+		segBytes = defaultSegBytes
+	}
+	if keepSegs == 0 {
+		keepSegs = defaultKeepSegs
+	}
+	log, err := openSegLog(filepath.Join(lane, logDirName), segBytes, keepSegs)
+	if err == nil {
+		err = writeDaemonInfo(filepath.Join(lane, daemonInfoName), daemonInfo{
+			PID: int64(os.Getpid()), StartedMS: clockMS(o.Options), StartOffset: log.end(),
+		})
+		if err != nil {
+			_ = log.Close()
+		}
+	}
+	if err != nil {
+		say(stderr, "crew: fleet stream: daemon: %s\n", oneLine(err))
+		lock.Release(lockd)
+		return nil, false
+	}
+	return log, true
 }
 
 // overseer is the lane's one goroutine: it writes the tick, rediscovers, polls
@@ -293,7 +352,7 @@ func (v *overseer) loadDiffer() {
 		if h.Host == "" {
 			continue
 		}
-		v.partners[h.Host] = &partner{moves: h.Moves.transitions(), seen: h.Seen, ok: h.OK}
+		v.partners[h.Host] = &partner{moves: h.Moves.transitions(), seen: h.Seen, ok: h.OK, streak: h.Streak}
 	}
 }
 
@@ -307,7 +366,7 @@ func (v *overseer) saveDiffer() {
 	f := differFile{Version: differVersion, Lane: v.moves.snapshot(), Partners: []hostMoves{}}
 	for _, host := range slices.Sorted(maps.Keys(v.partners)) {
 		p := v.partners[host]
-		f.Partners = append(f.Partners, hostMoves{Host: host, Seen: p.seen, OK: p.ok, Moves: p.moves.snapshot()})
+		f.Partners = append(f.Partners, hostMoves{Host: host, Seen: p.seen, OK: p.ok, Streak: p.streak, Moves: p.moves.snapshot()})
 	}
 	path := v.differPath()
 	data, err := json.Marshal(f)
@@ -469,11 +528,18 @@ func (v *overseer) diff(ctx context.Context) bool {
 	return v.parkWoke()
 }
 
+// hostFlipStreak is how many consecutive probe results must disagree with a
+// partner's reported reachability before it flips and an edge prints, so one
+// dropped probe does not raise an alert pair.
+const hostFlipStreak = 3
+
 // partner is one partner host's memory: its own transitions, whether its last
-// document was ok, and its remote misrouted throttle.
+// document was ok, how many consecutive results have disagreed with ok (flips
+// at hostFlipStreak), and its remote misrouted throttle.
 type partner struct {
 	moves      *transitions
 	seen, ok   bool
+	streak     int
 	misrouted  int
 	reportedAt int64
 	reported   bool
@@ -489,15 +555,25 @@ func (v *overseer) federate(h fleetpkg.HostStatus, now int64) bool {
 		v.partners[h.Host] = p
 	}
 	ok := h.State == "ok" && h.TS != nil
-	if p.seen && p.ok != ok {
+	switch {
+	case !p.seen:
+		p.seen, p.ok = true, ok
+	case p.ok == ok:
+		p.streak = 0
+	default:
+		if p.streak++; p.streak < hostFlipStreak {
+			break
+		}
+		p.streak, p.ok = 0, ok
 		line := hostLine{overseerHead: overseerHead{Stream: "overseer", Event: "host_reachable", Host: h.Host}, TS: now}
 		if !ok {
 			line.Event, line.Error, line.LastOkTS = "host_unreachable", h.Error, h.LastOkTS
 		}
 		say(v.out, "%s\n", encode(line))
 	}
-	p.seen, p.ok = true, ok
-	if !ok {
+	// Mid-streak the old state stands: a still-ok partner whose probe failed has
+	// no fresh doc to fold, and a still-down one carries its conditions.
+	if !p.ok || !ok {
 		return v.parkWoke()
 	}
 	doc := fleetpkg.StatusDoc{TS: *h.TS, Host: h.Host, Machine: h.Machine, Queue: h.Queue, Repos: h.Repos}
@@ -689,6 +765,18 @@ type laneDeadLine struct {
 	TS    int64 `json:"ts"`
 }
 
+type dispatcherAwaitingLine struct {
+	overseerHead
+	PaneState string `json:"pane_state"`
+	PROpen    int    `json:"pr_open"`
+	Blocked   int    `json:"blocked"`
+	Failed    int    `json:"failed"`
+	Active    int    `json:"active"`
+	WaitedS   int64  `json:"waited_s"`
+	Summary   string `json:"summary"`
+	TS        int64  `json:"ts"`
+}
+
 type blockedAgingLine struct {
 	overseerHead
 	Session     string `json:"session"`
@@ -718,14 +806,16 @@ type capacityLine struct {
 // conditions true at the last evaluation, the crews it reported down, and when
 // each live crew's lane was first seen dead.
 type transitions struct {
-	seen      bool
-	on        map[condKey]bool
-	down      map[crewRef]bool
-	deadSince map[crewRef]int64
+	seen       bool
+	on         map[condKey]bool
+	down       map[crewRef]bool
+	deadSince  map[crewRef]int64
+	awaitSince map[crewRef]int64
+	awaitOff   map[crewRef]int64
 }
 
 func newTransitions() *transitions {
-	return &transitions{on: map[condKey]bool{}, down: map[crewRef]bool{}, deadSince: map[crewRef]int64{}}
+	return &transitions{on: map[condKey]bool{}, down: map[crewRef]bool{}, deadSince: map[crewRef]int64{}, awaitSince: map[crewRef]int64{}, awaitOff: map[crewRef]int64{}}
 }
 
 type crewRef struct{ key, crew string }
@@ -753,10 +843,12 @@ const differVersion = 1
 // differMoves is transitions as JSON: its maps are keyed by structs, which JSON
 // cannot, so each goes out as an array of entries.
 type differMoves struct {
-	Seen      bool        `json:"seen"`
-	On        []condEntry `json:"on"`
-	Down      []refEntry  `json:"down"`
-	DeadSince []deadEntry `json:"dead_since"`
+	Seen       bool        `json:"seen"`
+	On         []condEntry `json:"on"`
+	Down       []refEntry  `json:"down"`
+	DeadSince  []deadEntry `json:"dead_since"`
+	AwaitSince []deadEntry `json:"await_since"`
+	AwaitOff   []deadEntry `json:"await_off"`
 }
 
 type condEntry struct {
@@ -784,16 +876,19 @@ type deadEntry struct {
 // hostMoves is one partner host's memory: whether its last document was ok and
 // its transitions. Its misrouted count and throttle start empty on each park.
 type hostMoves struct {
-	Host  string      `json:"host"`
-	Seen  bool        `json:"seen"`
-	OK    bool        `json:"ok"`
-	Moves differMoves `json:"moves"`
+	Host string `json:"host"`
+	Seen bool   `json:"seen"`
+	OK   bool   `json:"ok"`
+	// Streak is the partner's pending-flip count, so a park cut short does not
+	// restart the hysteresis.
+	Streak int         `json:"streak,omitempty"`
+	Moves  differMoves `json:"moves"`
 }
 
 // snapshot is t as JSON may carry it: its maps as entries, in map order, which
 // a reader must not depend on.
 func (t *transitions) snapshot() differMoves {
-	m := differMoves{On: []condEntry{}, Down: []refEntry{}, DeadSince: []deadEntry{}}
+	m := differMoves{On: []condEntry{}, Down: []refEntry{}, DeadSince: []deadEntry{}, AwaitSince: []deadEntry{}, AwaitOff: []deadEntry{}}
 	if t == nil {
 		return m
 	}
@@ -807,11 +902,17 @@ func (t *transitions) snapshot() differMoves {
 	for ref, ts := range t.deadSince {
 		m.DeadSince = append(m.DeadSince, deadEntry{refEntry: refEntry{Key: ref.key, Crew: ref.crew}, TS: ts})
 	}
+	for ref, ts := range t.awaitSince {
+		m.AwaitSince = append(m.AwaitSince, deadEntry{refEntry: refEntry{Key: ref.key, Crew: ref.crew}, TS: ts})
+	}
+	for ref, ts := range t.awaitOff {
+		m.AwaitOff = append(m.AwaitOff, deadEntry{refEntry: refEntry{Key: ref.key, Crew: ref.crew}, TS: ts})
+	}
 	return m
 }
 
 // transitions is the differ memory m describes. Stale entries are safe: next
-// rebuilds on and deadSince from what the document still holds.
+// rebuilds on, deadSince, awaitSince and awaitOff from what the document still holds.
 func (m differMoves) transitions() *transitions {
 	t := newTransitions()
 	t.seen = m.Seen
@@ -823,6 +924,12 @@ func (m differMoves) transitions() *transitions {
 	}
 	for _, e := range m.DeadSince {
 		t.deadSince[crewRef{key: e.Key, crew: e.Crew}] = e.TS
+	}
+	for _, e := range m.AwaitSince {
+		t.awaitSince[crewRef{key: e.Key, crew: e.Crew}] = e.TS
+	}
+	for _, e := range m.AwaitOff {
+		t.awaitOff[crewRef{key: e.Key, crew: e.Crew}] = e.TS
 	}
 	return t
 }
@@ -847,6 +954,18 @@ func (t *transitions) next(doc fleetpkg.StatusDoc, nowMS int64) []any {
 	for ref, ts := range t.deadSince {
 		if !present[ref.key] {
 			deadSince[ref] = ts
+		}
+	}
+	awaitSince := map[crewRef]int64{}
+	for ref, ts := range t.awaitSince {
+		if !present[ref.key] {
+			awaitSince[ref] = ts
+		}
+	}
+	awaitOff := map[crewRef]int64{}
+	for ref, ts := range t.awaitOff {
+		if !present[ref.key] {
+			awaitOff[ref] = ts
 		}
 	}
 	var out []any
@@ -881,7 +1000,41 @@ func (t *transitions) next(doc fleetpkg.StatusDoc, nowMS int64) []any {
 					t.down[ref] = true
 				}
 			}
-			if c.Attention != "guest" && live && c.Dispatcher.Lane != nil && *c.Dispatcher.Lane == "dead" {
+			n, held := awaiting(c.Dispatcher.PaneState, c.Workers)
+			if c.Attention != "guest" && live {
+				awaitKey := condKey{event: "dispatcher_awaiting", key: r.Key, crew: c.CrewID}
+				// A parked dispatcher's own short wakes (heartbeat, hold_due, reap)
+				// must not end a fired episode, or the same held work re-fires.
+				if !held && t.on[awaitKey] {
+					off, ok := t.awaitOff[ref]
+					if !ok {
+						off = doc.TS
+					}
+					if doc.TS-off < awaitAfter.Milliseconds() {
+						on[awaitKey] = true
+						awaitSince[ref] = t.awaitSince[ref]
+						awaitOff[ref] = off
+					}
+				}
+				if held {
+					since, ok := t.awaitSince[ref]
+					if !ok {
+						since = doc.TS
+					}
+					awaitSince[ref] = since
+					if doc.TS-since >= awaitAfter.Milliseconds() {
+						fire(awaitKey,
+							n.line(head("dispatcher_awaiting"), *c.Dispatcher.PaneState, (doc.TS-since)/1000, nowMS))
+					}
+				}
+			}
+			// A dispatcher parked on the human has not re-armed its lane because
+			// it waits, so its dead lane is not dead time; dispatcher_awaiting
+			// covers it. A standby one (turn ended, workers active) is deaf to
+			// them and still fires. Skipping the block also drops the clock,
+			// which a dispatcher the human wakes would otherwise trip on its
+			// first turn.
+			if c.Attention != "guest" && live && !held && c.Dispatcher.Lane != nil && *c.Dispatcher.Lane == "dead" {
 				since, ok := t.deadSince[ref]
 				if !ok {
 					since = doc.TS
@@ -968,8 +1121,56 @@ func (t *transitions) next(doc fleetpkg.StatusDoc, nowMS int64) []any {
 		}
 	}
 
-	t.on, t.deadSince, t.seen = on, deadSince, true
+	t.on, t.deadSince, t.awaitSince, t.awaitOff, t.seen = on, deadSince, awaitSince, awaitOff, true
 	return out
+}
+
+// awaitCounts are the non-stale worker rows of a crew by what they need.
+type awaitCounts struct{ prOpen, blocked, failed, active int }
+
+func (n awaitCounts) line(head overseerHead, pane string, waitedS, ts int64) dispatcherAwaitingLine {
+	return dispatcherAwaitingLine{overseerHead: head, PaneState: pane, PROpen: n.prOpen, Blocked: n.blocked, Failed: n.failed,
+		Active: n.active, WaitedS: waitedS, TS: ts,
+		Summary: fmt.Sprintf("%s %s: dispatcher %s, %d pr_open, %d blocked, %d failed, %d active",
+			head.Repo, head.Crew, pane, n.prOpen, n.blocked, n.failed, n.active)}
+}
+
+// turnEnded is whether the dispatcher's own turn is over: it is idle, finished
+// or at a dialog, so it will not re-arm its lane until something wakes it.
+func turnEnded(paneState *string) bool {
+	return paneState != nil && slices.Contains([]string{"done", "idle", "waiting"}, *paneState)
+}
+
+// awaiting is whether the dispatcher waits on the human, with the rows it
+// counted. Rows are non-stale and include remote-host ones: the condition is
+// the crew's, not a host's. A dialog (waiting) is the human's whatever the
+// workers do. A finished or idle pane is the human's only while work is held
+// (pr_open, blocked, failed or exited) and none is active (working or
+// answered): with active workers the dispatcher is on standby for them, and
+// with nothing held it is idle, a state rather than an ask, which would
+// notify after every batch. done rows are neither: they wait only for a reap.
+func awaiting(paneState *string, workers []map[string]any) (awaitCounts, bool) {
+	var n awaitCounts
+	if !turnEnded(paneState) {
+		return n, false
+	}
+	for _, w := range workers {
+		if w["stale"] != false {
+			continue
+		}
+		switch w["state"] {
+		case "working", "answered":
+			n.active++
+		case "pr_open":
+			n.prOpen++
+		case "blocked":
+			n.blocked++
+		case "failed", "exited":
+			n.failed++
+		}
+	}
+	held := n.prOpen + n.blocked + n.failed
+	return n, *paneState == "waiting" || (n.active == 0 && held > 0)
 }
 
 // strandsWork is whether a dead lane leaves work unread: a worker that is not
@@ -997,4 +1198,22 @@ func wholeNumber(v any) (int64, bool) {
 		return i, err == nil
 	}
 	return 0, false
+}
+
+// daemonHolds reports the lane's daemon.json when its pid is the one holding
+// the lane's lock; a leftover file from an older daemon does not count.
+func daemonHolds(lane string) (daemonInfo, bool) {
+	holder, err := strconv.ParseInt(lock.Holder(filepath.Join(lane, "stream.lock.d")), 10, 64)
+	d, ok := readDaemonInfo(filepath.Join(lane, daemonInfoName))
+	return d, ok && err == nil && d.PID == holder
+}
+
+// overseerStatus is status with the lane's mode: "daemon" when daemon.json
+// names the pid that holds the lane's lock.
+func overseerStatus(lane, crew string, stdout io.Writer, o Options) int {
+	mode := ""
+	if _, ok := daemonHolds(lane); ok {
+		mode = "daemon"
+	}
+	return statusMode(lane, crew, mode, stdout, o)
 }

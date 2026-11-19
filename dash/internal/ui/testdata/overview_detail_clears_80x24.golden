@@ -10,7 +10,7 @@
 │▌│ ACCEPTANCE —                                                             │ │
 │▌│ AGENTS                                                                   │ │
 ╰─│   lead sonnet standard failed                                            │─╯
-╭ │   execute subagents: not reported                                        │─╮
+╭ │   execute subagents: none                                                │─╮
 │ │ ATTENTION                                                                │—│
 │ │   ✗ exit 1 after test failure → crew where --crew c1 -- feat/h           │ │
 │▌│     To clear: reaped once its PR merges/closes or its issue closes (crew │—│
@@ -18,7 +18,7 @@
 ╰─│ RECENT EVENTS                                                            │─╯
 ╭ │   none                                                                   │─╮
 │ ╰──────────────────────────────────────────────────────────────────────────╯─│
-│ otter      ▁▁▁▁▁▁█▁█▁▁█▁▁▁▁▁▁▁▁▁█▁▁▁▁▁▁█▁ ok 45s                             │
+│ otter      ▁▁▁▁▁▁▄▁▄▁▁▄▁▁▁▁▁▁▁▁▁▄▁▁▁▁▁▁█▄ ok 45s                             │
 │ heron      ▁▁▁▁▁▁▁█▁█▁▁█▁▁▁█▁█▁▁▁▁▁▁▁▁▁▁▁ ok 10m                             │
 │ feat/c     ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁ ok 5m                              │
 ╰──────────────────────────────────────────────────────────────────────────────╯
