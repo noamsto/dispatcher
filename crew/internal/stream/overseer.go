@@ -50,7 +50,9 @@ const (
 	// status's own gh timeout, well inside the tick age --status calls alive.
 	statusTimeout = 20 * time.Second
 
-	laneDeadAfter   = 10 * time.Minute
+	laneDeadAfter = 10 * time.Minute
+	// awaitAfter is the dwell before dispatcher_awaiting: a status document can
+	// sample a done pane beside a pr_open its live dispatcher is about to wake on.
 	awaitAfter      = 5 * time.Minute
 	blockedAgeAfter = 30 * time.Minute
 	budgetLowS      = 1800
@@ -1090,10 +1092,6 @@ func turnEnded(paneState *string) bool {
 // answered): with active workers the dispatcher is on standby for them, and
 // with nothing held it is idle, a state rather than an ask, which would
 // notify after every batch. done rows are neither: they wait only for a reap.
-// The caller applies awaitAfter because a status document is one per
-// --interval, so it can sample done beside a pr_open the live dispatcher is
-// about to wake on. An absent repo's awaitSince carries forward in next, like
-// deadSince.
 func awaiting(paneState *string, workers []map[string]any) (awaitCounts, bool) {
 	var n awaitCounts
 	if !turnEnded(paneState) {
