@@ -131,7 +131,7 @@ func detailLines(ov vm.OverviewView, wi, iw int) []string {
 	plain := lipgloss.NewStyle()
 	var out []string
 	out = append(out,
-		" "+fg(glyphColor(w.State)).Render(stateGlyph(w.State))+" "+fg(colText).Bold(true).Render(cleanText(workerLabel(w)))+
+		" "+fg(glyphColor(w.State)).Render(stateGlyph(w.State))+" "+codenameStyle(w.Tmux, fg(colText).Bold(true)).Render(cleanText(workerLabel(w)))+
 			fg(colDim).Render(cleanText("  "+w.Branch+"  "+ovStr(w.Tier, "?")+"  "+ovStr(w.Engine, "?")+"/"+ovStr(w.Model, "?")+"  "))+
 			fg(glyphColor(w.State)).Render(cleanText(w.State)))
 	if d := ovStr(w.Detail, ""); d != "" {

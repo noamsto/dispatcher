@@ -733,6 +733,10 @@ func attnStripLine(visible []vm.AttentionItem, i int, label func(vm.AttentionIte
 	const ageW = 4
 	msgW := iw - 5 - workerW - 1 - 1 - ageW - actionPart - 1
 	glyph, gc := severityGlyph(a.Severity)
+	workerSt := fg(colText).Bold(true)
+	if a.Worker != "" {
+		workerSt = s.codename(a.Tmux, workerSt)
+	}
 	msg := a.Message
 	if msgW >= clearsMinWidth && a.Clears != "" {
 		msg += " — " + a.Clears
@@ -742,7 +746,7 @@ func attnStripLine(visible []vm.AttentionItem, i int, label func(vm.AttentionIte
 		add(" ", lipgloss.NewStyle()).
 		add(glyph, fg(gc)).
 		add(" ", lipgloss.NewStyle()).
-		col(label(a), workerW, fg(colText).Bold(true), false).
+		col(label(a), workerW, workerSt, false).
 		add(" ", lipgloss.NewStyle()).
 		col(msg, msgW, fg(colText), false).
 		add(" ", lipgloss.NewStyle()).
@@ -771,7 +775,7 @@ func cardLines(ov vm.OverviewView, lines int, it placed, line func() *spans, iw 
 	l1 := line()
 	l1.add(stateGlyph(w.State), fg(glyphColor(w.State))).add(" ", lipgloss.NewStyle())
 	l1.limit = max0(iw - rightW)
-	l1.add(workerLabel(w), fg(colText).Bold(true)).add(" "+ovStr(w.Tier, "?"), fg(colDim))
+	l1.add(workerLabel(w), l1.codename(w.Tmux, fg(colText).Bold(true))).add(" "+ovStr(w.Tier, "?"), fg(colDim))
 	l1.limit = iw
 	l1.padTo(iw-rightW+1).add(ac, fg(colDim))
 
@@ -811,13 +815,17 @@ func phaseLabel(w vm.OverviewWorker) string {
 func agentLines(ov vm.OverviewView, it placed, line func() *spans, narrow bool) []string {
 	a := ov.Agents[it.idx]
 	label := rowLabel(a.Branch, a.Host)
+	labelStyle := fg(colText).Bold(true)
 	if it.worker >= 0 {
 		label = workerLabel(ov.Workers[it.worker])
 	}
-	l1 := line().
-		add(stateGlyph(a.Lead.State), fg(glyphColor(a.Lead.State))).
+	l1 := line()
+	if it.worker >= 0 {
+		labelStyle = l1.codename(ov.Workers[it.worker].Tmux, labelStyle)
+	}
+	l1.add(stateGlyph(a.Lead.State), fg(glyphColor(a.Lead.State))).
 		add(" ", lipgloss.NewStyle()).
-		add(label, fg(colText).Bold(true)).
+		add(label, labelStyle).
 		add(" "+ovStr(a.Lead.Model, ovStr(a.Lead.Engine, "?")), fg(colPurple))
 	if !narrow {
 		l1.add(" "+ovStr(a.Lead.Tier, "?"), fg(colDim))
@@ -851,12 +859,14 @@ func sectionLine(title string, iw int) string {
 func watchLine(ov vm.OverviewView, it placed, s *spans, iw int) string {
 	w := ov.Monitors.Watchdogs[it.idx]
 	name := rowLabel(w.Branch, w.Host)
+	nameSt := fg(colText)
 	if it.worker >= 0 {
 		name = workerLabel(ov.Workers[it.worker])
+		nameSt = s.codename(ov.Workers[it.worker].Tmux, nameSt)
 	}
 	const nameW, labelW = 10, 10
 	sparkW := clamp(iw-1-nameW-1-1-labelW, 4, 30)
-	return s.col(name, nameW, fg(colText), false).
+	return s.col(name, nameW, nameSt, false).
 		add(" ", lipgloss.NewStyle()).
 		add(sparkline(w.Activity, sparkW), fg(glyphColor(w.State))).
 		add(" ", lipgloss.NewStyle()).
@@ -916,14 +926,14 @@ func ovEventLine(ov vm.OverviewView, it placed, s *spans, iw int, narrow bool) s
 		fromW := min(ansi.StringWidth(from), iw/3)
 		return s.add(age, fg(colDim)).
 			add(" ", lipgloss.NewStyle()).
-			col(from, fromW, fg(colText).Bold(true), false).
+			col(from, fromW, s.codename(eventTmux(ov, e.Worker), fg(colText).Bold(true)), false).
 			add(" ", lipgloss.NewStyle()).
 			col(e.Text, iw-1-ansi.StringWidth(age)-1-fromW-1, fg(colText), false).String()
 	}
 	fromW := clamp(iw/4, 12, 24)
 	return s.col(ovAge(ov.GeneratedAt-e.TS), 4, fg(colDim), true).
 		add(" ", lipgloss.NewStyle()).
-		col(eventFrom(ov, e.Worker), fromW, fg(colText).Bold(true), false).
+		col(eventFrom(ov, e.Worker), fromW, s.codename(eventTmux(ov, e.Worker), fg(colText).Bold(true)), false).
 		add(" ", lipgloss.NewStyle()).
 		col(e.Text, iw-1-4-1-fromW-1, fg(colText), false).String()
 }
@@ -942,6 +952,28 @@ func eventFrom(ov vm.OverviewView, from string) string {
 		}
 	}
 	return from
+}
+
+// eventTmux is the tmux colour of the worker a bus sender names, nil for any
+// other sender or a worker not in the roster.
+func eventTmux(ov vm.OverviewView, from string) *string {
+	var branch string
+	if rest, ok := strings.CutPrefix(from, "worker:"); ok {
+		branch, _, _ = strings.Cut(rest, "#")
+	} else if rest, ok := strings.CutPrefix(from, "role:"); ok {
+		var hasRole bool
+		if branch, _, hasRole = strings.Cut(rest, ":"); !hasRole {
+			return nil
+		}
+	} else {
+		return nil
+	}
+	for _, w := range ov.Workers {
+		if w.Branch == branch {
+			return w.Tmux
+		}
+	}
+	return nil
 }
 
 // branchName is the codename of the worker on branch, else the branch.
