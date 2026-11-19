@@ -5216,13 +5216,22 @@ if [ "${#attach_flags[@]}" -gt 0 ]; then
     attach_n_cur="${attach_n_cur%%-*}"
     [ $((10#$attach_n_cur)) -le "$attach_n" ] || attach_n=$((10#$attach_n_cur))
   done < <(_attach_names "$attach_dir")
+  if [ $((attach_n + ${#attach_flags[@]})) -gt 9999 ]; then
+    echo "dispatch: --attach: attachment numbering exhausted in $attach_dir" >&2
+    exit 1
+  fi
   attach_copied=0
+  attach_made=()
   for attach_file in "${attach_flags[@]}"; do
     attach_n=$((attach_n + 1))
-    attach_bytes="$(_attach_copy "$attach_file" "$attach_n" "$attach_dir")" || exit 1
+    attach_bytes="$(_attach_copy "$attach_file" "$attach_n" "$attach_dir")" || {
+      rm -f -- ${attach_made[@]+"${attach_made[@]}"}
+      exit 1
+    }
+    attach_made+=("$attach_dir/$attach_n-"*)
     attach_copied=$((attach_copied + attach_bytes))
     if [ "$attach_copied" -gt "$ATTACH_MAX_TOTAL" ]; then
-      rm -f -- "$attach_dir/$attach_n-"*
+      rm -f -- "${attach_made[@]}"
       echo "dispatch: --attach: $attach_copied bytes copied in total exceeds the 25 MiB per-dispatch limit" >&2
       exit 1
     fi

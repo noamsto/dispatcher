@@ -17992,3 +17992,33 @@ _attach_nothing_scaffolded() {
   [ "$status" -eq 0 ]
   [ "$output" = "$(wc -c <"$BATS_TEST_TMPDIR/shot.png")" ]
 }
+
+@test "attach: numbering exhausted at 9999 is refused and nothing is added" {
+  stub_launch_bins
+  _attach_png "$BATS_TEST_TMPDIR/one.png"
+  _attach_png "$BATS_TEST_TMPDIR/two.png"
+  att="$TEST_REPO/.git/crew/artifacts/feat/42-title/attachments"
+  run run_dispatch standard sonnet --effort medium --no-grid --crew-id c1 --attach "$BATS_TEST_TMPDIR/one.png" 42 "title"
+  [ "$status" -eq 0 ]
+  lane_profile_resume_ready
+  _attach_png "$att/9999-a.png"
+  run --separate-stderr run_dispatch standard sonnet --effort medium --no-grid --crew-id c1 --attach "$BATS_TEST_TMPDIR/two.png" 42 "title"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"dispatch: --attach: attachment numbering exhausted in $att"* ]]
+  [ "$(ls -A "$att" | sort | tr '\n' ' ')" = "1-one.png 9999-a.png " ]
+}
+
+@test "attach: a copy failure removes this run's earlier copies" {
+  stub_launch_bins
+  _attach_png "$BATS_TEST_TMPDIR/seed.png"
+  _attach_png "$BATS_TEST_TMPDIR/a.png"
+  _attach_png "$BATS_TEST_TMPDIR/b.png"
+  att="$TEST_REPO/.git/crew/artifacts/feat/42-title/attachments"
+  run run_dispatch standard sonnet --effort medium --no-grid --crew-id c1 --attach "$BATS_TEST_TMPDIR/seed.png" 42 "title"
+  [ "$status" -eq 0 ]
+  lane_profile_resume_ready
+  mkdir "$att/3-b.png"
+  run run_dispatch standard sonnet --effort medium --no-grid --crew-id c1 --attach "$BATS_TEST_TMPDIR/a.png" --attach "$BATS_TEST_TMPDIR/b.png" 42 "title"
+  [ "$status" -ne 0 ]
+  [ "$(ls -A "$att" | sort | tr '\n' ' ')" = "1-seed.png 3-b.png " ]
+}

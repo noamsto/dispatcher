@@ -995,8 +995,8 @@ _attach_copy() {
 }
 
 # _attach_names <dir> — the owner-supplied copies in <dir>, numeric order:
-# regular non-symlink image files named <1-4 digits>-<name> only, so a planted or
-# stray file never gets listed or numbered.
+# regular non-symlink image files named <1-4 digits>-<name> only. Non-images and
+# malformed names are excluded; a valid planted image is still listed and numbered.
 _attach_names() {
   local f
   for f in "$1"/*; do
