@@ -23,11 +23,7 @@ export interface SubagentBody {
 }
 
 function compact(body: SubagentBody): SubagentBody {
-	const out: Record<string, unknown> = {};
-	for (const [key, value] of Object.entries(body)) {
-		if (value !== undefined && value !== "") out[key] = value;
-	}
-	return out as unknown as SubagentBody;
+	return Object.fromEntries(Object.entries(body).filter(([, value]) => value !== undefined && value !== "")) as SubagentBody;
 }
 
 function clip(text: string, max: number): string {

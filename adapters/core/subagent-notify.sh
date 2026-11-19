@@ -1,18 +1,13 @@
 #!/usr/bin/env bash
-# Subagent-notify hook: record a Claude Code execute subagent's spawn and finish
-# on the crew bus, as `crew msg <worker> subagent:<crew> <json>` rows, so the dash
-# can draw the subagents under their worker (#1582). The sink is a synthetic
-# recipient like metrics:<crew>, so the row never wakes `crew watch`.
+# Records a Claude Code subagent's spawn and finish as
+# `crew msg <worker> subagent:<crew> <json>` rows; that synthetic sink wakes no
+# `crew watch`.
 #
-# Registered sync in the claude plugin's hooks.json: PreToolUse, PostToolUse and
-# PostToolUseFailure on Agent|Task, and SubagentStop. It runs on the tool path, so
-# it NEVER BLOCKS AND NEVER SPEAKS: stdout from SubagentStop can inject context
-# and exit 2 can block, so every command's output goes to /dev/null and every path
-# exits 0 (no `set -e`).
+# It runs on the tool path, where SubagentStop stdout can inject context and exit 2
+# can block, so it prints nothing and exits 0 on every path (no `set -e`).
 #
-# Workers' leads only: a session without CREW_WORKER_ID, a grid role pane (it
-# inherits the lead's CREW_WORKER_ID) and a pi `subagent` child (CREW_SUBAGENT)
-# are not the lead's subagents.
+# A grid role pane inherits the lead's CREW_WORKER_ID and a pi subagent child
+# carries CREW_SUBAGENT; neither is the lead.
 
 [[ -n ${CREW_WORKER_ID:-} && -z ${CREW_ROLE_ID:-} && -z ${CREW_SUBAGENT:-} ]] || exit 0
 command -v jq >/dev/null 2>&1 || exit 0

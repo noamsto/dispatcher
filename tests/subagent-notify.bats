@@ -2,7 +2,7 @@ bats_require_minimum_version 1.5.0 # `run --separate-stderr`
 
 # adapters/core/subagent-notify.sh: a Claude Code execute subagent's spawn and
 # finish, posted as `crew msg <worker> subagent:<crew> <json>` rows that never
-# wake `crew watch` (#1582). Hook JSON on stdin; the hook prints nothing and
+# wake `crew watch`. Hook JSON on stdin; the hook prints nothing and
 # exits 0 on every path.
 
 setup() {
