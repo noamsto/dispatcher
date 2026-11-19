@@ -1103,10 +1103,12 @@ _claude_pretrust() {
 # Claude Code also asks "Is this a directory you trust?" at launch for every
 # --add-dir path with no trust record, and tmux keys cannot answer it. The four
 # read-only dirs are immutable store paths whose hash changes on every
-# dispatcher update, so their realpaths are stamped here. Only they are: a
-# persistent trust record for a mutable artifacts dir or a user-granted dir is
-# the owner's decision. A failed stamp warns and still emits every flag, since
-# the #442 deny rules must reach the launch line.
+# dispatcher update, so their realpaths are stamped here, and so is the
+# branch's own artifacts dir when granted. Only the user-granted dirs are left
+# to the owner: a persistent trust record for one is their decision.
+# _claude_pretrust writes only $HOME/.claude.json, so under a non-default
+# CLAUDE_CONFIG_DIR the stamps are no-ops. A failed stamp warns and still emits
+# every flag, since the #442 deny rules must reach the launch line.
 #
 # claude's --add-dir and --disallowedTools are both variadic and would swallow
 # the positional prompt, so callers splice this in right before
@@ -1117,7 +1119,7 @@ _claude_pretrust() {
 # gates paths, and pi has no tool-permission layer at all.
 launch_dir_args() {
   [ "$1" = claude ] || return 0
-  local a c d bad line dirs=() rules=() ro_real=() uniq=()
+  local a c d bad line dirs=() rules=() trust_real=() uniq=()
   local -A seen=()
   for d in "$PROTOCOL_DIR" "$SKILLS_DIR" "$REVIEWERS_DIR" "$CRITICS_DIR"; do
     [[ $d == /* ]] && [ -d "$d" ] || continue
@@ -1128,7 +1130,7 @@ launch_dir_args() {
       continue
     fi
     dirs+=("$d")
-    ro_real+=("$c")
+    trust_real+=("$c")
     rules+=("Edit(/$d/**)")
     [ "$c" = "$d" ] || rules+=("Edit(/$c/**)")
   done
@@ -1138,6 +1140,7 @@ launch_dir_args() {
   else
     mkdir -p -- "$a"
     dirs+=("$a")
+    trust_real+=("$(realpath -e -- "$a")")
   fi
   if [ -f "$crew_dir/grants/$2" ]; then
     while IFS= read -r line || [ -n "$line" ]; do
@@ -1154,8 +1157,8 @@ launch_dir_args() {
     seen[$d]=1
     uniq+=("$d")
   done
-  if [ "${#ro_real[@]}" -gt 0 ] && ! _claude_pretrust "${ro_real[@]}"; then
-    echo "dispatch: could not pre-trust protocol dirs for $2 — the worker may stall on Claude Code's add-dir trust dialog" >&2
+  if [ "${#trust_real[@]}" -gt 0 ] && ! _claude_pretrust "${trust_real[@]}"; then
+    echo "dispatch: could not pre-trust protocol and artifacts dirs for $2 — the worker may stall on Claude Code's add-dir trust dialog" >&2
   fi
   for d in "${uniq[@]}"; do
     printf ' --add-dir %q' "$d"

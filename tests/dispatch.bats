@@ -8961,7 +8961,18 @@ _ro_dirs_fixture() {
   [ "$status" -eq 0 ]
 }
 
-@test "trust: the artifacts dir and an explicit --add-dir grant are never stamped" {
+@test "1687: trust: a claude dispatch stamps the artifacts dir by realpath" {
+  stub_launch_bins
+  _ro_dirs_fixture
+  run run_dispatch standard sonnet --effort medium --no-grid --crew-id c1 42 "title"
+  [ "$status" -eq 0 ]
+  art="$TEST_REPO/.git/crew/artifacts/feat/42-title"
+  [ -d "$art" ]
+  run jq -e --arg a "$(realpath -e "$art")" '.projects[$a].hasTrustDialogAccepted == true' "$HOME/.claude.json"
+  [ "$status" -eq 0 ]
+}
+
+@test "1687: trust: an explicit --add-dir grant is never stamped" {
   stub_launch_bins
   _ro_dirs_fixture
   export DISPATCH_GRANT_ROOTS="$(realpath "$BATS_TEST_TMPDIR")"
@@ -8969,9 +8980,7 @@ _ro_dirs_fixture() {
   mkdir -p "$real"
   run run_dispatch standard sonnet --effort medium --no-grid --add-dir "$real" --crew-id c1 42 "title"
   [ "$status" -eq 0 ]
-  art="$TEST_REPO/.git/crew/artifacts/feat/42-title"
-  [ -d "$art" ]
-  run jq -e --arg a "$art" --arg g "$real" '(.projects | has($a) | not) and (.projects | has($g) | not)' "$HOME/.claude.json"
+  run jq -e --arg g "$real" '.projects | has($g) | not' "$HOME/.claude.json"
   [ "$status" -eq 0 ]
 }
 
@@ -9035,7 +9044,7 @@ _ro_dirs_fixture() {
   ' _ "$TEST_REPO" "$DISPATCHER_PROTOCOL_DIR" "$DISPATCHER_SKILLS_DIR" "$DISPATCHER_REVIEWERS_DIR" "$DISPATCHER_CRITICS_DIR" "$BATS_TEST_DIRNAME/.." "$BATS_TEST_TMPDIR/stdout"
   kill "$holder_pid" 2>/dev/null || true
   [ "$status" -eq 0 ]
-  [[ "$output" == *"could not pre-trust protocol dirs for feat/42-title"* ]]
+  [[ "$output" == *"could not pre-trust protocol and artifacts dirs for feat/42-title"* ]]
   out="$(cat "$BATS_TEST_TMPDIR/stdout")"
   for d in "${ro_dirs[@]}"; do
     [[ "$out" == *"--add-dir $d"* ]]

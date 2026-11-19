@@ -1403,7 +1403,7 @@ _ro_rule() { printf -v r ' %q' "Edit(/$1/**)"; }
   [[ "$line" == *"$r"* ]]
 }
 
-@test "claude resume stamps the read-only protocol dirs, never the artifacts dir or a recorded grant" {
+@test "1687: claude resume stamps the protocol and artifacts dirs and the worktree, never a recorded grant" {
   setup_worker_wt
   stub_tmux_with_pane_at_wt '@4' '%8' iris
   export DISPATCH_GRANT_ROOTS="$(realpath "$BATS_TEST_TMPDIR")"
@@ -1417,8 +1417,8 @@ _ro_rule() { printf -v r ' %q' "Edit(/$1/**)"; }
     run jq -e --arg p "$(realpath -e "$d")" '.projects[$p].hasTrustDialogAccepted == true' "$HOME/.claude.json"
     [ "$status" -eq 0 ]
   done
-  run jq -e --arg a "$TEST_REPO/.git/crew/artifacts/feat/7-a-thing" --arg g "$extra" \
-    '(.projects | has($a) | not) and (.projects | has($g) | not)' "$HOME/.claude.json"
+  run jq -e --arg a "$(realpath -e "$TEST_REPO/.git/crew/artifacts/feat/7-a-thing")" --arg w "$(realpath -e "$WT")" --arg g "$extra" \
+    '.projects[$a].hasTrustDialogAccepted == true and .projects[$w].hasTrustDialogAccepted == true and (.projects | has($g) | not)' "$HOME/.claude.json"
   [ "$status" -eq 0 ]
 }
 
