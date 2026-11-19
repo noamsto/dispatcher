@@ -82,7 +82,8 @@ func (f *followRig) fakeDaemon(startedMS, startOffset int64) {
 	}
 	writeFile(f.t, filepath.Join(lockd, "pid"), fmt.Sprintf("%d\n", me))
 	writeFile(f.t, filepath.Join(f.lane, "stream.tick"), fmt.Sprintf(`{"pid":%d,"ts":%d,"park":2}`, me, f.clock.Now().UnixMilli()))
-	if err := writeDaemonInfo(filepath.Join(f.lane, daemonInfoName), daemonInfo{PID: int64(me), StartedMS: startedMS, StartOffset: startOffset}); err != nil {
+	exe, exeID := currentBinary()
+	if err := writeDaemonInfo(filepath.Join(f.lane, daemonInfoName), daemonInfo{PID: int64(me), StartedMS: startedMS, StartOffset: startOffset, Exe: exe, ExeID: exeID}); err != nil {
 		f.t.Fatal(err)
 	}
 }
@@ -683,4 +684,67 @@ func TestOverseerFollowReadErrorLine(t *testing.T) {
 		t.Fatal(err)
 	}
 	r.finish()
+}
+
+func TestOverseerFollowSameBinaryResumes(t *testing.T) {
+	f := newFollowRig(t)
+	f.fakeDaemon(ovStart, 0)
+	r := f.follow(Request{})
+	r.started()
+	wantMarker(t, r.markers()[0], "fresh", "first")
+	r.finish()
+	r = f.follow(Request{})
+	r.started()
+	wantMarker(t, r.markers()[0], "resume", "resume")
+	r.finish()
+	if f.spawnCount() != 0 {
+		t.Errorf("spawns %v", f.spawns)
+	}
+}
+
+func TestOverseerFollowUpgradedBinaryRestartsTheDaemon(t *testing.T) {
+	for name, edit := range map[string]func(*daemonInfo){
+		"path":     func(d *daemonInfo) { d.Exe += ".old" },
+		"identity": func(d *daemonInfo) { d.ExeID += "0" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newFollowRig(t)
+			f.fakeDaemon(ovStart, 0)
+			info, _ := readDaemonInfo(filepath.Join(f.lane, daemonInfoName))
+			edit(&info)
+			if err := writeDaemonInfo(filepath.Join(f.lane, daemonInfoName), info); err != nil {
+				t.Fatal(err)
+			}
+			r := f.follow(Request{})
+			r.started()
+			wantMarker(t, r.markers()[0], "fresh", "upgraded")
+			r.finish()
+			want := []string{"fleet", "stream", "--overseer", "--daemon", "--force"}
+			if f.spawnCount() != 1 || !slices.Equal(f.spawnArgs(0), want) {
+				t.Fatalf("spawns %v, want %v", f.spawns, want)
+			}
+		})
+	}
+}
+
+func TestOverseerFollowDaemonWithoutBinaryFieldRestartsOnce(t *testing.T) {
+	f := newFollowRig(t)
+	f.fakeDaemon(ovStart, 0)
+	if err := writeDaemonInfo(filepath.Join(f.lane, daemonInfoName), daemonInfo{PID: int64(os.Getpid()), StartedMS: ovStart}); err != nil {
+		t.Fatal(err)
+	}
+	r := f.follow(Request{})
+	r.started()
+	wantMarker(t, r.markers()[0], "fresh", "upgraded")
+	r.finish()
+	if f.spawnCount() != 1 {
+		t.Fatalf("spawns %v", f.spawns)
+	}
+	r = f.follow(Request{})
+	r.started()
+	wantMarker(t, r.markers()[0], "resume", "resume")
+	r.finish()
+	if f.spawnCount() != 1 {
+		t.Errorf("spawned again: %v", f.spawns)
+	}
 }

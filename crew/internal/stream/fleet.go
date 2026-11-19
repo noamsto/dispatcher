@@ -68,6 +68,9 @@ type FleetOptions struct {
 	// Spawn starts a detached `crew fleet stream` with args, its stderr
 	// appended to stderrPath. nil execs o.Self detached.
 	Spawn func(args []string, stderrPath string) error
+	// Binary is this process's executable identity, which a daemon records
+	// and a follow compares. nil is the running executable.
+	Binary func() (path, id string)
 
 	segBytes int64
 	keepSegs int
@@ -77,6 +80,9 @@ func (o FleetOptions) withDefaults() FleetOptions {
 	o.Options = o.Options.withDefaults()
 	if o.Getenv == nil {
 		o.Getenv = os.Getenv
+	}
+	if o.Binary == nil {
+		o.Binary = currentBinary
 	}
 	if o.Discover == nil {
 		registry, env := o.Registry, o.Getenv

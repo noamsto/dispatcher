@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 )
 
 const (
@@ -197,6 +198,32 @@ type daemonInfo struct {
 	PID         int64 `json:"pid"`
 	StartedMS   int64 `json:"started_ms"`
 	StartOffset int64 `json:"start_offset"`
+	// Exe and ExeID name the binary the daemon runs: its resolved path and
+	// file identity. A daemon older than the fields records neither.
+	Exe   string `json:"exe,omitempty"`
+	ExeID string `json:"exe_id,omitempty"`
+}
+
+// currentBinary is the running executable's resolved path and device:inode,
+// which change when an upgrade replaces the binary (a new Nix store path, or a
+// rewritten file). Empty when either cannot be read.
+func currentBinary() (path, id string) {
+	exe, err := os.Executable()
+	if err != nil {
+		return "", ""
+	}
+	if exe, err = filepath.EvalSymlinks(exe); err != nil {
+		return "", ""
+	}
+	fi, err := os.Stat(exe)
+	if err != nil {
+		return "", ""
+	}
+	st, ok := fi.Sys().(*syscall.Stat_t)
+	if !ok {
+		return exe, ""
+	}
+	return exe, fmt.Sprintf("%d:%d", st.Dev, st.Ino)
 }
 
 type followState struct {
