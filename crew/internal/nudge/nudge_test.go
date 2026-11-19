@@ -923,3 +923,101 @@ func TestPaneRefusesInterruptedFramesThatAreNotIdle(t *testing.T) {
 		})
 	}
 }
+
+// tickClock is a clock the test moves by hand.
+type tickClock struct{ now time.Time }
+
+func (c *tickClock) read() time.Time { return c.now }
+
+func agentDeps(t *testing.T, p *fakePane, clk *tickClock) Deps {
+	d := newDeps(p, &fakeBus{rows: sessionRows(t, idleReq, "working")}, map[string]string{"CREW_NUDGE_SETTLE": "0", "CREW_NUDGE_GAP": "0"})
+	d.Clock = clock.Clock{Now: clk.read}
+	return d
+}
+
+// A claude lead idle after a background agent finished has no done marker; the
+// frame counts as idle only once it held byte-identical across two samples.
+func TestPaneAgentFinishedStable(t *testing.T) {
+	wins, panes := anchored()
+	idle := fixture(t, "nudge_agent_finished.txt")
+	typed := strings.Replace(idle, "\n❯\n", "\n❯ crew inbox \"$CREW_WORKER_ID\"\n", 1)
+	clk := &tickClock{now: time.Unix(1800000000, 0)}
+	sample := &AgentSample{}
+	r := req("claude")
+	r.Agent = sample
+
+	p := &fakePane{frames: []string{idle}, windows: wins, panes: panes}
+	out, rc := Pane(context.Background(), r, agentDeps(t, p, clk))
+	if rc != exitRefused || out != ReasonAgentPending {
+		t.Fatalf("first sample = (%q, %d), want pending refusal", out, rc)
+	}
+	clk.now = clk.now.Add((agentStableSecs - 1) * time.Second)
+	if out, rc = Pane(context.Background(), r, agentDeps(t, p, clk)); rc != exitRefused || out != ReasonAgentPending {
+		t.Fatalf("before the window = (%q, %d), want pending refusal", out, rc)
+	}
+	if got := keys(p); len(got) != 0 {
+		t.Fatalf("typed before the frame was stable: %q", got)
+	}
+
+	clk.now = clk.now.Add(time.Second)
+	p = &fakePane{frames: []string{idle, idle, typed, fixture(t, "meter.2s.1.2k.txt")}, windows: wins, panes: panes}
+	out, rc = Pane(context.Background(), r, agentDeps(t, p, clk))
+	if rc != 0 || !strings.HasPrefix(out, "nudge accepted: %9 ") {
+		t.Fatalf("stable sample = (%q, %d), want accepted", out, rc)
+	}
+	if got := keys(p); !slices.Equal(got, typedArgv) {
+		t.Errorf("keys = %q, want %q", got, typedArgv)
+	}
+}
+
+func TestPaneAgentFinishedChanged(t *testing.T) {
+	wins, panes := anchored()
+	idle := fixture(t, "nudge_agent_finished.txt")
+	other := strings.Replace(idle, "5m 8s", "5m 9s", 1)
+	clk := &tickClock{now: time.Unix(1800000000, 0)}
+	r := req("claude")
+	r.Agent = &AgentSample{}
+
+	p := &fakePane{frames: []string{idle}, windows: wins, panes: panes}
+	Pane(context.Background(), r, agentDeps(t, p, clk))
+	clk.now = clk.now.Add(agentStableSecs * 3 * time.Second)
+	p = &fakePane{frames: []string{other}, windows: wins, panes: panes}
+	out, rc := Pane(context.Background(), r, agentDeps(t, p, clk))
+	if rc != exitRefused || out != ReasonAgentPending {
+		t.Fatalf("changed frame = (%q, %d), want pending refusal", out, rc)
+	}
+	if got := keys(p); len(got) != 0 {
+		t.Errorf("typed into a frame that changed: %q", got)
+	}
+}
+
+func TestPaneAgentFinishedSingleLook(t *testing.T) {
+	wins, panes := anchored()
+	p := &fakePane{frames: []string{fixture(t, "nudge_agent_finished.txt")}, windows: wins, panes: panes}
+	out, rc := Pane(context.Background(), req("claude"), newDeps(p, &fakeBus{}, nil))
+	if rc != exitRefused || out != ReasonAgentOnce || !strings.Contains(out, "--wait") {
+		t.Fatalf("Pane = (%q, %d), want the --wait hint refusal", out, rc)
+	}
+	if got := keys(p); len(got) != 0 {
+		t.Errorf("typed on a single look: %q", got)
+	}
+}
+
+// A frame that is still idle but changed after the stability proof is a new
+// completion row, not the one that was confirmed: it never types.
+func TestPaneAgentFinishedChangedAfterConfirm(t *testing.T) {
+	wins, panes := anchored()
+	a := fixture(t, "nudge_agent_finished.txt")
+	a2 := strings.Replace(a, "5m 8s", "5m 9s", 1)
+	clk := &tickClock{now: time.Unix(1800000000, 0)}
+	r := req("claude")
+	r.Agent = &AgentSample{frame: a, at: clk.now.Unix() - 2*agentStableSecs}
+	p := &fakePane{frames: []string{a, a2}, windows: wins, panes: panes}
+	out, rc := Pane(context.Background(), r, agentDeps(t, p, clk))
+	if rc != exitRefused || out != ReasonAgentPending {
+		t.Fatalf("Pane = (%q, %d), want pending refusal", out, rc)
+	}
+	if got := keys(p); len(got) != 0 {
+		t.Errorf("typed into a changed frame: %q", got)
+	}
+}

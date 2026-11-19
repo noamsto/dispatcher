@@ -1243,3 +1243,36 @@ func TestRunDispatcherGateComesBeforeRouting(t *testing.T) {
 		t.Errorf("rc = %d, want the dispatcher-only refusal's 2", rc)
 	}
 }
+
+// An agent-finished frame parks the --wait loop like a live turn, then types once a
+// later look finds the frame unchanged past the stability window.
+func TestRunWaitConfirmsAnAgentFinishedFrame(t *testing.T) {
+	f := newArm(t)
+	agent := fixture(t, "nudge_agent_finished.txt")
+	f.pane.frames = []string{agent, agent, agent, fixture(t, "nudge_typed.txt"), fixture(t, "meter.2s.1.2k.txt")}
+	f.env = map[string]string{"CREW_NUDGE_WAIT_INTERVAL": "15"}
+	if rc := f.run(Request{Wait: "60", Target: idleReq}); rc != 0 {
+		t.Fatalf("rc = %d, stderr = %q", rc, f.errOut())
+	}
+	if f.ticks("15") != 1 {
+		t.Errorf("slept %v, want one 15s tick", f.slept)
+	}
+	if got := keys(f.pane); !slices.Equal(got, typedArgv) {
+		t.Errorf("keys = %q, want %q", got, typedArgv)
+	}
+}
+
+// Without --wait one look at that frame refuses and names --wait.
+func TestRunRefusesAnAgentFinishedFrameWithoutWait(t *testing.T) {
+	f := newArm(t)
+	f.pane.frames = []string{fixture(t, "nudge_agent_finished.txt")}
+	if rc := f.run(Request{Target: idleReq}); rc != 2 {
+		t.Fatalf("rc = %d, stderr = %q", rc, f.errOut())
+	}
+	if want := "refused — " + ReasonAgentOnce; f.errOut() != want {
+		t.Errorf("stderr = %q, want %q", f.errOut(), want)
+	}
+	if got := keys(f.pane); len(got) != 0 {
+		t.Errorf("typed on a single look: %q", got)
+	}
+}

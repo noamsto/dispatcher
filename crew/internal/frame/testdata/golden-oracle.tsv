@@ -1207,6 +1207,37 @@ meter_transcribed.txt	quota_cursor_limit	0
 meter_transcribed.txt	quota_prompt	0
 meter_transcribed.txt	quota_session_limit	0
 meter_transcribed.txt	subrow	0
+nudge_agent_finished.txt	codex_hook_review	0
+nudge_agent_finished.txt	permission_prompt@claude	0
+nudge_agent_finished.txt	permission_prompt@codex	0
+nudge_agent_finished.txt	permission_prompt@pi	0
+nudge_agent_finished.txt	permission_prompt@cursor	0
+nudge_agent_finished.txt	prompt@claude	0
+nudge_agent_finished.txt	prompt@codex	0
+nudge_agent_finished.txt	prompt@pi	0
+nudge_agent_finished.txt	prompt@cursor	0
+nudge_agent_finished.txt	quota_prompt	0
+nudge_agent_finished.txt	quota_session_limit	0
+nudge_agent_finished.txt	quota_cursor_limit	0
+nudge_agent_finished.txt	bg_wait	0
+nudge_agent_finished.txt	meter	
+nudge_agent_finished.txt	subrow	0
+nudge_agent_finished.txt	pi_live_turn	1
+nudge_agent_finished.txt	pi_working_row	0
+nudge_agent_finished.txt	pi_working_label	0
+nudge_agent_finished.txt	pi_idle_box	0
+nudge_agent_finished.txt	box_claude.rc	0
+nudge_agent_finished.txt	box_claude.out	❯\n● Agent "Plan critic" finished · 5m 8s
+nudge_agent_finished.txt	box_any.rc	0
+nudge_agent_finished.txt	box_any.out	❯\n● Agent "Plan critic" finished · 5m 8s
+nudge_agent_finished.txt	claude_idle_box.own0.plain	1
+nudge_agent_finished.txt	claude_idle_box.own0.color	1
+nudge_agent_finished.txt	claude_idle_box.own1.plain	1
+nudge_agent_finished.txt	claude_idle_box.own1.color	1
+nudge_agent_finished.txt	idle_reason.skip0.plain	rc=1 reason=no finished-turn marker above the input box
+nudge_agent_finished.txt	idle_reason.skip0.color	rc=1 reason=no finished-turn marker above the input box
+nudge_agent_finished.txt	idle_reason.skip1.plain	rc=1 reason=no finished-turn marker above the input box
+nudge_agent_finished.txt	idle_reason.skip1.color	rc=1 reason=no finished-turn marker above the input box
 nudge_bgwait_typed.txt	bg_wait	1
 nudge_bgwait_typed.txt	box_any.out	❯ crew inbox "$CREW_WORKER_ID"\n✻ Churned for 36s · done 11:20 AM · 1 shell still running
 nudge_bgwait_typed.txt	box_any.rc	0
