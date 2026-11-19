@@ -293,7 +293,7 @@ func (v *overseer) loadDiffer() {
 		if h.Host == "" {
 			continue
 		}
-		v.partners[h.Host] = &partner{moves: h.Moves.transitions(), seen: h.Seen, ok: h.OK}
+		v.partners[h.Host] = &partner{moves: h.Moves.transitions(), seen: h.Seen, ok: h.OK, streak: h.Streak}
 	}
 }
 
@@ -307,7 +307,7 @@ func (v *overseer) saveDiffer() {
 	f := differFile{Version: differVersion, Lane: v.moves.snapshot(), Partners: []hostMoves{}}
 	for _, host := range slices.Sorted(maps.Keys(v.partners)) {
 		p := v.partners[host]
-		f.Partners = append(f.Partners, hostMoves{Host: host, Seen: p.seen, OK: p.ok, Moves: p.moves.snapshot()})
+		f.Partners = append(f.Partners, hostMoves{Host: host, Seen: p.seen, OK: p.ok, Streak: p.streak, Moves: p.moves.snapshot()})
 	}
 	path := v.differPath()
 	data, err := json.Marshal(f)
@@ -469,11 +469,18 @@ func (v *overseer) diff(ctx context.Context) bool {
 	return v.parkWoke()
 }
 
+// hostFlipStreak is how many consecutive probe results must disagree with a
+// partner's reported reachability before it flips and an edge prints, so one
+// dropped probe does not raise an alert pair.
+const hostFlipStreak = 3
+
 // partner is one partner host's memory: its own transitions, whether its last
-// document was ok, and its remote misrouted throttle.
+// document was ok, how many consecutive results have disagreed with ok (flips
+// at hostFlipStreak), and its remote misrouted throttle.
 type partner struct {
 	moves      *transitions
 	seen, ok   bool
+	streak     int
 	misrouted  int
 	reportedAt int64
 	reported   bool
@@ -489,15 +496,25 @@ func (v *overseer) federate(h fleetpkg.HostStatus, now int64) bool {
 		v.partners[h.Host] = p
 	}
 	ok := h.State == "ok" && h.TS != nil
-	if p.seen && p.ok != ok {
+	switch {
+	case !p.seen:
+		p.seen, p.ok = true, ok
+	case p.ok == ok:
+		p.streak = 0
+	default:
+		if p.streak++; p.streak < hostFlipStreak {
+			break
+		}
+		p.streak, p.ok = 0, ok
 		line := hostLine{overseerHead: overseerHead{Stream: "overseer", Event: "host_reachable", Host: h.Host}, TS: now}
 		if !ok {
 			line.Event, line.Error, line.LastOkTS = "host_unreachable", h.Error, h.LastOkTS
 		}
 		say(v.out, "%s\n", encode(line))
 	}
-	p.seen, p.ok = true, ok
-	if !ok {
+	// Mid-streak the old state stands: a still-ok partner whose probe failed has
+	// no fresh doc to fold, and a still-down one carries its conditions.
+	if !p.ok || !ok {
 		return v.parkWoke()
 	}
 	doc := fleetpkg.StatusDoc{TS: *h.TS, Host: h.Host, Machine: h.Machine, Queue: h.Queue, Repos: h.Repos}
@@ -784,10 +801,13 @@ type deadEntry struct {
 // hostMoves is one partner host's memory: whether its last document was ok and
 // its transitions. Its misrouted count and throttle start empty on each park.
 type hostMoves struct {
-	Host  string      `json:"host"`
-	Seen  bool        `json:"seen"`
-	OK    bool        `json:"ok"`
-	Moves differMoves `json:"moves"`
+	Host string `json:"host"`
+	Seen bool   `json:"seen"`
+	OK   bool   `json:"ok"`
+	// Streak is the partner's pending-flip count, so a park cut short does not
+	// restart the hysteresis.
+	Streak int         `json:"streak,omitempty"`
+	Moves  differMoves `json:"moves"`
 }
 
 // snapshot is t as JSON may carry it: its maps as entries, in map order, which

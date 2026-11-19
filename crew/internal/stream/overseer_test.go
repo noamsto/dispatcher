@@ -1439,23 +1439,49 @@ func TestOverseerHomeCrewRemoteRowFiresNoWorkerEvent(t *testing.T) {
 func TestOverseerHostUnreachableThenReachable(t *testing.T) {
 	w := ovWorker("worker:feat/a#s1-1", "working")
 	good := func(ts int64) fleetpkg.HostStatus {
-		return okHost("mbp", ts, ovRepo("beta", ovCrew("c9", "dead", "unattended", w)))
+		return okHost("mbp", ts, ovRepo("beta", ovCrew("c9", "live", "attended", w)))
+	}
+	// Recovering docs carry a new condition: it must wait for host_reachable.
+	withBeta := func(h fleetpkg.HostStatus) fleetpkg.HostStatus {
+		return okHost("mbp", *h.TS, ovRepo("beta", ovCrew("c9", "dead", "unattended", w)))
 	}
 	got := fedRun(t, fedOverseer(t),
 		withHosts(ovDoc(ovStart), good(ovStart)),
-		withHosts(ovDoc(ovStart+minute), downHost("mbp", ovStart, "ssh: timeout")),
-		withHosts(ovDoc(ovStart+2*minute), downHost("mbp", ovStart, "ssh: timeout")),
-		withHosts(ovDoc(ovStart+3*minute), good(ovStart+3*minute)))
-	if len(got[0]) != 0 || len(got[2]) != 0 {
-		t.Errorf("baseline %v / repeat-down %v printed lines", got[0], got[2])
+		withHosts(ovDoc(ovStart+minute), downHost("mbp", ovStart, "ssh: first")),
+		withHosts(ovDoc(ovStart+2*minute), downHost("mbp", ovStart+minute, "ssh: second")),
+		withHosts(ovDoc(ovStart+3*minute), downHost("mbp", ovStart+2*minute, "ssh: timeout")),
+		withHosts(ovDoc(ovStart+4*minute), downHost("mbp", ovStart+2*minute, "ssh: timeout")),
+		withHosts(ovDoc(ovStart+5*minute), withBeta(good(ovStart+5*minute))),
+		withHosts(ovDoc(ovStart+6*minute), withBeta(good(ovStart+6*minute))),
+		withHosts(ovDoc(ovStart+7*minute), withBeta(good(ovStart+7*minute))))
+	for _, i := range []int{0, 1, 2, 4, 5, 6} {
+		if len(got[i]) != 0 {
+			t.Errorf("step %d printed %v, want none", i, got[i])
+		}
 	}
 	want := map[string]any{"stream": "overseer", "event": "host_unreachable", "repo": "", "crew": "", "host": "mbp",
-		"error": "ssh: timeout", "last_ok_ts": float64(ovStart), "ts": float64(ovStart)}
-	if len(got[1]) != 1 || !reflect.DeepEqual(got[1][0], want) {
-		t.Errorf("down lines = %v, want [%v]", got[1], want)
+		"error": "ssh: timeout", "last_ok_ts": float64(ovStart + 2*minute), "ts": float64(ovStart)}
+	if len(got[3]) != 1 || !reflect.DeepEqual(got[3][0], want) {
+		t.Errorf("down lines = %v, want [%v]", got[3], want)
 	}
-	if len(got[3]) != 1 || got[3][0]["event"] != "host_reachable" || got[3][0]["host"] != "mbp" {
-		t.Errorf("recovery lines = %v, want only host_reachable (dispatcher_down was carried)", got[3])
+	if len(got[7]) != 2 || ofEvent(got[7], "host_reachable")[0]["host"] != "mbp" || len(ofEvent(got[7], "dispatcher_down")) != 1 {
+		t.Errorf("recovery lines = %v, want host_reachable and the held dispatcher_down", got[7])
+	}
+}
+
+func TestOverseerHostFlappingProbesPrintNothing(t *testing.T) {
+	good := func(ts int64) fleetpkg.HostStatus { return okHost("mbp", ts) }
+	bad := func(ts int64) fleetpkg.HostStatus { return downHost("mbp", ovStart, "ssh: timeout") }
+	probes := []func(int64) fleetpkg.HostStatus{good, bad, good, bad, good, bad, bad, good, bad, bad, good, good, bad, good}
+	var docs []fleetpkg.StatusDoc
+	for i, probe := range probes {
+		ts := ovStart + int64(i)*minute
+		docs = append(docs, withHosts(ovDoc(ts), probe(ts)))
+	}
+	for i, step := range fedRun(t, fedOverseer(t), docs...) {
+		if len(step) != 0 {
+			t.Errorf("step %d printed %v, want none (no streak of %d)", i, step, hostFlipStreak)
+		}
 	}
 }
 
