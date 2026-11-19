@@ -234,8 +234,8 @@ capture() {
 # in its one slot and anchored: a named bottom rule (`───── <name> ─`) as the
 # last line, dropped before the footer check, and the auto-deny/auto-block
 # countdown newer builds put between the command's lower `╌` rule and the
-# question. Anything else there still refuses. Walks the trimmed non-empty lines up from the bottom: footer,
-# `4. No`, option 3, option 2 (accepted in its write form and its read form),
+# question. Anything else there still refuses. Walks the trimmed non-empty
+# lines up from the bottom: footer, `4. No`, option 3, option 2 (accepted in its write form and its read form),
 # `❯ 1. Yes`, the question, the command's `╌` rule, the command, the upper
 # `╌` rule, an optional description, the exact Tip, and the subagent header.
 # Sets F_AGENT, F_BLOCK1 (the command), F_BLOCK2 (the description, or empty),
