@@ -51,6 +51,19 @@ func TestCrewHeaderNamesEveryCrew(t *testing.T) {
 	}
 }
 
+func TestCrewHeaderStateIgnoresForeignCrews(t *testing.T) {
+	asciiProfile(t)
+	m := sized(newTestModel(t), 100, 30)
+	m.active = overviewTab
+	m.snap.Roster.Crews = []data.RosterCrew{
+		{ID: "c1", Lane: &data.LaneStatus{State: "alive"}, Dispatcher: &data.DispatcherLoc{Where: "here"}},
+		{ID: "f1", Dispatcher: &data.DispatcherLoc{Where: "elsewhere"}},
+	}
+	if out := stripped(m.View()); !strings.Contains(out, "crew › c1, f1 · live") {
+		t.Errorf("home crew state missing:\n%s", out)
+	}
+}
+
 func TestRepoOfEvents(t *testing.T) {
 	for in, want := range map[string]string{
 		"/h/dispatcher/.git/crew/events.jsonl": "dispatcher",

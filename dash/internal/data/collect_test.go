@@ -539,14 +539,14 @@ func TestCollectRosterLane(t *testing.T) {
 
 func TestSnapshotJSONOmitsPeersAndLane(t *testing.T) {
 	snap := Snapshot{Roster: RosterSection{
-		Crews: []RosterCrew{{ID: "c1", Lane: &LaneStatus{State: "alive"}}},
+		Crews: []RosterCrew{{ID: "c1", Lane: &LaneStatus{State: "alive"}, Dispatcher: &DispatcherLoc{Where: "here"}}},
 		Peers: []map[string]any{{"name": "p"}},
 	}}
 	b, err := json.Marshal(snap)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, key := range []string{`"peers"`, `"lane"`} {
+	for _, key := range []string{`"peers"`, `"lane"`, `"dispatcher"`, `"Dispatcher"`} {
 		if strings.Contains(string(b), key) {
 			t.Errorf("snapshot JSON contains %s: %s", key, b)
 		}
@@ -582,5 +582,88 @@ func TestFakeRunnerRunInRecordsDir(t *testing.T) {
 	calls := fr.CallsSnapshot()
 	if len(calls) != 2 || calls[0].Dir != "/r/x" || calls[1].Dir != "" {
 		t.Errorf("calls = %+v", calls)
+	}
+}
+
+const foreignCrewsTSV = "crew_id\tlast_event_s\tfirst_event_s\tworkers\tpid\talive\n" +
+	"c1\t0\t0\t1\t1\tyes\n" +
+	"f1\t0\t0\t2\t\t\u2014\n" +
+	"d1\t0\t0\t1\t\tno\n" +
+	"i1\t0\t0\t0\t\tno\n"
+
+const foreignFleet = `{"repos":[
+ {"repo":"x","common":"/r/x/.git","crews":[{"crew_id":"d1","dispatcher":{"state":"dead"}}]},
+ {"repo":"a","common":"/r/a/.git","crews":[{"crew_id":"f1","dispatcher":{"state":"live"}},{"crew_id":"d1","dispatcher":{"state":"closed"}}]}]}`
+
+func foreignRunner(t *testing.T) *FakeRunner {
+	t.Helper()
+	r := allOKRunner(t)
+	r.Responses["crew crews"] = FakeResponse{Stdout: []byte(foreignCrewsTSV)}
+	r.Responses["crew crews --home"] = FakeResponse{Stdout: []byte("crew_id\tlast_event_s\tfirst_event_s\tworkers\tpid\talive\nc1\t0\t0\t1\t1\tyes\n")}
+	r.Responses["crew fleet status --json"] = FakeResponse{Stdout: []byte(foreignFleet)}
+	r.Responses["crew roster c1 --peers"] = FakeResponse{Stdout: []byte(`[{"name":"w0","branch":"feat/0"}]`)}
+	r.Responses["crew roster f1 --peers"] = FakeResponse{Stdout: []byte(`[{"name":"w1","branch":"feat/1"},{"name":"w2","branch":"feat/2"}]`)}
+	for _, id := range []string{"c1", "f1"} {
+		r.Responses["crew hold list --crew "+id+" --json"] = FakeResponse{Stdout: []byte("[]")}
+	}
+	r.Responses["crew stream --crew c1 --status"] = FakeResponse{Stdout: []byte(`{"state":"alive"}`)}
+	return r
+}
+
+func TestCollectRosterListsCrewWhoseDispatcherIsElsewhere(t *testing.T) {
+	r := foreignRunner(t)
+	sec := CollectRoster(context.Background(), r, baseConfig())
+
+	if sec.Error != nil || len(sec.Crews) != 2 || sec.Crews[0].ID != "c1" || sec.Crews[1].ID != "f1" {
+		t.Fatalf("roster = %+v", sec)
+	}
+	if d := sec.Crews[0].Dispatcher; d == nil || d.Where != "here" || d.Repo != nil {
+		t.Errorf("c1 dispatcher = %+v", d)
+	}
+	f := sec.Crews[1]
+	if d := f.Dispatcher; d == nil || d.Where != "elsewhere" || *d.Repo != "a" || *d.Common != "/r/a/.git" {
+		t.Errorf("f1 dispatcher = %+v", d)
+	}
+	if len(f.Workers) != 2 || f.Lane != nil {
+		t.Errorf("f1 workers = %+v lane = %+v", f.Workers, f.Lane)
+	}
+	for _, c := range r.CallsSnapshot() {
+		if k := fakeKey(c.Name, c.Args); k == "crew stream --crew f1 --status" || strings.Contains(k, "d1") || strings.Contains(k, "i1") {
+			t.Errorf("unexpected call %q", k)
+		}
+	}
+}
+
+func TestCollectRosterForeignLookupFailureOmitsCandidates(t *testing.T) {
+	for _, key := range []string{"crew crews --home", "crew fleet status --json"} {
+		t.Run(key, func(t *testing.T) {
+			r := foreignRunner(t)
+			r.Responses[key] = FakeResponse{Stderr: []byte("boom\n"), Err: FakeExitError{Code: 1}}
+			sec := CollectRoster(context.Background(), r, baseConfig())
+			if sec.Error != nil || sec.ForeignError == nil || *sec.ForeignError != "foreign crews: boom" || len(sec.Crews) != 1 || sec.Crews[0].ID != "c1" {
+				t.Errorf("roster = %+v", sec)
+			}
+		})
+	}
+}
+
+func TestCollectRosterNoCandidatesNoExtraCalls(t *testing.T) {
+	r := twoCrewRunner(t)
+	r.Responses["crew roster c1 --peers"] = FakeResponse{Stdout: []byte("[]")}
+	r.Responses["crew roster c2 --peers"] = FakeResponse{Stdout: []byte("[]")}
+	CollectRoster(context.Background(), r, baseConfig())
+	for _, c := range r.CallsSnapshot() {
+		if k := fakeKey(c.Name, c.Args); strings.Contains(k, "--home") || strings.Contains(k, "fleet") {
+			t.Errorf("unexpected call %q", k)
+		}
+	}
+}
+
+func TestCollectRosterForeignCrewHomedHereIsNotListed(t *testing.T) {
+	r := foreignRunner(t)
+	r.Responses["crew crews --home"] = FakeResponse{Stdout: []byte("crew_id\tlast_event_s\tfirst_event_s\tworkers\tpid\talive\nc1\t0\t0\t1\t1\tyes\nf1\t0\t0\t2\t\t\u2014\n")}
+	sec := CollectRoster(context.Background(), r, baseConfig())
+	if len(sec.Crews) != 1 {
+		t.Errorf("crews = %+v", sec.Crews)
 	}
 }

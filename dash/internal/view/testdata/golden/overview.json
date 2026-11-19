@@ -479,7 +479,8 @@
           "needs_input": true,
           "pr": null
         }
-      ]
+      ],
+      "dispatcher": null
     },
     {
       "crew": "c1",
@@ -606,7 +607,8 @@
           "needs_input": false,
           "pr": 12
         }
-      ]
+      ],
+      "dispatcher": null
     },
     {
       "crew": "c1",
@@ -714,7 +716,8 @@
           "needs_input": true,
           "pr": null
         }
-      ]
+      ],
+      "dispatcher": null
     },
     {
       "crew": "c1",
@@ -822,7 +825,8 @@
           "needs_input": true,
           "pr": null
         }
-      ]
+      ],
+      "dispatcher": null
     },
     {
       "crew": "c1",
@@ -930,7 +934,8 @@
           "needs_input": true,
           "pr": null
         }
-      ]
+      ],
+      "dispatcher": null
     },
     {
       "crew": "c1",
@@ -1038,7 +1043,8 @@
           "needs_input": true,
           "pr": null
         }
-      ]
+      ],
+      "dispatcher": null
     },
     {
       "crew": "c1",
@@ -1146,7 +1152,8 @@
           "needs_input": true,
           "pr": null
         }
-      ]
+      ],
+      "dispatcher": null
     },
     {
       "crew": "c1",
@@ -1254,7 +1261,8 @@
           "needs_input": true,
           "pr": null
         }
-      ]
+      ],
+      "dispatcher": null
     },
     {
       "crew": "c1",
@@ -1328,7 +1336,8 @@
           "needs_input": true,
           "pr": null
         }
-      ]
+      ],
+      "dispatcher": null
     },
     {
       "crew": "c2",
@@ -1436,7 +1445,8 @@
           "needs_input": true,
           "pr": null
         }
-      ]
+      ],
+      "dispatcher": null
     },
     {
       "crew": "c1",
@@ -1457,7 +1467,8 @@
       "answered_at": null,
       "phase": null,
       "acceptance": null,
-      "actions": []
+      "actions": [],
+      "dispatcher": null
     },
     {
       "crew": "c1",
@@ -1478,7 +1489,8 @@
       "answered_at": null,
       "phase": null,
       "acceptance": null,
-      "actions": []
+      "actions": [],
+      "dispatcher": null
     },
     {
       "crew": "",
@@ -1499,7 +1511,8 @@
       "answered_at": null,
       "phase": null,
       "acceptance": null,
-      "actions": []
+      "actions": [],
+      "dispatcher": null
     }
   ],
   "agents": [

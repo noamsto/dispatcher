@@ -5,6 +5,8 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+
+	"github.com/noamsto/dispatcher/dash/internal/data"
 )
 
 // repoOfEvents names the repo whose bus log sits at <common>/crew/events.jsonl:
@@ -37,14 +39,21 @@ func (m Model) crewHeader() string {
 	}
 	id := strings.Join(ids, ", ")
 	// One crew has one dispatcher to report; several name no single state.
+	// A crew whose dispatcher lives on another bus has no lane here.
+	var homed []data.RosterCrew
+	for _, c := range m.snap.Roster.Crews {
+		if c.Dispatcher == nil || c.Dispatcher.Where == "here" {
+			homed = append(homed, c)
+		}
+	}
 	state := ""
-	if c := m.snap.Roster.Crews[0]; len(m.snap.Roster.Crews) == 1 && c.Lane != nil {
-		switch c.Lane.State {
+	if len(homed) == 1 && homed[0].Lane != nil {
+		switch homed[0].Lane.State {
 		case "alive":
 			state = "live"
 		case "unknown":
 		default:
-			state = c.Lane.State
+			state = homed[0].Lane.State
 		}
 	}
 	repo := m.repo

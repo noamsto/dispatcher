@@ -546,7 +546,14 @@ func TestCrewInputsDrill(t *testing.T) {
 		t.Error("fleet quota hold did not raise hold_matured in the drill-down")
 	}
 
+	if d := crews[0].Dispatcher; d == nil || d.Where != "here" || d.Repo != nil {
+		t.Errorf("repo a drill dispatcher = %+v", d)
+	}
+
 	ci, _ = view.CrewInputs(in, keyB1)
+	if d := ci.Snap.Roster.Crews[0].Dispatcher; d == nil || d.Where != "elsewhere" || *d.Repo != "a" || *d.Common != "/r/a/.git" {
+		t.Errorf("repo b drill dispatcher = %+v", d)
+	}
 	if ci.Bus.PRs[12].Checks != "PENDING" {
 		t.Errorf("repo b row reads PR 12 checks %s", ci.Bus.PRs[12].Checks)
 	}
@@ -558,8 +565,12 @@ func TestCrewInputsDrill(t *testing.T) {
 
 	c5 := crewOf(in, "/r/b/.git", "c5")
 	c5.Dispatcher.State = "closed"
-	if ci, _ = view.CrewInputs(in, keyB5); ci.Snap.Roster.Crews[0].Lane != nil {
+	ci, _ = view.CrewInputs(in, keyB5)
+	if ci.Snap.Roster.Crews[0].Lane != nil {
 		t.Errorf("closed dispatcher lane = %+v", ci.Snap.Roster.Crews[0].Lane)
+	}
+	if d := ci.Snap.Roster.Crews[0].Dispatcher; d == nil || d.Where != "none" {
+		t.Errorf("closed dispatcher location = %+v", d)
 	}
 
 	ci, ok = view.CrewInputs(in, "box||p2")

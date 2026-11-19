@@ -57,27 +57,28 @@ type Acceptance struct {
 // fields: null for remote and peer rows, whose events never reach the local
 // bus, and Acceptance is also null until a ledger exists.
 type OverviewWorker struct {
-	Crew         string      `json:"crew"`
-	Branch       string      `json:"branch"`
-	Name         *string     `json:"name"`
-	Tmux         *string     `json:"tmux,omitempty"`
-	Host         string      `json:"host"`
-	Origin       Origin      `json:"origin"`
-	State        string      `json:"state"`
-	Detail       *string     `json:"detail"`
-	Tier         *string     `json:"tier"`
-	Engine       *string     `json:"engine"`
-	Model        *string     `json:"model"`
-	Title        *string     `json:"title"`
-	PRURL        *string     `json:"pr_url"`
-	PR           *int        `json:"pr"`
-	AgeSec       *int64      `json:"age_sec"`
-	BlockedSince *int64      `json:"blocked_since"`
-	AnsweredAt   *int64      `json:"answered_at"`
-	Phase        *Phase      `json:"phase"`
-	Acceptance   *Acceptance `json:"acceptance"`
-	Actions      []Action    `json:"actions"`
-	NeedsCleanup bool        `json:"needs_cleanup,omitempty"`
+	Crew         string            `json:"crew"`
+	Branch       string            `json:"branch"`
+	Name         *string           `json:"name"`
+	Tmux         *string           `json:"tmux,omitempty"`
+	Host         string            `json:"host"`
+	Origin       Origin            `json:"origin"`
+	State        string            `json:"state"`
+	Detail       *string           `json:"detail"`
+	Tier         *string           `json:"tier"`
+	Engine       *string           `json:"engine"`
+	Model        *string           `json:"model"`
+	Title        *string           `json:"title"`
+	PRURL        *string           `json:"pr_url"`
+	PR           *int              `json:"pr"`
+	AgeSec       *int64            `json:"age_sec"`
+	BlockedSince *int64            `json:"blocked_since"`
+	AnsweredAt   *int64            `json:"answered_at"`
+	Phase        *Phase            `json:"phase"`
+	Acceptance   *Acceptance       `json:"acceptance"`
+	Actions      []Action          `json:"actions"`
+	NeedsCleanup bool              `json:"needs_cleanup,omitempty"`
+	Dispatcher   *WorkerDispatcher `json:"dispatcher"`
 }
 
 type AgentNode struct {
@@ -407,6 +408,9 @@ func overviewErrors(in Inputs, rows []WorkerRow) []string {
 	if e := in.Snap.Roster.Error; e != nil {
 		errs = append(errs, "roster: "+*e)
 	}
+	if e := in.Snap.Roster.ForeignError; e != nil {
+		errs = append(errs, *e)
+	}
 	for _, c := range in.Snap.Roster.Crews {
 		if c.WorkersError != nil {
 			errs = append(errs, fmt.Sprintf("crew %s: workers: %s", c.ID, *c.WorkersError))
@@ -455,15 +459,23 @@ func BuildOverview(in Inputs) OverviewView {
 		Events:        eventRows(in.Bus.Recent),
 		Errors:        overviewErrors(in, rows),
 	}
+	dispatchers := map[string]*WorkerDispatcher{}
+	for _, c := range in.Snap.Roster.Crews {
+		dispatchers[c.ID] = dispatcherOf(c.Dispatcher)
+	}
 	for _, w := range rows {
 		d := in.Bus.Workers[data.WorkerKey{Crew: w.Crew, Branch: w.Branch}]
+		var dispatcher *WorkerDispatcher
+		if w.Origin != OriginPeer {
+			dispatcher = dispatchers[w.Crew]
+		}
 		v.Workers = append(v.Workers, OverviewWorker{
 			Crew: w.Crew, Branch: w.Branch, Name: w.Name, Tmux: w.Tmux, Host: w.Host, Origin: w.Origin,
 			State: w.State, Detail: w.Detail, Tier: w.Tier, Engine: w.Engine, Model: w.Model,
 			Title: w.Title, PRURL: w.PRURL, PR: w.PR, AgeSec: w.AgeS,
 			BlockedSince: w.BlockedSince, AnsweredAt: w.AnsweredAt,
 			Phase: phaseOf(w, d, now), Acceptance: acceptanceOf(w, d), Actions: w.Actions,
-			NeedsCleanup: w.NeedsCleanup,
+			NeedsCleanup: w.NeedsCleanup, Dispatcher: dispatcher,
 		})
 		if !w.NeedsCleanup {
 			agent := agentRow(w, in, now)

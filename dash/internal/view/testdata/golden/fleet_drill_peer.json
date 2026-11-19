@@ -32,7 +32,8 @@
       "answered_at": null,
       "phase": null,
       "acceptance": null,
-      "actions": []
+      "actions": [],
+      "dispatcher": null
     }
   ],
   "agents": [

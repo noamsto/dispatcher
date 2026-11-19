@@ -104,3 +104,21 @@ func TestOverviewDetailClearsGolden(t *testing.T) {
 		checkGolden(t, fmt.Sprintf("overview_detail_clears_%dx%d.golden", w, h), got, w, h)
 	}
 }
+
+func TestOverviewNotesDispatcherElsewhere(t *testing.T) {
+	asciiProfile(t)
+	in := viewtest.Inputs()
+	in.Snap.Roster.Peers = nil
+	if got := stripped(newOverviewView(in, overviewNow).View(150, 40)); strings.Contains(got, "dispatcher in") {
+		t.Fatalf("no dispatcher location, yet the note renders:\n%s", got)
+	}
+	repo := "other-repo"
+	in.Snap.Roster.Crews[0].Dispatcher = &data.DispatcherLoc{Where: "elsewhere", Repo: &repo}
+	if got := stripped(newOverviewView(in, overviewNow).View(150, 40)); !strings.Contains(got, "dispatcher in other-repo") {
+		t.Errorf("elsewhere crew has no dispatcher note:\n%s", got)
+	}
+	in.Snap.Roster.Crews[0].Dispatcher = &data.DispatcherLoc{Where: "here"}
+	if got := stripped(newOverviewView(in, overviewNow).View(150, 40)); strings.Contains(got, "dispatcher in") {
+		t.Errorf("here crew renders the note:\n%s", got)
+	}
+}

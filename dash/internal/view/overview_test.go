@@ -271,6 +271,38 @@ func TestPeerRowNeverShadowsLocalRow(t *testing.T) {
 	}
 }
 
+func TestPeerRowDispatcherIsNull(t *testing.T) {
+	in := viewtest.Inputs()
+	in.Snap.Roster.Crews = []data.RosterCrew{
+		{ID: "c1", Workers: []map[string]any{}, Holds: []map[string]any{}, Dispatcher: &data.DispatcherLoc{Where: "here"}},
+	}
+	in.Snap.Roster.Peers = []map[string]any{
+		{"crew_id": "c1", "branch": "feat/peer", "host": "mbp", "peer": true, "state": "blocked"},
+	}
+	var n int
+	for _, w := range view.BuildOverview(in).Workers {
+		if w.Origin != view.OriginPeer {
+			continue
+		}
+		n++
+		if w.Dispatcher != nil {
+			t.Errorf("peer row dispatcher = %+v, want nil", w.Dispatcher)
+		}
+	}
+	if n == 0 {
+		t.Fatal("no peer row in overview")
+	}
+}
+
+func TestOverviewListsForeignError(t *testing.T) {
+	in := viewtest.Inputs()
+	msg := "foreign crews: boom"
+	in.Snap.Roster.ForeignError = &msg
+	if !slices.Contains(view.BuildOverview(in).Errors, msg) {
+		t.Errorf("Errors = %v, want %q", view.BuildOverview(in).Errors, msg)
+	}
+}
+
 func TestOverviewInputsDir(t *testing.T) {
 	check := func(v view.OverviewView, want *string) {
 		t.Helper()
@@ -376,5 +408,44 @@ func TestAgentNodeOmitsEmptyLabelAndEffort(t *testing.T) {
 	}
 	if strings.Contains(string(b), "label") || strings.Contains(string(b), "effort") {
 		t.Errorf("json = %s", b)
+	}
+}
+
+func TestOverviewDispatcherLocation(t *testing.T) {
+	row := func(branch string) map[string]any {
+		return map[string]any{"branch": branch, "name": branch, "state": "blocked", "detail": "needs input", "tier": "standard", "engine": "claude", "live": true, "age_s": float64(30)}
+	}
+	repo, common := "a", "/r/a/.git"
+	in := viewtest.Inputs()
+	in.Snap.Roster.Peers = nil
+	in.Snap.Roster.Crews = []data.RosterCrew{
+		{ID: "home", Workers: []map[string]any{row("feat/h")}, Holds: []map[string]any{}, Dispatcher: &data.DispatcherLoc{Where: "here"}},
+		{ID: "away", Workers: []map[string]any{row("feat/h")}, Holds: []map[string]any{}, Dispatcher: &data.DispatcherLoc{Where: "elsewhere", Repo: &repo, Common: &common}},
+		{ID: "bare", Workers: []map[string]any{row("feat/h")}, Holds: []map[string]any{}},
+	}
+	v := view.BuildOverview(in)
+	by := map[string]view.OverviewWorker{}
+	for _, w := range v.Workers {
+		by[w.Crew] = w
+	}
+	if len(by) != 3 {
+		t.Fatalf("workers = %+v", v.Workers)
+	}
+	h, a := by["home"], by["away"]
+	if h.State != a.State || deref(h.Detail) != deref(a.Detail) || deref(h.Detail) == "" || h.AgeSec == nil || a.AgeSec == nil || *h.AgeSec != *a.AgeSec {
+		t.Errorf("home %+v and away %+v fold differently", h, a)
+	}
+	if h.Dispatcher == nil || h.Dispatcher.Where != "here" || h.Dispatcher.Repo != nil {
+		t.Errorf("home dispatcher = %+v", h.Dispatcher)
+	}
+	if d := a.Dispatcher; d == nil || d.Where != "elsewhere" || *d.Repo != "a" || *d.Common != "/r/a/.git" {
+		t.Errorf("away dispatcher = %+v", a.Dispatcher)
+	}
+	if by["bare"].Dispatcher != nil {
+		t.Errorf("bare dispatcher = %+v, want nil", by["bare"].Dispatcher)
+	}
+	rv := view.BuildRoster(in)
+	if rv.Crews[1].Dispatcher == nil || rv.Crews[1].Dispatcher.Where != "elsewhere" || rv.Crews[2].Dispatcher != nil {
+		t.Errorf("roster crew dispatchers = %+v %+v", rv.Crews[1].Dispatcher, rv.Crews[2].Dispatcher)
 	}
 }

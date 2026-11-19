@@ -791,6 +791,9 @@ func cardLines(ov vm.OverviewView, lines int, it placed, line func() *spans, iw 
 		l2.add(c.glyph, trackStyle(c.status))
 	}
 	l2.add(" "+phaseLabel(w), fg(colDim))
+	if d := w.Dispatcher; d != nil && d.Where == "elsewhere" && d.Repo != nil {
+		l2.add(" · dispatcher in "+*d.Repo, fg(colDim))
+	}
 
 	out := []string{l1.String(), l2.String()}
 	if lines >= 3 {

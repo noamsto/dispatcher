@@ -391,7 +391,7 @@ func (c fleetCrew) inputs(f FleetInputs) Inputs {
 	for _, h := range c.local.Holds {
 		holds = append(holds, map[string]any{"id": h.ID, "kind": h.Kind, "waited_s": h.WaitedS, "due": h.Due})
 	}
-	rc := data.RosterCrew{ID: c.crew, Workers: c.local.Workers, Holds: holds}
+	rc := data.RosterCrew{ID: c.crew, Workers: c.local.Workers, Holds: holds, Dispatcher: c.dispatcherLoc()}
 	if lane := c.home.Dispatcher.Lane; c.live() && lane != nil {
 		rc.Lane = &data.LaneStatus{State: *lane}
 	}
@@ -399,6 +399,16 @@ func (c fleetCrew) inputs(f FleetInputs) Inputs {
 	in.Bus = c.digest(f)
 	in.Dir = c.dir()
 	return in
+}
+
+func (c fleetCrew) dispatcherLoc() *data.DispatcherLoc {
+	switch {
+	case !c.live():
+		return &data.DispatcherLoc{Where: "none"}
+	case c.homeRepo == c.repo:
+		return &data.DispatcherLoc{Where: "here"}
+	}
+	return &data.DispatcherLoc{Where: "elsewhere", Repo: &c.homeRepo.Repo, Common: &c.homeRepo.Common}
 }
 
 // digest is the repo's digest with Recent cut to this crew's own events.
