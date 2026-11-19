@@ -97,7 +97,7 @@ Relaunch means launcher re-entry with the same crew id in that repo, **never** y
 
 - **On the human's yes**, relaunch a `dead`/`unattended` crew whose launch record is valid.
 - **Under `overseer.autoRelaunch`** (`false` by default): only for `dead`, only with a valid launch record, only when a non-stale worker is blocked unanswered or a hold is due, never when another crew in the repo is live, and always reported.
-- **A crew with no launch record** (a promoted in-session crew) is relaunched only under `overseer.autoStart`, from the settings defaults, and then only as above: on the human's yes, or under `overseer.autoRelaunch` with its conditions. A present but invalid record is always refused.
+- **A crew with no launch record** (a promoted in-session crew) is relaunched only under `overseer.autoStart`, from the settings defaults, which stand in for the valid launch record: on the human's yes, or under `overseer.autoRelaunch` with its other conditions. A present but invalid record is always refused.
 - **Never** relaunch `closed` (a deliberate close), or anything through anything but `dispatcher --relaunch`.
 
 **Relaunch only rows whose `host` is this host.** A dead or unattended dispatcher on another host is flagged in Needs-you with its `host`; that host's own overseer or the human acts there. Never relaunch across ssh, and never `dispatcher --relaunch` for a remote crew.
