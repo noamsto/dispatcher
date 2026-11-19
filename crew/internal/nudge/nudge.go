@@ -336,7 +336,9 @@ func frameGate(ctx context.Context, d Deps, pane, engine string) (string, bool) 
 	}
 	// skipBg: a detached background shell is no reason to refuse a directive, so an
 	// idle box passes with one on screen.
-	if why, idle := frame.PaneIdleReason(plain, colored, true); !idle {
+	// An Interrupted turn has no finished-turn marker but waits for direction.
+	if why, idle := frame.PaneIdleReason(plain, colored, true); !idle &&
+		(why != "no finished-turn marker above the input box" || !frame.InterruptedAboveBox(plain)) {
 		return busyReason(plain, colored, why), false
 	}
 	return "", true

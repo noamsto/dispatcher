@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/noamsto/dispatcher/crew/internal/clock"
+	"github.com/noamsto/dispatcher/crew/internal/frame"
 	"github.com/noamsto/dispatcher/crew/internal/tmux/tmuxtest"
 )
 
@@ -870,5 +871,55 @@ func TestNudgeRowLeadingZeroMsgTS(t *testing.T) {
 	r.MsgTS = "007"
 	if got := rowJSON(t, nudgeRow(r, "accepted", "", 1)); !strings.Contains(got, `"msg_ts":7`) {
 		t.Errorf("row %s lacks msg_ts 7", got)
+	}
+}
+
+// The turn a blocked tool call ended: an Interrupted row above an empty box has no
+// finished-turn marker, yet the lead waits for direction, so the nudge goes through.
+func TestPaneAcceptedClaudeInterrupted(t *testing.T) {
+	wins, panes := anchored()
+	idle := fixture(t, "nudge_interrupted.txt")
+	typed := strings.Replace(idle, "\n❯\n", "\n❯ crew inbox \"$CREW_WORKER_ID\"\n", 1)
+	p := &fakePane{frames: []string{idle, idle, typed, fixture(t, "meter.2s.1.2k.txt")}, windows: wins, panes: panes}
+	b := &fakeBus{rows: sessionRows(t, idleReq, "working")}
+	out, rc := Pane(context.Background(), req("claude"), newDeps(p, b, map[string]string{"CREW_NUDGE_SETTLE": "0", "CREW_NUDGE_GAP": "0"}))
+	if rc != 0 || !strings.HasPrefix(out, "nudge accepted: %9 ") {
+		t.Fatalf("Pane = (%q, %d), want accepted on an Interrupted frame", out, rc)
+	}
+	if got := keys(p); !slices.Equal(got, typedArgv) {
+		t.Errorf("keys = %q, want %q", got, typedArgv)
+	}
+}
+
+// The Interrupted allowance covers only the missing finished-turn marker: any other
+// busy signal on the same frame still refuses.
+func TestPaneRefusesInterruptedFramesThatAreNotIdle(t *testing.T) {
+	wins, panes := anchored()
+	idle := fixture(t, "nudge_interrupted.txt")
+	limit := "  ⎿  You've hit your session limit · resets 7pm (Asia/Jerusalem)\n     /upgrade to increase your usage limit.\n" + idle
+	limit = strings.Replace(limit, "  -- INSERT -- ⏵⏵ auto mode on · ← for agents", "  ⚠ /low-priority to continue now at lower priority · uses your weekly limit", 1)
+	cases := []struct {
+		name  string
+		frame string
+		want  string
+	}{
+		{"typed input", strings.Replace(idle, "\n❯\n", "\n❯ hello draft text\n", 1), "unsent input in the input box"},
+		{"live turn", strings.Replace(idle, "  ⎿  Interrupted", "✻ Churning… (2s · ↓ 1.2k tokens)\n  ⎿  Interrupted", 1), "live turn or no idle input box"},
+		{"session limit", limit, "quota frame on screen"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if !frame.InterruptedAboveBox(tc.frame) {
+				t.Fatal("setup: Interrupted row is not directly above the box")
+			}
+			p := &fakePane{frames: []string{tc.frame}, windows: wins, panes: panes}
+			out, rc := Pane(context.Background(), req("claude"), newDeps(p, &fakeBus{}, nil))
+			if rc != exitRefused || out != tc.want {
+				t.Errorf("Pane = (%q, %d), want (%q, %d)", out, rc, tc.want, exitRefused)
+			}
+			if got := keys(p); len(got) != 0 {
+				t.Errorf("typed into a refused pane: %q", got)
+			}
+		})
 	}
 }

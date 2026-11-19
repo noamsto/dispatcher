@@ -1300,6 +1300,37 @@ nudge_fresh.txt	quota_cursor_limit	0
 nudge_fresh.txt	quota_prompt	0
 nudge_fresh.txt	quota_session_limit	0
 nudge_fresh.txt	subrow	0
+nudge_interrupted.txt	bg_wait	0
+nudge_interrupted.txt	box_any.out	❯\n  ⎿  Interrupted · What should Claude do instead?\n● Bash(rm -rf /tmp/wt/build)
+nudge_interrupted.txt	box_any.rc	0
+nudge_interrupted.txt	box_claude.out	❯\n  ⎿  Interrupted · What should Claude do instead?\n● Bash(rm -rf /tmp/wt/build)
+nudge_interrupted.txt	box_claude.rc	0
+nudge_interrupted.txt	claude_idle_box.own0.color	1
+nudge_interrupted.txt	claude_idle_box.own0.plain	1
+nudge_interrupted.txt	claude_idle_box.own1.color	1
+nudge_interrupted.txt	claude_idle_box.own1.plain	1
+nudge_interrupted.txt	codex_hook_review	0
+nudge_interrupted.txt	idle_reason.skip0.color	rc=1 reason=no finished-turn marker above the input box
+nudge_interrupted.txt	idle_reason.skip0.plain	rc=1 reason=no finished-turn marker above the input box
+nudge_interrupted.txt	idle_reason.skip1.color	rc=1 reason=no finished-turn marker above the input box
+nudge_interrupted.txt	idle_reason.skip1.plain	rc=1 reason=no finished-turn marker above the input box
+nudge_interrupted.txt	meter	
+nudge_interrupted.txt	permission_prompt@claude	0
+nudge_interrupted.txt	permission_prompt@codex	0
+nudge_interrupted.txt	permission_prompt@cursor	0
+nudge_interrupted.txt	permission_prompt@pi	0
+nudge_interrupted.txt	pi_idle_box	0
+nudge_interrupted.txt	pi_live_turn	1
+nudge_interrupted.txt	pi_working_label	0
+nudge_interrupted.txt	pi_working_row	0
+nudge_interrupted.txt	prompt@claude	0
+nudge_interrupted.txt	prompt@codex	0
+nudge_interrupted.txt	prompt@cursor	0
+nudge_interrupted.txt	prompt@pi	0
+nudge_interrupted.txt	quota_cursor_limit	0
+nudge_interrupted.txt	quota_prompt	0
+nudge_interrupted.txt	quota_session_limit	0
+nudge_interrupted.txt	subrow	0
 nudge_pi_draft.txt	bg_wait	0
 nudge_pi_draft.txt	box_any.out	hello draft\n pi v0.87.1
 nudge_pi_draft.txt	box_any.rc	0
@@ -1548,6 +1579,37 @@ permission_bash_guard.txt	quota_cursor_limit	0
 permission_bash_guard.txt	quota_prompt	0
 permission_bash_guard.txt	quota_session_limit	0
 permission_bash_guard.txt	subrow	0
+permission_bash_guard_block.txt	bg_wait	0
+permission_bash_guard_block.txt	box_any.out	
+permission_bash_guard_block.txt	box_any.rc	1
+permission_bash_guard_block.txt	box_claude.out	
+permission_bash_guard_block.txt	box_claude.rc	1
+permission_bash_guard_block.txt	claude_idle_box.own0.color	0
+permission_bash_guard_block.txt	claude_idle_box.own0.plain	0
+permission_bash_guard_block.txt	claude_idle_box.own1.color	0
+permission_bash_guard_block.txt	claude_idle_box.own1.plain	0
+permission_bash_guard_block.txt	codex_hook_review	0
+permission_bash_guard_block.txt	idle_reason.skip0.color	rc=1 reason=prompt on screen
+permission_bash_guard_block.txt	idle_reason.skip0.plain	rc=1 reason=prompt on screen
+permission_bash_guard_block.txt	idle_reason.skip1.color	rc=1 reason=prompt on screen
+permission_bash_guard_block.txt	idle_reason.skip1.plain	rc=1 reason=prompt on screen
+permission_bash_guard_block.txt	meter	
+permission_bash_guard_block.txt	permission_prompt@claude	1
+permission_bash_guard_block.txt	permission_prompt@codex	0
+permission_bash_guard_block.txt	permission_prompt@cursor	0
+permission_bash_guard_block.txt	permission_prompt@pi	0
+permission_bash_guard_block.txt	pi_idle_box	0
+permission_bash_guard_block.txt	pi_live_turn	1
+permission_bash_guard_block.txt	pi_working_label	0
+permission_bash_guard_block.txt	pi_working_row	0
+permission_bash_guard_block.txt	prompt@claude	0
+permission_bash_guard_block.txt	prompt@codex	0
+permission_bash_guard_block.txt	prompt@cursor	0
+permission_bash_guard_block.txt	prompt@pi	0
+permission_bash_guard_block.txt	quota_cursor_limit	0
+permission_bash_guard_block.txt	quota_prompt	0
+permission_bash_guard_block.txt	quota_session_limit	0
+permission_bash_guard_block.txt	subrow	0
 permission_sanitize.txt	bg_wait	0
 permission_sanitize.txt	box_any.out	
 permission_sanitize.txt	box_any.rc	1
