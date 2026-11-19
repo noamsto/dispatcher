@@ -478,7 +478,7 @@ CD_BLOCK='⚠ Claude Code will automatically block this request in about 2 minut
 
 @test "permission-check: a block countdown with two spaces after the glyph is allowed" {
   pending_bash "cat $WT/README.md"
-  FRAME_COUNTDOWN='⚠  Claude Code will automatically block this request in 0:05, to avoid holding up an unattended session' frame "cat $WT/README.md"
+  FRAME_COUNTDOWN='⚠  Claude Code will automatically block this request in 10:05, to avoid holding up an unattended session' frame "cat $WT/README.md"
   check
   assert_allowed
 }
@@ -1281,6 +1281,74 @@ alt_frame() {
   pane --answer
   assert_refused "answer: the frame changed"
   no_send_keys
+}
+
+# pane_countdown FIRST ALT — a pane dialog whose countdown reads FIRST, and an
+# alternate frame where the same countdown reads ALT.
+pane_countdown() {
+  pending_bash "cat $WT/README.md"
+  FRAME_COUNTDOWN=$1 frame "cat $WT/README.md"
+  export PANE_FRAME_ALT="$BATS_TEST_TMPDIR/frame-alt.txt"
+  FRAME=$PANE_FRAME_ALT FRAME_COUNTDOWN=$2 frame "cat $WT/README.md"
+}
+
+@test "permission-check: a countdown that ticks during the settle is allowed" {
+  pane_countdown "$CD_DENY" "${CD_DENY/1:30/1:20}"
+  export PANE_FRAME_ALT_AT=2
+  pane --answer
+  assert_allowed
+  [ "$(grep -c '^send-keys -t %9 1$' "$TMUX_LOG")" -eq 1 ]
+}
+
+@test "permission-check: a countdown that ticks before the keystroke is allowed" {
+  pane_countdown "$CD_DENY" "${CD_DENY/1:30/1:19}"
+  export PANE_FRAME_ALT_AT=3
+  pane --answer
+  assert_allowed
+  [ "$(grep -c '^send-keys -t %9 1$' "$TMUX_LOG")" -eq 1 ]
+}
+
+@test "permission-check: a countdown frame that changes beyond the time at the settle goes to the human" {
+  pane_countdown "$CD_DENY" "${CD_DENY/deny/block}"
+  export PANE_FRAME_ALT_AT=2
+  pane --answer
+  assert_human
+  no_send_keys
+}
+
+@test "permission-check: a ticked countdown frame with new output above it at the settle goes to the human" {
+  pane_countdown "$CD_DENY" "${CD_DENY/1:30/1:20}"
+  { printf 'earlier output\n'; cat "$PANE_FRAME_ALT"; } >"$BATS_TEST_TMPDIR/alt2.txt"
+  mv "$BATS_TEST_TMPDIR/alt2.txt" "$PANE_FRAME_ALT"
+  export PANE_FRAME_ALT_AT=2
+  pane --answer
+  assert_refused "settle: the frame changed"
+  no_send_keys
+}
+
+@test "permission-check: a countdown frame that changes beyond the time before the keystroke goes to the human" {
+  pane_countdown "$CD_DENY" "${CD_DENY/1:30/1:20}"
+  { printf 'earlier output\n'; cat "$PANE_FRAME_ALT"; } >"$BATS_TEST_TMPDIR/alt2.txt"
+  mv "$BATS_TEST_TMPDIR/alt2.txt" "$PANE_FRAME_ALT"
+  export PANE_FRAME_ALT_AT=3
+  pane --answer
+  assert_refused "answer: the frame changed"
+  no_send_keys
+}
+
+@test "permission-check: a countdown too close to auto-block goes to the human" {
+  pane_countdown "${CD_DENY/1:30/0:09}" "${CD_DENY/1:30/0:09}"
+  pane --answer
+  assert_refused "countdown: too close to auto-block"
+  no_send_keys
+}
+
+@test "permission-check: a minutes countdown that ticks during the settle is allowed" {
+  pane_countdown "$CD_BLOCK" "${CD_BLOCK/about 2 minutes/about 1 minute}"
+  export PANE_FRAME_ALT_AT=2
+  pane --answer
+  assert_allowed
+  [ "$(grep -c '^send-keys -t %9 1$' "$TMUX_LOG")" -eq 1 ]
 }
 
 @test "permission-check: a second pending call appended during the settle goes to the human" {

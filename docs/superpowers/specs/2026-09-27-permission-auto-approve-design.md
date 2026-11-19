@@ -218,9 +218,16 @@ permission-check.sh --capture <file> --branch <branch> --worktree <dir> \
   a test can change the frame or the transcript during the wait. Both
   observations must see a byte-identical frame and the same single pending
   call id; any difference → human. A live call not yet flushed at the first
-  scan shows up at the second as a second pending call.
+  scan shows up at the second as a second pending call. The one exception is
+  a countdown line (Frame gate 3), which ticks every second: the frames are
+  compared with only that line's `T` replaced by a fixed token, and
+  everything else still byte for byte. At the second observation a countdown
+  with under 15 s left (`about N minute(s)` counts as N×60 s) → human
+  (`countdown: too close to auto-block`): the dialog could auto-block before
+  or as the keystroke lands.
 - `--answer` (with `--pane` only): after an allow verdict, capture a third time,
-  require it byte-identical to the decided frame, then
+  re-run the Frame gate on it and require it byte-identical to the decided
+  frame (with the same countdown normalization), then
   `tmux send-keys -t <pane> 1`. `1` selects option 1 (`Yes`) directly, whatever
   the cursor row. It never sends anything else.
 - `--branch` comes from the dispatcher's own `dispatch` event on the bus — not
@@ -246,7 +253,7 @@ permission-check.sh --capture <file> --branch <branch> --worktree <dir> \
    exactly `⚠ Claude Code will automatically deny this request in T, to avoid
 blocking progress on an unattended session` or `⚠ Claude Code will
 automatically block this request in T, to avoid holding up an unattended
-session` (one or two spaces after `⚠`; `T` is `M:SS` or `about N minute(s)`),
+session` (one or two spaces after `⚠`; `T` is `M:SS` or `MM:SS`, `[0-9]{1,2}:[0-5][0-9]`, or `about N minute(s)`),
    in that slot only; then a `╌` rule, the command, a `╌` rule; above the upper
    rule an optional description line, then exactly
    `Tip: auto mode handles these prompts for you — choose "switch to auto mode" below`.

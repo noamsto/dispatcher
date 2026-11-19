@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/noamsto/dispatcher/crew/internal/clock"
+	"github.com/noamsto/dispatcher/crew/internal/frame"
 	"github.com/noamsto/dispatcher/crew/internal/tmux/tmuxtest"
 )
 
@@ -895,7 +896,8 @@ func TestPaneAcceptedClaudeInterrupted(t *testing.T) {
 func TestPaneRefusesInterruptedFramesThatAreNotIdle(t *testing.T) {
 	wins, panes := anchored()
 	idle := fixture(t, "nudge_interrupted.txt")
-	dialog := fixture(t, "rw_permission.txt")
+	limit := "  ⎿  You've hit your session limit · resets 7pm (Asia/Jerusalem)\n     /upgrade to increase your usage limit.\n" + idle
+	limit = strings.Replace(limit, "  -- INSERT -- ⏵⏵ auto mode on · ← for agents", "  ⚠ /low-priority to continue now at lower priority · uses your weekly limit", 1)
 	cases := []struct {
 		name  string
 		frame string
@@ -903,10 +905,13 @@ func TestPaneRefusesInterruptedFramesThatAreNotIdle(t *testing.T) {
 	}{
 		{"typed input", strings.Replace(idle, "\n❯\n", "\n❯ hello draft text\n", 1), "unsent input in the input box"},
 		{"live turn", strings.Replace(idle, "  ⎿  Interrupted", "✻ Churning… (2s · ↓ 1.2k tokens)\n  ⎿  Interrupted", 1), "live turn or no idle input box"},
-		{"permission dialog", idle + "\n" + dialog[strings.Index(dialog, "──────"):], "permission dialog on screen"},
+		{"session limit", limit, "quota frame on screen"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			if !frame.InterruptedAboveBox(tc.frame) {
+				t.Fatal("setup: Interrupted row is not directly above the box")
+			}
 			p := &fakePane{frames: []string{tc.frame}, windows: wins, panes: panes}
 			out, rc := Pane(context.Background(), req("claude"), newDeps(p, &fakeBus{}, nil))
 			if rc != exitRefused || out != tc.want {

@@ -239,7 +239,9 @@ capture() {
 # `❯ 1. Yes`, the question, the command's `╌` rule, the command, the upper
 # `╌` rule, an optional description, the exact Tip, and the subagent header.
 # Sets F_AGENT, F_BLOCK1 (the command), F_BLOCK2 (the description, or empty),
-# F_NBLOCK.
+# F_NBLOCK, F_CD_SECS (the countdown's remaining seconds, or empty) and
+# FRAME_CMP (CAPTURE with only the countdown's time token fixed, so a ticking
+# countdown still compares equal across observations).
 frame_parse() {
   local lines=() ne=() line t
   mapfile -t lines <<<"$CAPTURE"
@@ -276,8 +278,16 @@ frame_parse() {
   [ "${ne[n - 5]}" = "❯ 1. Yes" ] || refuse "frame: option 1 is not exactly Yes"
   [ "${ne[n - 6]}" = "Do you want to proceed?" ] || refuse "frame: question unrecognised"
   local k=$((n - 7))
+  FRAME_CMP=$CAPTURE F_CD_SECS=""
   if [[ ${ne[k]} =~ $countdown_re ]]; then
     [ "$n" -ge 12 ] || refuse "frame: not a permission dialog"
+    local cd=${ne[k]} tok=${BASH_REMATCH[2]:-${BASH_REMATCH[3]}}
+    if [[ $tok =~ ^([0-9]+):([0-9]+)$ ]]; then
+      F_CD_SECS=$((10#${BASH_REMATCH[1]} * 60 + 10#${BASH_REMATCH[2]}))
+    elif [[ $tok =~ ^about\ ([0-9]+) ]]; then
+      F_CD_SECS=$((10#${BASH_REMATCH[1]} * 60))
+    fi
+    FRAME_CMP=${CAPTURE%"$cd"*}${cd/" in $tok, "/" in T, "}${CAPTURE##*"$cd"}
     k=$((k - 1))
   fi
   [[ ${ne[k]} =~ ^(╌)+$ ]] || refuse "frame: no rule above the options"
@@ -899,15 +909,19 @@ main() {
   grant_roots
   [ -z "$PANE" ] || pane_worktree
   decide
-  frame=$CAPTURE id=$T_ID
+  frame=$FRAME_CMP id=$T_ID
   sleep "$SETTLE"
   decide
-  [ "$CAPTURE" = "$frame" ] || refuse "settle: the frame changed"
+  [ "$FRAME_CMP" = "$frame" ] || refuse "settle: the frame changed"
   [ "$T_ID" = "$id" ] || refuse "settle: the pending call changed"
+  # 15 s covers the answer re-capture and send-keys with wide slack; nearer
+  # than that the dialog may auto-block before or as the `1` lands.
+  [ -z "$F_CD_SECS" ] || [ "$F_CD_SECS" -ge 15 ] || refuse "countdown: too close to auto-block"
 
   if [ "$ANSWER" = 1 ]; then
     capture
-    [ "$CAPTURE" = "$frame" ] || refuse "answer: the frame changed before the keystroke"
+    frame_parse
+    [ "$FRAME_CMP" = "$frame" ] || refuse "answer: the frame changed before the keystroke"
     # `1` picks option 1 whatever the cursor row. Nothing else is ever sent.
     tmux send-keys -t "$PANE" 1 >&2 || refuse "answer: send-keys failed"
   fi
