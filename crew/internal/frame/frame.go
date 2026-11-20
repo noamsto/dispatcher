@@ -547,11 +547,11 @@ func TerminalPaneIdleReason(plain, colored string, skipBg bool) (reason string, 
 // the box after its last finished-turn marker (the window top when there is none),
 // so compaction rows cannot bury it.
 func interruptedSinceDone(text string) bool {
-	_, plain, a, _, off, ok := scanBox(text)
+	_, plain, a, _, _, ok := scanBox(text)
 	if !ok {
 		return false
 	}
-	for j := a - 1; j >= off && !reDone.MatchString(plain[j]); j-- {
+	for j := a - 1; j >= 0 && !reDone.MatchString(plain[j]); j-- {
 		if reInterrupted.MatchString(plain[j]) {
 			return true
 		}

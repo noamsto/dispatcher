@@ -156,6 +156,19 @@ func compactedIdleFrame(above ...string) string {
 	return strings.Join(rows, "\n")
 }
 
+// interruptedFarAboveBox puts an Interrupted row more than the 30-row window above
+// the input box, with no finished-turn marker between them.
+func interruptedFarAboveBox() string {
+	rule := strings.Repeat("─", 20)
+	rows := []string{"  ⎿  Interrupted · What should Claude do instead?"}
+	for range 35 {
+		rows = append(rows, "  ⎿  Referenced file crew/internal/frame/frame.go")
+	}
+	rows = append(rows, rule+" rust ─", "❯ ", rule,
+		"  -- INSERT -- ⏵⏵ auto mode on (shift+tab to cycle) · ← 1 agent", "  mode")
+	return strings.Join(rows, "\n")
+}
+
 func TestTerminalPaneIdleReason(t *testing.T) {
 	cases := []struct {
 		name         string
@@ -166,6 +179,7 @@ func TestTerminalPaneIdleReason(t *testing.T) {
 		{"meter above box", compactedIdleFrame("✻ Churning… (3s · ↓ 1k tokens)"), false},
 		{"interrupted above box", compactedIdleFrame("  ⎿  Interrupted · What should Claude do instead?"), false},
 		{"interrupted buried above compaction rows", strings.Replace(compactedIdleFrame(), "※ recap: Goal x", "  ⎿  Interrupted · What should Claude do instead?\n※ recap: Goal x", 1), false},
+		{"interrupted beyond the sampler window", interruptedFarAboveBox(), false},
 		{"shell still running footer", strings.Replace(compactedIdleFrame(), "· ← 1 agent", "· 1 shell still running", 1), false},
 		{"unsent draft", strings.Replace(compactedIdleFrame(), "❯ \n", "❯ draft text\n", 1), false},
 	}
