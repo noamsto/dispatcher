@@ -1616,7 +1616,7 @@ func TestOverviewHjklResizeFollowsLayout(t *testing.T) {
 	}
 }
 
-func TestOverviewHjklAgentsEndingInSubagents(t *testing.T) {
+func TestOverviewHjklAgentsWithSubagentNodes(t *testing.T) {
 	v, _ := ovFixture(t, 150, 60, false, nil)
 	ws := panelWorkers(panelAgents, v.model, newOvIndex(v.model, v.st))
 	if len(ws) < 2 {
@@ -1629,6 +1629,11 @@ func TestOverviewHjklAgentsEndingInSubagents(t *testing.T) {
 		{Kind: "subagent", State: "running", Label: ptr("sub1")},
 	}
 	v.rebuild()
+	// Subagents render inside their lead's card, never as panel rows of their
+	// own, so the selectable rows must not change.
+	if got := panelWorkers(panelAgents, v.model, newOvIndex(v.model, v.st)); !slices.Equal(got, ws) {
+		t.Fatalf("subagent nodes changed the Agents rows: %v, want %v", got, ws)
+	}
 	v = ovAt(t, v, panelAgents, -2)
 	v, _ = ovKeys(v, "j")
 	if v.st.focus != panelAgents || v.sel().worker != ws[len(ws)-1] {
