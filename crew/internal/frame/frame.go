@@ -529,6 +529,21 @@ func piBlock(lines []string, end int) []string {
 // PaneIdleReason is _pane_idle_reason with engine fixed to claude: idle, or
 // the keep reason it prints.
 func PaneIdleReason(plain, colored string, skipBg bool) (reason string, idle bool) {
+	return paneIdleReason(plain, colored, skipBg, true)
+}
+
+// TerminalPaneIdleReason is PaneIdleReason for a session already recorded done:
+// idle compaction and similar post-turn rows can bury the finished-turn marker,
+// so the frame must be idle without it. Every other check still applies, plus
+// an Interrupted row above the box.
+func TerminalPaneIdleReason(plain, colored string, skipBg bool) (reason string, idle bool) {
+	if InterruptedAboveBox(plain) {
+		return "interrupted turn above the input box", false
+	}
+	return paneIdleReason(plain, colored, skipBg, false)
+}
+
+func paneIdleReason(plain, colored string, skipBg, needMarker bool) (reason string, idle bool) {
 	if IsPermissionPrompt("claude", plain) || IsPrompt("claude", plain) || IsQuotaSessionLimit(plain) {
 		return "prompt on screen", false
 	}
@@ -537,6 +552,9 @@ func PaneIdleReason(plain, colored string, skipBg bool) (reason string, idle boo
 	}
 	if !ClaudeIdleBox(plain, colored, false) {
 		return "live turn, unsent input, or no idle input box", false
+	}
+	if !needMarker {
+		return "", true
 	}
 	if _, above, _ := BoxRows(plain, FirstRowClaude); !anyMatch(above, reDone) && !doneBehindPostTurn(plain) && !clearHintAboveBox(plain) {
 		return "no finished-turn marker above the input box", false

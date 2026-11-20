@@ -73,6 +73,7 @@
             | if (.state == "done" or .state == "failed" or .state == "exited") and $rp != null and $rp.ts > .ts
               then . + {state: "reaped", detail: ($rp | if (.pr_state == "ISSUE_CLOSED") and ((.issues // []) | length > 0) then "issue #" + ((.issues | map(tostring)) | join(", #")) + " CLOSED"
                                        elif (.pr // "") != "" and (.pr_state // "") != "" then "PR #" + (.pr | split("/") | last) + " " + .pr_state
+                                       elif (.pr_state // "") == "NO_PR" then "no PR, work pushed"
                                        else (.pr_state // "reaped") end), source: "reap", ts: $rp.ts, age_s: ((now - ($rp.ts/1000))|floor)}
               else . end)
       # `crew reap` posts a `stale` row when it keeps a finished worker's tree

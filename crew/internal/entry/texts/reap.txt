@@ -30,14 +30,20 @@ non-terminal latest status, a busy reap lock and a tree holding an embedded git
 repository. Never implicit: plain reap and the stream's reaps never discard.
 
 Kept: an open PR, uncommitted changes, a live engine, a tip past the head of a
-PR that is not the latest session's own, or no PR with a done/failed worker
-whose claimed issue is not CLOSED, has no claim-issue row, or has commits on no
-remote and not patch-equivalent to the default branch.
+PR that is not the latest session's own, or no PR with a failed worker whose
+claimed issue is not CLOSED, has no claim-issue row, or has commits on no remote
+and not patch-equivalent to the default branch. A done worker with no PR is
+reclaimed whatever its issue's state once its tree is clean and every commit
+beyond base is on some remote-tracking ref (or patch-equivalent to the default
+branch), or there are none; the local branch, the origin feat branch and the
+issue's `dispatched` label stay. For a done session a claude pane needs no
+finished-turn marker, since idle compaction can bury it; every other idle check
+still applies, and a live background agent (`<- 1 agent` footer) does not block.
 
-A kept worktree that needs a human (uncommitted changes, or no PR with an open
-issue, unpushed commits or no default ref) and is stale prints a stale:,
-inspect: and remove: line, and a non-dry run posts a `stale` bus row that
-`crew roster` surfaces as needs_cleanup. --json adds stale, stale_reason,
+A kept worktree that needs a human (uncommitted changes, or a failed worker with
+no PR and an open issue, unpushed commits or no default ref) and is stale prints
+a stale:, inspect: and remove: line, and a non-dry run posts a `stale` bus row
+that `crew roster` surfaces as needs_cleanup. --json adds stale, stale_reason,
 worktree, inspect and remove to that keep. Reap never removes it. A finished
 session whose worktree is already gone is retired (`would retire` under
 --dry-run).

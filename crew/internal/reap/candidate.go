@@ -26,7 +26,8 @@ type candidate struct {
 	latestRow
 	wtpath string // the branch's worktree
 	admin  string // its realpath admin dir, set by the admin gate
-	// mode is "pr", "issue" when no PR vouches for the branch, or "migrated"
+	// mode is "pr", "issue" when no PR vouches for the branch, "pushed" when
+	// a done worker has no PR and its issue is still open, or "migrated"
 	// when crew migrate's mark does.
 	mode string
 	// rel is the mark of a migrated candidate; markTree is set when its tree
@@ -246,7 +247,10 @@ func (r *run) isAncestor(ctx context.Context, branch, head string) int {
 type enginePane struct{ win, pane, cmd string }
 
 // idleSample is a provably idle claude or pi pane's window, pane and first capture.
-type idleSample struct{ win, pane, engine, frame string }
+type idleSample struct {
+	win, pane, engine, frame string
+	terminal                 bool
+}
 
 // enginePanes is the live panes running an engine at exactly wt.
 func (r *run) enginePanes(wt string) []enginePane {
@@ -297,6 +301,7 @@ func (r *run) idleEngines(ctx context.Context, c *candidate) ([]idleSample, bool
 	if keep == "" && c.later == "1" {
 		keep = "session posted after its " + c.state
 	}
+	terminal := c.state == "done"
 	var idle []idleSample
 	if keep == "" {
 		for _, p := range panes {
@@ -310,11 +315,11 @@ func (r *run) idleEngines(ctx context.Context, c *candidate) ([]idleSample, bool
 				keep = "empty capture of " + p.pane
 				break
 			}
-			if why, ok := r.paneIdle(ctx, engine, p.pane, plain); !ok {
+			if why, ok := r.paneIdle(ctx, engine, p.pane, plain, terminal); !ok {
 				keep = why
 				break
 			}
-			idle = append(idle, idleSample{p.win, p.pane, engine, plain})
+			idle = append(idle, idleSample{p.win, p.pane, engine, plain, terminal})
 		}
 	}
 	if keep != "" {
@@ -326,7 +331,7 @@ func (r *run) idleEngines(ctx context.Context, c *candidate) ([]idleSample, bool
 
 // paneIdle is the engine's idle predicate over an already-taken plain capture.
 // A pi keep reason names the pi frame.
-func (r *run) paneIdle(ctx context.Context, engine, pane, plain string) (string, bool) {
+func (r *run) paneIdle(ctx context.Context, engine, pane, plain string, terminal bool) (string, bool) {
 	if engine == "pi" {
 		why, ok := frame.PiIdleReason(plain)
 		if !ok {
@@ -335,6 +340,9 @@ func (r *run) paneIdle(ctx context.Context, engine, pane, plain string) (string,
 		return why, ok
 	}
 	colored := r.p.tmuxOut(ctx, "capture-pane", "-e", "-p", "-t", pane)
+	if terminal {
+		return frame.TerminalPaneIdleReason(plain, colored, false)
+	}
 	return frame.PaneIdleReason(plain, colored, false)
 }
 
@@ -436,7 +444,7 @@ func dirt(st string) bool {
 	return strings.TrimRight(strings.Join(kept, "\n"), "\n") != ""
 }
 
-// pushedGate is issue mode's check: no PR vouches for the branch, so every
+// pushedGate is issue and pushed mode's check: no PR vouches for the branch, so every
 // commit must already be on a remote or patch-equivalent to one on the
 // default branch. False has noted why the branch is kept.
 func (r *run) pushedGate(ctx context.Context, c *candidate) bool {
@@ -466,15 +474,23 @@ func (r *run) pushedGate(ctx context.Context, c *candidate) bool {
 		return false
 	}
 	unpushedLines := strings.Split(unpushed, "\n")
-	ahead := 0
+	var ahead []string
 	for line := range strings.SplitSeq(cherry, "\n") {
 		mark, sha := splitMark(line)
 		if mark == "+" && slices.Contains(unpushedLines, sha) {
-			ahead++
+			ahead = append(ahead, sha)
 		}
 	}
-	if ahead > 0 {
-		r.keepHuman(ctx, c, c.nopr+"; "+strconv.Itoa(ahead)+" commit(s) not on any remote and not patch-equivalent to "+short, classUnpushed)
+	if len(ahead) > 0 {
+		why := c.nopr + "; " + strconv.Itoa(len(ahead)) + " commit(s) not on any remote and not patch-equivalent to " + short
+		if c.mode == "pushed" {
+			shas := make([]string, len(ahead))
+			for i, sha := range ahead {
+				shas[i] = sha[:min(7, len(sha))]
+			}
+			why += " (" + strings.Join(shas, ", ") + ")"
+		}
+		r.keepHuman(ctx, c, why, classUnpushed)
 		return false
 	}
 	return true
@@ -504,7 +520,7 @@ func (r *run) killIdle(ctx context.Context, c *candidate, idle []idleSample) boo
 	resample := ""
 	for _, s := range idle {
 		plain := r.p.tmuxOut(ctx, "capture-pane", "-p", "-t", s.pane)
-		if _, ok := r.paneIdle(ctx, s.engine, s.pane, plain); plain != s.frame || !ok {
+		if _, ok := r.paneIdle(ctx, s.engine, s.pane, plain, s.terminal); plain != s.frame || !ok {
 			resample = "pane changed between samples"
 			break
 		}
@@ -548,6 +564,10 @@ func (r *run) landedGate(ctx context.Context, c *candidate) bool {
 	}
 	c.mode = "issue"
 	if !r.issueClosed(ctx, c) {
+		if c.humanKeep && c.state == "done" {
+			c.mode, c.pr, c.prState, c.label = "pushed", "", "NO_PR", "no PR, work pushed"
+			return true
+		}
 		if c.humanKeep {
 			r.keepHuman(ctx, c, c.why, classOpenIssue)
 		} else {
@@ -593,7 +613,7 @@ func (r *run) consider(ctx context.Context, row latestRow) (bool, int) {
 	if !r.treeGates(ctx, c) {
 		return false, 0
 	}
-	if c.mode == "issue" && !r.pushedGate(ctx, c) {
+	if (c.mode == "issue" || c.mode == "pushed") && !r.pushedGate(ctx, c) {
 		return false, 0
 	}
 	if len(idle) > 0 && !r.killIdle(ctx, c, idle) {
