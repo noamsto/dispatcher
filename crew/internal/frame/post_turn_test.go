@@ -165,10 +165,12 @@ func TestTerminalPaneIdleReason(t *testing.T) {
 		{"compacted idle frame", compactedIdleFrame(), true},
 		{"meter above box", compactedIdleFrame("✻ Churning… (3s · ↓ 1k tokens)"), false},
 		{"interrupted above box", compactedIdleFrame("  ⎿  Interrupted · What should Claude do instead?"), false},
+		{"interrupted buried above compaction rows", strings.Replace(compactedIdleFrame(), "※ recap: Goal x", "  ⎿  Interrupted · What should Claude do instead?\n※ recap: Goal x", 1), false},
+		{"shell still running footer", strings.Replace(compactedIdleFrame(), "· ← 1 agent", "· 1 shell still running", 1), false},
 		{"unsent draft", strings.Replace(compactedIdleFrame(), "❯ \n", "❯ draft text\n", 1), false},
 	}
 	for _, c := range cases {
-		if reason, got := TerminalPaneIdleReason(c.text, "", true); got != c.wantTerminal {
+		if reason, got := TerminalPaneIdleReason(c.text, "", false); got != c.wantTerminal {
 			t.Errorf("%s: terminal idle=%v (%s), want %v", c.name, got, reason, c.wantTerminal)
 		}
 	}

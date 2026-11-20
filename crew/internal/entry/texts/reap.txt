@@ -1,8 +1,9 @@
 usage: crew reap [--quiet] [--dry-run] [--no-wait] [--fleet] [--json] [--idle S] [--stale-after S] [--discard BRANCH]
 
-Reclaim a worker's tmux window and worktree once its PR has landed. The PR, not
-elapsed time, is the gate: a done worker sits for as long as its PR takes. The
-PR is the latest session's, else any earlier session of the branch or a past
+Reclaim a worker's tmux window and worktree once its PR has landed (or, with no
+PR, once its issue is closed or a done worker's work is pushed). Not elapsed
+time, but the PR, is the gate: a done worker sits for as long as its PR takes.
+The PR is the latest session's, else any earlier session of the branch or a past
 reap row, else `gh pr list --head`.
 
   --quiet     Suppress the per-worker notes
@@ -35,13 +36,17 @@ claimed issue is not CLOSED, has no claim-issue row, or has commits on no remote
 and not patch-equivalent to the default branch. A done worker with no PR is
 reclaimed whatever its issue's state once its tree is clean and every commit
 beyond base is on some remote-tracking ref (or patch-equivalent to the default
-branch), or there are none; the local branch, the origin feat branch and the
-issue's `dispatched` label stay. For a done session a claude pane needs no
-finished-turn marker, since idle compaction can bury it; every other idle check
-still applies, and a live background agent (`<- 1 agent` footer) does not block.
+branch), or there are none; the local branch stays, and so do the origin feat
+branch and the issue's `dispatched` label unless the issue is CLOSED (then they
+follow the closed-issue rules). A failed gh or bus lookup still keeps the worker.
+For a done session a claude pane needs no finished-turn marker, since idle
+compaction can bury it; every other idle check still applies, an Interrupted row
+after the last marker keeps it, and a person present in the window (attached,
+recent output, or a newer user turn) keeps it on that marker-less path. A live
+background agent (`← 1 agent` footer) does not block.
 
-A kept worktree that needs a human (uncommitted changes, or a failed worker with
-no PR and an open issue, unpushed commits or no default ref) and is stale prints
+A kept worktree that needs a human (uncommitted changes; a failed no-PR worker with
+an open issue; or a no-PR worker with unpushed commits or no default ref) and is stale prints
 a stale:, inspect: and remove: line, and a non-dry run posts a `stale` bus row
 that `crew roster` surfaces as needs_cleanup. --json adds stale, stale_reason,
 worktree, inspect and remove to that keep. Reap never removes it. A finished

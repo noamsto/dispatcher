@@ -696,6 +696,23 @@ func TestIdleCompactedDoneWindow(t *testing.T) {
 	f.noKill()
 }
 
+func TestIdleMarkerlessDoneWindowKeepsForHuman(t *testing.T) {
+	rule := strings.Repeat("─", 20)
+	fresh := strings.Join([]string{"╭ Claude Code", rule + " rust ─", "❯ ", rule, "  -- INSERT --"}, "\n")
+	f := newFx(t)
+	f.bus(status("done", prURL, 0))
+	f.gh["pr view "+prURL+" --json state --jq .state"] = "MERGED"
+	f.tmux[panesKey] = "@5\t%5\tclaude\t" + f.wt
+	f.tmux["capture-pane -p -t %5"] = fresh
+	f.tmux["capture-pane -e -p -t %5"] = fresh
+	line := fmt.Sprintf(`{"type":"user","timestamp":%q,"message":{"content":"hello"}}`,
+		time.UnixMilli(nowUnix*1000+5000).UTC().Format("2006-01-02T15:04:05.000Z"))
+	plantTranscript(t, f.wt, map[string][]string{"a.jsonl": {line}}, nil)
+	f.reap(f.main, Request{DryRun: true})
+	f.wantOut("crew reap: keeping feat/r — an engine is still running there (human present: the engine transcript has a user turn newer than the status)")
+	f.noKill()
+}
+
 func TestIdlePiEngineWindow(t *testing.T) {
 	read := func(name string) string {
 		b, err := os.ReadFile("../frame/testdata/" + name)

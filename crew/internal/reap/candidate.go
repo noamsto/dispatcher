@@ -303,6 +303,7 @@ func (r *run) idleEngines(ctx context.Context, c *candidate) ([]idleSample, bool
 	}
 	terminal := c.state == "done"
 	var idle []idleSample
+	markerless := false
 	if keep == "" {
 		for _, p := range panes {
 			engine := strings.TrimSuffix(strings.TrimPrefix(p.cmd, "."), "-wrapped")
@@ -319,7 +320,20 @@ func (r *run) idleEngines(ctx context.Context, c *candidate) ([]idleSample, bool
 				keep = why
 				break
 			}
+			if engine == "claude" && terminal && r.markerless(ctx, p.pane, plain) {
+				markerless = true
+			}
 			idle = append(idle, idleSample{p.win, p.pane, engine, plain, terminal})
+		}
+	}
+	if keep == "" && markerless {
+		windows := make([]string, len(panes))
+		for i, p := range panes {
+			windows[i] = p.win
+		}
+		ts, _ := strconv.ParseFloat(c.ts, 64)
+		if why, ok := humanPresent(ctx, r.p, windows, c.wtpath, int64(ts), r.grace()); ok {
+			keep = "human present: " + why
 		}
 	}
 	if keep != "" {
@@ -344,6 +358,15 @@ func (r *run) paneIdle(ctx context.Context, engine, pane, plain string, terminal
 		return frame.TerminalPaneIdleReason(plain, colored, false)
 	}
 	return frame.PaneIdleReason(plain, colored, false)
+}
+
+// markerless reports a claude pane idle only through the terminal check: its
+// finished-turn marker is buried or gone, so a fresh or cleared session a person
+// restarted there would look the same.
+func (r *run) markerless(ctx context.Context, pane, plain string) bool {
+	colored := r.p.tmuxOut(ctx, "capture-pane", "-e", "-p", "-t", pane)
+	_, idle := frame.PaneIdleReason(plain, colored, false)
+	return !idle
 }
 
 // treeGates are the gates before reap's own anchored reads of the tree: the

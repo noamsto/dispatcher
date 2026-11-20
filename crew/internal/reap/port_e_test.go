@@ -3,6 +3,7 @@ package reap
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -308,6 +309,51 @@ func (f *fx) wantPushedReap() {
 }
 
 func TestPortEPushedModeReaps(t *testing.T) {
+	t.Run("uncommitted file is kept", func(t *testing.T) {
+		f := portEPushedFx(t)
+		if err := os.WriteFile(filepath.Join(f.wt, "notes.txt"), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if rc := f.reap(f.main, Request{}); rc != 0 {
+			t.Fatalf("rc=%d stderr=%q", rc, f.stderr.String())
+		}
+		if !strings.Contains(f.stdout.String(), "keeping feat/r — uncommitted changes") || !portCExists(f.wt) {
+			t.Fatalf("stdout %s", f.stdout.String())
+		}
+	})
+	t.Run("no claim-issue row reaps", func(t *testing.T) {
+		f := portEPushedFx(t)
+		f.bus(statusFor(rb, "s1", "done", "", 0))
+		if rc := f.reap(f.main, Request{Quiet: true}); rc != 0 {
+			t.Fatalf("rc=%d stderr=%q", rc, f.stderr.String())
+		}
+		f.wantPushedReap()
+	})
+	t.Run("non-numeric claim row reaps", func(t *testing.T) {
+		f := portEPushedFx(t)
+		f.bus(statusFor(rb, "s1", "done", "", 0),
+			fmt.Sprintf(`{"ts":%d,"crew_id":"c1","kind":"claim-issue","issue":"abc","branch":%q,"pid":1}`, nowUnix*1000, rb))
+		if rc := f.reap(f.main, Request{Quiet: true}); rc != 0 {
+			t.Fatalf("rc=%d stderr=%q", rc, f.stderr.String())
+		}
+		f.wantPushedReap()
+	})
+	t.Run("origin branch is not deleted", func(t *testing.T) {
+		f := portEPushedFx(t)
+		bare := f.bareOrigin()
+		f.bus(statusFor(rb, "s1", "done", "", 0),
+			fmt.Sprintf(`{"ts":%d,"crew_id":"c1","kind":"claim-issue","issue":"77","branch":%q,"pid":1}`, nowUnix*1000, rb),
+			pushedRow(gitOut(t, f.main, "rev-parse", "HEAD")))
+		if rc := f.reap(f.main, Request{}); rc != 0 {
+			t.Fatalf("rc=%d stderr=%q", rc, f.stderr.String())
+		}
+		if strings.Contains(f.stdout.String(), "deleted origin branch") || !originHas(bare) {
+			t.Fatalf("origin branch touched: %s", f.stdout.String())
+		}
+		if portCExists(f.wt) {
+			t.Fatal("worktree kept")
+		}
+	})
 	t.Run("nothing beyond origin/main", func(t *testing.T) {
 		f := portEPushedFx(t)
 		if rc := f.reap(f.main, Request{Quiet: true}); rc != 0 {

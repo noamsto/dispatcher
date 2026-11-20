@@ -535,12 +535,28 @@ func PaneIdleReason(plain, colored string, skipBg bool) (reason string, idle boo
 // TerminalPaneIdleReason is PaneIdleReason for a session already recorded done:
 // idle compaction and similar post-turn rows can bury the finished-turn marker,
 // so the frame must be idle without it. Every other check still applies, plus
-// an Interrupted row above the box.
+// an Interrupted row in the window above the box after the last finished-turn marker.
 func TerminalPaneIdleReason(plain, colored string, skipBg bool) (reason string, idle bool) {
-	if InterruptedAboveBox(plain) {
+	if interruptedSinceDone(plain) {
 		return "interrupted turn above the input box", false
 	}
 	return paneIdleReason(plain, colored, skipBg, false)
+}
+
+// interruptedSinceDone reports an Interrupted row anywhere in the window above
+// the box after its last finished-turn marker (the window top when there is none),
+// so compaction rows cannot bury it.
+func interruptedSinceDone(text string) bool {
+	_, plain, a, _, off, ok := scanBox(text)
+	if !ok {
+		return false
+	}
+	for j := a - 1; j >= off && !reDone.MatchString(plain[j]); j-- {
+		if reInterrupted.MatchString(plain[j]) {
+			return true
+		}
+	}
+	return false
 }
 
 func paneIdleReason(plain, colored string, skipBg, needMarker bool) (reason string, idle bool) {
