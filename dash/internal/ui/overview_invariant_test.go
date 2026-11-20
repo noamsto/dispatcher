@@ -197,8 +197,8 @@ func selectionInvariant(m Model) string {
 	}
 
 	var strip, rest []workerKey
-	found := 0
-	for p := panelAttention; p <= panelMonitors; p++ {
+	found, evMarks := 0, 0
+	for p := panelAttention; p <= panelEvents; p++ {
 		for _, it := range r.panels[p].items {
 			n := 0
 			for l := range it.lines {
@@ -212,6 +212,10 @@ func selectionInvariant(m Model) string {
 			}
 			if n != it.lines || it.kind == eHeader {
 				return fmt.Sprintf("panel %d item %d is highlighted on %d of %d lines", p, it.idx, n, it.lines)
+			}
+			if p == panelEvents {
+				evMarks++
+				continue
 			}
 			k := drawnKey(ov.model, it)
 			if p == panelAttention {
@@ -228,6 +232,9 @@ func selectionInvariant(m Model) string {
 	}
 	if found != marks {
 		return fmt.Sprintf("%d selection bars drawn, %d on rows", marks, found)
+	}
+	if evMarks > 1 || evMarks == 1 && ov.st.focus != panelEvents {
+		return fmt.Sprintf("%d event rows highlighted with focus on %v", evMarks, ov.st.focus)
 	}
 	if len(rest) > 1 {
 		return fmt.Sprintf("panels highlight %d workers: %v", len(rest), rest)

@@ -215,7 +215,7 @@ func (v *overviewView) setFocus(p ovPanel) {
 		v.setWorker(s.worker)
 	}
 	v.st.focus = p
-	if p == panelAttention {
+	if fullWidth(p) {
 		v.st.ret, v.st.retWorker = 0, workerKey{}
 	}
 }
@@ -224,7 +224,11 @@ func (v *overviewView) setFocus(p ovPanel) {
 // strip that emptied has handed focus to the checklists, and it stays there
 // when items come back.
 func (v *overviewView) settleFocus() {
-	if f := effectiveFocus(v.model, v.st.focus); f != v.st.focus {
+	f := effectiveFocus(v.model, v.st.focus)
+	if f == panelEvents && !v.layout().panels[panelEvents].shown {
+		f = panelChecklists
+	}
+	if f != v.st.focus {
 		v.setFocus(f)
 	}
 }
@@ -303,7 +307,7 @@ func newOvInput(prompt, value string) textinput.Model {
 
 // cycle moves focus through the body panels in the order the layout shows
 // them, whether or not they are drawn (focusing one draws it), plus the strip
-// while it is drawn.
+// and Recent Events while they are drawn.
 func (v *overviewView) cycle(d int) {
 	r := v.layout()
 	order := []ovPanel{panelChecklists, panelAgents, panelMonitors}
@@ -313,42 +317,90 @@ func (v *overviewView) cycle(d int) {
 	if r.panels[panelAttention].shown {
 		order = slices.Insert(order, 0, panelAttention)
 	}
+	if r.panels[panelEvents].shown {
+		order = append(order, panelEvents)
+	}
 	i := slices.Index(order, v.st.focus)
 	v.setFocus(order[(i+d+len(order))%len(order)])
 }
 
-// hop moves focus one panel across the row, without wrapping; the strip spans
-// the row, so it has no neighbour.
+// hop moves focus to the panel drawn left or right of the focused one, if any.
 func (v *overviewView) hop(d int) {
-	if v.st.focus == panelAttention {
+	if to, ok := v.layout().neighbour(v.st.focus, d, 0); ok {
+		v.setFocus(to)
+	}
+}
+
+// fullWidth panels span the row or the stack, so leaving one returns to the
+// panel it was entered from.
+func fullWidth(p ovPanel) bool { return p == panelAttention || p == panelEvents }
+
+// retPanel is the body panel the focused full-width panel was entered from, if
+// it is still drawn.
+func (v *overviewView) retPanel(r overviewRects) (ovPanel, bool) {
+	p := v.st.ret
+	return p, (p == panelChecklists || p == panelAgents || p == panelMonitors) && r.panels[p].shown
+}
+
+// cross hands focus to the panel drawn above (d < 0) or below the focused one
+// when j or k runs off its edge. Entering a full-width panel remembers the
+// panel and row left; leaving one returns there.
+func (v *overviewView) cross(r overviewRects, d int) {
+	if v.mode != ovNormal {
 		return
 	}
-	order := []ovPanel{panelChecklists, panelAgents, panelMonitors}
-	i := slices.Index(order, v.st.focus)
-	v.setFocus(order[clamp(i+d, 0, len(order)-1)])
-}
-
-// retPanel is the body panel j returns to from the strip.
-func (v *overviewView) retPanel() ovPanel {
-	if v.st.ret == panelAgents || v.st.ret == panelMonitors {
-		return v.st.ret
+	from := v.st.focus
+	if fullWidth(from) {
+		to, ok := v.retPanel(r)
+		if !ok {
+			to, ok = r.neighbour(from, 0, d)
+		}
+		if !ok {
+			return
+		}
+		rw := v.st.retWorker
+		v.setFocus(to)
+		if i := newOvIndex(v.model, v.st).pick(rw.crew, rw.branch); i >= 0 {
+			v.setWorker(i)
+		}
+		return
 	}
-	return panelChecklists
+	to, ok := r.neighbour(from, 0, d)
+	if !ok {
+		return
+	}
+	rw := workerKey{}
+	if r.sel.worker >= 0 {
+		w := v.model.Workers[r.sel.worker]
+		rw = workerKey{w.Crew, w.Branch}
+	}
+	v.setFocus(to)
+	switch to {
+	case panelAttention:
+		v.st.ret, v.st.retWorker = from, rw
+		v.setCursor(len(v.model.Attention) - 1)
+		v.st.stripOff = v.layout().stripOff
+	case panelEvents:
+		v.st.ret, v.st.retWorker = from, rw
+		v.st.evCursor, v.st.evOff = 0, 0
+	default:
+		if ws := panelWorkers(to, v.model, newOvIndex(v.model, v.st)); len(ws) > 0 {
+			v.setWorker(ws[max(0, (len(ws)-1)*(1-d)/2)])
+		}
+	}
 }
 
-// move steps the strip cursor, or the selected worker over the focused panel's
-// rows, from what is drawn.
+// move steps the strip cursor, the Recent Events cursor, or the selected
+// worker over the focused panel's rows, from what is drawn; at a panel's edge
+// it crosses to the panel in that direction.
 func (v *overviewView) move(d int) {
 	r := v.layout()
-	if v.st.focus == panelAttention {
+	switch v.st.focus {
+	case panelAttention:
 		c := clamp(r.sel.cursor+d, 0, len(v.model.Attention)-1)
 		if c == r.sel.cursor {
-			if d > 0 && v.mode == ovNormal {
-				rw := v.st.retWorker
-				v.setFocus(v.retPanel())
-				if i := newOvIndex(v.model, v.st).pick(rw.crew, rw.branch); i >= 0 {
-					v.setWorker(i)
-				}
+			if d > 0 {
+				v.cross(r, d)
 			}
 			return
 		}
@@ -359,22 +411,22 @@ func (v *overviewView) move(d int) {
 		v.setCursor(c)
 		v.st.stripOff = v.layout().stripOff
 		return
+	case panelEvents:
+		c := clamp(r.evCursor+d, 0, len(v.model.Events)-1)
+		if r.evCursor < 0 || c == r.evCursor {
+			if d < 0 {
+				v.cross(r, d)
+			}
+			return
+		}
+		v.st.evOff, v.st.evCursor = r.evOff+d, c
+		v.st.evOff = v.layout().evOff
+		return
 	}
 	ws := panelWorkers(v.st.focus, v.model, newOvIndex(v.model, v.st))
 	pos := slices.Index(ws, r.sel.worker)
-	if d < 0 && pos <= 0 && v.mode == ovNormal && len(v.model.Attention) > 0 && (pos == 0 || len(ws) == 0) {
-		from, rw := v.st.focus, workerKey{}
-		if r.sel.worker >= 0 {
-			w := v.model.Workers[r.sel.worker]
-			rw = workerKey{w.Crew, w.Branch}
-		}
-		v.setFocus(panelAttention)
-		v.st.ret, v.st.retWorker = from, rw
-		v.setCursor(len(v.model.Attention) - 1)
-		v.st.stripOff = v.layout().stripOff
-		return
-	}
-	if len(ws) == 0 {
+	if len(ws) == 0 || d < 0 && pos == 0 || d > 0 && pos == len(ws)-1 {
+		v.cross(r, d)
 		return
 	}
 	switch {
@@ -383,7 +435,7 @@ func (v *overviewView) move(d int) {
 	case pos < 0:
 		pos = 0
 	default:
-		pos = clamp(pos+d, 0, len(ws)-1)
+		pos += d
 	}
 	v.setWorker(ws[pos])
 }
@@ -568,7 +620,7 @@ func (p *actionPrompt) replyKey(msg tea.KeyMsg) tea.Cmd {
 func (v *overviewView) click(x, y int) {
 	r := v.layout()
 	in := func(rc rect) bool { return x >= rc.x && x < rc.x+rc.w && y >= rc.y && y < rc.y+rc.h }
-	for p := panelAttention; p <= panelMonitors; p++ {
+	for p := panelAttention; p <= panelEvents; p++ {
 		pl := r.panels[p]
 		if !pl.shown || !in(pl.rect) {
 			continue
@@ -580,6 +632,8 @@ func (v *overviewView) click(x, y int) {
 			}
 			if p == panelAttention {
 				v.setCursor(it.idx)
+			} else if p == panelEvents {
+				v.st.evCursor, v.st.evOff = it.idx, r.evOff
 			} else if it.worker >= 0 {
 				v.setWorker(it.worker)
 			}

@@ -11,8 +11,7 @@ import (
 	vm "github.com/noamsto/dispatcher/dash/internal/view"
 )
 
-// ovPanel names the focusable panels in tab order; panelEvents is display
-// only.
+// ovPanel names the focusable panels in tab order.
 type ovPanel int
 
 const (
@@ -44,6 +43,8 @@ type overviewState struct {
 	cursorAt  int       // the cursor's index when set: the tie-break, and the fallback once its item leaves
 	worker    workerKey // the worker chosen outside the strip
 	stripOff  int
+	evCursor  int // the Recent Events cursor's row, clamped to the rows there are
+	evOff     int // the first Recent Events row shown, kept so the window holds the cursor
 	filter    string
 	narrow    bool // stack the panels whatever the width
 }
@@ -99,8 +100,11 @@ type overviewRects struct {
 	allClear  bool
 	stripRows int
 	stripOff  int
+	evCursor  int // -1 with no events
+	evOff     int
 	cardLines int
 	narrow    bool
+	focus     ovPanel   // the focus the layout was resolved for
 	stack     []ovPanel // narrow only: the body panels and events, top to bottom
 	sel       ovSel
 	panels    [numOvPanels]panelLayout
@@ -188,6 +192,9 @@ func absInt(n int) int { return max(n, -n) }
 // on a row of its own can be selected, so the highlight and the target agree.
 func resolve(ov vm.OverviewView, st overviewState, ix ovIndex, shown []ovPanel) ovSel {
 	sel := ovSel{worker: -1, cursor: cursorIndex(ov, st)}
+	if st.focus == panelEvents {
+		return sel
+	}
 	var cands []int
 	for _, p := range shown {
 		cands = append(cands, panelWorkers(p, ov, ix)...)
@@ -383,6 +390,19 @@ func panelRect(r rect) (outer, inner rect) {
 // action share, and the only place the selection is resolved and the strip
 // window computed.
 func overviewLayout(w, h int, ov vm.OverviewView, st overviewState) overviewRects {
+	r := layoutPanels(w, h, ov, st)
+	r.focus = st.focus
+	if st.focus == panelEvents && !r.panels[panelEvents].shown {
+		// Events focused but not drawn (a resize took them): the checklists
+		// hold focus, as settleFocus makes it on the next key.
+		st.focus = panelChecklists
+		r = layoutPanels(w, h, ov, st)
+		r.focus = st.focus
+	}
+	return r
+}
+
+func layoutPanels(w, h int, ov vm.OverviewView, st overviewState) overviewRects {
 	ix := newOvIndex(ov, st)
 	narrow := isNarrow(w, st)
 	r := overviewRects{w: w, h: h, narrow: narrow}
@@ -459,6 +479,7 @@ func overviewLayout(w, h int, ov vm.OverviewView, st overviewState) overviewRect
 	if len(checklistEntries(ov, ix, 1))*3 > max0(panelsH-2) {
 		r.cardLines = 2
 	}
+	anchor := r.windowAnchor(ix, st)
 	x := 0
 	for _, p := range shown {
 		outer, inner := panelRect(rect{x, y, widths[p], panelsH})
@@ -471,14 +492,83 @@ func overviewLayout(w, h int, ov vm.OverviewView, st overviewState) overviewRect
 		case panelMonitors:
 			es = monitorEntries(ov, ix)
 		}
-		r.panels[p] = panelLayout{shown: true, rect: outer, inner: inner, items: place(es, inner, r.sel.worker)}
+		r.panels[p] = panelLayout{shown: true, rect: outer, inner: inner, items: place(es, inner, anchor)}
 		x += widths[p]
 	}
 	if eventsH > 0 {
 		outer, inner := panelRect(rect{0, y + panelsH, w, eventsH})
-		r.panels[panelEvents] = panelLayout{shown: true, rect: outer, inner: inner, items: place(eventEntries(ov), inner, -1)}
+		r.placeEvents(ov, st, outer, inner)
 	}
 	return r
+}
+
+// windowAnchor is the worker the body panels keep in view. With Recent Events
+// focused nothing is selected, but the panels stay scrolled where they were.
+func (r overviewRects) windowAnchor(ix ovIndex, st overviewState) int {
+	if st.focus == panelEvents {
+		return ix.pick(st.worker.crew, st.worker.branch)
+	}
+	return r.sel.worker
+}
+
+// placeEvents lays the event rows into inner, one line each. Like the strip,
+// the window keeps the offset it had and moves only to hold the cursor.
+func (r *overviewRects) placeEvents(ov vm.OverviewView, st overviewState, outer, inner rect) {
+	es := eventEntries(ov)
+	rows := min(inner.h, len(es))
+	r.evCursor, r.evOff = -1, 0
+	if len(es) > 0 {
+		r.evCursor = clamp(st.evCursor, 0, len(es)-1)
+		r.evOff = clamp(clamp(st.evOff, 0, len(es)-rows), r.evCursor-rows+1, r.evCursor)
+	}
+	pl := panelLayout{shown: true, rect: outer, inner: inner}
+	for i := range rows {
+		pl.items = append(pl.items, placed{entry: es[r.evOff+i], rect: rect{inner.x, inner.y + i, inner.w, 1}})
+	}
+	r.panels[panelEvents] = pl
+}
+
+// neighbour is the shown panel next to from in direction (dx, dy), each -1, 0
+// or 1: it must lie wholly beyond from's edge and overlap it across the other
+// axis. The nearest wins, then the one closest to from's centre (a full-width
+// panel counts as its left edge, so it prefers the first panel of a row).
+func (r overviewRects) neighbour(from ovPanel, dx, dy int) (ovPanel, bool) {
+	f := r.panels[from].rect
+	if !r.panels[from].shown {
+		return 0, false
+	}
+	overlap := func(a0, a1, b0, b1 int) bool { return a0 < b1 && b0 < a1 }
+	cx, cy := f.x+f.w/2, f.y+f.h/2
+	if f.w >= r.w {
+		cx = 0
+	}
+	best, bestGap, bestOff, found := ovPanel(0), 0, 0, false
+	for p := range numOvPanels {
+		q := r.panels[p].rect
+		if p == from || !r.panels[p].shown {
+			continue
+		}
+		var gap, off int
+		switch {
+		case dx < 0 && overlap(f.y, f.y+f.h, q.y, q.y+q.h):
+			gap, off = f.x-(q.x+q.w), absInt(q.y+q.h/2-cy)
+		case dx > 0 && overlap(f.y, f.y+f.h, q.y, q.y+q.h):
+			gap, off = q.x-(f.x+f.w), absInt(q.y+q.h/2-cy)
+		case dy < 0 && overlap(f.x, f.x+f.w, q.x, q.x+q.w):
+			gap, off = f.y-(q.y+q.h), absInt(q.x+q.w/2-cx)
+		case dy > 0 && overlap(f.x, f.x+f.w, q.x, q.x+q.w):
+			gap, off = q.y-(f.y+f.h), absInt(q.x+q.w/2-cx)
+		default:
+			continue
+		}
+		if gap < 0 {
+			continue
+		}
+		if !found || gap < bestGap || gap == bestGap && off < bestOff {
+			best, bestGap, bestOff, found = p, gap, off, true
+		}
+	}
+	return best, found
 }
 
 func panelEntries(p ovPanel, ov vm.OverviewView, ix ovIndex, cardLines int) []entry {
@@ -500,7 +590,7 @@ func (r *overviewRects) stackBody(ov vm.OverviewView, st overviewState, ix ovInd
 	var shown []ovPanel
 	if bodyH >= minH {
 		prio := []ovPanel{panelAgents, panelChecklists, panelMonitors}
-		if f := effectiveFocus(ov, st.focus); f != panelAttention {
+		if f := effectiveFocus(ov, st.focus); f != panelAttention && f != panelEvents {
 			prio = slices.Insert(slices.DeleteFunc(prio, func(p ovPanel) bool { return p == f }), 0, f)
 		}
 		keep := prio[:min(len(prio), bodyH/minH)]
@@ -512,6 +602,7 @@ func (r *overviewRects) stackBody(ov vm.OverviewView, st overviewState, ix ovInd
 	}
 	r.sel = resolve(ov, st, ix, shown)
 
+	anchor := r.windowAnchor(ix, st)
 	r.cardLines = 3
 	left := bodyH
 	for i, p := range shown {
@@ -534,14 +625,14 @@ func (r *overviewRects) stackBody(ov vm.OverviewView, st overviewState, ix ovInd
 		}
 		outer, inner := panelRect(rect{0, y, r.w, ph})
 		es := panelEntries(p, ov, ix, r.cardLines)
-		r.panels[p] = panelLayout{shown: true, rect: outer, inner: inner, items: place(es, inner, r.sel.worker)}
+		r.panels[p] = panelLayout{shown: true, rect: outer, inner: inner, items: place(es, inner, anchor)}
 		r.stack = append(r.stack, p)
 		y += ph
 		left -= ph
 	}
 	if left >= minH {
 		outer, inner := panelRect(rect{0, y, r.w, left})
-		r.panels[panelEvents] = panelLayout{shown: true, rect: outer, inner: inner, items: place(eventEntries(ov), inner, -1)}
+		r.placeEvents(ov, st, outer, inner)
 		r.stack = append(r.stack, panelEvents)
 	}
 }
@@ -566,7 +657,7 @@ func renderOverview(w, h int, ov vm.OverviewView, st overviewState, mode pillMod
 	body := func(p ovPanel) []string {
 		pl := r.panels[p]
 		sp := specs[p]
-		sp.focused = effectiveFocus(ov, st.focus) == p
+		sp.focused = effectiveFocus(ov, r.focus) == p
 		var content []string
 		for _, it := range pl.items {
 			content = append(content, rowLines(ov, r, st, it, pl.inner.w)...)
@@ -672,9 +763,12 @@ func severityGlyph(s vm.Severity) (string, lipgloss.Color) {
 func rowLines(ov vm.OverviewView, r overviewRects, st overviewState, it placed, iw int) []string {
 	var bg lipgloss.TerminalColor = lipgloss.NoColor{}
 	selected := it.worker >= 0 && it.worker == r.sel.worker && it.kind != eHeader
-	if it.kind == eAttn && effectiveFocus(ov, st.focus) == panelAttention {
+	if it.kind == eAttn && effectiveFocus(ov, r.focus) == panelAttention {
 		// The focused strip highlights its own cursor, which may name no worker.
 		selected = it.idx == r.sel.cursor
+	}
+	if it.kind == eEvent {
+		selected = r.focus == panelEvents && it.idx == r.evCursor
 	}
 	if selected {
 		bg = colSelBg
