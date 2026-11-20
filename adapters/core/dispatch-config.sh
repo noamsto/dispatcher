@@ -669,6 +669,8 @@ printf '%s\n' "$base" "$user" "$locked" "$env_layer" | jq -n --argjson show_orig
   | need(["fleetHeadTimeout"]; "a non-negative integer"; type == "number" and . == floor and . >= 0)
   | need(["overseer"]; "an object"; type == "object")
   | need(["overseer", "autoRelaunch"]; "a boolean"; type == "boolean")
+  | need(["overseer", "autoStart"]; "a boolean"; type == "boolean")
+  | need(["overseer", "acceptTrust"]; "a boolean"; type == "boolean")
   | need(["overseer", "digestEvery"]; "a positive integer (seconds)"; pos_int)
   | need(["overseer", "root"]; "an absolute path string"; type == "string" and startswith("/"))
   | need(["repoTrackers"]; "an object of strings"; type == "object" and all(.[]; type == "string"))

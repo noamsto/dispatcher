@@ -1,6 +1,7 @@
 usage: crew overseer msg [--host <h>] <repo> <crew> '<json>'
        crew overseer status --origin <host> [--since <ms>]
        crew overseer deliver --origin <host> -- <repo> <crew> '<json>'
+       crew overseer trust <pane>
 
 Post the overseer's message to one crew's dispatcher, on that repo's bus. Only
 the overseer session runs it: CREW_OVERSEER set to this host's name (uname -n
@@ -35,6 +36,17 @@ and the msgs to overseer:<origin> above --since (a millisecond ts) as one
 JSON line; deliver posts a message relayed from overseer:<origin>, a host in
 this host's settings, and prints its ts, or {"refused":"<code>"} when it
 refuses.
+
+trust types one Enter into a local crew pane (%N) that shows Claude Code's
+workspace-trust dialog with "1. Yes, I trust this folder" selected, then posts
+a notice to the dispatcher of the crew that owns the pane (its @crew_id stamp,
+else the crew whose dispatcher pane file names it). Only the overseer session
+runs it, and only while the owner sets overseer.acceptTrust to true. It never
+types into the overseer's own pane or a pane not running an engine, and refuses
+the add-dir trust dialog, which ignores injected keys — relay that to the
+human. Exit 0 accepted, 1 usage or resolution error (nothing typed), 2 refused
+before typing, 3 typed but the dialog is still shown after 3 s, 4 typed and
+accepted but the notice to the dispatcher failed.
 
   crew overseer msg noamsto/dispatcher <crew-id> \
     '{"kind":"ask","detail":"worker violet blocked 45 min — handling it?"}'

@@ -14,6 +14,9 @@ setup() {
   OVERSEER="$BATS_TEST_DIRNAME/../adapters/core/overseer.sh"
   run_overseer() { bash -euo pipefail "$OVERSEER" "$@"; }
   setup_repo
+  # A claude launch inside a repo stamps workspace trust in $HOME/.claude.json.
+  export HOME="$BATS_TEST_TMPDIR/home"
+  mkdir -p "$HOME"
   stub_bin tmux
   stub_bin crew
   stub_bin tmux-crew-dash
@@ -359,6 +362,19 @@ second line"
   CREW_ID=c1 run_launcher
   run grep -F -- '--autocompact 300000' "$STUB_LOG"
   [ "$status" -eq 0 ]
+}
+
+@test "1687: a claude crew launch pre-trusts the cwd" {
+  CREW_ID=c1 run_launcher
+  run jq -e --arg p "$(pwd -P)" '.projects[$p].hasTrustDialogAccepted == true' "$HOME/.claude.json"
+  [ "$status" -eq 0 ]
+}
+
+@test "1687: an --overseer launch does not touch ~/.claude.json" {
+  _overseer_setup
+  run run_launcher --overseer
+  [ "$status" -eq 0 ]
+  [ ! -e "$HOME/.claude.json" ]
 }
 
 @test "--autocompact auto keeps the engine default (no flag)" {
@@ -2307,8 +2323,14 @@ _relaunch_refuses() { # message [repo]
 
 @test "1420: --relaunch refuses a crew with no launch record" {
   _relaunch_setup
+  _fake_settings '{"overseer":{"autoStart":false},"orchestratorDefaults":{"claude":{"model":"opus"}}}'
   rm "$C1/launch"
-  _relaunch_refuses "dispatcher: no launch record — relaunch by hand with --agent/--model"
+  begin_rows
+  keep_row off _relaunch_refuses "dispatcher: no launch record — relaunch by hand with --agent/--model, or the owner enables overseer.autoStart"
+  touch "$STUB_DIR/settings.fail"
+  keep_row unreadable _relaunch_refuses "the settings could not be read (so overseer.autoStart counts as off)"
+  finish_rows 2
+  [ ! -e "$C1/relaunch" ]
 }
 
 _bad_record_row() { # record message
@@ -2427,6 +2449,255 @@ _want_new_window_argv() { # wt
   keep_row repo _fresh_refusal_row 2 "--repo only goes with --relaunch" --repo .
   keep_row no-value _fresh_refusal_row 1 "--relaunch needs a value" --relaunch
   finish_rows 5
+}
+
+# _fake_settings <json> — a settings resolver that prints <json>, or fails while
+# $STUB_DIR/settings.fail exists; the owner's real settings never reach a test.
+_fake_settings() {
+  printf '%s\n' "$1" >"$STUB_DIR/settings.json"
+  cat >"$STUB_DIR/settings" <<'EOF'
+#!/usr/bin/env bash
+[ ! -e "$STUB_DIR/settings.fail" ] || exit 1
+cat "$STUB_DIR/settings.json"
+EOF
+  chmod +x "$STUB_DIR/settings"
+  export DISPATCH_CONFIG_BIN="$STUB_DIR/settings"
+}
+
+_auto_start_on='{"overseer":{"autoStart":true},"orchestratorDefaults":{"claude":{"model":"opus","effort":"high","autoCompact":300000}}}'
+
+@test "1687: --relaunch with no launch record and overseer.autoStart on uses the settings defaults" {
+  _relaunch_setup
+  _fake_settings "$_auto_start_on"
+  rm "$C1/launch"
+  run run_launcher --relaunch c1 --repo "$TEST_REPO"
+  live_pid=$(cat "$STUB_DIR/dispatcher.pid")
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"crew c1 has no launch record — using the settings defaults (overseer.autoStart)"* ]]
+  [[ "$output" == *"relaunched crew c1 in pane %9"* ]]
+  wt=$(git rev-parse --path-format=absolute --git-common-dir)
+  wt=${wt%/.git}
+  printf '%s\n' respawn-pane -k -t %9 -c "$wt" -e CREW_ID=c1 -- \
+    env -u CREW_OVERSEER dispatcher --fresh --no-note --agent claude --model opus --effort high --autocompact 300000 \
+    >"$BATS_TEST_TMPDIR/want.argv"
+  diff "$BATS_TEST_TMPDIR/want.argv" "$STUB_DIR/respawn-pane.argv"
+  [[ $(cat "$C1/relaunch") =~ ^[0-9]+$ ]]
+}
+
+@test "1687: --relaunch settings defaults leave out an unset effort and take autocompact auto" {
+  _relaunch_setup
+  _fake_settings '{"overseer":{"autoStart":true},"orchestratorDefaults":{"claude":{"model":"sonnet"}}}'
+  rm "$C1/launch"
+  run run_launcher --relaunch c1 --repo "$TEST_REPO"
+  live_pid=$(cat "$STUB_DIR/dispatcher.pid")
+  [ "$status" -eq 0 ]
+  mapfile -t got <"$STUB_DIR/respawn-pane.argv"
+  [ "${got[*]:9}" = "env -u CREW_OVERSEER dispatcher --fresh --no-note --agent claude --model sonnet --autocompact auto" ]
+}
+
+@test "1687: --relaunch with no launch record refuses an unset default model" {
+  _relaunch_setup
+  _fake_settings '{"overseer":{"autoStart":true},"orchestratorDefaults":{"claude":{"effort":"high"}}}'
+  rm "$C1/launch"
+  _relaunch_refuses "dispatcher: --relaunch: crew c1 has no launch record and orchestratorDefaults.claude.model is unset — relaunch by hand with --agent/--model"
+  [ ! -e "$C1/relaunch" ]
+}
+
+_invalid_record_row() { # record message
+  _bad_record_row "$1" "$2"
+  [[ "$output" != *"settings defaults"* ]]
+}
+
+@test "1687: --relaunch still refuses a present but invalid launch record with overseer.autoStart on" {
+  _relaunch_setup
+  _fake_settings "$_auto_start_on"
+  begin_rows
+  keep_row agent _invalid_record_row '{"agent":"bash","model":"opus","effort":"high","autocompact":"auto"}' "launch record agent"
+  keep_row not-json _invalid_record_row 'agent=claude model=opus' "launch record is not a JSON object"
+  keep_row empty _invalid_record_row '' "launch record is not a JSON object"
+  finish_rows 3
+  [ ! -e "$C1/relaunch" ]
+}
+
+# _spawn_setup — the relaunch stubs, a `crew new` that mints c-new, and a fresh
+# repo $SPAWN_REPO that has never had a crew (no .git/crew). _spawn_bus gives it
+# the crew bus dir that spawn requires, still with no crew registered.
+_spawn_setup() {
+  _relaunch_setup
+  _fake_settings "$_auto_start_on"
+  cat >"$STUB_DIR/crew" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$1" in
+new) echo c-new ;;
+crews)
+  [ ! -e "$STUB_DIR/crews.fail" ] || exit 1
+  cat "$STUB_DIR/crews.tsv"
+  ;;
+esac
+exit 0
+EOF
+  # The real launcher registers the exported CREW_ID, which creates its dir.
+  cat >"$STUB_DIR/dispatcher" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$@" >"$STUB_DIR/dispatcher.argv"
+printf 'CREW_ID=%s CREW_OVERSEER=%s CREW_WORKER_ID=%s CREW_ROLE_ID=%s\n' "${CREW_ID-UNSET}" \
+  "${CREW_OVERSEER-UNSET}" "${CREW_WORKER_ID-UNSET}" "${CREW_ROLE_ID-UNSET}" >"$STUB_DIR/dispatcher.env"
+echo $$ >"$STUB_DIR/dispatcher.pid"
+crew_dir="$(git rev-parse --path-format=absolute --git-common-dir)/crew/crews/$CREW_ID"
+mkdir -p "$crew_dir"
+echo $$ >"$crew_dir/pid"
+exec sleep 15
+EOF
+  chmod +x "$STUB_DIR/crew" "$STUB_DIR/dispatcher"
+  SPAWN_REPO="$BATS_TEST_TMPDIR/spawn-repo"
+  git init -q -b main "$SPAWN_REPO"
+  SPAWN_REPO=$(cd "$SPAWN_REPO" && pwd -P)
+  SPAWN_MARKER="$SPAWN_REPO/.git/crew/spawn"
+}
+
+_spawn_bus() { mkdir "$SPAWN_REPO/.git/crew"; }
+
+_spawn_refuses() { # message [repo]
+  : >"$STUB_LOG"
+  run run_launcher --spawn "${2:-$SPAWN_REPO}"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"$1"* ]]
+  _no_new_window
+  if grep -qx new "$STUB_LOG"; then return 1; fi
+}
+
+@test "1687: --spawn takes no other flags or task words" {
+  begin_rows
+  keep_row agent _fresh_refusal_row 2 "--spawn takes no other flags" --spawn . --agent claude
+  keep_row model _fresh_refusal_row 2 "--spawn takes no other flags" --spawn . --model opus
+  keep_row effort _fresh_refusal_row 2 "--spawn takes no other flags" --spawn . --effort high
+  keep_row new _fresh_refusal_row 2 "--spawn takes no other flags" --spawn . --new
+  keep_row fresh _fresh_refusal_row 2 "--spawn takes no other flags" --spawn . --fresh --no-note
+  keep_row relaunch _fresh_refusal_row 2 "--spawn takes no other flags" --relaunch c1 --spawn .
+  keep_row repo _fresh_refusal_row 2 "--spawn takes no other flags" --spawn . --repo .
+  keep_row overseer _fresh_refusal_row 2 "--spawn takes no other flags" --overseer --spawn .
+  keep_row task _fresh_refusal_row 2 "--spawn takes no other flags" --spawn . fix the build
+  keep_row no-value _fresh_refusal_row 1 "--spawn needs a value" --spawn
+  finish_rows 10
+}
+
+@test "1687: --spawn refuses unless the owner's settings turn overseer.autoStart on" {
+  _spawn_setup
+  begin_rows
+  _fake_settings '{"overseer":{"autoStart":false}}'
+  keep_row off _spawn_refuses "dispatcher: --spawn is off — the owner enables it with overseer.autoStart"
+  _fake_settings '{}'
+  keep_row unset _spawn_refuses "--spawn is off"
+  _fake_settings '{"overseer":{"autoStart":"true"}}'
+  keep_row string _spawn_refuses "--spawn is off"
+  touch "$STUB_DIR/settings.fail"
+  keep_row unreadable _spawn_refuses "dispatcher: --spawn: the settings could not be read, so overseer.autoStart counts as off"
+  finish_rows 4
+  [ ! -e "$SPAWN_REPO/.git/crew" ]
+}
+
+@test "1687: --spawn refuses outside tmux" {
+  _spawn_setup
+  unset TMUX
+  _spawn_refuses "--spawn needs tmux"
+  [ ! -e "$SPAWN_REPO/.git/crew" ]
+}
+
+@test "1687: --spawn refuses a path that is not a main checkout's git repo" {
+  _spawn_setup
+  mkdir "$BATS_TEST_TMPDIR/plain"
+  git init -q --separate-git-dir "$BATS_TEST_TMPDIR/sep.git" "$BATS_TEST_TMPDIR/sep"
+  begin_rows
+  keep_row missing _spawn_refuses "--spawn: cannot enter" "$BATS_TEST_TMPDIR/nowhere"
+  keep_row plain _spawn_refuses "is not a git repo" "$BATS_TEST_TMPDIR/plain"
+  keep_row separate _spawn_refuses "does not end in /.git" "$BATS_TEST_TMPDIR/sep"
+  finish_rows 3
+}
+
+@test "1687: --spawn refuses while any crew in the repo is live, or crew crews fails" {
+  _spawn_setup
+  _spawn_bus
+  begin_rows
+  crews_tsv "$(printf 'c1\t5\t5\t1\t999999\tno')" "$(printf 'c2\t5\t5\t1\t4321\tyes')" >"$STUB_DIR/crews.tsv"
+  keep_row live _spawn_refuses "dispatcher: --spawn: crew c2's dispatcher is live in this repo — ask it instead"
+  touch "$STUB_DIR/crews.fail"
+  keep_row crews-fails _spawn_refuses "dispatcher: --spawn: 'crew crews' failed"
+  finish_rows 2
+  [ ! -e "$SPAWN_MARKER" ]
+  [ ! -e "$SPAWN_REPO/.git/crew/.spawn.lock" ]
+}
+
+# The spawned claude dispatcher pre-trusts its checkout, so spawn must not reach
+# a clone crew never knew.
+@test "1687: --spawn refuses a repo with no crew bus, or a symlinked one" {
+  _spawn_setup
+  mkdir "$BATS_TEST_TMPDIR/elsewhere"
+  begin_rows
+  keep_row missing _spawn_refuses "dispatcher: --spawn: $SPAWN_REPO has no crew bus ($SPAWN_REPO/.git/crew) — spawn starts dispatchers only in repos crew already knows; start the first one by hand"
+  [ ! -s "$STUB_LOG" ]
+  [ ! -e "$SPAWN_REPO/.git/crew" ]
+  ln -s "$BATS_TEST_TMPDIR/elsewhere" "$SPAWN_REPO/.git/crew"
+  keep_row symlink _spawn_refuses "has no crew bus ($SPAWN_REPO/.git/crew)"
+  [ ! -s "$STUB_LOG" ]
+  finish_rows 2
+  [ -z "$(ls -A "$BATS_TEST_TMPDIR/elsewhere")" ]
+}
+
+@test "1687: --spawn refuses while another --spawn in the repo holds the lock" {
+  _spawn_setup
+  mkdir -p "$SPAWN_REPO/.git/crew/.spawn.lock"
+  _spawn_refuses "another --spawn in this repo is in progress"
+  [ -d "$SPAWN_REPO/.git/crew/.spawn.lock" ]
+  [ ! -e "$SPAWN_MARKER" ]
+}
+
+@test "1687: --spawn starts a new crew in a repo with a crew bus but no crew, as an argv with a clean identity" {
+  _spawn_setup
+  _spawn_bus
+  CREW_OVERSEER=host CREW_WORKER_ID=w1 CREW_ROLE_ID=r1 run --separate-stderr run_launcher --spawn "$SPAWN_REPO"
+  live_pid=$(cat "$STUB_DIR/dispatcher.pid")
+  [ "$status" -eq 0 ]
+  [ "$output" = "dispatcher: spawned crew c-new in pane %9" ]
+  grep -qx new "$STUB_LOG"
+  grep -qx 'crews --home' "$STUB_LOG"
+  _want_new_window_argv "$SPAWN_REPO"
+  printf '%s\n' respawn-pane -k -t %9 -c "$SPAWN_REPO" -e CREW_ID=c-new -- \
+    env -u CREW_OVERSEER -u CREW_WORKER_ID -u CREW_ROLE_ID dispatcher \
+    >"$BATS_TEST_TMPDIR/want.argv"
+  diff "$BATS_TEST_TMPDIR/want.argv" "$STUB_DIR/respawn-pane.argv"
+  [ -z "$(cat "$STUB_DIR/dispatcher.argv")" ]
+  [ "$(cat "$STUB_DIR/dispatcher.env")" = "CREW_ID=c-new CREW_OVERSEER=UNSET CREW_WORKER_ID=UNSET CREW_ROLE_ID=UNSET" ]
+  _assert_clean_argv
+  _assert_kept_then_respawned
+  grep -qx 'set-option -p -t %9 remain-on-exit off' "$STUB_LOG"
+  [ ! -e "$SPAWN_REPO/.git/crew/.spawn.lock" ]
+  [[ $(cat "$SPAWN_MARKER") =~ ^[0-9]+$ ]]
+}
+
+@test "1687: --spawn refuses a second spawn in the repo within 30 min, and passes an older marker" {
+  _spawn_setup
+  _spawn_bus
+  run run_launcher --spawn "$SPAWN_REPO"
+  [ "$status" -eq 0 ]
+  live_pid=$(cat "$STUB_DIR/dispatcher.pid")
+  kill "$live_pid"
+  live_pid=""
+  crews_tsv "$(printf 'c-new\t5\t5\t1\t999999\tno')" >"$STUB_DIR/crews.tsv"
+  begin_rows
+  keep_row recent _spawn_refuses "a dispatcher was spawned in this repo within the last 30 min"
+  echo $(($(date +%s) + 3000)) >"$SPAWN_MARKER"
+  keep_row future _spawn_refuses "within the last 30 min"
+  echo soon >"$SPAWN_MARKER"
+  keep_row garbage _spawn_refuses "within the last 30 min"
+  finish_rows 3
+  [ "$(cat "$SPAWN_MARKER")" = soon ]
+  echo $(($(date +%s) - 1801)) >"$SPAWN_MARKER"
+  rm "$SPAWN_REPO/.git/crew/crews/c-new/pid"
+  run run_launcher --spawn "$SPAWN_REPO"
+  live_pid=$(cat "$STUB_DIR/dispatcher.pid")
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"spawned crew c-new in pane %9"* ]]
 }
 
 # --overseer: the one-per-host fleet session, started outside any repo.

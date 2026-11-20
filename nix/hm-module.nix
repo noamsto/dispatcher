@@ -21,7 +21,7 @@ self: {
     monthlyUsd = cfg.openrouter.monthlyTarget;
   };
   overseerLocked = lib.filterAttrs (_: v: v != null) {
-    inherit (cfg.overseer) autoRelaunch digestEvery root;
+    inherit (cfg.overseer) autoRelaunch autoStart acceptTrust digestEvery root;
   };
   lockedSettings =
     {inherit (cfg) profile grantRoots;}
@@ -554,6 +554,34 @@ in {
           lands as `overseer.autoRelaunch` in the locked settings layer.
           Unset (the default, false from the base defaults), the user
           settings file governs.
+        '';
+      };
+
+      autoStart = lib.mkOption {
+        type = lib.types.nullOr lib.types.bool;
+        default = null;
+        example = true;
+        description = ''
+          Whether the overseer session may start a dispatcher with
+          `dispatcher --spawn`, and relaunch a crew that has no launch
+          record from the settings defaults. Set, it lands as
+          `overseer.autoStart` in the locked settings layer. Unset (the
+          default, false from the base defaults), the user settings file
+          governs.
+        '';
+      };
+
+      acceptTrust = lib.mkOption {
+        type = lib.types.nullOr lib.types.bool;
+        default = null;
+        example = true;
+        description = ''
+          Whether the overseer session may accept Claude Code's
+          workspace-trust dialog in a crew pane with
+          `crew overseer trust <pane>`. Set, it lands as
+          `overseer.acceptTrust` in the locked settings layer. Unset (the
+          default, false from the base defaults), the user settings file
+          governs.
         '';
       };
 

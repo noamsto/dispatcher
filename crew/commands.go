@@ -429,6 +429,11 @@ type overseerCmd struct {
 	Msg     overseerMsgCmd     `cmd:"" name:"msg" help:"Post the overseer's message to a dispatcher."`
 	Status  overseerStatusCmd  `cmd:"" name:"status" help:"Answer a federated overseer's status pull (run over ssh)."`
 	Deliver overseerDeliverCmd `cmd:"" name:"deliver" help:"Post a federated overseer's relayed message (run over ssh)."`
+	Trust   overseerTrustCmd   `cmd:"" name:"trust" help:"Accept Claude Code's workspace-trust dialog in one crew pane."`
+}
+
+type overseerTrustCmd struct {
+	Pane string `arg:"" optional:"" name:"pane"`
 }
 
 type overseerStatusCmd struct {
@@ -750,6 +755,7 @@ var wordings = map[string]wording{
 	"overseer msg":     {all: overseer.MsgUsage, code: exitFailure},
 	"overseer status":  {all: overseer.StatusUsage, code: exitFailure},
 	"overseer deliver": {all: overseer.DeliverUsage, code: exitFailure},
+	"overseer trust":   {all: overseer.TrustUsage, code: exitFailure},
 	"migrate":          {all: migrateUsage, code: exitFailure},
 	"migrate stop":     {all: migrateUsage, code: exitFailure},
 	"migrate snapshot": {all: migrateUsage, code: exitFailure},
@@ -1273,6 +1279,10 @@ func validate(sub string, r *root) *refusal {
 	case "overseer deliver":
 		if c := r.Overseer.Deliver; c.Origin == "" || c.Repo == "" || c.Crew == "" || c.Body == "" {
 			return fail(overseer.DeliverUsage)
+		}
+	case "overseer trust":
+		if r.Overseer.Trust.Pane == "" {
+			return fail(overseer.TrustUsage)
 		}
 	case "migrate stop":
 		if c := r.Migrate.Stop; given(c.Crew) || c.Timeout < 0 {

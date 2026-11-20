@@ -512,3 +512,29 @@ func TestTrimSpace(t *testing.T) {
 		})
 	}
 }
+
+func TestIsWorkspaceTrustPrompt(t *testing.T) {
+	trust := readFrame(t, "testdata/frames/prompt_trust.txt")
+	tests := []struct {
+		name string
+		text string
+		want bool
+	}{
+		{"trust", trust, true},
+		{"trust distant", readFrame(t, "testdata/frames/prompt_trust_distant.txt"), true},
+		{"trust distant session limit", readFrame(t, "testdata/frames/prompt_trust_distant_session_limit.txt"), true},
+		{"named session rule below", trust + "\n── my-session ─────", true},
+		{"dialog scrolled above output", readFrame(t, "testdata/frames/prompt_scrollback.txt"), false},
+		{"add-dir dialog", readFrame(t, "../stall/testdata/prompt_adddir.txt"), false},
+		{"cursor on option 2", strings.Replace(strings.Replace(trust, "> 1. Yes", "  1. Yes", 1), "2. No, exit", "> 2. No, exit", 1), false},
+		{"footer missing", strings.TrimSuffix(trust, "\nEnter to confirm"), false},
+		{"permission prompt", readFrame(t, "testdata/frames/permission_bash.txt"), false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := IsWorkspaceTrustPrompt(tc.text); got != tc.want {
+				t.Errorf("IsWorkspaceTrustPrompt = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}

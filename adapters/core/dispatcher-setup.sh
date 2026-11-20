@@ -170,6 +170,8 @@ report() {
   entry_for dashAutoOpen '["dashAutoOpen"]' null ""
   entry_for dashPlacement '["dashPlacement"]' null ""
   entry_for overseer.autoRelaunch '["overseer","autoRelaunch"]' "$has_overseer" ""
+  entry_for overseer.autoStart '["overseer","autoStart"]' "$has_overseer" ""
+  entry_for overseer.acceptTrust '["overseer","acceptTrust"]' "$has_overseer" ""
   entry_for localModels '["localModels"]' null ""
   entry_for grantRoots '["grantRoots"]' null ""
   entry_for openrouter.keyFile '["openrouter","keyFile"]' null ""
@@ -294,6 +296,8 @@ if [ "$interactive" = 1 ]; then
   decide dashPlacement '["dashPlacement"]' '"side"' parse_placement
   if [ "$has_overseer" = true ]; then
     decide overseer.autoRelaunch '["overseer","autoRelaunch"]' "" parse_bool
+    decide overseer.autoStart '["overseer","autoStart"]' "" parse_bool
+    decide overseer.acceptTrust '["overseer","acceptTrust"]' "" parse_bool
   fi
 fi
 

@@ -387,7 +387,8 @@ hosts to offer (each one you pick is checked with a bounded
 `ssh -o BatchMode=yes` before it is added), and whether an OpenRouter key is
 found (its source is reported, never the key). Interactively it also asks for
 `openrouter.monthlyUsd`, `anthropicCredits`, `dashAutoOpen` and, when `overseer`
-is installed, `overseer.autoRelaunch`. It merges into the existing file (your
+is installed, `overseer.autoRelaunch`, `overseer.autoStart` and
+`overseer.acceptTrust`. It merges into the existing file (your
 keys and unknown keys are kept), shows a diff and asks before writing;
 `--yes` takes the detected proposals without asking, and without a terminal or
 `--yes` it writes nothing and exits 2. It never writes `grantRoots` or
@@ -843,7 +844,8 @@ or task words, and on codex or cursor. It has no crew: it exports
 pane `@crew_role overseer`, and loads `OVERSEER_PROTOCOL`. A second launch with a
 live overseer switches to its pane. `dispatch` refuses to run under
 `CREW_OVERSEER` (`--engines` and `--models` stay allowed). Settings:
-`overseer.root`, `overseer.autoRelaunch` (default false) and `overseer.digestEvery`
+`overseer.root`, `overseer.autoRelaunch`, `overseer.autoStart` and
+`overseer.acceptTrust` (each default false) and `overseer.digestEvery`
 (seconds, default 14400).
 
 The `overseer` command resolves the repos root as the `overseer.root` setting,

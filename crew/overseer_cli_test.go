@@ -250,3 +250,74 @@ func TestOverseerFarGrammarRefusals(t *testing.T) {
 		}
 	}
 }
+
+func TestOverseerTrustGrammarRefusals(t *testing.T) {
+	e := env{getwd: func() (string, error) { return t.TempDir(), nil }}
+	for _, args := range [][]string{
+		{"overseer", "trust"},
+		{"overseer", "trust", "%1", "%2"},
+		{"overseer", "trust", "--bogus", "%1"},
+	} {
+		code, out, errs := crewRun(t, e, args...)
+		if code != exitFailure || out != "" || errs != overseer.TrustUsage+"\n" {
+			t.Errorf("crew %v: %d %q %q", args, code, out, errs)
+		}
+	}
+}
+
+// TestOverseerTrustRefusesANonOverseer: outside the overseer session the verb
+// is refused before it runs tmux at all, and writes nothing.
+func TestOverseerTrustRefusesANonOverseer(t *testing.T) {
+	e, common := overseerFar(t)
+	bin := filepath.Dir(os.Getenv("DISPATCH_CONFIG_BIN"))
+	calls := filepath.Join(t.TempDir(), "tmux-calls")
+	if err := os.WriteFile(filepath.Join(bin, "tmux"), []byte("#!/bin/sh\necho \"$*\" >>'"+calls+"'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	settings := `{"overseer":{"acceptTrust":true}}`
+	if err := os.WriteFile(filepath.Join(bin, "settings"), []byte("#!/bin/sh\nprintf '%s' '"+settings+"'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(filepath.Join(common, "crew", "events.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, out, errs := crewRun(t, e, "overseer", "trust", "%1")
+	if code != 2 || out != "" || !strings.HasPrefix(errs, "crew: overseer trust: refusing sender 'overseer:") || strings.Count(errs, "\n") != 1 {
+		t.Fatalf("exit %d, stdout %q, stderr %q", code, out, errs)
+	}
+	if _, err := os.Stat(calls); !os.IsNotExist(err) {
+		log, _ := os.ReadFile(calls)
+		t.Errorf("tmux ran: %q", log)
+	}
+	if after, _ := os.ReadFile(filepath.Join(common, "crew", "events.jsonl")); string(after) != string(before) {
+		t.Errorf("a refused trust wrote %q", after)
+	}
+}
+
+// TestAcceptTrustIsOnlyJSONTrue: the settings read enables trust only for a
+// JSON true, and an unreadable settings file is an error.
+func TestAcceptTrustIsOnlyJSONTrue(t *testing.T) {
+	for _, tc := range []struct {
+		name, script string
+		want, fail   bool
+	}{
+		{"true", `printf '{"overseer":{"acceptTrust":true}}'`, true, false},
+		{"false", `printf '{"overseer":{"acceptTrust":false}}'`, false, false},
+		{"absent", `printf '{"overseer":{}}'`, false, false},
+		{"string true", `printf '{"overseer":{"acceptTrust":"true"}}'`, false, false},
+		{"unreadable", "exit 3", false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			bin := filepath.Join(t.TempDir(), "settings")
+			if err := os.WriteFile(bin, []byte("#!/bin/sh\n"+tc.script+"\n"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("DISPATCH_CONFIG_BIN", bin)
+			got, err := acceptTrust(t.Context())
+			if got != tc.want || (err != nil) != tc.fail {
+				t.Fatalf("acceptTrust = %v, %v; want %v, error %v", got, err, tc.want, tc.fail)
+			}
+		})
+	}
+}
