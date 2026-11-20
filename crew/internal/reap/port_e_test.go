@@ -3,6 +3,7 @@ package reap
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -121,10 +122,10 @@ func TestPortECrossRepoPRURL(t *testing.T) {
 	const evil = "https://github.com/evil/other/pull/7"
 	t.Run("ignored keeps the worktree, dry run and real", func(t *testing.T) {
 		f := newFx(t)
-		f.bus(statusFor(rb, "s1", "done", evil, 0))
+		f.bus(statusFor(rb, "s1", "failed", evil, 0))
 		f.gh[portEListKey] = "[]"
 		f.gh[portEPRKey(evil, "state")] = "MERGED"
-		want := []string{"crew reap: keeping feat/r — done but no PR on the bus or GitHub (ignoring cross-repo pr_url " + evil + "); no claim-issue row"}
+		want := []string{"crew reap: keeping feat/r — failed but no PR on the bus or GitHub (ignoring cross-repo pr_url " + evil + "); no claim-issue row"}
 		for _, req := range []Request{{DryRun: true}, {}} {
 			if !req.DryRun {
 				want = append(want, "crew reap: nothing reclaimed")
@@ -159,13 +160,13 @@ func TestPortECrossRepoPRURL(t *testing.T) {
 	t.Run("github.com pr_url ignored when origin is not github.com", func(t *testing.T) {
 		f := newFx(t)
 		f.setOriginURL("https://ghe.example.com/o/r.git")
-		f.bus(statusFor(rb, "s1", "done", prURL, 0))
+		f.bus(statusFor(rb, "s1", "failed", prURL, 0))
 		f.gh[portEListKey] = "[]"
 		f.gh[portEPRKey(prURL, "state")] = "MERGED"
 		if rc := f.reap(f.main, Request{DryRun: true}); rc != 0 {
 			t.Fatalf("rc=%d stderr=%q", rc, f.stderr.String())
 		}
-		f.wantOut("crew reap: keeping feat/r — done but no PR on the bus or GitHub (ignoring cross-repo pr_url " + prURL + "); no claim-issue row")
+		f.wantOut("crew reap: keeping feat/r — failed but no PR on the bus or GitHub (ignoring cross-repo pr_url " + prURL + "); no claim-issue row")
 		if !portCExists(f.wt) {
 			t.Fatal("worktree removed")
 		}
@@ -224,8 +225,8 @@ func TestPortEIssueModeKeeps(t *testing.T) {
 				"crew reap:   inspect: " + f.inspectCmd(),
 				"crew reap:   remove:  " + f.removeCmd()}
 		}},
-		{"no claim-issue row, fresh", "CLOSED", false, func(*fx) []string {
-			return []string{"crew reap: keeping feat/r — done but no PR on the bus or GitHub; no claim-issue row"}
+		{"failed with no claim-issue row, fresh", "CLOSED", false, func(*fx) []string {
+			return []string{"crew reap: keeping feat/r — failed but no PR on the bus or GitHub; no claim-issue row"}
 		}},
 	}
 	for _, c := range cases {
@@ -233,6 +234,9 @@ func TestPortEIssueModeKeeps(t *testing.T) {
 			f := newFx(t)
 			runGit(t, f.main, "update-ref", "refs/remotes/origin/main", "main")
 			portEIssue(f, c.state, c.claim)
+			if strings.HasPrefix(c.name, "failed") {
+				f.bus(statusFor(rb, "s1", "failed", "", 0))
+			}
 			if rc := f.reap(f.main, Request{}); rc != 0 {
 				t.Fatalf("rc=%d stderr=%q", rc, f.stderr.String())
 			}
@@ -270,4 +274,126 @@ func TestPortEClosedIssueReclaimsKeepingBranch(t *testing.T) {
 		t.Fatalf("rows %q", rows)
 	}
 	wantJSON(t, rows[0], fmt.Sprintf(`{"ts":%d,"kind":"reap","branch":"feat/r","pr":"","pr_state":"ISSUE_CLOSED","worktree":%q,"issues":["77"]}`, nowUnix*1000, f.wt))
+}
+
+// portEPushedFx is a done worker with a clean tree, no PR anywhere and a
+// claimed issue that is still OPEN, with origin/main at the branch tip.
+func portEPushedFx(t *testing.T) *fx {
+	t.Helper()
+	f := newFx(t)
+	runGit(t, f.main, "update-ref", "refs/remotes/origin/main", "main")
+	runGit(t, f.main, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
+	f.bus(statusFor(rb, "s1", "done", "", 0),
+		fmt.Sprintf(`{"ts":%d,"crew_id":"c1","kind":"claim-issue","issue":"77","branch":%q,"pid":1}`, nowUnix*1000, rb))
+	f.gh[portEListKey] = "[]"
+	f.gh["issue view 77 --json state --jq .state"] = "OPEN"
+	return f
+}
+
+func (f *fx) wantPushedReap() {
+	f.t.Helper()
+	f.wantOut("crew reap: reaped feat/r (no PR, work pushed)")
+	if portCExists(f.wt) {
+		f.t.Fatal("worktree kept")
+	}
+	if !f.portBBranchExists() {
+		f.t.Fatal("branch deleted")
+	}
+	f.portBWantNoCall("issue edit")
+	f.portBWantNoCall("pr view")
+	rows := f.rows("reap")
+	if len(rows) != 1 {
+		f.t.Fatalf("rows %q", rows)
+	}
+	wantJSON(f.t, rows[0], fmt.Sprintf(`{"ts":%d,"kind":"reap","branch":"feat/r","pr":"","pr_state":"NO_PR","worktree":%q}`, nowUnix*1000, f.wt))
+}
+
+func TestPortEPushedModeReaps(t *testing.T) {
+	t.Run("uncommitted file is kept", func(t *testing.T) {
+		f := portEPushedFx(t)
+		if err := os.WriteFile(filepath.Join(f.wt, "notes.txt"), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if rc := f.reap(f.main, Request{}); rc != 0 {
+			t.Fatalf("rc=%d stderr=%q", rc, f.stderr.String())
+		}
+		if !strings.Contains(f.stdout.String(), "keeping feat/r — uncommitted changes") || !portCExists(f.wt) {
+			t.Fatalf("stdout %s", f.stdout.String())
+		}
+	})
+	t.Run("no claim-issue row reaps", func(t *testing.T) {
+		f := portEPushedFx(t)
+		f.bus(statusFor(rb, "s1", "done", "", 0))
+		if rc := f.reap(f.main, Request{Quiet: true}); rc != 0 {
+			t.Fatalf("rc=%d stderr=%q", rc, f.stderr.String())
+		}
+		f.wantPushedReap()
+	})
+	t.Run("non-numeric claim row reaps", func(t *testing.T) {
+		f := portEPushedFx(t)
+		f.bus(statusFor(rb, "s1", "done", "", 0),
+			fmt.Sprintf(`{"ts":%d,"crew_id":"c1","kind":"claim-issue","issue":"abc","branch":%q,"pid":1}`, nowUnix*1000, rb))
+		if rc := f.reap(f.main, Request{Quiet: true}); rc != 0 {
+			t.Fatalf("rc=%d stderr=%q", rc, f.stderr.String())
+		}
+		f.wantPushedReap()
+	})
+	t.Run("origin branch is not deleted", func(t *testing.T) {
+		f := portEPushedFx(t)
+		bare := f.bareOrigin()
+		f.bus(statusFor(rb, "s1", "done", "", 0),
+			fmt.Sprintf(`{"ts":%d,"crew_id":"c1","kind":"claim-issue","issue":"77","branch":%q,"pid":1}`, nowUnix*1000, rb),
+			pushedRow(gitOut(t, f.main, "rev-parse", "HEAD")))
+		if rc := f.reap(f.main, Request{}); rc != 0 {
+			t.Fatalf("rc=%d stderr=%q", rc, f.stderr.String())
+		}
+		if strings.Contains(f.stdout.String(), "deleted origin branch") || !originHas(bare) {
+			t.Fatalf("origin branch touched: %s", f.stdout.String())
+		}
+		if portCExists(f.wt) {
+			t.Fatal("worktree kept")
+		}
+	})
+	t.Run("nothing beyond origin/main", func(t *testing.T) {
+		f := portEPushedFx(t)
+		if rc := f.reap(f.main, Request{Quiet: true}); rc != 0 {
+			t.Fatalf("rc=%d stderr=%q", rc, f.stderr.String())
+		}
+		f.wantPushedReap()
+	})
+	t.Run("commit on a non-PR remote ref", func(t *testing.T) {
+		f := portEPushedFx(t)
+		f.portBCommit("a.txt", "a")
+		runGit(t, f.main, "update-ref", "refs/remotes/upstream/bidi", "refs/heads/"+rb)
+		if rc := f.reap(f.main, Request{Quiet: true}); rc != 0 {
+			t.Fatalf("rc=%d stderr=%q", rc, f.stderr.String())
+		}
+		f.wantPushedReap()
+	})
+	t.Run("unpushed commit is kept and named", func(t *testing.T) {
+		f := portEPushedFx(t)
+		f.portBCommit("a.txt", "a")
+		sha := gitOut(t, f.main, "rev-parse", "--short=7", "refs/heads/"+rb)
+		if rc := f.reap(f.main, Request{}); rc != 0 {
+			t.Fatalf("rc=%d stderr=%q", rc, f.stderr.String())
+		}
+		want := "keeping feat/r — done but no PR on the bus or GitHub; 1 commit(s) not on any remote and not patch-equivalent to origin/main (" + sha + ")"
+		if !strings.Contains(f.stdout.String(), want) {
+			t.Fatalf("stdout %s\nwant %s", f.stdout.String(), want)
+		}
+		if !portCExists(f.wt) {
+			t.Fatal("worktree removed")
+		}
+	})
+	t.Run("failed session with an open issue is kept", func(t *testing.T) {
+		f := portEPushedFx(t)
+		f.bus(statusFor(rb, "s1", "failed", "", 0),
+			fmt.Sprintf(`{"ts":%d,"crew_id":"c1","kind":"claim-issue","issue":"77","branch":%q,"pid":1}`, nowUnix*1000, rb))
+		if rc := f.reap(f.main, Request{}); rc != 0 {
+			t.Fatalf("rc=%d stderr=%q", rc, f.stderr.String())
+		}
+		if !strings.Contains(f.stdout.String(), "failed but no PR on the bus or GitHub; issue #77 is OPEN") || !portCExists(f.wt) {
+			t.Fatalf("stdout %s", f.stdout.String())
+		}
+	})
 }

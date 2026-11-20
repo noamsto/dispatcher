@@ -69,9 +69,6 @@ func TestPortDIdleEngineKept(t *testing.T) {
 			"──────────────────────────────\n❯\n──────────────────────────────", "codex has no idle signature"},
 		{"pi pane with no footer row under its box", "pi",
 			"──────────────────────────────\n❯\n──────────────────────────────", "pi frame: live turn or no idle input box"},
-		{"fresh boot, no finished-turn marker", "claude",
-			"╭───────────────────────────────────────────╮\n│ ✻ Welcome to Claude Code!                 │\n╰───────────────────────────────────────────╯\n" +
-				"────────────────── reef ─\n❯\n──────────────────\n  ? for shortcuts", "no finished-turn marker above the input box"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -83,6 +80,20 @@ func TestPortDIdleEngineKept(t *testing.T) {
 			f.portDWantKept()
 		})
 	}
+}
+
+// A pr_open session still needs the finished-turn marker: only a done session's
+// pane may be marker-less.
+func TestPortDPROpenNeedsMarker(t *testing.T) {
+	fresh := "╭───────────────────────────────────────────╮\n│ ✻ Welcome to Claude Code!                 │\n╰───────────────────────────────────────────╯\n" +
+		"────────────────── reef ─\n❯\n──────────────────\n  ? for shortcuts"
+	f := portDFx(t, "claude", fresh)
+	f.bus(status("pr_open", prURL, 0))
+	if rc := f.reap(f.main, Request{}); rc != 0 {
+		t.Fatalf("rc=%d stderr=%q", rc, f.stderr.String())
+	}
+	f.wantOut(portDKeepNote+"no finished-turn marker above the input box)", "crew reap: nothing reclaimed")
+	f.portDWantKept()
 }
 
 // The colored capture tells a real unsent draft from a dimmed prompt

@@ -131,3 +131,64 @@ func TestPaneIdleClearHintNoDone(t *testing.T) {
 		}
 	}
 }
+
+// compactedIdleFrame is a done session's pane after idle compaction: the
+// finished-turn marker is buried under recap, file and compaction rows.
+func compactedIdleFrame(above ...string) string {
+	rule := strings.Repeat("─", 20)
+	rows := []string{
+		"✻ Churned for 3s · done 11:20 AM",
+		"※ recap: Goal x",
+		"  tail. (disable recaps in /config)",
+		"  ⎿  Referenced file crew/internal/reap/candidate.go",
+		"  ⎿  Referenced file crew/internal/reap/remove.go",
+		"  ⎿  Referenced file crew/internal/reap/release.go",
+		"  ⎿  Referenced file crew/internal/frame/frame.go",
+		"  ⎿  Referenced file crew/internal/frame/box.go",
+		"  ⎿  Read crew/internal/reap/reap.go (120 lines)",
+		"  ⎿  Read crew/internal/reap/keeps.go (80 lines)",
+		"  ⎿  Skills restored (dispatcher:deslop)",
+		"● Compacted while idle, before the prompt cache expired · turn off with \"idleCompaction\": false in settings.json",
+	}
+	rows = append(rows, above...)
+	rows = append(rows, rule+" rust ─", "❯ ", rule,
+		"  -- INSERT -- ⏵⏵ auto mode on (shift+tab to cycle) · ← 1 agent", "  mode")
+	return strings.Join(rows, "\n")
+}
+
+// interruptedFarAboveBox puts an Interrupted row more than the 30-row window above
+// the input box, with no finished-turn marker between them.
+func interruptedFarAboveBox() string {
+	rule := strings.Repeat("─", 20)
+	rows := []string{"  ⎿  Interrupted · What should Claude do instead?"}
+	for range 35 {
+		rows = append(rows, "  ⎿  Referenced file crew/internal/frame/frame.go")
+	}
+	rows = append(rows, rule+" rust ─", "❯ ", rule,
+		"  -- INSERT -- ⏵⏵ auto mode on (shift+tab to cycle) · ← 1 agent", "  mode")
+	return strings.Join(rows, "\n")
+}
+
+func TestTerminalPaneIdleReason(t *testing.T) {
+	cases := []struct {
+		name         string
+		text         string
+		wantTerminal bool
+	}{
+		{"compacted idle frame", compactedIdleFrame(), true},
+		{"meter above box", compactedIdleFrame("✻ Churning… (3s · ↓ 1k tokens)"), false},
+		{"interrupted above box", compactedIdleFrame("  ⎿  Interrupted · What should Claude do instead?"), false},
+		{"interrupted buried above compaction rows", strings.Replace(compactedIdleFrame(), "※ recap: Goal x", "  ⎿  Interrupted · What should Claude do instead?\n※ recap: Goal x", 1), false},
+		{"interrupted beyond the sampler window", interruptedFarAboveBox(), false},
+		{"shell still running footer", strings.Replace(compactedIdleFrame(), "· ← 1 agent", "· 1 shell still running", 1), false},
+		{"unsent draft", strings.Replace(compactedIdleFrame(), "❯ \n", "❯ draft text\n", 1), false},
+	}
+	for _, c := range cases {
+		if reason, got := TerminalPaneIdleReason(c.text, "", false); got != c.wantTerminal {
+			t.Errorf("%s: terminal idle=%v (%s), want %v", c.name, got, reason, c.wantTerminal)
+		}
+	}
+	if reason, idle := PaneIdleReason(compactedIdleFrame(), "", true); idle || reason != "no finished-turn marker above the input box" {
+		t.Errorf("marker-required: idle=%v reason=%q", idle, reason)
+	}
+}

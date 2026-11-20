@@ -474,8 +474,9 @@ func (r *run) revParse(ctx context.Context, ref string) string {
 // block the sweep — but a failed lookup is noted, so it cannot pass for "no
 // closing issues" and leave the label stuck without a trace.
 func (r *run) releaseLabels(ctx context.Context, c *candidate) {
-	// A migrated worker's issue is still being worked, on the other host.
-	if c.mode == "migrated" {
+	// A migrated worker's issue is still being worked, on the other host; a
+	// pushed worker's issue is still open.
+	if c.mode == "migrated" || c.mode == "pushed" {
 		return
 	}
 	closing := strings.Join(c.issues, " ")

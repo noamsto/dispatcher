@@ -159,11 +159,11 @@ func TestStaleNotStale(t *testing.T) {
 
 func TestStaleIssueModeKeeps(t *testing.T) {
 	f := newFx(t)
-	f.bus(status("done", "", threeDays), claim5())
+	f.bus(status("failed", "", threeDays), claim5())
 	f.gh["pr list --head feat/r --state all --json url,state,headRefOid,isCrossRepository"] = "[]"
 	f.gh[issueView] = "OPEN"
 	f.reap(f.main, Request{})
-	if !strings.Contains(f.stdout.String(), "done but no PR on the bus or GitHub; issue #5 is OPEN; older than 72h") {
+	if !strings.Contains(f.stdout.String(), "failed but no PR on the bus or GitHub; issue #5 is OPEN; older than 72h") {
 		t.Fatalf("stdout %s", f.stdout.String())
 	}
 
@@ -357,11 +357,11 @@ func TestStaleNoPRDefiniteStates(t *testing.T) {
 		extra []string
 		want  string
 	}{
-		{"done no claim row old", "done", threeDays, nil, "no claim-issue row; older than 72h"},
-		{"done no claim row fresh", "done", 0, nil, ""},
+		{"failed no claim row old", "failed", threeDays, nil, "no claim-issue row; older than 72h"},
+		{"failed no claim row fresh", "failed", 0, nil, ""},
 		{"exited no PR old", "exited", threeDays, nil, "only done/failed reclaim on a closed issue; older than 72h"},
 		{"exited no PR fresh", "exited", 0, nil, ""},
-		{"non-numeric claim old", "done", threeDays, []string{`{"ts":1,"kind":"claim-issue","branch":"` + rb + `","issue":"x1"}`}, "non-numeric issue; older than 72h"},
+		{"non-numeric claim old", "failed", threeDays, []string{`{"ts":1,"kind":"claim-issue","branch":"` + rb + `","issue":"x1"}`}, "non-numeric issue; older than 72h"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := noPRFx(t, tc.state, tc.age, tc.extra...)

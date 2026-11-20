@@ -551,18 +551,18 @@ func TestIssueMode(t *testing.T) {
 	claim := func(issue string) string {
 		return `{"ts":1,"crew_id":"c1","kind":"claim-issue","branch":"` + rb + `","issue":` + issue + `}`
 	}
-	f.bus(status("done", "", 0), claim("5"), claim(`"6"`), claim("5"))
+	f.bus(status("failed", "", 0), claim("5"), claim(`"6"`), claim("5"))
 	f.gh["pr list --head feat/r --state all --json url,state,headRefOid,isCrossRepository"] = "[]"
 	f.gh["issue view 5 --json state --jq .state"] = "CLOSED"
 	f.gh["issue view 6 --json state --jq .state"] = "OPEN"
 	f.reap(f.main, Request{})
-	f.wantOut("crew reap: keeping feat/r — done but no PR on the bus or GitHub; issue #6 is OPEN", "crew reap: nothing reclaimed")
+	f.wantOut("crew reap: keeping feat/r — failed but no PR on the bus or GitHub; issue #6 is OPEN", "crew reap: nothing reclaimed")
 
 	// Both closed: no origin default branch ref in this repo keeps it.
 	f.gh["issue view 6 --json state --jq .state"] = "CLOSED"
 	f.reap(f.main, Request{})
-	f.wantOut("crew reap: keeping feat/r — done but no PR on the bus or GitHub; no origin default branch ref",
-		"crew reap:   stale: needs human cleanup — done but no PR on the bus or GitHub; no origin default branch ref; issue closed",
+	f.wantOut("crew reap: keeping feat/r — failed but no PR on the bus or GitHub; no origin default branch ref",
+		"crew reap:   stale: needs human cleanup — failed but no PR on the bus or GitHub; no origin default branch ref; issue closed",
 		"crew reap:   inspect: "+f.inspectCmd(),
 		"crew reap:   remove:  "+f.removeCmd(),
 		"crew reap: nothing reclaimed")
@@ -663,6 +663,54 @@ func TestIdleEngineWindow(t *testing.T) {
 	if !slices.Contains(f.calls, "tmux kill-window -t @5") {
 		t.Fatalf("calls %q", f.calls)
 	}
+}
+
+func TestIdleCompactedDoneWindow(t *testing.T) {
+	rule := strings.Repeat("─", 20)
+	frameWith := func(above string) string {
+		return strings.Join([]string{
+			"✻ Churned for 3s · done 11:20 AM", "※ recap: Goal x", "  tail. (disable recaps in /config)",
+			"  ⎿  Skills restored (dispatcher:deslop)",
+			"● Compacted while idle, before the prompt cache expired", above,
+			rule + " rust ─", "❯ ", rule, "  -- INSERT -- ⏵⏵ auto mode on · ← 1 agent", "  mode"}, "\n")
+	}
+	f := newFx(t)
+	f.bus(status("done", prURL, 0))
+	f.gh["pr view "+prURL+" --json state --jq .state"] = "MERGED"
+	f.tmux["list-panes -a -F #{window_id}\t#{pane_id}\t#{pane_current_command}\t#{pane_current_path}"] = "@5\t%5\tclaude\t" + f.wt
+
+	idle := frameWith("")
+	f.tmux["capture-pane -p -t %5"] = idle
+	f.tmux["capture-pane -e -p -t %5"] = idle
+	f.reap(f.main, Request{DryRun: true})
+	anchor, _ := wtgit.AnchorPath(f.wt)
+	f.wantOut("crew reap: would kill window @5 (feat/r idle engine)",
+		"crew reap: would reap feat/r (MERGED) @ "+f.wt, "crew reap: would prune record "+anchor)
+	f.noKill()
+
+	live := frameWith("✻ Churning… (3s · ↓ 1k tokens)")
+	f.tmux["capture-pane -p -t %5"] = live
+	f.tmux["capture-pane -e -p -t %5"] = live
+	f.reap(f.main, Request{DryRun: true})
+	f.wantOut("crew reap: keeping feat/r — an engine is still running there (live turn, unsent input, or no idle input box)")
+	f.noKill()
+}
+
+func TestIdleMarkerlessDoneWindowKeepsForHuman(t *testing.T) {
+	rule := strings.Repeat("─", 20)
+	fresh := strings.Join([]string{"╭ Claude Code", rule + " rust ─", "❯ ", rule, "  -- INSERT --"}, "\n")
+	f := newFx(t)
+	f.bus(status("done", prURL, 0))
+	f.gh["pr view "+prURL+" --json state --jq .state"] = "MERGED"
+	f.tmux[panesKey] = "@5\t%5\tclaude\t" + f.wt
+	f.tmux["capture-pane -p -t %5"] = fresh
+	f.tmux["capture-pane -e -p -t %5"] = fresh
+	line := fmt.Sprintf(`{"type":"user","timestamp":%q,"message":{"content":"hello"}}`,
+		time.UnixMilli(nowUnix*1000+5000).UTC().Format("2006-01-02T15:04:05.000Z"))
+	plantTranscript(t, f.wt, map[string][]string{"a.jsonl": {line}}, nil)
+	f.reap(f.main, Request{DryRun: true})
+	f.wantOut("crew reap: keeping feat/r — an engine is still running there (human present: the engine transcript has a user turn newer than the status)")
+	f.noKill()
 }
 
 func TestIdlePiEngineWindow(t *testing.T) {

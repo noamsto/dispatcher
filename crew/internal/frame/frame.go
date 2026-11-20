@@ -529,6 +529,37 @@ func piBlock(lines []string, end int) []string {
 // PaneIdleReason is _pane_idle_reason with engine fixed to claude: idle, or
 // the keep reason it prints.
 func PaneIdleReason(plain, colored string, skipBg bool) (reason string, idle bool) {
+	return paneIdleReason(plain, colored, skipBg, true)
+}
+
+// TerminalPaneIdleReason is PaneIdleReason for a session already recorded done:
+// idle compaction and similar post-turn rows can bury the finished-turn marker,
+// so the frame must be idle without it. Every other check still applies, plus
+// an Interrupted row in the window above the box after the last finished-turn marker.
+func TerminalPaneIdleReason(plain, colored string, skipBg bool) (reason string, idle bool) {
+	if interruptedSinceDone(plain) {
+		return "interrupted turn above the input box", false
+	}
+	return paneIdleReason(plain, colored, skipBg, false)
+}
+
+// interruptedSinceDone reports an Interrupted row anywhere in the window above
+// the box after its last finished-turn marker (the window top when there is none),
+// so compaction rows cannot bury it.
+func interruptedSinceDone(text string) bool {
+	_, plain, a, _, _, ok := scanBox(text)
+	if !ok {
+		return false
+	}
+	for j := a - 1; j >= 0 && !reDone.MatchString(plain[j]); j-- {
+		if reInterrupted.MatchString(plain[j]) {
+			return true
+		}
+	}
+	return false
+}
+
+func paneIdleReason(plain, colored string, skipBg, needMarker bool) (reason string, idle bool) {
 	if IsPermissionPrompt("claude", plain) || IsPrompt("claude", plain) || IsQuotaSessionLimit(plain) {
 		return "prompt on screen", false
 	}
@@ -537,6 +568,9 @@ func PaneIdleReason(plain, colored string, skipBg bool) (reason string, idle boo
 	}
 	if !ClaudeIdleBox(plain, colored, false) {
 		return "live turn, unsent input, or no idle input box", false
+	}
+	if !needMarker {
+		return "", true
 	}
 	if _, above, _ := BoxRows(plain, FirstRowClaude); !anyMatch(above, reDone) && !doneBehindPostTurn(plain) && !clearHintAboveBox(plain) {
 		return "no finished-turn marker above the input box", false
