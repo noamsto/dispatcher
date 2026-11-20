@@ -1615,3 +1615,31 @@ func TestOverviewHjklResizeFollowsLayout(t *testing.T) {
 		t.Errorf("narrow j at the bottom of agents: focus=%v, stack %v", w.st.focus, st)
 	}
 }
+
+func TestOverviewHjklAgentsEndingInSubagents(t *testing.T) {
+	v, _ := ovFixture(t, 150, 60, false, nil)
+	ws := panelWorkers(panelAgents, v.model, newOvIndex(v.model, v.st))
+	if len(ws) < 2 {
+		t.Fatalf("fixture needs two agent workers: %d", len(ws))
+	}
+	last := v.model.Workers[ws[len(ws)-1]]
+	row := &v.model.Agents[agentIndex(t, v, last.Branch)]
+	row.Execute = []vm.AgentNode{
+		{Kind: "subagent", State: "done", Label: ptr("sub0")},
+		{Kind: "subagent", State: "running", Label: ptr("sub1")},
+	}
+	v.rebuild()
+	v = ovAt(t, v, panelAgents, -2)
+	v, _ = ovKeys(v, "j")
+	if v.st.focus != panelAgents || v.sel().worker != ws[len(ws)-1] {
+		t.Fatalf("j should step to the last agent row: focus=%v worker=%d", v.st.focus, v.sel().worker)
+	}
+	v, _ = ovKeys(v, "j")
+	if v.st.focus != panelEvents || v.layout().evCursor != 0 {
+		t.Fatalf("j past a subagent-ending panel: focus=%v evCursor=%d", v.st.focus, v.layout().evCursor)
+	}
+	v, _ = ovKeys(v, "k")
+	if v.st.focus != panelAgents || v.sel().worker != ws[len(ws)-1] {
+		t.Errorf("k returned focus=%v worker=%d, want agents worker %d", v.st.focus, v.sel().worker, ws[len(ws)-1])
+	}
+}
