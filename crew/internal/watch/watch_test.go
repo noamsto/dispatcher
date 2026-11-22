@@ -786,12 +786,12 @@ func TestSignalStatus(t *testing.T) {
 		{syscall.SIGINT, 130},
 		{syscall.SIGHUP, 129},
 	} {
-		if got := signalStatus(tc.sig); got != tc.want {
-			t.Errorf("signalStatus(%v) = %d, want %d", tc.sig, got, tc.want)
+		if got := SignalStatus(tc.sig); got != tc.want {
+			t.Errorf("SignalStatus(%v) = %d, want %d", tc.sig, got, tc.want)
 		}
 	}
-	if got := signalStatus(osSignalStub{}); got != 1 {
-		t.Errorf("signalStatus(unnamed) = %d, want 1", got)
+	if got := SignalStatus(osSignalStub{}); got != 1 {
+		t.Errorf("SignalStatus(unnamed) = %d, want 1", got)
 	}
 }
 
@@ -805,21 +805,21 @@ func (osSignalStub) Signal()        {}
 // an interval it rejects, and 128+n when a signal killed it mid-poll.
 func TestExitStatus(t *testing.T) {
 	if _, err := exec.Command("sh", "-c", "exit 3").Output(); err != nil {
-		if got := childStatus(err); got != 3 {
-			t.Errorf("childStatus(exit 3) = %d, want 3", got)
+		if got := ChildStatus(err); got != 3 {
+			t.Errorf("ChildStatus(exit 3) = %d, want 3", got)
 		}
 	} else {
 		t.Fatal("`exit 3` succeeded")
 	}
 	if _, err := exec.Command("sh", "-c", "kill -TERM $$").Output(); err != nil {
-		if got := childStatus(err); got != 143 {
-			t.Errorf("childStatus(SIGTERM) = %d, want 143", got)
+		if got := ChildStatus(err); got != 143 {
+			t.Errorf("ChildStatus(SIGTERM) = %d, want 143", got)
 		}
 	} else {
 		t.Skip("`kill -TERM $$` did not fail the child")
 	}
-	if got := childStatus(errors.New("exec never started")); got != 1 {
-		t.Errorf("childStatus(non-ExitError) = %d, want 1", got)
+	if got := ChildStatus(errors.New("exec never started")); got != 1 {
+		t.Errorf("ChildStatus(non-ExitError) = %d, want 1", got)
 	}
 }
 

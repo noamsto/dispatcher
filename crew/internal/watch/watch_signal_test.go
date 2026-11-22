@@ -79,7 +79,7 @@ func TestWatchTermInLockWindowReleasesTheLock(t *testing.T) {
 			t.Fatal(err)
 		}
 		if err := cmd.Wait(); err != nil {
-			if rc := childStatus(err); rc != 128+int(syscall.SIGTERM) {
+			if rc := ChildStatus(err); rc != 128+int(syscall.SIGTERM) {
 				t.Errorf("iteration %d: exit = %d, want 143:\n%s", i, rc, out.String())
 			}
 		} else {
@@ -148,7 +148,7 @@ func TestWatchTermMidParkReleasesTheLock(t *testing.T) {
 	if err := cmd.Process.Signal(syscall.SIGTERM); err != nil {
 		t.Fatal(err)
 	}
-	if err := cmd.Wait(); childStatus(err) != 128+int(syscall.SIGTERM) {
+	if err := cmd.Wait(); ChildStatus(err) != 128+int(syscall.SIGTERM) {
 		t.Fatalf("exit = %v, want 143:\n%s", err, out.String())
 	}
 	if _, err := os.Stat(lockd); !os.IsNotExist(err) {

@@ -100,6 +100,36 @@ attention), never a wake.
   crew fleet stream --crew <crew-id>
   crew fleet stream --overseer
 
+usage: crew fleet watch --crew ID [--timeout S] [--states a,b,c]
+
+The park-lane twin of `crew fleet stream`: one `crew watch` that covers every
+repo on the machine, for a dispatcher whose workers land in other repos. It
+prints one `crew watch` batch {"cursor","events","repo"} and exits 0. On timeout
+nothing goes to stdout, one line goes to stderr and the exit is 0. Refusals
+exit 64, except a table flag placed before `watch` (e.g. `fleet --all watch`),
+which exits 1 as `fleet stream` does.
+
+  --crew ID     The crew to watch (required; no ambient CREW_ID)
+  --timeout S   Give up after S seconds (default 3300)
+  --states a,b  Qualifying states (default blocked,pr_open,done,failed,exited,
+                as `crew watch`)
+
+One repo's batch per call: repos rotate fairly, starting after the one delivered
+last (remembered under ${XDG_STATE_HOME:-~/.local/state}/crew/fleet-watch/<crew>),
+so the next call returns the next. The per-crew cursor is the one `crew watch`
+and `crew fleet stream` share, so nothing is delivered twice. A repo joins once
+it holds a row for the crew (no cursor is seeded elsewhere); with no cursor file
+its backlog replays on the first pass, as a bare `crew watch` does. A repo whose
+per-repo `crew stream` is alive is skipped. A held per-crew watch lock is
+reported on stderr and never stolen; each pass holds the lock briefly, so a
+simultaneous bare `crew watch` for that crew in that repo may be refused
+("another watch is already running").
+
+Local buses only: the remote-host relay stays a streaming-lane feature. It does
+not evaluate holds or reap.
+
+  crew fleet watch --crew <crew-id>
+
 usage: crew fleet load [--json] [--budget N] [--add WEIGHT] [--own BRANCH]...
 
 How loaded the machine is, from any directory (no git repo needed): the live

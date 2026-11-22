@@ -47,3 +47,27 @@ func TestFleetStatusGrammarAndHelp(t *testing.T) {
 		}
 	}
 }
+
+func TestFleetWatchHelpAndRefusals(t *testing.T) {
+	e := fleetLoadEnv(t)
+	for _, tc := range []struct {
+		args         []string
+		code         int
+		stdout, errs string
+	}{
+		{[]string{"fleet", "watch", "--help"}, 0, "usage: crew fleet watch --crew ID", ""},
+		{[]string{"fleet", "watch", "-h"}, 0, "One repo's batch per call", ""},
+		{[]string{"fleet", "watch", "--help"}, 0, "Local buses only", ""},
+		{[]string{"fleet", "watch", "--help"}, 0, "--timeout S", ""},
+		{[]string{"fleet", "watch", "--bogus"}, 64, "", "crew: fleet watch: unknown arg '--bogus'"},
+		{[]string{"fleet", "--all", "watch", "--crew", "c"}, 1, "", "crew: fleet [--all]"},
+		{[]string{"fleet", "watch"}, 64, "", "--crew"},
+		{[]string{"fleet", "watch", "--crew", ""}, 64, "", "crew: --crew needs a value"},
+	} {
+		var stdout, stderr bytes.Buffer
+		code := run(context.Background(), tc.args, &stdout, &stderr, e)
+		if code != tc.code || !strings.Contains(stdout.String(), tc.stdout) || !strings.Contains(stderr.String(), tc.errs) {
+			t.Errorf("%v: exit %d, stdout %q, stderr %q", tc.args, code, stdout.String(), stderr.String())
+		}
+	}
+}
