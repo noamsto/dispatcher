@@ -143,7 +143,7 @@ func RunFleetWatch(r FleetWatchRequest, stdout, stderr io.Writer, o FleetWatchOp
 			case watch.Delivered:
 				writeRotation(rotation, common)
 				return 0
-			default:
+			case watch.Empty:
 				if rc != 0 {
 					return rc
 				}
