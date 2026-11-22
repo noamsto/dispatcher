@@ -1,0 +1,15 @@
+direction: right
+dispatcher: Park-lane dispatcher
+fwatch: "crew fleet watch (NEW)\nstream/fleetwatch.go: RunFleetWatch" {style.stroke: green}
+once: "watch.Once + deliver (NEW)\nshared with watch.Run" {style.stroke: green}
+rot: "rotation file\nfleet-watch/<crew>/last (NEW)" {style.stroke: green}
+a: "repo A bus + cursor"
+b: "repo B bus + cursor"
+c: "repo C bus + cursor"
+dispatcher -> fwatch: "one-shot, exit after one batch"
+fwatch -> once: "per repo, lock + fold + cursor"
+fwatch -> rot: fairness
+once -> a
+once -> b
+once -> c
+fwatch -> a: "skip if per-repo stream alive;\nreport held watch lock"

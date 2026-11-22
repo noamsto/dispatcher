@@ -1,0 +1,14 @@
+direction: right
+dispatcher: Park-lane dispatcher (pi, codex, cursor)
+watch: "crew watch\n(watch.Run, one repo's bus)"
+fstream: "crew fleet stream\n(stream/fleet.go, streaming lane only)"
+a: "repo A bus + cursor"
+b: "repo B bus + cursor"
+c: "repo C bus + cursor"
+dispatcher -> watch: "foreground, --timeout 270"
+watch -> a: reads current checkout only
+fstream -> a
+fstream -> b
+fstream -> c
+gap: "no one-shot multi-repo park" {style.stroke: red; style.font-color: red}
+dispatcher -> gap: "B and C unwatched" {style.stroke: red}
