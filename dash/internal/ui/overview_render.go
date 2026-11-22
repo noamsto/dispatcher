@@ -829,7 +829,7 @@ func attnStripLine(visible []vm.AttentionItem, i int, label func(vm.AttentionIte
 	glyph, gc := severityGlyph(a.Severity)
 	workerSt := fg(colText).Bold(true)
 	if a.Worker != "" {
-		workerSt = s.codename(a.Tmux, workerSt)
+		workerSt = codenameStyle(a.Tmux, workerSt)
 	}
 	msg := a.Message
 	if msgW >= clearsMinWidth && a.Clears != "" {
@@ -869,7 +869,7 @@ func cardLines(ov vm.OverviewView, lines int, it placed, line func() *spans, iw 
 	l1 := line()
 	l1.add(stateGlyph(w.State), fg(glyphColor(w.State))).add(" ", lipgloss.NewStyle())
 	l1.limit = max0(iw - rightW)
-	l1.add(workerLabel(w), l1.codename(w.Tmux, fg(colText).Bold(true))).add(" "+ovStr(w.Tier, "?"), fg(colDim))
+	l1.add(workerLabel(w), codenameStyle(w.Tmux, fg(colText).Bold(true))).add(" "+ovStr(w.Tier, "?"), fg(colDim))
 	l1.limit = iw
 	l1.padTo(iw-rightW+1).add(ac, fg(colDim))
 
@@ -918,7 +918,7 @@ func agentLines(ov vm.OverviewView, it placed, line func() *spans, narrow bool) 
 	}
 	l1 := line()
 	if it.worker >= 0 {
-		labelStyle = l1.codename(ov.Workers[it.worker].Tmux, labelStyle)
+		labelStyle = codenameStyle(ov.Workers[it.worker].Tmux, labelStyle)
 	}
 	l1.add(stateGlyph(a.Lead.State), fg(glyphColor(a.Lead.State))).
 		add(" ", lipgloss.NewStyle()).
@@ -970,7 +970,7 @@ func watchLine(ov vm.OverviewView, it placed, s *spans, iw int) string {
 	nameSt := fg(colText)
 	if it.worker >= 0 {
 		name = workerLabel(ov.Workers[it.worker])
-		nameSt = s.codename(ov.Workers[it.worker].Tmux, nameSt)
+		nameSt = codenameStyle(ov.Workers[it.worker].Tmux, nameSt)
 	}
 	const nameW, labelW = 10, 10
 	sparkW := clamp(iw-1-nameW-1-1-labelW, 4, 30)
@@ -1034,14 +1034,14 @@ func ovEventLine(ov vm.OverviewView, it placed, s *spans, iw int, narrow bool) s
 		fromW := min(ansi.StringWidth(from), iw/3)
 		return s.add(age, fg(colDim)).
 			add(" ", lipgloss.NewStyle()).
-			col(from, fromW, s.codename(eventTmux(ov, e.Worker), fg(colText).Bold(true)), false).
+			col(from, fromW, codenameStyle(eventTmux(ov, e.Worker), fg(colText).Bold(true)), false).
 			add(" ", lipgloss.NewStyle()).
 			col(e.Text, iw-1-ansi.StringWidth(age)-1-fromW-1, fg(colText), false).String()
 	}
 	fromW := clamp(iw/4, 12, 24)
 	return s.col(ovAge(ov.GeneratedAt-e.TS), 4, fg(colDim), true).
 		add(" ", lipgloss.NewStyle()).
-		col(eventFrom(ov, e.Worker), fromW, s.codename(eventTmux(ov, e.Worker), fg(colText).Bold(true)), false).
+		col(eventFrom(ov, e.Worker), fromW, codenameStyle(eventTmux(ov, e.Worker), fg(colText).Bold(true)), false).
 		add(" ", lipgloss.NewStyle()).
 		col(e.Text, iw-1-4-1-fromW-1, fg(colText), false).String()
 }

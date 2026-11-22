@@ -32,17 +32,17 @@ func TestCodenameStyleUsesTmuxColourOrFallback(t *testing.T) {
 	}
 }
 
-func TestSpansCodenameKeepsSelectedRowStyle(t *testing.T) {
+func TestSelectedRowKeepsCodenameColour(t *testing.T) {
 	trueColor(t)
 	c := "colour25"
 	fallback := lipgloss.NewStyle().Italic(true)
-	plain := newSpans(10, nil)
-	if got := plain.add("moss", plain.codename(&c, fallback)).String(); !strings.Contains(got, "38;5;25") {
-		t.Errorf("plain row = %q, want the tmux colour", got)
-	}
 	sel := newSpans(10, lipgloss.Color("#223344"))
-	if got := sel.add("moss", sel.codename(&c, fallback)).String(); strings.Contains(got, "38;5;25") {
-		t.Errorf("selected row = %q, must keep the fallback style", got)
+	got := sel.add("moss", codenameStyle(&c, fallback)).String()
+	if !strings.Contains(got, "38;5;25") {
+		t.Errorf("selected row = %q, want the tmux colour", got)
+	}
+	if !strings.Contains(got, "48;2;34;51;68") {
+		t.Errorf("selected row = %q, want the selection background", got)
 	}
 }
 
