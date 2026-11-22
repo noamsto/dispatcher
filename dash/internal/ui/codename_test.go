@@ -35,15 +35,19 @@ func TestCodenameStyleUsesTmuxColourOrFallback(t *testing.T) {
 func TestSelectedRowKeepsCodenameColour(t *testing.T) {
 	trueColor(t)
 	c := "colour25"
-	fallback := lipgloss.NewStyle().Italic(true)
-	sel := newSpans(10, lipgloss.Color("#223344"))
-	got := sel.add("moss", codenameStyle(&c, fallback)).String()
-	if !strings.Contains(got, "38;5;25") {
-		t.Errorf("selected row = %q, want the tmux colour", got)
+	ov := vm.OverviewView{Workers: []vm.OverviewWorker{{Crew: "c", Branch: "feat/x", Tmux: &c, State: "working"}}}
+	st := overviewState{worker: workerKey{crew: "c", branch: "feat/x"}}
+	out := renderOverview(120, 40, ov, st, pillRound)
+	for _, line := range strings.Split(out, "\n") {
+		if !strings.Contains(line, "feat/x") {
+			continue
+		}
+		if !strings.Contains(line, "38;5;25") || !strings.Contains(line, "48;2;") {
+			t.Errorf("selected row = %q, want the tmux colour on the selection background", line)
+		}
+		return
 	}
-	if !strings.Contains(got, "48;2;34;51;68") {
-		t.Errorf("selected row = %q, want the selection background", got)
-	}
+	t.Errorf("no row names feat/x in %q", out)
 }
 
 func TestBoardCardHeadUsesTmuxColour(t *testing.T) {
