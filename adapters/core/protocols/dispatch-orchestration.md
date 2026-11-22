@@ -369,8 +369,10 @@ Omitted, pi registers the model as text-only, so a vision-capable endpoint
 never sees the screenshots a worker takes: declare `["text", "image"]` for one.
 
 This lane's recommended entry adds `"reasoning": true, "thinkingFormat":
-"qwen-chat-template", "effortThinking": {"low": "off"}`: `--effort low` runs
-with thinking off, every other rung with it on.
+"qwen-chat-template"`: Qwen needs thinking on at every `--effort` rung, `low`
+included. A `trivial` worker dispatched at `--effort low` with thinking off
+looped on one command for about 98 minutes and never committed, so
+`effortThinking` mapping a rung to `off` is not recommended for worker leads.
 
 - **Gate.** `dispatch --agent pi --model <id>` admits a local id only at the
   entry's `tiers`; `--ignore-map` overrides. Every other id is gated as before.
