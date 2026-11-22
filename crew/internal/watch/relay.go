@@ -92,7 +92,7 @@ func Relay(req RelayRequest, paths bus.Paths, stdout, stderr io.Writer, o Option
 			lastLine = o.Clock.Now()
 		}
 		if err := o.Sleep(c.interval, stderr); err != nil {
-			return childStatus(err)
+			return ChildStatus(err)
 		}
 	}
 }

@@ -106,7 +106,8 @@ The park-lane twin of `crew fleet stream`: one `crew watch` that covers every
 repo on the machine, for a dispatcher whose workers land in other repos. It
 prints one `crew watch` batch {"cursor","events","repo"} and exits 0. On timeout
 nothing goes to stdout, one line goes to stderr and the exit is 0. Refusals
-exit 64.
+exit 64, except a table flag placed before `watch` (e.g. `fleet --all watch`),
+which exits 1 as `fleet stream` does.
 
   --crew ID     The crew to watch (required; no ambient CREW_ID)
   --timeout S   Give up after S seconds (default 3300)

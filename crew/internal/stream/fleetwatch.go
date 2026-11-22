@@ -101,19 +101,15 @@ func RunFleetWatch(r FleetWatchRequest, stdout, stderr io.Writer, o FleetWatchOp
 	n.prefix = fleetWatchPrefix
 	joined := map[string]struct{}{}
 	names := FleetOptions{Git: o.Git}
+	labels := map[string]string{}
 	rotation := filepath.Join(o.StateRoot, r.Crew, "last")
 	deadline := wo.Clock.RealMS() + timeout*1000
 	var lastDiscover time.Time
 	discovered := false
 
 	for {
-		select {
-		case s := <-sigs:
-			if sig, ok := s.(syscall.Signal); ok {
-				return 128 + int(sig)
-			}
-			return 1
-		default:
+		if s, ok := watch.Pending(sigs); ok {
+			return watch.SignalStatus(s)
 		}
 		if now := wo.Clock.Now(); !discovered || now.Sub(lastDiscover) >= o.Rediscover {
 			discovered, lastDiscover = true, now
@@ -128,7 +124,11 @@ func RunFleetWatch(r FleetWatchRequest, stdout, stderr io.Writer, o FleetWatchOp
 
 		for _, common := range rotate(joined, readRotation(rotation)) {
 			cdir := filepath.Join(common, "crew", "crews", r.Crew)
-			repo := names.repoName(common)
+			repo, ok := labels[common]
+			if !ok {
+				repo = names.repoName(common)
+				labels[common] = repo
+			}
 			if state, _, pid, _ := lanepkg.State(cdir, o.Proc, wo.Clock.RealMS()); state == "alive" {
 				n.lines(noteLine("%s: %s: per-repo stream alive (pid %s) — not watching\n", fleetWatchPrefix, repo, pidText(pid)))
 				continue

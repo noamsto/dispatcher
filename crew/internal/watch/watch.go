@@ -168,8 +168,8 @@ func Run(req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int 
 	deadline := start + c.timeout*1000
 
 	for {
-		if s, ok := pending(sigs); ok {
-			return signalStatus(s)
+		if s, ok := Pending(sigs); ok {
+			return SignalStatus(s)
 		}
 		if orphaned() {
 			return 1
@@ -188,10 +188,10 @@ func Run(req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int 
 			// when a group-directed signal (a terminal's Ctrl-C) killed it out
 			// from under the park. A signal aimed at this process too is already
 			// queued, and reports the same number either way.
-			if s, ok := pending(sigs); ok {
-				return signalStatus(s)
+			if s, ok := Pending(sigs); ok {
+				return SignalStatus(s)
 			}
-			return childStatus(err)
+			return ChildStatus(err)
 		}
 	}
 }
@@ -443,10 +443,10 @@ func parseIntSaturate(text string) int64 {
 	return n
 }
 
-// childStatus is what `set -e` would have exited the arm with: the child's own
+// ChildStatus is what `set -e` would have exited the arm with: the child's own
 // status, or 128+n when it died of a signal. Anything Go could not read a
 // status from (the exec itself failed) is the shell's generic 1.
-func childStatus(err error) int {
+func ChildStatus(err error) int {
 	var ee *exec.ExitError
 	if errors.As(err, &ee) {
 		if ws, ok := ee.Sys().(syscall.WaitStatus); ok {
@@ -462,18 +462,18 @@ func childStatus(err error) int {
 	return 1
 }
 
-// signalStatus is the conventional 128+n a shell reports for a command that
+// SignalStatus is the conventional 128+n a shell reports for a command that
 // died of that signal — the status `stream`'s `wait` saw from the bash arm.
-func signalStatus(s os.Signal) int {
+func SignalStatus(s os.Signal) int {
 	if sig, isSig := s.(syscall.Signal); isSig {
 		return 128 + int(sig)
 	}
 	return 1
 }
 
-// pending is a non-blocking look at the signal channel: the park acts on a
+// Pending is a non-blocking look at the signal channel: the park acts on a
 // caught signal at the loop boundary, never mid-fold.
-func pending(sigs <-chan os.Signal) (os.Signal, bool) {
+func Pending(sigs <-chan os.Signal) (os.Signal, bool) {
 	select {
 	case s := <-sigs:
 		return s, true
