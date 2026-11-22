@@ -32,18 +32,22 @@ func TestCodenameStyleUsesTmuxColourOrFallback(t *testing.T) {
 	}
 }
 
-func TestSpansCodenameKeepsSelectedRowStyle(t *testing.T) {
+func TestSelectedRowKeepsCodenameColour(t *testing.T) {
 	trueColor(t)
 	c := "colour25"
-	fallback := lipgloss.NewStyle().Italic(true)
-	plain := newSpans(10, nil)
-	if got := plain.add("moss", plain.codename(&c, fallback)).String(); !strings.Contains(got, "38;5;25") {
-		t.Errorf("plain row = %q, want the tmux colour", got)
+	ov := vm.OverviewView{Workers: []vm.OverviewWorker{{Crew: "c", Branch: "feat/x", Tmux: &c, State: "working"}}}
+	st := overviewState{worker: workerKey{crew: "c", branch: "feat/x"}}
+	out := renderOverview(120, 40, ov, st, pillRound)
+	for _, line := range strings.Split(out, "\n") {
+		if !strings.Contains(line, "feat/x") {
+			continue
+		}
+		if !strings.Contains(line, "38;5;25") || !strings.Contains(line, "48;2;") {
+			t.Errorf("selected row = %q, want the tmux colour on the selection background", line)
+		}
+		return
 	}
-	sel := newSpans(10, lipgloss.Color("#223344"))
-	if got := sel.add("moss", sel.codename(&c, fallback)).String(); strings.Contains(got, "38;5;25") {
-		t.Errorf("selected row = %q, must keep the fallback style", got)
-	}
+	t.Errorf("no row names feat/x in %q", out)
 }
 
 func TestBoardCardHeadUsesTmuxColour(t *testing.T) {
