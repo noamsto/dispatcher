@@ -119,7 +119,7 @@ func routeHelp(sub string, args []string, stdout, stderr io.Writer) (int, bool) 
 			return entry.RunHelp([]string{"hold", arg(args, 1)}, stdout, stderr), true
 		}
 	case "fleet":
-		if slices.Contains([]string{"stream", "load", "status", "queue", "prio"}, arg(args, 1)) && isHelpFlag(arg(args, 2)) {
+		if slices.Contains([]string{"stream", "watch", "load", "status", "queue", "prio"}, arg(args, 1)) && isHelpFlag(arg(args, 2)) {
 			return entry.RunHelp([]string{"fleet"}, stdout, stderr), true
 		}
 	case "policy":
@@ -360,6 +360,9 @@ func parseCrew(args []string) (crewArgs, bool) {
 	if strings.HasPrefix(cmd, "fleet stream") {
 		key = "fleet stream"
 	}
+	if strings.HasPrefix(cmd, "fleet watch") {
+		key = "fleet watch"
+	}
 	if strings.HasPrefix(cmd, "fleet load") {
 		key = "fleet load"
 	}
@@ -392,6 +395,8 @@ func refusalKey(args []string) string {
 			return "migrate " + args[1]
 		case args[0] == "fleet" && args[1] == "stream":
 			return "fleet stream"
+		case args[0] == "fleet" && args[1] == "watch":
+			return "fleet watch"
 		case args[0] == "fleet" && args[1] == "load":
 			return "fleet load"
 		case args[0] == "fleet" && args[1] == "status":
@@ -1368,6 +1373,20 @@ func runFleet(ctx context.Context, p crewArgs, stdout, stderr io.Writer, e env) 
 				return fleet.CollectStatus(ctx, fleet.StatusRequest{}, stderr, overseerStatusOptions(e, stderr, hostSince))
 			},
 		})
+	}
+	if strings.HasPrefix(p.cmd, "fleet watch") {
+		w := p.typed.Fleet.Watch
+		out := bufio.NewWriterSize(stdout, 64<<10)
+		code := stream.RunFleetWatch(stream.FleetWatchRequest{Crew: str(w.Crew), States: str(w.States), Timeout: str(w.Timeout)}, out, stderr, stream.FleetWatchOptions{
+			Watch: watch.Options{
+				Flush: out.Flush,
+				Hosts: sender.NewOverseerHosts(overseerProbes(e)),
+				Clock: clock.FromEnv(),
+			},
+			Proc: e.proc,
+			Git:  git.Exec{},
+		})
+		return flush(out, stderr, code)
 	}
 	if strings.HasPrefix(p.cmd, "fleet load") {
 		return runFleetLoad(ctx, p.typed.Fleet.Load, stdout, stderr)

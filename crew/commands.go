@@ -125,6 +125,7 @@ type fleetTableCmd struct {
 type fleetCmd struct {
 	Table  fleetTableCmd  `cmd:"" name:"-table" default:"withargs" hidden:""`
 	Stream fleetStreamCmd `cmd:"" name:"stream"`
+	Watch  fleetWatchCmd  `cmd:"" name:"watch"`
 	Load   fleetLoadCmd   `cmd:"" name:"load"`
 	Status fleetStatusCmd `cmd:"" name:"status"`
 	Queue  fleetQueueCmd  `cmd:"" name:"queue"`
@@ -198,6 +199,12 @@ type fleetStreamCmd struct {
 	Daemon      bool    `name:"daemon"`
 	Follow      bool    `name:"follow"`
 	ReapEvery   *string `name:"reap-every" hidden:""`
+}
+
+type fleetWatchCmd struct {
+	Crew    *string `name:"crew"`
+	Timeout *string `name:"timeout"`
+	States  *string `name:"states"`
 }
 
 type stackCutCmd struct {
@@ -825,6 +832,11 @@ var wordings = map[string]wording{
 		extra:       func(w string) string { return fmt.Sprintf("crew: fleet stream: unknown arg '%s'", w) },
 		code:        exitUsage,
 	},
+	"fleet watch": {
+		unknownFlag: func(f string) string { return fmt.Sprintf("crew: fleet watch: unknown arg '%s'", f) },
+		extra:       func(w string) string { return fmt.Sprintf("crew: fleet watch: unknown arg '%s'", w) },
+		code:        exitUsage,
+	},
 	"roster": plain("roster"),
 	"report": plain("report"),
 	"retro":  {all: retro.Usage, code: exitFailure},
@@ -1258,6 +1270,16 @@ func validate(sub string, r *root) *refusal {
 			return &refusal{"crew: fleet stream: --reap-every is not supported — the fleet lane does not reap (each repo's own stream or dispatch does)", exitUsage}
 		}
 		for _, f := range append(c.valueFlags(), valueFlag{"--rediscover", c.Rediscover}) {
+			if given(f.v) {
+				return &refusal{fmt.Sprintf("crew: %s needs a value", f.name), exitUsage}
+			}
+		}
+	case "fleet watch":
+		if t := r.Fleet.Table; t.All || t.JSON || t.Crew != nil {
+			return fail(fleet.Usage)
+		}
+		c := r.Fleet.Watch
+		for _, f := range []valueFlag{{"--crew", c.Crew}, {"--timeout", c.Timeout}, {"--states", c.States}} {
 			if given(f.v) {
 				return &refusal{fmt.Sprintf("crew: %s needs a value", f.name), exitUsage}
 			}
