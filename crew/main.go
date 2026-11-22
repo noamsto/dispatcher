@@ -13,6 +13,7 @@ import (
 	"io"
 	"math/rand/v2"
 	"os"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -1393,7 +1394,12 @@ func runFleet(ctx context.Context, p crewArgs, stdout, stderr io.Writer, e env) 
 	}
 	if strings.HasPrefix(p.cmd, "fleet status") {
 		s := p.typed.Fleet.Status
-		return runFleetStatus(ctx, fleet.StatusRequest{JSON: s.JSON, GH: s.GH}, o, e, stdout, stderr)
+		req := fleet.StatusRequest{JSON: s.JSON, GH: s.GH}
+		if s.MaxAge == nil || *s.MaxAge == 0 {
+			return runFleetStatus(ctx, req, o, e, stdout, stderr)
+		}
+		scan := func(out, errw io.Writer) int { return runFleetStatus(ctx, req, o, e, out, errw) }
+		return fleet.CachedStatus(ctx, req, time.Duration(*s.MaxAge)*time.Second, stdout, stderr, statusCacheOptions(), scan)
 	}
 	c := p.typed.Fleet.Table
 	return fleet.Run(ctx, fleet.Request{All: c.All, JSON: c.JSON, Crew: str(c.Crew)}, stdout, stderr, o)
@@ -1436,6 +1442,24 @@ func fleetSettings(stderr io.Writer) func(context.Context) (fleet.QueueSettings,
 	return func(ctx context.Context) (fleet.QueueSettings, error) {
 		return fleet.ResolveQueueSettings(ctx, fleet.ConfigBin(), stderr)
 	}
+}
+
+// statusCacheOptions is the shared cache under $XDG_CACHE_HOME/crew, else
+// ~/.cache/crew; with neither set there is no cache home and no caching.
+func statusCacheOptions() fleet.CacheOptions {
+	base := os.Getenv("XDG_CACHE_HOME")
+	if base == "" {
+		home := os.Getenv("HOME")
+		if home == "" {
+			return fleet.CacheOptions{}
+		}
+		base = filepath.Join(home, ".cache")
+	}
+	variant := ""
+	if os.Getenv("CREW_OVERSEER") != "" {
+		variant = "overseer"
+	}
+	return fleet.CacheOptions{Dir: filepath.Join(base, "crew"), User: strconv.Itoa(os.Getuid()), Variant: variant}
 }
 
 func runFleetStatus(ctx context.Context, req fleet.StatusRequest, o fleet.Options, e env, stdout, stderr io.Writer) int {

@@ -129,7 +129,7 @@ one skips the load check.
 
   crew fleet load --json | jq '.free'
 
-usage: crew fleet status [--json] [--gh]
+usage: crew fleet status [--json] [--gh] [--max-age S]
 
 The cold-start view of the whole fleet, rebuilt from durable state on disk from
 any directory (no git repo needed, no memory of earlier runs): which
@@ -166,6 +166,14 @@ as `crew fleet` finds them.
            pr_error. Adds pr
            {state, merge_state, review, checks: pass|fail|pending} or, when the
            lookup fails, pr_error. Never fails the command
+  --max-age S
+           Serve the last output when it is younger than S seconds, else scan
+           and refresh it. The cache is shared by every caller with the same
+           flags under ${XDG_CACHE_HOME:-~/.cache}/crew (mode 0600): one scans
+           while the others wait for its result, and only a successful scan is
+           kept. Warnings the scan prints to stderr appear only on the run
+           that scanned, not when the output is served. Absent or 0 always
+           scans
 
 Without --json, one line per crew: REPO CREW DISPATCHER LANE LIVE
 BLOCKED(oldest) PR_OPEN HOLDS. With CREW_OVERSEER set no remote host is asked:

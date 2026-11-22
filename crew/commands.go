@@ -132,8 +132,9 @@ type fleetCmd struct {
 }
 
 type fleetStatusCmd struct {
-	JSON bool `name:"json"`
-	GH   bool `name:"gh"`
+	JSON   bool `name:"json"`
+	GH     bool `name:"gh"`
+	MaxAge *int `name:"max-age"`
 }
 
 type fleetLoadCmd struct {
@@ -1232,6 +1233,9 @@ func validate(sub string, r *root) *refusal {
 		}
 	case "fleet status":
 		if t := r.Fleet.Table; t.All || t.JSON || t.Crew != nil {
+			return fail(fleet.StatusUsage)
+		}
+		if m := r.Fleet.Status.MaxAge; m != nil && *m < 0 {
 			return fail(fleet.StatusUsage)
 		}
 	case "fleet queue":

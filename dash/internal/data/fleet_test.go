@@ -5,12 +5,13 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 )
 
 const (
-	fleetStatusKey = "crew fleet status --json"
+	fleetStatusKey = "crew fleet status --json --max-age 15"
 	fleetQueueKey  = "crew fleet queue --json"
 	tailscaleKey   = "tailscale status --json"
 	sshHaloKey     = "ssh -o BatchMode=yes -o ConnectTimeout=3 -o ServerAliveInterval=2 -o ServerAliveCountMax=1 -- halo.lan true"
@@ -118,6 +119,17 @@ func TestFleetStatusFixtureDecodes(t *testing.T) {
 	}
 	if _, err := json.Marshal(sec); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestCollectFleetStatusRecordsMaxAge(t *testing.T) {
+	r := fleetRunner(t)
+	allSSH(r)
+	CollectFleet(context.Background(), r, baseConfig(), false, fleetSettings(false), fixedProber(r))
+	if !slices.ContainsFunc(r.CallsSnapshot(), func(c FakeCall) bool {
+		return slices.Equal(c.Args, []string{"fleet", "status", "--json", "--max-age", "15"})
+	}) {
+		t.Errorf("no fleet status call with --max-age 15: %+v", r.CallsSnapshot())
 	}
 }
 

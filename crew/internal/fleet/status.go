@@ -33,7 +33,7 @@ import (
 )
 
 // StatusUsage is the line every `crew fleet status` grammar refusal prints.
-const StatusUsage = "crew: fleet status [--json] [--gh]"
+const StatusUsage = "crew: fleet status [--json] [--gh] [--max-age S]"
 
 const (
 	// blockedCycles and blockedCycleS are the worker's await budget: 24 cycles of
