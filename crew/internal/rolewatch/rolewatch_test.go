@@ -240,7 +240,7 @@ func TestDeliverIdleClaude(t *testing.T) {
 			Tmux:   tm,
 			Clock:  NewClock(func(string) string { return clockFile }),
 			Stderr: os.Stderr,
-			Log:    log,
+			Paths:  bus.Paths{Dir: filepath.Dir(log), Log: log},
 			Post: func(_ context.Context, crew, from, to, body string) {
 				posts = append(posts, to+" "+body)
 			},
@@ -283,9 +283,9 @@ func spilledWatcher(dir string, posts *[]string) *watcher {
 		role: "reviewer", pane: "%6", branch: "feat/9-x", wCrew: "c1", crew: "c1",
 		roleID: "role:feat/9-x:reviewer", delivery: "typed",
 		o: Options{
-			Tmux: &fakeTmux{reads: stampedPane()},
-			Log:  filepath.Join(dir, "events.jsonl"),
-			Post: func(_ context.Context, _, _, to, body string) { *posts = append(*posts, to+" "+body) },
+			Tmux:  &fakeTmux{reads: stampedPane()},
+			Paths: bus.Paths{Dir: dir, Log: filepath.Join(dir, "events.jsonl")},
+			Post:  func(_ context.Context, _, _, to, body string) { *posts = append(*posts, to+" "+body) },
 		},
 	}
 }
@@ -375,7 +375,7 @@ func TestDeliverCancelledDuringStampSkipsOrphanNotice(t *testing.T) {
 			Tmux:   tm,
 			Clock:  NewClock(func(string) string { return filepath.Join(dir, "clock") }),
 			Stderr: os.Stderr,
-			Log:    log,
+			Paths:  bus.Paths{Dir: filepath.Dir(log), Log: log},
 			Post:   func(context.Context, string, string, string, string) { posts++ },
 			CrewID: func() string { return "" },
 			PID:    42,

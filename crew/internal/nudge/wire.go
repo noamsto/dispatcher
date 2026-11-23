@@ -25,11 +25,15 @@ import (
 // read. `internal/stall` builds its D6 nudge from this, which is why the capture seams
 // (`CREW_STALL_SAMPLE_CMD`/`CREW_STALL_COLOR_CMD`) are `_pane_capture`'s here: a test
 // that scripts a frame scripts one capture, for the watchdog and the arm alike.
-func PaneDeps(paths bus.Paths, stderr io.Writer, clk clock.Clock) Deps {
+func PaneDeps(paths bus.Paths, crew func() string, stderr io.Writer, clk clock.Clock) Deps {
 	return Deps{
 		Tmux: tmux.Exec{},
 		Events: func() ([]any, error) {
-			events, err := bus.ReadEvents(paths.Log)
+			log, err := crewLog(paths, crew)
+			if err != nil {
+				return nil, err
+			}
+			events, err := bus.ReadEvents(log)
 			if errors.Is(err, bus.ErrNoLog) {
 				// `_sessions` answers `[]` when there is no log at all.
 				return nil, nil
@@ -48,7 +52,11 @@ func PaneDeps(paths bus.Paths, stderr io.Writer, clk clock.Clock) Deps {
 			if err != nil {
 				return err
 			}
-			return bus.Append(paths.Log, string(b))
+			log, err := crewLog(paths, crew)
+			if err != nil {
+				return err
+			}
+			return bus.Append(log, string(b))
 		},
 		Sleep:  func(ctx context.Context, seconds string) error { return clk.SleepCtx(ctx, seconds, stderr) },
 		Getenv: os.Getenv,
@@ -57,20 +65,41 @@ func PaneDeps(paths bus.Paths, stderr io.Writer, clk clock.Clock) Deps {
 	}
 }
 
+// crewLog is the log the crew's rows live in, the repo log while no crew is
+// named.
+func crewLog(paths bus.Paths, crew func() string) (string, error) {
+	id := crew()
+	if id == "" {
+		return paths.Log, nil
+	}
+	c, err := paths.Crew(id)
+	return c.Log, err
+}
+
 // Default wires the whole arm. The `nudge)` delegation arm execs here directly:
 // the one helper it called back for, `_unread_scan`, moved in process to
 // `internal/unread` with #968.
 func Default(paths bus.Paths, stderr io.Writer, pid int, crewID func() string) Options {
 	clk := clock.FromEnv()
 	return Options{
-		Deps: PaneDeps(paths, stderr, clk),
+		Deps: PaneDeps(paths, crewID, stderr, clk),
 		Unread: func(_ context.Context, crew, branch, sid string) string {
+			c, err := paths.Crew(crew)
+			if err != nil {
+				return ""
+			}
 			return unread.Scan(unread.Request{
-				Dir: paths.Dir, Log: paths.Log, Crew: crew, Branch: branch,
+				Dir: paths.Dir, Log: c.Log, Crew: crew, Branch: branch,
 				Me: "worker:" + branch, FromID: sid,
 			}, unread.Any)
 		},
-		Rows: func(maxLines int) ([]any, bool) { return probe.BusRows(paths.Log, 0, maxLines) },
+		Rows: func(maxLines int) ([]any, bool) {
+			log, err := crewLog(paths, crewID)
+			if err != nil {
+				return nil, false
+			}
+			return probe.BusRows(log, 0, maxLines)
+		},
 		Git:  git.Exec{},
 		Exists: func(path string) bool {
 			st, err := os.Stat(path)

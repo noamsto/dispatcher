@@ -10,7 +10,7 @@
 // dispatch bats match those lines.
 //
 // Bus location: the bus is still discovered from the watcher's cwd, resolved
-// once at startup by the caller (Options.Log). dispatch launches the watcher in
+// once at startup by the caller (Options.Paths). dispatch launches the watcher in
 // the worker's own worktree and the only reader of its rows is that worker's
 // own role pane, so anchoring would add a flag every launcher and resume path
 // must pass and buy nothing against a writer that already shares the worktree.
@@ -31,6 +31,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/clock"
 	"github.com/noamsto/dispatcher/crew/internal/tmux"
 )
@@ -46,7 +47,7 @@ type Options struct {
 	Clock         clock.Clock
 	Stderr        io.Writer
 	CurrentBranch func() (string, error) // the --branch default
-	Log           string                 // the bus file; empty never reads
+	Paths         bus.Paths              // the repo's bus; the zero value never reads
 	LogErr        error                  // why the bus could not be located; refuses at startup
 	// Post writes one msg row; a failed post is ignored, as `crew msg … || true` was.
 	Post   func(ctx context.Context, crew, from, to, body string)

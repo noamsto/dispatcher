@@ -8,7 +8,6 @@ import (
 	"io"
 	"math"
 	"os"
-	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
@@ -127,15 +126,25 @@ func (w *watcher) loop() int {
 	return 0
 }
 
+// logPath is the crew's log. The crew comes from a window stamp, which is
+// enumerated, not the caller's own id, so a bad one reads the repo log rather
+// than failing the watcher.
+func (w *watcher) logPath() string {
+	if bc, err := w.o.Paths.Crew(w.crew); err == nil {
+		return bc.Log
+	}
+	return w.o.Paths.Log
+}
+
 // intake processes, in log order, the rows newer than since that are msgs to or
 // from this role or its own statuses, then moves since to the newest of them.
 func (w *watcher) intake() {
 	// The bus is append-only, so an unchanged size means no new rows.
-	fi, err := os.Stat(w.o.Log)
+	fi, err := os.Stat(w.logPath())
 	if err != nil || !fi.Mode().IsRegular() || fi.Size() == w.logSize {
 		return
 	}
-	evs, err := bus.ReadEventsTolerant(w.o.Log)
+	evs, err := bus.ReadEventsTolerant(w.logPath())
 	var oe *bus.OpenError
 	if errors.As(err, &oe) {
 		return
@@ -220,7 +229,7 @@ func (w *watcher) enqueue(obj map[string]any, ts int64) {
 		// carries the whole assignment.
 		// The crew is the watcher's own, never the row's: a row names any crew_id
 		// it likes, and the body file is read from that crew's directory.
-		spill.Expand(obj, bus.Paths{Dir: filepath.Dir(w.o.Log)}, w.crew)
+		spill.Expand(obj, w.o.Paths, w.crew)
 		if note := rawText(obj[spill.NoteField]); note != "" {
 			obj["body"] = rawText(obj["body"]) + " [" + note + "]"
 			w.notify(truncatedNotice(w.role, w.pane, from, note), from)

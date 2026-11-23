@@ -208,7 +208,7 @@ func oneLine(err error) string { return strings.Join(strings.Fields(err.Error())
 func joinedSig(others []source, panes, crew string) string {
 	var b strings.Builder
 	for _, s := range others {
-		fmt.Fprintf(&b, "|%s|%d|%s", s.paths.Common, busSize(s.paths), joinRows(roleRows(panes, s.paths.Dir, crew)))
+		fmt.Fprintf(&b, "|%s|%d|%s", s.paths.Common, busSize(s.paths, crew), joinRows(roleRows(panes, s.paths.Dir, crew)))
 	}
 	return b.String()
 }

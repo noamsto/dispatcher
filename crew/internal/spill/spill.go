@@ -126,8 +126,8 @@ func expand(row map[string]any, paths bus.Paths, crew string, left int) int {
 	}
 	rel, _ := named.(string)
 	crewDir := ""
-	if bus.ValidCrewID(crew) {
-		crewDir = paths.CrewDir(crew)
+	if c, err := paths.Crew(crew); err == nil {
+		crewDir = c.Dir
 	}
 	full, err := read(crewDir, rel)
 	if err != nil {

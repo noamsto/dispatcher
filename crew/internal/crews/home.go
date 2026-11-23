@@ -129,7 +129,11 @@ func (h *Homes) IsHome(id string) bool {
 	if h.loggedHome(id) {
 		return true
 	}
-	pidfile := h.paths.CrewDir(id) + "/pid"
+	bc, err := h.paths.Crew(id)
+	if err != nil {
+		return false
+	}
+	pidfile := bc.Dir + "/pid"
 	text, _ := PidFileText(pidfile)
 	n, ok := validPid(text)
 	if !ok || !RecordedLive(h.o.Proc, h.o.Clock.Now(), n, pidfile) {

@@ -139,6 +139,8 @@ type call struct {
 	force, statusMode                        bool
 }
 
+const badCrewMsg = "crew: invalid crew id — expected only letters, digits, '.', '_' and '-'"
+
 // Request is one `crew stream` call as the grammar bound it: each value flag
 // as the caller's text, "" for its default.
 type Request struct {
@@ -156,7 +158,12 @@ func Run(r Request, paths bus.Paths, stdout, stderr io.Writer, opts Options) int
 		say(stderr, "%s\n", msg)
 		return exitUsage
 	}
-	cdir := paths.CrewDir(c.crew)
+	bc, err := paths.Crew(c.crew)
+	if err != nil {
+		say(stderr, "%s\n", badCrewMsg)
+		return exitUsage
+	}
+	cdir := bc.Dir
 	if err := os.MkdirAll(cdir, 0o755); err != nil {
 		say(stderr, "crew: %v\n", err)
 		return 1
@@ -193,7 +200,7 @@ func Run(r Request, paths bus.Paths, stdout, stderr io.Writer, opts Options) int
 		reapout: filepath.Join(cdir, "stream.reap.out"),
 		reaperr: filepath.Join(cdir, "stream.reap.err"),
 	}
-	l.relays = newRelays(l, paths.Log, cdir)
+	l.relays = newRelays(l, bc.Log, cdir)
 	l.peers = newPeerLink(l, paths)
 	return l.run(sigs)
 }
@@ -396,7 +403,7 @@ func check(r Request, o Options) (call, string) {
 	// just as caller-supplied, and unvalidated would let `/` or `..` mkdir and
 	// write a pid file outside the bus dir.
 	if !bus.ValidCrewID(c.crew) {
-		return c, "crew: invalid crew id — expected only letters, digits, '.', '_' and '-'"
+		return c, badCrewMsg
 	}
 	return c, ""
 }

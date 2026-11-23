@@ -35,7 +35,16 @@ type msgRow struct {
 // name the PR. Workers send free prose, one msg per PR, so splitting it into
 // entries and titling them is left to the dispatcher.
 func draft(pr int, crew string, paths bus.Paths, stdout, stderr io.Writer) int {
-	data, err := os.ReadFile(paths.Log)
+	log := paths.Log
+	if crew != "" {
+		c, err := paths.Crew(crew)
+		if err != nil {
+			say(stderr, "crew: followups: invalid crew id %s\n", crew)
+			return exitFailure
+		}
+		log = c.Log
+	}
+	data, err := os.ReadFile(log)
 	if err != nil && !os.IsNotExist(err) {
 		say(stderr, "crew: followups: could not read the bus: %v\n", err)
 		return exitFailure
