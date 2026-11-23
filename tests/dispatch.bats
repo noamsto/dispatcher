@@ -8016,6 +8016,212 @@ lock_path() { # <branch>
   [ ! -L "$(lock_path feat/42-do-a-thing)" ]
 }
 
+# The codename lock: mandatory, taken after the --pr re-fetch and held from the
+# claim row through the dispatch row.
+ident_lock_path() {
+  printf '%s/crew/identity.lock' "$(git rev-parse --path-format=absolute --git-common-dir)"
+}
+
+# stub_tenth_sleep — `sleep 0.1`, the lock's retry pause, returns at once and is
+# counted; every other duration runs the real sleep. The bound counts tries, so
+# 300 of them run fast.
+stub_tenth_sleep() {
+  local real_sleep
+  real_sleep="$(type -P sleep)"
+  cat >"$STUB_DIR/sleep" <<EOF
+#!/usr/bin/env bash
+if [ "\$*" = 0.1 ]; then
+  echo 0.1 >>"$BATS_TEST_TMPDIR/tenth-sleeps"
+  exit 0
+fi
+exec "$real_sleep" "\$@"
+EOF
+  chmod +x "$STUB_DIR/sleep"
+}
+
+tenth_sleeps() {
+  if [ -f "$BATS_TEST_TMPDIR/tenth-sleeps" ]; then
+    wc -l <"$BATS_TEST_TMPDIR/tenth-sleeps"
+  else
+    echo 0
+  fi
+}
+
+@test "identity lock: this dispatch holds it over the claim row, crew identity and the dispatch row, and drops it after" {
+  stub_launch_bins
+  unset DISPATCH_SESSION_ID
+  lock="$(ident_lock_path)"
+  probe="$BATS_TEST_TMPDIR/lock-probe"
+  real_jq="$(type -P jq)"
+  cat >"$STUB_DIR/jq" <<EOF
+#!/usr/bin/env bash
+case "\$*" in
+*'kind:"claim"}'*) printf 'claim %s\n' "\$(readlink "$lock")" >>"$probe" ;;
+*'kind:"dispatch", repo:'*) printf 'dispatch %s\n' "\$(readlink "$lock")" >>"$probe" ;;
+esac
+exec "$real_jq" "\$@"
+EOF
+  chmod +x "$STUB_DIR/jq"
+  mv "$STUB_DIR/crew" "$STUB_DIR/crew-inner"
+  cat >"$STUB_DIR/crew" <<EOF
+#!/usr/bin/env bash
+if [ "\${1:-}" = identity ] && [ "\${2#--}" = "\${2:-}" ]; then
+  printf 'identity %s\n' "\$(readlink "$lock")" >>"$probe"
+fi
+exec "$STUB_DIR/crew-inner" "\$@"
+EOF
+  chmod +x "$STUB_DIR/crew"
+
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  [ "$status" -eq 0 ]
+  # The session id ends in the dispatch shell's pid, which the lock links to.
+  pid="$(jq -r 'select(.kind == "dispatch") | .session | sub("^.*-"; "")' "$TEST_REPO/.git/crew/events.jsonl")"
+  [[ $pid =~ ^[0-9]+$ ]]
+  [ "$(cat "$probe")" = "$(printf 'claim %s\nidentity %s\ndispatch %s' "$pid" "$pid" "$pid")" ]
+  [ ! -e "$lock" ]
+  [ ! -L "$lock" ]
+  [ ! -L "$lock.break" ]
+}
+
+@test "identity lock: the --pr re-fetch and hard reset run before the lock and the claim row" {
+  setup_stale_pr_worktree eng-1746-prlock
+  lock="$(ident_lock_path)"
+  log="$TEST_REPO/.git/crew/events.jsonl"
+  probe="$BATS_TEST_TMPDIR/git-probe"
+  real_git="$(type -P git)"
+  cat >"$STUB_DIR/git" <<EOF
+#!/usr/bin/env bash
+for a in "\$@"; do
+  case "\$a" in
+  fetch | reset)
+    held=none claims=0
+    [ ! -L "$lock" ] || held="\$(readlink "$lock")"
+    [ ! -f "$log" ] || claims="\$(grep -c '"kind":"claim"' "$log" || true)"
+    printf '%s lock=%s claims=%s\n' "\$a" "\$held" "\$claims" >>"$probe"
+    break
+    ;;
+  esac
+done
+exec "$real_git" "\$@"
+EOF
+  chmod +x "$STUB_DIR/git"
+
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --pr 99 --crew-id c1 "Fix it"
+  [ "$status" -eq 0 ]
+  [ "$(git -C "$TEST_REPO/.worktrees/eng-1746-prlock" rev-parse HEAD)" = "$STALE_NEW_OID" ]
+  grep -qx 'fetch lock=none claims=0' "$probe"
+  grep -qx 'reset lock=none claims=0' "$probe"
+  jq -e 'select(.kind == "claim")' "$log" >/dev/null
+  [ ! -L "$lock" ]
+}
+
+@test "identity lock: a live holder past the bound refuses with it named, no claim row and no unlocked fallback" {
+  stub_launch_bins
+  lock="$(ident_lock_path)"
+  mkdir -p "${lock%/*}"
+  sleep 1000 >/dev/null 2>&1 3>&- &
+  live_pid=$!
+  ln -s "$live_pid" "$lock"
+  stub_tenth_sleep
+
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"identity lock busy after 30s — held by pid $live_pid at $lock"* ]]
+  [[ "$output" != *unlocked* ]]
+  n="$(tenth_sleeps)"
+  [ "$n" -ge 299 ]
+  [ "$n" -le 300 ]
+  [ "$(readlink "$lock")" = "$live_pid" ]
+  assert_no_bus_row claim
+  assert_no_bus_row dispatch
+  run ! grep -q 'new-window' "$STUB_LOG"
+}
+
+@test "identity lock: a lock left by a dead pid is broken at once and the dispatch proceeds" {
+  stub_launch_bins
+  stub_tenth_sleep
+  lock="$(ident_lock_path)"
+  mkdir -p "${lock%/*}"
+  # PID 2^31-1 is above any pid_max, so it is never a live process.
+  ln -s 2147483647 "$lock"
+
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  [ "$status" -eq 0 ]
+  [ "$(tenth_sleeps)" -eq 0 ]
+  jq -e 'select(.kind == "claim")' "$TEST_REPO/.git/crew/events.jsonl" >/dev/null
+  [ ! -L "$lock" ]
+  [ ! -L "$lock.break" ]
+  grep -q 'new-window' "$STUB_LOG"
+}
+
+@test "identity lock: an empty pre-upgrade directory lock is broken after the observation window" {
+  stub_launch_bins
+  stub_tenth_sleep
+  lock="$(ident_lock_path)"
+  mkdir -p "$lock"
+
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  [ "$status" -eq 0 ]
+  n="$(tenth_sleeps)"
+  [ "$n" -ge 99 ]
+  [ "$n" -lt 300 ]
+  jq -e 'select(.kind == "claim")' "$TEST_REPO/.git/crew/events.jsonl" >/dev/null
+  [ ! -e "$lock" ]
+  [ ! -L "$lock" ]
+  [ ! -L "$lock.break" ]
+}
+
+@test "identity lock: a directory lock that will not rmdir refuses at the bound and keeps no stray link inside" {
+  stub_launch_bins
+  stub_tenth_sleep
+  lock="$(ident_lock_path)"
+  mkdir -p "$lock"
+  touch "$lock/keep"
+
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"held by a pre-upgrade dispatch (no pid recorded) at $lock"* ]]
+  [ "$(ls -A "$lock")" = keep ]
+  [ ! -L "$lock.break" ]
+  assert_no_bus_row claim
+}
+
+@test "identity lock: a stranded break mutex refuses at the bound naming its path" {
+  stub_launch_bins
+  stub_tenth_sleep
+  lock="$(ident_lock_path)"
+  mkdir -p "${lock%/*}"
+  ln -s 2147483647 "$lock"
+  ln -s 2147483646 "$lock.break"
+
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"held by pid 2147483647 at $lock"* ]]
+  [[ "$output" == *"blocked by $lock.break, held by pid 2147483646"* ]]
+  [[ "$output" == *"rm -f $lock.break and re-dispatch"* ]]
+  [ "$(readlink "$lock")" = 2147483647 ]
+  [ "$(readlink "$lock.break")" = 2147483646 ]
+  assert_no_bus_row claim
+}
+
+@test "identity lock: a dispatch failing inside the lock span releases it on exit" {
+  stub_launch_bins
+  commit_envrc
+  cat >"$STUB_DIR/direnv" <<'EOF'
+#!/usr/bin/env bash
+exit 1
+EOF
+  chmod +x "$STUB_DIR/direnv"
+  lock="$(ident_lock_path)"
+
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"direnv allow failed"* ]]
+  jq -e 'select(.kind == "claim")' "$TEST_REPO/.git/crew/events.jsonl" >/dev/null
+  [ ! -L "$lock" ]
+  [ ! -e "$lock" ]
+}
+
 # Create-mode base resolution (#41): `wt switch -c` with no -b bases off the
 # LOCAL default branch, which nothing here fetches or fast-forwards first —
 # routine staleness on a machine that dispatches more than it pulls. These

@@ -4599,10 +4599,113 @@ if ! ln -s "$$" "$dispatch_lock" 2>/dev/null; then
   fi
   exit 1
 fi
-ident_locked=""
-claude_json_lock=""
+
+# The codename lock (identity.lock) is mandatory: a dispatch that cannot take it
+# within 300 tries 0.1 s apart (30 s) refuses. It covers local work only, so
+# only a hung or killed holder outlasts that. Unlike dispatch_lock, a dead
+# holder's lock IS broken, because the break runs under a second ln -s mutex and
+# removes the lock only while it still names the dead pid it was seen with:
+# another breaker cannot race that re-read (mutex), and no live acquirer can
+# have replaced it (the dead one still exists). A pre-upgrade dispatch's lock is
+# a pid-less directory its holder keeps for seconds and stops waiting on after
+# 10 s, so one seen for 100 consecutive tries is a SIGKILLed leftover; it is
+# rmdir'd, which only succeeds while it is empty.
 ident_lock="$crew_dir/identity.lock"
-trap 'rm -f "$dispatch_lock" "${claude_json_lock:-}"; [ -z "$ident_locked" ] || rmdir "$ident_lock" 2>/dev/null' EXIT INT TERM HUP
+ident_break="$ident_lock.break"
+ident_locked="" ident_break_held=""
+claude_json_lock=""
+
+# _pid_link_take <path> — create <path> as a symlink to this pid; 0 only when
+# this process then holds it.
+_pid_link_take() {
+  ln -s "$$" "$1" 2>/dev/null || return 1
+  [ -L "$1" ] && [ "$(readlink "$1" 2>/dev/null)" = "$$" ] && return 0
+  # <path> is a directory (a pre-upgrade identity.lock): ln linked inside it.
+  rm -f "$1/$$"
+  return 1
+}
+
+# _pid_live <pid> — 1 only when <pid> surely names no process: not a pid at all
+# (every writer links $$, so nothing live wrote it), or kill -0 failing with
+# anything but EPERM (EPERM proves the process exists, under another uid).
+_pid_live() {
+  local kmsg
+  [[ $1 =~ ^[1-9][0-9]*$ ]] || return 1
+  kmsg="$(LC_ALL=C kill -0 "$1" 2>&1)" && return 0
+  case "$kmsg" in *"not permitted"* | *"not allowed"*) return 0 ;; esac
+  return 1
+}
+
+# _ident_lock_break <seen> — under the break mutex, remove the codename lock if
+# it is still what the caller saw: <seen> is its dead holder's pid, or empty for
+# a stale directory-form lock. 1 when the mutex is busy.
+_ident_lock_break() {
+  _pid_link_take "$ident_break" || return 1
+  ident_break_held=1
+  if [ -z "$1" ]; then
+    rmdir "$ident_lock" 2>/dev/null || true
+  elif [ "$(readlink "$ident_lock" 2>/dev/null)" = "$1" ]; then
+    rm -f "$ident_lock"
+  fi
+  ident_break_held=""
+  rm -f "$ident_break"
+}
+
+# _ident_lock_acquire — take the codename lock, or refuse (exit 1). A break
+# blocked by a mutex whose holder is gone is never forced: the refusal names it.
+_ident_lock_acquire() {
+  local holder="" who="" stuck="" dir_seen=0
+  for _ in $(seq 1 300); do
+    if _pid_link_take "$ident_lock"; then
+      ident_locked=1
+      return 0
+    fi
+    stuck=""
+    if [ -L "$ident_lock" ]; then
+      dir_seen=0
+      holder="$(readlink "$ident_lock" 2>/dev/null || true)"
+      who="pid $holder"
+      if [ -n "$holder" ] && ! _pid_live "$holder"; then
+        _ident_lock_break "$holder" && continue
+        stuck="$(readlink "$ident_break" 2>/dev/null || true)"
+      fi
+    elif [ -d "$ident_lock" ]; then
+      who="a pre-upgrade dispatch (no pid recorded)"
+      dir_seen=$((dir_seen + 1))
+      if [ "$dir_seen" -ge 100 ]; then
+        if _ident_lock_break ""; then
+          dir_seen=0
+          continue
+        fi
+        stuck="$(readlink "$ident_break" 2>/dev/null || true)"
+      fi
+    else
+      dir_seen=0 who=""
+    fi
+    if _pid_live "$stuck"; then stuck=""; fi
+    sleep 0.1
+  done
+  {
+    echo "dispatch: identity lock busy after 30s — held by ${who:-an unknown holder} at $ident_lock; refusing to launch without it, since two dispatches could take one codename. Re-dispatch once it frees; the worktree stays for that."
+    [ -z "$stuck" ] || echo "  its stale-lock break is blocked by $ident_break, held by pid $stuck — if that pid is gone, rm -f $ident_break and re-dispatch"
+  } >&2
+  exit 1
+}
+
+# _ident_lock_release — drop the codename lock and break mutex this process
+# holds. Each flag clears before its link goes: the signal trap runs this too,
+# and resumes the script afterwards, so a set flag must never outlive the link.
+_ident_lock_release() {
+  if [ -n "$ident_break_held" ]; then
+    ident_break_held=""
+    rm -f "$ident_break"
+  fi
+  if [ -n "$ident_locked" ]; then
+    ident_locked=""
+    rm -f "$ident_lock"
+  fi
+}
+trap 'rm -f "$dispatch_lock" "${claude_json_lock:-}"; _ident_lock_release' EXIT INT TERM HUP
 
 # Reuse-or-refuse (#17). git allows exactly one worktree per branch, so a dispatch
 # onto a branch that already has one lands in the same directory. Occupancy is a
@@ -4842,19 +4945,6 @@ sanitized="${branch//\//-}"
 session="${DISPATCH_SESSION_ID:-s$(date +%s)-$$}"
 worker_id="worker:$branch#$session"
 
-# Claim the branch on the bus before the tmux window exists (#32): reap's
-# idle-release loop reads a branch's newest bus event, and a session that
-# hasn't posted `working` yet would otherwise still read as whatever the
-# prior session last posted — often a stale `done` — releasing the window
-# this dispatch is about to create. A claim has no `body`, so it can never
-# itself satisfy reap's terminal-state check; it only masks a stale `done`
-# until the worker's own `working` post supersedes it. If this dispatch
-# aborts before that happens, the claim becomes the branch's permanent
-# latest bus event and idle-release can never touch it again.
-line=$(jq -nc --arg crew "$crew_id" --arg from "$worker_id" \
-  '{ts:(now*1000|floor), crew_id:$crew, from:$from, kind:"claim"}')
-_crew_append "$line"
-
 # Ask git where worktrunk actually placed the worktree — its path template is
 # user-configurable, so reconstructing it here drifts the moment that changes.
 # awk must read to EOF: an early `exit` closes the pipe while git still has
@@ -4874,34 +4964,6 @@ wt_admin="$(_wt_admin_dir "${crew_dir%/crew}" "$wt_path")" || {
   echo "dispatch: no git admin dir for $wt_path" >&2
   exit 1
 }
-
-# Pre-trust the worktree for claude (#40). Claude Code keys workspace trust by
-# absolute path in ~/.claude.json under .projects["<path>"].hasTrustDialogAccepted
-# — confirmed by inspecting an already-trusted checkout's own entry there, not
-# guessed. A fresh worktree path is unknown to that store, and
-# --permission-mode auto does NOT bypass the resulting trust dialog, so an
-# unattended worker wedges on it before ever reading WORKER_TASK.md. Stamp
-# trust here so the worker's first turn never sees the prompt. Locked with the
-# same ln -s idiom as dispatch_lock above: ~/.claude.json is shared by every
-# concurrent dispatch on this machine, and an unlocked read-modify-write would
-# lose one racer's stamp to another's. The lock only serializes dispatch
-# invocations against each other — a live claude session's own background
-# writes to ~/.claude.json race it too, same as they'd race any other writer;
-# that residual loss window is accepted, not solved, here. Aborts the dispatch
-# on failure — a worker that can't be pre-trusted just reproduces the wedge
-# this fixes.
-if [ "$agent" = claude ]; then
-  if ! _claude_pretrust "$wt_path"; then
-    claude_json_lock_path="$HOME/.claude.json.dispatch.lock"
-    held=$(readlink "$claude_json_lock_path" 2>/dev/null || true)
-    if [ -n "$held" ] && kill -0 "$held" 2>/dev/null; then
-      echo "dispatch: could not pre-trust worktree $wt_path — $claude_json_lock_path is held by pid $held (another dispatch mid-scaffold) — the worker would wedge on the workspace-trust dialog" >&2
-    else
-      echo "dispatch: could not pre-trust worktree $wt_path — a stale lock from a hard-killed dispatch remains at $claude_json_lock_path; remove it and retry" >&2
-    fi
-    exit 1
-  fi
-fi
 
 # --pr: verify the attached worktree actually sits at the PR head. `wt switch`
 # attaches to an existing worktree without fetching or resetting it, so a
@@ -4929,6 +4991,54 @@ if [ -n "$pr_number" ]; then
       echo "dispatch: worktree HEAD $worktree_head != PR $pr_number head $head_oid, and the worktree has uncommitted changes — refusing to reset. Resolve manually at $wt_path, then re-dispatch." >&2
       exit 1
     fi
+  fi
+fi
+
+# Codename lock, held from here through the dispatch row: `crew identity` picks
+# a slot no live worker holds and the dispatch row records it, so two racing
+# dispatches cannot read the same free slot. Taken only now, after the base
+# fetch, the switch and its hooks, and the --pr re-fetch: it is crew-wide, and
+# holding it across network I/O would queue every dispatch behind the slowest.
+_ident_lock_acquire
+
+# Claim the branch on the bus before the tmux window exists (#32): reap's
+# idle-release loop reads a branch's newest bus event, and a session that
+# hasn't posted `working` yet would otherwise still read as whatever the
+# prior session last posted — often a stale `done` — releasing the window
+# this dispatch is about to create. A claim has no `body`, so it can never
+# itself satisfy reap's terminal-state check; it only masks a stale `done`
+# until the worker's own `working` post supersedes it. If this dispatch
+# aborts before that happens, the claim becomes the branch's permanent
+# latest bus event and idle-release can never touch it again.
+line=$(jq -nc --arg crew "$crew_id" --arg from "$worker_id" \
+  '{ts:(now*1000|floor), crew_id:$crew, from:$from, kind:"claim"}')
+_crew_append "$line"
+
+# Pre-trust the worktree for claude (#40). Claude Code keys workspace trust by
+# absolute path in ~/.claude.json under .projects["<path>"].hasTrustDialogAccepted
+# — confirmed by inspecting an already-trusted checkout's own entry there, not
+# guessed. A fresh worktree path is unknown to that store, and
+# --permission-mode auto does NOT bypass the resulting trust dialog, so an
+# unattended worker wedges on it before ever reading WORKER_TASK.md. Stamp
+# trust here so the worker's first turn never sees the prompt. Locked with the
+# same ln -s idiom as dispatch_lock above: ~/.claude.json is shared by every
+# concurrent dispatch on this machine, and an unlocked read-modify-write would
+# lose one racer's stamp to another's. The lock only serializes dispatch
+# invocations against each other — a live claude session's own background
+# writes to ~/.claude.json race it too, same as they'd race any other writer;
+# that residual loss window is accepted, not solved, here. Aborts the dispatch
+# on failure — a worker that can't be pre-trusted just reproduces the wedge
+# this fixes.
+if [ "$agent" = claude ]; then
+  if ! _claude_pretrust "$wt_path"; then
+    claude_json_lock_path="$HOME/.claude.json.dispatch.lock"
+    held=$(readlink "$claude_json_lock_path" 2>/dev/null || true)
+    if [ -n "$held" ] && kill -0 "$held" 2>/dev/null; then
+      echo "dispatch: could not pre-trust worktree $wt_path — $claude_json_lock_path is held by pid $held (another dispatch mid-scaffold) — the worker would wedge on the workspace-trust dialog" >&2
+    else
+      echo "dispatch: could not pre-trust worktree $wt_path — a stale lock from a hard-killed dispatch remains at $claude_json_lock_path; remove it and retry" >&2
+    fi
+    exit 1
   fi
 fi
 
@@ -4960,17 +5070,8 @@ elif ! direnv allow "$wt_path"; then
 fi
 
 # FleetView-style codename+color: the branch's recorded one, else a slot no live
-# worker holds. Picked and recorded under one lock so two racing dispatches
-# cannot read the same free slot; the recorded name is what roster, tmux and
-# `--name` all read back.
-for _ in $(seq 1 100); do
-  if mkdir "$ident_lock" 2>/dev/null; then
-    ident_locked=1
-    break
-  fi
-  sleep 0.1
-done
-[ -n "$ident_locked" ] || echo "dispatch: identity lock busy after 10s — picking a codename unlocked" >&2
+# worker holds; the recorded name is what roster, tmux and `--name` all read
+# back.
 ident=$(crew identity "$branch" "$crew_id")
 agent_name=$(printf '%s' "$ident" | jq -r .name)
 agent_color=$(printf '%s' "$ident" | jq -r .tmux)
@@ -5053,10 +5154,7 @@ _crew_append "$line"
 # A dispatcher on another host records the same row from this line.
 [ "${DISPATCH_EMIT_ROW:-}" != 1 ] || printf 'dispatch_row: %s\n' "$line"
 _claim_index_dispatch
-if [ -n "$ident_locked" ]; then
-  rmdir "$ident_lock" 2>/dev/null || true
-  ident_locked=""
-fi
+_ident_lock_release
 
 # GitHub-issue dispatch only: post a context comment for at-a-glance history.
 # Linear dispatches and `--pr` review dispatches set neither $gh_issue nor
