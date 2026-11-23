@@ -1968,9 +1968,8 @@ _crew_repo() { realpath -e -- "${crew_dir%/crew}"; }
 # live dispatch of $branch in crew $crew_id, one per line (only <only>, when
 # given). An untagged row belongs to <repo>, the repo whose log it is. A dispatch
 # stays live until a reap or release of the branch in its own repo that is later
-# by (ts, file position): a reap here must not end another repo's dispatch once
-# a crew's repos share one log. A ts that is not a number orders as 0: jq ranks
-# strings above every number, so a junk one would outlast any real end.
+# by (ts, file position). A ts that is not a number orders as 0: jq ranks strings
+# above every number, so a junk one would outlast any real end.
 _branch_live_repos() {
   jq -nrR --arg b "$branch" --arg c "$crew_id" --arg r "$2" --arg only "${3:-}" '
     reduce (inputs | fromjson? | objects) as $row ({n: 0, live: {}, ended: {}};
@@ -1990,13 +1989,12 @@ _branch_live_repos() {
 # _branch_live_elsewhere — print the repo of a live dispatch of $branch in crew
 # $crew_id from another repo, or nothing: worker ids, reply and the stamp rule
 # key on the branch alone, so a crew holds one worker per branch name. A row's
-# repo is its writer's word, and nothing here can end a planted or stale one,
-# so this log only names candidates: one counts when its own log, the source of
-# truth at layout 1, confirms the live dispatch by the same rule. That log must
-# not be this one, or an alias of this repo would confirm the row with itself.
-# A missing log here is no conflict; one jq cannot read returns 1, and the
-# caller refuses. A candidate log that is missing, unreadable or not a regular
-# file (a FIFO would hang jq) cannot confirm, so that candidate is ignored.
+# repo is its writer's word and nothing here can end a planted or stale one, so
+# this log only names candidates: one counts when its own log confirms the live
+# dispatch by the same rule. That log must not be this one, or an alias of this
+# repo would confirm the row with itself. A missing log here is no conflict; one
+# jq cannot read returns 1. A candidate log that is missing, unreadable or not a
+# regular file (a FIFO would hang jq) cannot confirm, so that candidate is ignored.
 _branch_live_elsewhere() {
   local events="$crew_dir/events.jsonl" here live repo
   [ -e "$events" ] || [ -L "$events" ] || return 0
@@ -2020,14 +2018,12 @@ _branch_live_elsewhere() {
 # _lost_branch_race <repo> — the re-check under the codename lock found <repo>'s
 # dispatch of $branch, which won the race since the pre-check: undo what this
 # dispatch made, keyed on facts recorded before the switch, and refuse. A
-# worktree that was already there is not this dispatch's to touch, nor is the
-# branch it holds: one on the branch at the listing ($prev_wt), or one whose
-# admin dir predates the listing and whose HEAD moved onto the branch since, so
-# the switch attached to it. A branch the switch made goes, with the tracking
-# config fetch-name writes and a name switch off origin's ref sets up; one that
-# existed stays, as does a pr-ref switch's, which worktrunk picked. Origin is
-# never touched. A failed step does not stop the rest; the refusal names what is
-# left.
+# worktree that was already there ($prev_wt, or an admin dir predating the
+# listing whose HEAD moved onto the branch since) is not this dispatch's to
+# touch, nor is its branch. A branch the switch made goes, with the tracking
+# config fetch-name writes and a name switch off origin's ref sets up; a
+# pre-existing or pr-ref one stays. Origin is never touched. A failed step does
+# not stop the rest; the refusal names what is left.
 _lost_branch_race() {
   local common="${crew_dir%/crew}" key rc
   local -a removed=() kept=() failed=()
@@ -5125,9 +5121,9 @@ fi
 # holding it across network I/O would queue every dispatch behind the slowest.
 _ident_lock_acquire || exit 1
 
-# Same-branch re-check, authoritative: the pre-check ran unlocked, so another
-# repo's dispatch of $branch may have written its row since. This dispatch's own
-# row follows under the same lock, so of two racers the later one sees it here.
+# Same-branch re-check, authoritative: the pre-check ran unlocked. This
+# dispatch's own row follows under the same lock, so of two racers the later one
+# sees the other's here.
 live_repo="$(_branch_live_elsewhere)" || exit 1
 [ -z "$live_repo" ] || _lost_branch_race "$live_repo"
 
