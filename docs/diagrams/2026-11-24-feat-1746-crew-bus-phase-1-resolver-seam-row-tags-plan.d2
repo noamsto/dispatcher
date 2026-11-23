@@ -1,0 +1,31 @@
+direction: right
+
+callers: "Go writers + readers\n(crew id in hand)"
+fanin: "fan-in + repo-wide\nreap, crews, log"
+resolver: "bus resolver\nPathsFor · Paths.Crew(id)\n→ Log, Dir, RepoDir" { class: good }
+crewid: "ResolveCrewID\n--crew → header/env\n→ window @crew_id" { class: good }
+rows: "dispatch / claim-issue /\nreap / release rows\n+ repo, + crew_id" { class: good }
+
+dispatch: "dispatch.sh" {
+  direction: down
+  pre: "same-branch pre-check\n(lock-free)" { class: good }
+  wt: "wt switch"
+  pr: "--pr re-fetch\n(per-branch lock only)" { class: good }
+  lock: "identity.lock\nmandatory 30 s, pid,\nstale break" { class: good }
+  recheck: "re-check\n+ cleanup on refusal" { class: good }
+  claim: "claim row"
+  row: "dispatch row"
+  pre -> wt
+  wt -> pr
+  pr -> lock
+  lock -> recheck
+  recheck -> claim
+  claim -> row
+}
+record: "worktree record\n+ line 5: crew id" { class: good }
+
+callers -> resolver: "Crew(id).Log/Dir"
+fanin -> resolver: "PathsFor(common)"
+callers -> crewid
+dispatch.row -> rows
+dispatch.row -> record
