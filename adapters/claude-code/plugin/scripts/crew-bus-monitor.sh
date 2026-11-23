@@ -73,7 +73,7 @@ parent=$PPID
 poll=${CREW_BUS_MONITOR_POLL:-5}
 child=
 nap=
-trap 'kill "$child" "$nap" 2>/dev/null; exit 0' TERM INT HUP
+trap 'kill "$child" "$nap" 2>/dev/null; [[ -z $child ]] || wait "$child"; exit 0' TERM INT HUP
 
 delay=$min_delay
 backoff() { ((delay = delay * 2 > max_delay ? max_delay : delay * 2)); }
@@ -97,6 +97,7 @@ while alive; do
       nap=
       alive || {
         kill "$child" 2>/dev/null
+        wait "$child"
         exit 0
       }
     done
