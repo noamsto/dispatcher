@@ -117,7 +117,7 @@ func (o Options) sources(ctx context.Context, local bus.Paths, crew string) []so
 			if r.Status != repos.StatusOK || sameDir(r.Common, local.Common) {
 				continue
 			}
-			p := bus.Paths{Common: r.Common, Dir: r.Common + "/crew", Log: r.Common + "/crew/events.jsonl"}
+			p := bus.PathsFor(r.Common)
 			events, err := bus.ReadEventsTolerant(p.Log)
 			if err != nil {
 				say(o.Stderr, "crew: roster-render: %s: skipped (%s)\n", r.Common, oneLine(err))

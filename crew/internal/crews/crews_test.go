@@ -383,6 +383,32 @@ func TestTableFinalPassFailureIsExit5WithNoRows(t *testing.T) {
 	}
 }
 
+// A crew_id a worker planted in the log that is no valid crew id is listed
+// like any logged crew but never read as a crew dir: "../x" would otherwise
+// resolve to the pid file planted beside the crews dir.
+func TestTableMalformedLogCrewIDListedWithoutPidRead(t *testing.T) {
+	p := fixture(t)
+	crewDir(t, p, "seed", "")
+	if err := os.MkdirAll(p.Dir+"/x", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p.Dir+"/x/pid", []byte("4321\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	writeLog(t, p, status(1785951000000, "../x", "dispatcher:1")+"\n"+status(1785950900000, "a b", "dispatcher:1")+"\n")
+	out, errB, code := run(t, p, opts(map[int]bool{4321: true}, nil))
+	if code != 0 || errB != "" {
+		t.Fatalf("code %d, stderr %q", code, errB)
+	}
+	want := "crew_id\tlast_event_s\tfirst_event_s\tworkers\tpid\talive\n" +
+		"../x\t264\t264\t0\t—\t—\n" +
+		"a b\t364\t364\t0\t—\t—\n" +
+		"seed\t—\t—\t0\t—\t—\n"
+	if out != want {
+		t.Errorf("got:\n%s\nwant:\n%s", out, want)
+	}
+}
+
 // A non-string crew_id contributes no id: the arm's jq -r printed numbers
 // and JSON fragments as id lines; Go drops them (documented divergence).
 func TestTableNonStringCrewIDsDropped(t *testing.T) {

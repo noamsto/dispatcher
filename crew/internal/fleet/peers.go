@@ -13,7 +13,7 @@ import (
 // with a local crew id or branch. A read error leaves no rows; dropped is
 // counted either way.
 func peerRows(common string, hosts func() (map[string]remote.Host, error), events []bus.Event, now time.Time) (rows []map[string]any, dropped int, err error) {
-	store := peer.StoreFor(bus.Paths{Common: common, Dir: common + "/crew"})
+	store := peer.StoreFor(bus.PathsFor(common))
 	rows, err = peer.RosterRows(store, hosts, now)
 	rows, dropped = peer.DropLocal(rows, events)
 	return rows, dropped, err
@@ -39,7 +39,7 @@ type PeerLink struct {
 func peerStatusOf(common string, hosts func() (map[string]remote.Host, error), events []bus.Event, now time.Time) (*PeerStatus, *string) {
 	p := &PeerStatus{Links: []PeerLink{}, Rows: []map[string]any{}}
 	rows, dropped, err := peerRows(common, hosts, events, now)
-	links, lerr := peer.StoreFor(bus.Paths{Common: common, Dir: common + "/crew"}).Links()
+	links, lerr := peer.StoreFor(bus.PathsFor(common)).Links()
 	if err = errors.Join(err, lerr); err != nil {
 		msg := oneLine(err)
 		return p, &msg

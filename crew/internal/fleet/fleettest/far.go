@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/clock"
 	"github.com/noamsto/dispatcher/crew/internal/fleet"
 	"github.com/noamsto/dispatcher/crew/internal/git"
@@ -96,11 +97,20 @@ func (f *Far) Advance(d time.Duration) { f.ms.Add(d.Milliseconds()) }
 // Common is the common dir of the repo name.
 func (f *Far) Common(name string) string { return filepath.Join(f.root, name, ".git") }
 
+func (f *Far) crewDir(name, crewID string) string {
+	f.tb.Helper()
+	c, err := bus.PathsFor(f.Common(name)).Crew(crewID)
+	if err != nil {
+		f.tb.Fatal(err)
+	}
+	return c.Dir
+}
+
 // Register lists the repo name in the registry with no bus yet: discovery
 // skips it until Append makes one.
 func (f *Far) Register(name string) {
 	f.tb.Helper()
-	if err := os.MkdirAll(filepath.Join(f.Common(name), "crew"), 0o755); err != nil {
+	if err := os.MkdirAll(bus.PathsFor(f.Common(name)).Dir, 0o755); err != nil {
 		f.tb.Fatal(err)
 	}
 	f.mu.Lock()
@@ -130,7 +140,7 @@ func (f *Far) Append(name string, lines ...string) {
 	if !known {
 		f.tb.Fatalf("fleettest: repo %s is not registered", name)
 	}
-	file, err := os.OpenFile(filepath.Join(f.Common(name), "crew", "events.jsonl"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	file, err := os.OpenFile(bus.PathsFor(f.Common(name)).Log, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
 	if err != nil {
 		f.tb.Fatal(err)
 	}
@@ -150,7 +160,7 @@ func (f *Far) Append(name string, lines ...string) {
 func (f *Far) DeadLaneCrew(name, crewID string, tickAge time.Duration) string {
 	f.tb.Helper()
 	f.Repo(name)
-	dir := filepath.Join(f.Common(name), "crew", "crews", crewID)
+	dir := f.crewDir(name, crewID)
 	const live, dead = 4240, 4241
 	f.procs.Procs[live] = proctest.Proc{}
 	if err := os.MkdirAll(filepath.Join(dir, "stream.lock.d"), 0o755); err != nil {
@@ -176,7 +186,7 @@ func (f *Far) HeadHold(name, crewID string, waitedS int64) string {
 	f.Repo(name)
 	const live = 4242
 	f.procs.Procs[live] = proctest.Proc{}
-	dir := filepath.Join(f.Common(name), "crew", "crews", crewID)
+	dir := f.crewDir(name, crewID)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		f.tb.Fatal(err)
 	}

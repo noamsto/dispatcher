@@ -351,10 +351,18 @@ func newQueue(ctx context.Context, o QueueOptions, scan fleetScan, s QueueSettin
 	prios := readPriorities(priorityPath(o.Getenv))
 	eligible := map[crewRef]bool{}
 	read := func(common, crew string) session {
-		return readSession(filepath.Join(common, "crew", "crews", crew), fleetLane(o.Getenv, crew), t, now)
+		c, err := bus.PathsFor(common).Crew(crew)
+		if err != nil {
+			return session{state: "closed"}
+		}
+		return readSession(c.Dir, fleetLane(o.Getenv, crew), t, now)
 	}
 	repoLaneAlive := func(common, crew string) bool {
-		state, _, _, _ := lane.State(filepath.Join(common, "crew", "crews", crew), t, q.nowMS)
+		c, err := bus.PathsFor(common).Crew(crew)
+		if err != nil {
+			return false
+		}
+		state, _, _, _ := lane.State(c.Dir, t, q.nowMS)
 		return state == "alive"
 	}
 	for _, h := range q.holds {

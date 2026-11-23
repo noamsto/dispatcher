@@ -553,7 +553,7 @@ func (b *repoBuild) crewIDs(byCrew map[string][]map[string]any) []string {
 	for id := range b.idx.holders {
 		ids[id] = true
 	}
-	entries, _ := os.ReadDir(filepath.Join(b.common, "crew", "crews"))
+	entries, _ := os.ReadDir(bus.PathsFor(b.common).CrewsDir())
 	for _, e := range entries {
 		if e.IsDir() {
 			ids[e.Name()] = true
@@ -684,7 +684,7 @@ func (s session) eligible() bool {
 // dispatcher reads the crew's registration: pid file, pane file and the lane
 // tick, with the state each says about the session.
 func (b *repoBuild) dispatcher(id string) Dispatcher {
-	dir := filepath.Join(b.common, "crew", "crews", id)
+	dir := bus.PathsFor(b.common).CrewDir(id)
 	s := readSession(dir, fleetLane(b.o.Getenv, id), b.o.Proc, b.now)
 	d := Dispatcher{State: s.state, PID: s.pid, Lane: s.lane}
 	// No registration here and a window another host's dispatcher launched:

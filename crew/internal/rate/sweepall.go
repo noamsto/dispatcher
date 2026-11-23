@@ -51,7 +51,7 @@ func sweepAll(roots []string, stdout, stderr io.Writer, o Options) int {
 			continue
 		}
 		slug := git.RepoSlug(origin)
-		if rc := o.sweepRepo(busAt(r.Common), workdir, stderr); rc != 0 {
+		if rc := o.sweepRepo(bus.PathsFor(r.Common), workdir, stderr); rc != 0 {
 			say(stdout, "%s: failed (rc=%d)\n", slug, rc)
 			failed++
 			continue
@@ -71,14 +71,6 @@ func (o Options) sweepRepo(paths bus.Paths, workdir string, stderr io.Writer) in
 		return o.SweepRepo(paths, workdir, stderr)
 	}
 	return runSweep(paths, workdir, stderr, o)
-}
-
-// busAt is a discovered repo's bus: the bus.Locate layout, spelled here because
-// discovery already proved `<common>/crew/events.jsonl` exists. `fleet` reads
-// the same paths off the same discovery.
-func busAt(common string) bus.Paths {
-	dir := common + "/crew"
-	return bus.Paths{Common: common, Dir: dir, Log: dir + "/events.jsonl"}
 }
 
 // runsInStore is the loop's `jq -s --arg r <slug> '[.[] | select(.repo == $r) |

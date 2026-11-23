@@ -123,19 +123,22 @@ func RunFleetWatch(r FleetWatchRequest, stdout, stderr io.Writer, o FleetWatchOp
 		}
 
 		for _, common := range rotate(joined, readRotation(rotation)) {
-			cdir := filepath.Join(common, "crew", "crews", r.Crew)
+			paths := bus.PathsFor(common)
+			crew, err := paths.Crew(r.Crew)
+			if err != nil {
+				continue
+			}
 			repo, ok := labels[common]
 			if !ok {
 				repo = names.repoName(common)
 				labels[common] = repo
 			}
-			if state, _, pid, _ := lanepkg.State(cdir, o.Proc, wo.Clock.RealMS()); state == "alive" {
+			if state, _, pid, _ := lanepkg.State(crew.Dir, o.Proc, wo.Clock.RealMS()); state == "alive" {
 				n.lines(noteLine("%s: %s: per-repo stream alive (pid %s) — not watching\n", fleetWatchPrefix, repo, pidText(pid)))
 				continue
 			}
 			ro := wo
 			ro.Repo = repo
-			paths := bus.Paths{Common: common, Dir: common + "/crew", Log: common + "/crew/events.jsonl"}
 			outcome, rc := watch.Once(req, paths, stdout, stderr, ro)
 			switch outcome {
 			case watch.Locked:

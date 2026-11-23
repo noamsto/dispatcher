@@ -335,7 +335,7 @@ func busFor(ctx context.Context, repo, crew string, found []repos.Repo, o Option
 // onBus is the bus at the git common dir common when crew is on it, else the
 // refusal reason.
 func onBus(common, crew string) (bus.Paths, string) {
-	paths := bus.Paths{Common: common, Dir: common + "/crew", Log: common + "/crew/events.jsonl"}
+	paths := bus.PathsFor(common)
 	if !bus.ValidCrewID(crew) || !slices.Contains(crews.IDs(paths), crew) {
 		return bus.Paths{}, fmt.Sprintf("crew %s is not on %s's bus", crew, common)
 	}

@@ -409,7 +409,7 @@ func (v *overseer) join(common string) {
 	}
 	v.buses[common] = &follower{
 		repo:       v.o.repoName(common),
-		log:        filepath.Join(common, "crew", "events.jsonl"),
+		log:        bus.PathsFor(common).Log,
 		cursorPath: path,
 		cursor:     cursor,
 	}
