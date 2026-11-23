@@ -307,7 +307,8 @@ func TestKeepSnoozesForBothCleanupAndReap(t *testing.T) {
 	if _, err := os.Stat(f.wt); err != nil {
 		t.Fatalf("keep touched the worktree: %v", err)
 	}
-	if !snooze.Active(f.paths.Dir, branch, f.now.Add(snooze.Default-time.Second)) || snooze.Active(f.paths.Dir, branch, f.now.Add(snooze.Default)) {
+	key := snooze.Key{Tip: runGit(t, f.wt, "rev-parse", "HEAD"), Worktree: f.wt}
+	if !snooze.Active(f.paths.Dir, branch, key, f.now.Add(snooze.Default-time.Second)) || snooze.Active(f.paths.Dir, branch, key, f.now.Add(snooze.Default)) {
 		t.Fatal("snooze is not exactly 14 days")
 	}
 
@@ -540,4 +541,25 @@ func mustAdmin(t *testing.T, f *fx) string {
 	}
 	real, _ := filepath.EvalSymlinks(dirs[0])
 	return real
+}
+
+func TestSnoozeEndsWhenTheTipMoves(t *testing.T) {
+	f := newFx(t)
+	f.dirty(false)
+	f.input = "k\n"
+	if rc := f.run(Request{}); rc != 0 {
+		t.Fatalf("rc=%d %s", rc, f.stderr.String())
+	}
+	if got := f.items(); len(got) != 0 {
+		t.Fatalf("snoozed item listed: %+v", got)
+	}
+	runGit(t, f.wt, "add", "tracked.txt")
+	runGit(t, f.wt, "commit", "-q", "-m", "new work")
+	if got := f.items(); len(got) != 1 {
+		t.Fatalf("a moved tip must end the snooze: %+v", got)
+	}
+	var out bytes.Buffer
+	if rc := reap.Run(context.Background(), reap.Request{DryRun: true}, f.paths, f.main, &out, io.Discard, f.opts().Reap); rc != 0 || !strings.Contains(out.String(), "stale: needs human cleanup") {
+		t.Fatalf("reap still hides it: rc=%d %s", rc, out.String())
+	}
 }

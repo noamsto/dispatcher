@@ -57,8 +57,6 @@ func (o Options) now() time.Time {
 	return time.Now()
 }
 
-func snoozed(busDir, branch string, now time.Time) bool { return snooze.Active(busDir, branch, now) }
-
 func say(w io.Writer, format string, a ...any) { _, _ = fmt.Fprintf(w, format, a...) }
 
 // refusal is why this call may not run, "" when it may. Only the read-only
@@ -190,7 +188,7 @@ walk:
 				}
 			case 'k':
 				now := o.now()
-				if err := snooze.Set(it.paths.Dir, it.Branch, now, now.Add(snooze.Default)); err != nil {
+				if err := snooze.Set(it.paths.Dir, it.Branch, it.snoozeKey(), now, now.Add(snooze.Default)); err != nil {
 					failed++
 					say(stderr, "crew cleanup: %s: could not record the snooze: %v\n", it.Branch, err)
 					break

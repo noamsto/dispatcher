@@ -13,6 +13,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/filekind"
 	"github.com/noamsto/dispatcher/crew/internal/reap"
+	"github.com/noamsto/dispatcher/crew/internal/snooze"
 	"github.com/noamsto/dispatcher/crew/internal/wtgit"
 )
 
@@ -44,6 +45,7 @@ type Item struct {
 
 	paths bus.Paths
 	cwd   string
+	tip   string
 	// callerCwd is where the user ran the command; reap changes the process's.
 	callerCwd string
 }
@@ -71,9 +73,6 @@ func (o Options) gather(ctx context.Context, buses []bus.Paths, cwds map[string]
 }
 
 func (o Options) item(ctx context.Context, p bus.Paths, cwd string, c reap.Candidate) *Item {
-	if !c.Stale && snoozed(p.Dir, c.Branch, o.now()) {
-		return nil
-	}
 	if c.Worktree == "" {
 		// A tip-past keep names no worktree; the list is of worktrees.
 		wt, ok := o.worktreeOf(ctx, p, c.Branch)
@@ -83,8 +82,12 @@ func (o Options) item(ctx context.Context, p bus.Paths, cwd string, c reap.Candi
 		c.Worktree = wt
 	}
 	it := &Item{
+		tip:  o.branchTip(ctx, p, c.Branch),
 		Repo: p.Common, Branch: c.Branch, Codename: c.Codename, Reason: c.StaleReason,
 		Stale: c.Stale, Worktree: c.Worktree, State: c.State, paths: p, cwd: cwd,
+	}
+	if !c.Stale && snooze.Active(p.Dir, c.Branch, it.snoozeKey(), o.now()) {
+		return nil
 	}
 	if it.Reason == "" {
 		it.Reason = c.Reason
@@ -100,6 +103,18 @@ func (o Options) item(ctx context.Context, p bus.Paths, cwd string, c reap.Candi
 	}
 	o.fillGit(ctx, it)
 	return it
+}
+
+func (it *Item) snoozeKey() snooze.Key { return snooze.Key{Tip: it.tip, Worktree: it.Worktree} }
+
+// branchTip is the branch's commit, "" when unreadable.
+func (o Options) branchTip(ctx context.Context, p bus.Paths, branch string) string {
+	cmd, err := wtgit.CommonCommand(ctx, p.Common, wtgit.Opts{Stderr: io.Discard}, "rev-parse", "--verify", "refs/heads/"+branch)
+	if err != nil {
+		return ""
+	}
+	out, _ := cmd.Output()
+	return strings.TrimSpace(string(out))
 }
 
 // worktreeOf is the branch's worktree from `git worktree list`.
