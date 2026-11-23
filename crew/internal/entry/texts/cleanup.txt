@@ -1,9 +1,11 @@
-usage: crew cleanup [--fleet] [--repo DIR] [--list] [--json]
+usage: crew cleanup [--fleet | --repo DIR] [--list] [--json]
        crew cleanup --prune-archive [--older-than AGE]
 
 Review, one worktree at a time, the finished worker worktrees `crew reap`
-keeps and flags "stale: needs human cleanup" (uncommitted changes, unpushed
-commits, or an issue closed without a PR), plus branches whose tip has commits
+keeps and flags "stale: needs human cleanup" (kept for uncommitted changes,
+unpushed commits, no PR or no origin default branch, once the worker is finished
+and its issues are closed or its last status is older than reap's --stale-after),
+plus branches whose tip has commits
 past their merged PR. Reap's own classifier picks them; nothing is removed
 without a key from you.
 
@@ -14,23 +16,26 @@ diffstat. Type a key and Enter:
   r   Remove: save a recovery bundle, then remove the worktree and local branch
   k   Keep: snooze for 14 days; neither `crew cleanup` nor reap's stale report
       raises it again before then
-  d   Show the full uncommitted diff in $PAGER (untracked files included)
+  d   Show the full uncommitted diff in $PAGER, default `less -R` (untracked files included)
   s   Skip: ask again next time
   q   Quit (end of input also quits)
 
 A summary line ends the run.
 
 The recovery bundle is written before anything is deleted, under
-${XDG_DATA_HOME:-~/.local/share}/crew/cleanup-archive/<repo>/<branch>-<UTC ts>/:
+${XDG_DATA_HOME:-~/.local/share}/crew/cleanup-archive/<repo>/<branch, / as ->-<UTC ts>/:
 
-  uncommitted.patch   tracked, staged and untracked changes (`git apply` it on
-                      the branch tip)
+  uncommitted.patch   tracked, staged and untracked changes; absent if none
+                      (`git apply` it on the branch tip)
   commits.bundle      the commits on no remote (`git fetch` it); absent if none
   info.json           repo, branch, issue, PR, reason and restore commands
+                      (fetch the bundle, switch to the branch, apply the patch)
 
 Removal then goes through the same git-config baseline and worktree-record
-checks reap uses, and never a bare rm. The archive path is printed. A drifted
-git config (see `crew git-baseline`) refuses the removal.
+checks reap uses, and never a bare rm. The archive path is printed. Nothing is
+removed, and the reason is printed, when the git config drifted (see `crew
+git-baseline`), the worktree is your current directory, its .git does not point
+at its admin dir, or it holds an embedded git repository.
 
   --fleet           Cover every repo `crew reap --fleet` covers (ignores cwd)
   --repo DIR        Use the repo at DIR instead of the current one

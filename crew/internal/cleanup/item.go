@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/filekind"
@@ -43,13 +44,15 @@ type Item struct {
 
 	paths bus.Paths
 	cwd   string
+	// callerCwd is where the user ran the command; reap changes the process's.
+	callerCwd string
 }
 
 // repoName is the checkout's directory name, the archive's repo key.
 func (it *Item) repoName() string { return filepath.Base(filepath.Dir(it.paths.Common)) }
 
 // gather resolves every repo's candidates into items.
-func (o Options) gather(ctx context.Context, buses []bus.Paths, cwds map[string]string, stderr io.Writer) ([]*Item, int) {
+func (o Options) gather(ctx context.Context, buses []bus.Paths, cwds map[string]string, callerCwd string, stderr io.Writer) ([]*Item, int) {
 	var items []*Item
 	for _, p := range buses {
 		cands, code := reap.Candidates(ctx, p, cwds[p.Common], stderr, o.Reap)
@@ -59,6 +62,7 @@ func (o Options) gather(ctx context.Context, buses []bus.Paths, cwds map[string]
 		for _, c := range cands {
 			it := o.item(ctx, p, cwds[p.Common], c)
 			if it != nil {
+				it.callerCwd = callerCwd
 				items = append(items, it)
 			}
 		}
@@ -152,6 +156,17 @@ func (o Options) fillGit(ctx context.Context, it *Item) {
 	}
 }
 
+// plain replaces control characters, so worker-written text (commit subjects,
+// file names, bus values) cannot drive the reviewer's terminal.
+func plain(s string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return '?'
+		}
+		return r
+	}, s)
+}
+
 // render is the block a human reads before deciding.
 func (it *Item) render(w io.Writer) {
 	name := it.Branch
@@ -159,6 +174,7 @@ func (it *Item) render(w io.Writer) {
 		name += " (" + it.Codename + ")"
 	}
 	p := func(format string, a ...any) { _, _ = fmt.Fprintf(w, format, a...) }
+	it = it.sanitized()
 	p("%s: %s\n", filepath.Base(filepath.Dir(it.Repo)), name)
 	p("  reason:   %s\n", it.Reason)
 	last := "no status on the bus"
@@ -183,6 +199,22 @@ func (it *Item) render(w io.Writer) {
 			p("    … %d more\n", len(lines)-previewLines)
 		}
 	}
+}
+
+// sanitized is a copy whose text fields are safe to print.
+func (it *Item) sanitized() *Item {
+	c := *it
+	c.Branch, c.Codename, c.Reason, c.Worktree, c.Diffstat = plain(it.Branch), plain(it.Codename), plain(it.Reason), plain(it.Worktree), plain(it.Diffstat)
+	c.Status, c.Unpushed = mapLines(it.Status), mapLines(it.Unpushed)
+	return &c
+}
+
+func mapLines(in []string) []string {
+	out := make([]string, len(in))
+	for i, l := range in {
+		out[i] = plain(l)
+	}
+	return out
 }
 
 func (it *Item) links() string {

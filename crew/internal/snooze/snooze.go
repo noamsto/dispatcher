@@ -19,15 +19,24 @@ const Default = 14 * 24 * time.Hour
 func file(busDir string) string { return filepath.Join(busDir, "cleanup-snooze.json") }
 
 func read(busDir string) map[string]int64 {
-	b, err := os.ReadFile(file(busDir))
-	if err != nil {
-		return map[string]int64{}
-	}
-	m := map[string]int64{}
-	if json.Unmarshal(b, &m) != nil {
-		return map[string]int64{}
-	}
+	m, _ := load(busDir)
 	return m
+}
+
+// load is the store, empty when absent; a corrupt store is an error.
+func load(busDir string) (map[string]int64, error) {
+	m := map[string]int64{}
+	b, err := os.ReadFile(file(busDir))
+	if errors.Is(err, fs.ErrNotExist) {
+		return m, nil
+	}
+	if err != nil {
+		return m, err
+	}
+	if err := json.Unmarshal(b, &m); err != nil {
+		return map[string]int64{}, err
+	}
+	return m, nil
 }
 
 // Active reports whether branch is snoozed at now. An unreadable store never
@@ -38,7 +47,10 @@ func Active(busDir, branch string, now time.Time) bool {
 
 // Set snoozes branch until `until`, dropping lapsed entries on the way.
 func Set(busDir, branch string, now, until time.Time) error {
-	m := read(busDir)
+	m, err := load(busDir)
+	if err != nil {
+		return err
+	}
 	for b, ms := range m {
 		if ms <= now.UnixMilli() {
 			delete(m, b)

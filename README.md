@@ -101,13 +101,14 @@ Full surface: `id`, `new`, `crews`, `adopt`, `identity`, `status`, `msg`, `reply
 `where`, `stall-watch`, `pr-watch`, `log`, `report`, `rate`, `reap`, `cleanup`.
 
 `crew cleanup` is the human-only counterpart of reap's "stale: needs human cleanup"
-keeps (uncommitted changes, unpushed commits, an issue closed without a PR). It walks
+keeps (uncommitted changes, unpushed commits, no PR) of finished workers. It walks
 each one with its status, unpushed commits and diffstat; `r` first writes a recovery
-bundle (`uncommitted.patch`, `commits.bundle`, `info.json`) under
-`~/.local/share/crew/cleanup-archive/<repo>/<branch>-<ts>/`, then removes the worktree and
+bundle (`info.json`, plus `uncommitted.patch` and `commits.bundle` when there is
+anything to save) under
+`${XDG_DATA_HOME:-~/.local/share}/crew/cleanup-archive/<repo>/<branch, / as ->-<ts>/`, then removes the worktree and
 branch behind reap's git-config baseline checks; `k` snoozes it for 14 days in cleanup
 and in reap's stale report. `--fleet` covers every repo, `--list`/`--json` are read-only
-and open to dispatchers, and `--prune-archive [--older-than 30d]` drops old bundles. It
+and open to workers and dispatchers, and `--prune-archive [--older-than 30d]` drops old bundles. It
 refuses when `CREW_WORKER_ID` or `CREW_ROLE_ID` is set or there is no terminal.
 
 Three design notes worth knowing. `reap` gates on **the PR having landed**, never

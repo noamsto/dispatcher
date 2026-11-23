@@ -60,7 +60,7 @@ func (o Options) remove(ctx context.Context, it *Item, stderr io.Writer) (string
 	if !filekind.IsDir(wt) {
 		return "", fmt.Errorf("%s is already gone", wt)
 	}
-	if cwd, err := os.Getwd(); err == nil && strings.HasPrefix(cwd+"/", wt+"/") {
+	if strings.HasPrefix(it.callerCwd+"/", wt+"/") {
 		return "", errors.New("it is the current worktree")
 	}
 	admin, err := wtgit.AdminDir(common, wt)
@@ -74,6 +74,10 @@ func (o Options) remove(ctx context.Context, it *Item, stderr io.Writer) (string
 		return "", err
 	}
 
+	before, err := treeState(ctx, admin, it, stderr)
+	if err != nil {
+		return "", err
+	}
 	ts := o.now().UTC().Format("20060102T150405Z")
 	rel := filepath.Join(it.repoName(), strings.ReplaceAll(it.Branch, "/", "-")+"-"+ts)
 	dir, err := o.archive(ctx, it, admin, rel, stderr)
@@ -81,6 +85,9 @@ func (o Options) remove(ctx context.Context, it *Item, stderr io.Writer) (string
 		return "", fmt.Errorf("archive failed, nothing removed: %w", err)
 	}
 
+	if after, err := treeState(ctx, admin, it, stderr); err != nil || after != before {
+		return dir, errors.New("changed while saving; archived, but nothing removed — review it again")
+	}
 	anchor, _ := wtgit.AnchorPath(wt)
 	// The checks run again right before the removal, as reap's do.
 	if err := checkBaseline(common, admin, it.cwd, stderr); err != nil {
@@ -124,13 +131,17 @@ func checkBaseline(common, admin, cwd string, stderr io.Writer) error {
 }
 
 // archive writes the recovery bundle under archiveRoot()/rel.
-func (o Options) archive(ctx context.Context, it *Item, admin, rel string, stderr io.Writer) (string, error) {
-	tmp, err := os.MkdirTemp("", "crew-cleanup-")
+func (o Options) archive(ctx context.Context, it *Item, admin, rel string, stderr io.Writer) (dir string, err error) {
+	root := o.archiveRoot()
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		return "", err
+	}
+	// Scratch beside the destination: Snapshot hard-links its patch into place.
+	tmp, err := os.MkdirTemp(root, ".tmp-")
 	if err != nil {
 		return "", err
 	}
 	defer func() { _ = os.RemoveAll(tmp) }()
-	root := o.archiveRoot()
 	res, err := reap.Snapshot(ctx, reap.SnapshotRequest{
 		Admin: admin, WtPath: it.Worktree, Branch: it.Branch, Tmp: tmp,
 		Root: root, Dir: rel, Name: patchName, FreshDir: true, IgnoredScaffold: true, Stderr: stderr,
@@ -138,7 +149,14 @@ func (o Options) archive(ctx context.Context, it *Item, admin, rel string, stder
 	if err != nil {
 		return "", err
 	}
-	dir := filepath.Join(root, rel)
+	dir = filepath.Join(root, rel)
+	// An archive that did not finish is no archive: never leave one that looks real.
+	defer func() {
+		if err != nil {
+			_ = os.RemoveAll(dir)
+			dir = ""
+		}
+	}()
 	opts := wtgit.Opts{Stderr: stderr}
 	revs := []string{"refs/heads/" + it.Branch, "--not", "--remotes"}
 	cmd, err := wtgit.CommonCommand(ctx, it.paths.Common, opts, append([]string{"rev-list"}, revs...)...)
@@ -164,11 +182,15 @@ func (o Options) archive(ctx context.Context, it *Item, admin, rel string, stder
 		Reason: it.Reason, Issues: it.Issues, PR: it.PR, Uncommit: res.Patch != "", Commits: hasCommits,
 		ArchivedAt: o.now().UTC().Format("2006-01-02T15:04:05Z"),
 	}
-	if meta.Uncommit {
-		meta.Restore = append(meta.Restore, "git apply "+filepath.Join(dir, patchName)+"  # on the branch tip")
-	}
+	// The branch is deleted, so bring its tip back before applying the patch.
 	if hasCommits {
-		meta.Restore = append(meta.Restore, "git fetch "+filepath.Join(dir, bundleName)+" refs/heads/"+it.Branch+":refs/heads/"+it.Branch)
+		meta.Restore = append(meta.Restore, "git fetch "+shq(filepath.Join(dir, bundleName))+" "+shq("refs/heads/"+it.Branch+":refs/heads/"+it.Branch))
+	} else {
+		meta.Restore = append(meta.Restore, "git branch "+shq(it.Branch)+" "+shq(res.Tip))
+	}
+	meta.Restore = append(meta.Restore, "git switch "+shq(it.Branch))
+	if meta.Uncommit {
+		meta.Restore = append(meta.Restore, "git apply "+shq(filepath.Join(dir, patchName)))
 	}
 	b, err := json.MarshalIndent(meta, "", "  ")
 	if err != nil {
@@ -200,4 +222,25 @@ func (o Options) patchText(ctx context.Context, it *Item, tmp string, stderr io.
 	}
 	b, err := os.ReadFile(res.Patch)
 	return string(b), err
+}
+
+// shq is a single-quoted shell word.
+func shq(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
+
+// treeState is the worktree's porcelain status and branch tip, compared before
+// and after the archive so work written meanwhile is never deleted unsaved.
+func treeState(ctx context.Context, admin string, it *Item, stderr io.Writer) (string, error) {
+	st, err := wtgit.Status(ctx, admin, it.Worktree, wtgit.Opts{Stderr: stderr}, "--untracked-files=all")
+	if err != nil {
+		return "", errors.New("git status failed")
+	}
+	cmd, err := wtgit.CommonCommand(ctx, it.paths.Common, wtgit.Opts{Stderr: stderr}, "rev-parse", "--verify", "refs/heads/"+it.Branch)
+	if err != nil {
+		return "", errDrift
+	}
+	tip, err := cmd.Output()
+	if err != nil {
+		return "", errors.New("could not read the branch tip")
+	}
+	return st + "\n" + string(tip), nil
 }

@@ -97,7 +97,7 @@ func Run(ctx context.Context, req Request, cwd string, stdout, stderr io.Writer,
 	if code != 0 {
 		return code
 	}
-	items, code := o.gather(ctx, buses, cwds, stderr)
+	items, code := o.gather(ctx, buses, cwds, cwd, stderr)
 	if code != 0 {
 		return code
 	}

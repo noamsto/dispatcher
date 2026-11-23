@@ -4,9 +4,11 @@ import (
 	"context"
 	"io"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
+	"github.com/noamsto/dispatcher/crew/internal/gh"
 	"github.com/noamsto/dispatcher/crew/internal/identity"
 	"github.com/noamsto/dispatcher/crew/internal/repos"
 )
@@ -34,6 +36,10 @@ type Candidate struct {
 // takes no lock and posts nothing) and returns its stale keeps and its
 // tip-past-merged-PR keeps. A non-zero code is reap's own failure.
 func Candidates(ctx context.Context, paths bus.Paths, cwd string, stderr io.Writer, o Options) ([]Candidate, int) {
+	if !gh.Installed(ctx, o.Probes.Gh) {
+		_, _ = io.WriteString(stderr, "crew cleanup: needs gh\n")
+		return nil, 1
+	}
 	log := &keepLog{}
 	req := Request{DryRun: true, JSON: true, Quiet: true, keeps: log}
 	if code := Run(ctx, req, paths, cwd, io.Discard, stderr, o); code != 0 {
@@ -47,27 +53,39 @@ func Candidates(ctx context.Context, paths bus.Paths, cwd string, stderr io.Writ
 		}
 	}
 	raws, _ := readRaws(paths.Log)
+	// Bus pr_urls and claimed issues are worker-written: only this repo's PRs
+	// and plain numbers may point gh anywhere, as reap's own gates require.
+	repo := originGitHubRepo(ctx, o.Probes.Git)
 	var out []Candidate
 	for _, k := range log.keeps {
 		if !k.Stale && !strings.HasPrefix(k.Reason, tipPastReason) {
 			continue
 		}
 		c := Candidate{Keep: k}
+		// A tip past its merged PR is no stale keep: only a finished worker's.
 		if id, ok := identity.Recorded(raws, k.Branch); ok {
 			c.Codename = id.Name
 		}
-		if row, ok := rows[k.Branch]; ok {
+		row, ok := rows[k.Branch]
+		if !k.Stale && (!ok || !slices.Contains(terminalStates, any(row.state))) {
+			continue
+		}
+		if ok {
 			c.State = row.state
 			c.StatusTS = int64(row.statusTS())
 			for _, u := range []string{row.own, row.earlier, row.reaprow} {
-				if u != "-" && u != "" {
+				if prURLInRepo(u, repo) {
 					c.PR = u
 					break
 				}
 			}
 		}
 		if claimed, err := r.claimed(k.Branch); err == nil && claimed != "" {
-			c.Issues = strings.Split(claimed, "\n")
+			for n := range strings.SplitSeq(claimed, "\n") {
+				if numericRe.MatchString(n) {
+					c.Issues = append(c.Issues, n)
+				}
+			}
 		}
 		out = append(out, c)
 	}

@@ -408,7 +408,7 @@ func TestDriftedConfigIsRefusedNotRemoved(t *testing.T) {
 	f := newFx(t)
 	f.dirty(false)
 	buses, cwds, _ := f.opts().repos(context.Background(), Request{}, f.main, io.Discard)
-	items, code := f.opts().gather(context.Background(), buses, cwds, io.Discard)
+	items, code := f.opts().gather(context.Background(), buses, cwds, f.main, io.Discard)
 	if code != 0 || len(items) != 1 {
 		t.Fatalf("items %+v rc=%d", items, code)
 	}
@@ -479,6 +479,35 @@ func TestParseAge(t *testing.T) {
 	for _, in := range []string{"", "d", "30", "30m", "-1d", "xd", "99999999999999999d"} {
 		if _, err := ParseAge(in); err == nil {
 			t.Errorf("%q accepted", in)
+		}
+	}
+}
+
+func TestMissingGhIsAnErrorNotAnEmptyList(t *testing.T) {
+	f := newFx(t)
+	f.dirty(false)
+	o := f.opts()
+	o.Reap.Probes.Gh = &ghtest.Fake{Func: func([]string) (string, error) { return "", exec.ErrNotFound }}
+	var out, errb bytes.Buffer
+	if rc := Run(context.Background(), Request{JSON: true}, f.main, &out, &errb, o); rc != 1 || !strings.Contains(errb.String(), "needs gh") || out.Len() != 0 {
+		t.Fatalf("rc=%d out=%q err=%q", rc, out.String(), errb.String())
+	}
+}
+
+func TestForeignPRAndNonNumericIssueAreNotQueried(t *testing.T) {
+	f := newFx(t)
+	f.dirty(false)
+	rows := []string{
+		fmt.Sprintf(`{"ts":%d,"crew_id":"c1","from":"worker:%s#s1","to":"dispatcher:c1","kind":"status","body":{"state":"failed","pr_url":"https://github.com/evil/x/pull/1"}}`, (nowUnix-3*24*3600)*1000, branch),
+		fmt.Sprintf(`{"ts":1,"crew_id":"c1","kind":"claim-issue","branch":"%s","issue":5}`, branch),
+		fmt.Sprintf(`{"ts":2,"crew_id":"c1","kind":"claim-issue","branch":"%s","issue":"https://github.com/evil/x/issues/9"}`, branch),
+	}
+	if err := os.WriteFile(f.paths.Log, []byte(strings.Join(rows, "\n")+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, it := range f.items() {
+		if it.PR != nil || len(it.Issues) > 1 {
+			t.Fatalf("worker-written refs leaked: %+v", it)
 		}
 	}
 }
