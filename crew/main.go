@@ -530,7 +530,7 @@ func runRoleWatch(ctx context.Context, e env, cwd string, c roleWatchCmd, stderr
 			}
 			return strings.TrimSpace(out), err
 		},
-		Log:    paths.Log,
+		Paths:  paths,
 		LogErr: locateErr,
 		Post: func(ctx context.Context, crew, from, to, body string) {
 			status.RunMsg(ctx, status.MsgRequest{From: from, To: to, Body: body}, paths, io.Discard, status.Options{
@@ -542,7 +542,7 @@ func runRoleWatch(ctx context.Context, e env, cwd string, c roleWatchCmd, stderr
 				PeerHosts: e.peerHosts,
 			})
 		},
-		CrewID: func() string { return bus.CrewIDEnvFirst(ctx, cwd) },
+		CrewID: func() string { return e.crewID(ctx, cwd, "", true) },
 		PID:    os.Getpid(),
 		Rand:   func() int { return rand.IntN(32768) },
 	})
@@ -557,6 +557,16 @@ type env struct {
 	clock  clock.Clock // the fold's clock (jq's `now`); nil Now is the wall clock
 	// peerHosts is the settings loader behind every peer read; nil reads no peer.
 	peerHosts func() (map[string]remote.Host, error)
+	// windowCrew reads @crew_id of the caller's tmux window; nil looks nowhere,
+	// so tests never read the pane they run in.
+	windowCrew func(context.Context) string
+}
+
+// crewID is the caller's crew: flag, then the task doc and env, then the
+// window. An invalid id is still returned so each arm keeps its own refusal.
+func (e env) crewID(ctx context.Context, cwd, flag string, envFirst bool) string {
+	id, _ := bus.ResolveCrewID(ctx, cwd, bus.Lookup{Flag: flag, EnvFirst: envFirst, Window: e.windowCrew})
+	return id
 }
 
 // now is the env clock when one is set, else the wall clock.
@@ -578,10 +588,11 @@ func main() {
 	// this process was invoked when its caller left it unset.
 	entry.EnsureSelf(entry.DefaultSelfProbes(), os.Args[0])
 	e := env{
-		getwd:  os.Getwd,
-		probes: probes,
-		proc:   proc.OS{},
-		stdin:  os.Stdin,
+		getwd:      os.Getwd,
+		probes:     probes,
+		proc:       proc.OS{},
+		stdin:      os.Stdin,
+		windowCrew: bus.WindowCrewID(os.Getenv, tmux.Exec{}),
 		peerHosts: func() (map[string]remote.Host, error) {
 			return remote.Load(context.Background(), remote.ConfigBin(), io.Discard)
 		},
@@ -699,7 +710,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 		// so the env answers.
 		dir, _ := e.getwd()
 		return entry.RunID(stdout, stderr, entry.IDOptions{
-			CrewID: func() string { return bus.CrewID(ctx, dir) },
+			CrewID: func() string { return e.crewID(ctx, dir, "", false) },
 		})
 	}
 	switch sub {
@@ -798,7 +809,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 		code := inbox.Run(inbox.Request{
 			Me: in.Agent, Crew: in.Crew, Since: str(in.Since), From: str(in.From), Undelivered: in.Undelivered,
 		}, paths, out, stderr, inbox.Options{
-			CrewID: func() string { return bus.CrewID(ctx, cwd) },
+			CrewID: func() string { return e.crewID(ctx, cwd, "", false) },
 			Flush:  out.Flush,
 			Hosts:  sender.NewOverseerHosts(overseerProbes(e)),
 		})
@@ -812,7 +823,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 		aw := parsed.typed.Await
 		out := bufio.NewWriterSize(stdout, 64<<10)
 		code := await.Run(await.Request{Me: aw.Agent, From: str(aw.From), Timeout: str(aw.Timeout), Interval: str(aw.Interval)}, paths, out, stderr, await.Options{
-			CrewID: func() string { return bus.CrewID(ctx, cwd) },
+			CrewID: func() string { return e.crewID(ctx, cwd, "", false) },
 			Flush:  out.Flush,
 			Hosts:  sender.NewOverseerHosts(overseerProbes(e)),
 			Clock:  clock.FromEnv(),
@@ -829,7 +840,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 		code := watch.Run(watch.Request{
 			Since: w.Since, States: str(w.States), Timeout: str(w.Timeout), Interval: str(w.Interval), Crew: str(w.Crew),
 		}, paths, out, stderr, watch.Options{
-			CrewID: func() string { return bus.CrewID(ctx, cwd) },
+			CrewID: func() string { return e.crewID(ctx, cwd, "", false) },
 			Flush:  out.Flush,
 			Hosts:  sender.NewOverseerHosts(overseerProbes(e)),
 			Clock:  clock.FromEnv(),
@@ -846,7 +857,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 		return watch.Relay(watch.RelayRequest{
 			Since: r.Since, States: str(r.States), Interval: str(r.Interval), Heartbeat: str(r.Heartbeat), Crew: str(r.Crew),
 		}, paths, out, stderr, watch.Options{
-			CrewID: func() string { return bus.CrewID(ctx, cwd) },
+			CrewID: func() string { return e.crewID(ctx, cwd, "", false) },
 			Flush:  out.Flush,
 			Hosts:  sender.NewOverseerHosts(overseerProbes(e)),
 			Clock:  clock.FromEnv(),
@@ -863,8 +874,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 	}
 	if sub == "dispatch-row" {
 		c := parsed.typed.DispatchRow
-		crew := cmp.Or(str(c.Crew), bus.CrewID(ctx, cwd))
-		return remote.DispatchRow(paths.Log, crew, str(c.Session), stdout, stderr)
+		crew := e.crewID(ctx, cwd, str(c.Crew), false)
+		return remote.DispatchRow(crewPaths(paths, crew).Log, crew, str(c.Session), stdout, stderr)
 	}
 	// peer-sync runs inside the clone remote-exec put it in, so the repo-located
 	// paths are the clone's. The dialer quotes only stderr's first line, so
@@ -890,7 +901,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 	if sub == "decide" {
 		return status.RunDecide(ctx, parsed.typed.Decide.Text, paths, stderr, status.Options{
 			Dir:       cwd,
-			CrewID:    func() string { return bus.CrewID(ctx, cwd) },
+			CrewID:    func() string { return e.crewID(ctx, cwd, "", false) },
 			Clock:     clock.FromEnv(),
 			Sender:    senderProbes(e.proc),
 			Tmux:      tmux.Exec{},
@@ -898,7 +909,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 		})
 	}
 	if sub == "class" {
-		ce := classEnv(ctx, cwd, paths, e.proc)
+		ce := classEnv(ctx, e, cwd, paths)
 		if strings.Fields(parsed.cmd)[1] == "revert" {
 			c := parsed.typed.Class.Revert
 			return classes.Revert(c.Engine, c.Class, ce, stderr)
@@ -937,7 +948,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 	// which is why it takes the environment's CREW_SELF through Options.
 	if sub == "stream" {
 		return stream.Run(streamRequest(parsed.typed.Stream.streamFlags, parsed.typed.Stream.ReapEvery), paths, stdout, stderr, stream.Options{
-			CrewID: func() string { return bus.CrewID(ctx, cwd) },
+			CrewID: func() string { return e.crewID(ctx, cwd, "", false) },
 			Clock:  clock.FromEnv(),
 			Proc:   e.proc,
 		})
@@ -986,7 +997,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 	// and appends to the bus itself, so it owns its run like inbox does.
 	if sub == "hold" {
 		return hold.Run(ctx, holdRequest(parsed), paths, stdout, stderr, hold.Options{
-			CrewID: func() string { return bus.CrewID(ctx, cwd) },
+			CrewID: func() string { return e.crewID(ctx, cwd, "", false) },
 			Clock:  clock.FromEnv(),
 			Sender: senderProbes(e.proc),
 			FleetDue: func(ctx context.Context, common, crew string, record bool) (hold.FleetVerdict, error) {
@@ -1004,7 +1015,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 	// queue reads its own action and flags and appends to the bus itself, as hold does.
 	if sub == "queue" {
 		return queue.Run(ctx, queueRequest(parsed), paths, stdout, stderr, queue.Options{
-			CrewID: func() string { return bus.CrewID(ctx, cwd) },
+			CrewID: func() string { return e.crewID(ctx, cwd, "", false) },
 			Clock:  clock.FromEnv(),
 			Sender: senderProbes(e.proc),
 		})
@@ -1027,7 +1038,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 			GH:     gh.Exec{},
 			Clock:  clock.FromEnv(),
 			Guard:  retro.ExecGuard(ctx, bashBin, cmp.Or(os.Getenv("PUBLIC_LEAK_GUARD"), publicLeakGuard), cwd, os.Getenv),
-			CrewID: func() string { return bus.CrewID(ctx, cwd) },
+			CrewID: func() string { return e.crewID(ctx, cwd, "", false) },
 			Roster: func(docs []any, crew string) []map[string]any {
 				rows, err := roster.Fold(ctx, docs, crew, e.nowSec(), e.probes(ctx, cwd))
 				if err != nil {
@@ -1043,9 +1054,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 	// rate's two repo-keyed modes: the sweep of this repo, and the store rollup.
 	if sub == "rate" {
 		return rate.Run(rateRequest(parsed.typed.Rate), paths, cwd, stdout, stderr, rate.Options{
-			ClassCheck: func(rows []any, w io.Writer) { classes.Check(rows, classEnv(ctx, cwd, paths, e.proc), w) },
+			ClassCheck: func(rows []any, w io.Writer) { classes.Check(rows, classEnv(ctx, e, cwd, paths), w) },
 			ClassReport: func(rows []any) []string {
-				return classes.ReportLines(rows, classEnv(ctx, cwd, paths, e.proc))
+				return classes.ReportLines(rows, classEnv(ctx, e, cwd, paths))
 			},
 		})
 	}
@@ -1054,7 +1065,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 	// it owns its run like hold does — and it prints nothing on success.
 	if sub == "reply" {
 		c := parsed.typed.Reply
-		crewID := func() string { return bus.CrewID(ctx, cwd) }
+		crewID := func() string { return e.crewID(ctx, cwd, "", false) }
 		return reply.Run(ctx, reply.Request{Crew: str(c.Crew), To: c.To, Body: c.Body}, paths, stderr, reply.Options{
 			CrewID: crewID,
 			Clock:  clock.FromEnv(),
@@ -1071,7 +1082,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 	if sub == "nudge" {
 		n := parsed.typed.Nudge
 		req, _ := nudge.NewRequest(str(n.Crew), n.Target, n.Wait)
-		crewID := func() string { return bus.CrewID(ctx, cwd) }
+		crewID := func() string { return e.crewID(ctx, cwd, str(n.Crew), false) }
 		o := nudge.Default(paths, stderr, os.Getpid(), crewID)
 		o.Sender = senderProbes(e.proc)
 		o.Remote = func(host string, argv []string) int {
@@ -1090,7 +1101,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 	if sub == "pr-watch" {
 		c := parsed.typed.PRWatch
 		return prwatch.Run(ctx, prwatch.Request{PR: c.PR, Repo: c.Repo, Timeout: c.Timeout, Interval: c.Interval}, paths, stdout, stderr, prwatch.Options{
-			CrewID: func() string { return bus.CrewID(ctx, cwd) },
+			CrewID: func() string { return e.crewID(ctx, cwd, "", false) },
 			Clock:  clock.FromEnv(),
 		})
 	}
@@ -1112,7 +1123,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 	}
 	if sub == "where" {
 		w := parsed.typed.Where
-		crewID := func() string { return bus.CrewID(ctx, cwd) }
+		crewID := func() string { return e.crewID(ctx, cwd, "", false) }
 		return where.Run(ctx, where.Request{Crew: str(w.Crew), Target: w.Target}, paths, stdout, stderr, where.Options{
 			CrewID: crewID,
 			Tmux:   tmux.Exec{},
@@ -1129,7 +1140,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 			crew = *id.CrewFlag
 		}
 		return identity.Run(ctx, identity.Request{Branch: id.Branch, Crew: crew, Hash: str(id.Hash), Occupied: id.Occupied}, paths, stdout, stderr, identity.Options{
-			CrewID: func() string { return bus.CrewID(ctx, cwd) },
+			CrewID: func() string { return e.crewID(ctx, cwd, "", false) },
 			Tmux:   tmux.Exec{},
 			Getenv: os.Getenv,
 		})
@@ -1161,7 +1172,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 		}
 		o := status.Options{
 			Dir:       cwd,
-			CrewID:    func() string { return bus.CrewID(ctx, cwd) },
+			CrewID:    func() string { return e.crewID(ctx, cwd, "", false) },
 			Clock:     clock.FromEnv(),
 			Sender:    senderProbes(e.proc),
 			Tmux:      tmux.Exec{},
@@ -1177,7 +1188,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 	// register and deregister record the caller's own identity like adopt does.
 	if sub == "register" || sub == "deregister" {
 		return register.Run(sub, parsed.typed.Register.PID, paths, stderr, register.Options{
-			CrewID: func() string { return bus.CrewID(ctx, cwd) },
+			CrewID: func() string { return e.crewID(ctx, cwd, "", false) },
 			Proc:   e.proc,
 			Clock:  clock.FromEnv(),
 			PID:    os.Getpid(),
@@ -1197,7 +1208,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 			// Anchor, don't discover: dispatch hands a watchdog its crew in the
 			// env, and its cwd is a worktree whose WORKER_TASK.md the watched
 			// worker can rewrite.
-			CrewID: func() string { return bus.CrewIDEnvFirst(ctx, cwd) },
+			CrewID: func() string { return e.crewID(ctx, cwd, "", true) },
 			Clock:  clock.FromEnv(),
 			Sender: senderProbes(e.proc),
 			NewProbes: func(pane string) probe.Probes {
@@ -1229,14 +1240,14 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 			crew = parsed.typed.Report.Crew
 		}
 		if crew == "" {
-			crew = bus.CrewID(ctx, cwd)
+			crew = e.crewID(ctx, cwd, "", false)
 		}
 		out := bufio.NewWriterSize(stdout, 64<<10)
 		var code int
 		if sub == "log" {
-			code = log.Run(crew, paths, out, stderr)
+			code = log.Run(crew, crewPaths(paths, crew), out, stderr)
 		} else {
-			code = report.Run(crew, paths, out, stderr, report.Options{
+			code = report.Run(crew, crewPaths(paths, crew), out, stderr, report.Options{
 				Clock: clock.FromEnv(),
 			})
 		}
@@ -1251,11 +1262,12 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 		branch, crew = parsed.typed.Sessions.Branch, str(parsed.typed.Sessions.Crew)
 	} else {
 		pretty = true
-		crew = cmp.Or(parsed.typed.Roster.Crew, bus.CrewID(ctx, cwd))
+		crew = e.crewID(ctx, cwd, parsed.typed.Roster.Crew, false)
 	}
 
 	out := bufio.NewWriterSize(stdout, 64<<10)
-	events, err := bus.ReadEvents(paths.Log)
+	logPath := crewPaths(paths, crew).Log
+	events, err := bus.ReadEvents(logPath)
 	if errors.Is(err, bus.ErrNoLog) {
 		if sub == "sessions" {
 			say(out, "[]\n")
@@ -1264,7 +1276,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 	}
 
 	var rosterRows []map[string]any
-	v, code := fold(sub, events, err, paths.Log, stderr, func(docs []any) (any, error) {
+	v, code := fold(sub, events, err, logPath, stderr, func(docs []any) (any, error) {
 		nowSec := e.nowSec()
 		if sub == "sessions" {
 			return sessions.Fold(docs, branch, crew, nowSec)
@@ -1316,6 +1328,15 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 	return flush(out, stderr, code)
 }
 
+// crewPaths is paths with the log of crew, where crew names a valid one; an
+// empty or invalid crew only filters the repo log, as it always has.
+func crewPaths(paths bus.Paths, crew string) bus.Paths {
+	if c, err := paths.Crew(crew); err == nil {
+		paths.Log = c.Log
+	}
+	return paths
+}
+
 // remoteAs runs a command on a remote host in this checkout's clone, as crew.
 func remoteAs(ctx context.Context, e env, cwd, crew string) func(host string, argv []string, stdout, stderr io.Writer) int {
 	return func(host string, argv []string, stdout, stderr io.Writer) int {
@@ -1327,7 +1348,7 @@ func remoteAs(ctx context.Context, e env, cwd, crew string) func(host string, ar
 // dispatcher's, since ssh carries neither this env nor this pane, so the sender
 // check runs here for every argv, read or write, as the crew the call names.
 func remoteRun(ctx context.Context, e env, c remote.Call, stdout, stderr io.Writer) int {
-	crew := bus.CrewID(ctx, c.Cwd)
+	crew := e.crewID(ctx, c.Cwd, "", false)
 	for _, kv := range c.Env {
 		if v, ok := strings.CutPrefix(kv, "CREW_ID="); ok {
 			crew = v
@@ -1562,7 +1583,7 @@ func reapOptions(ctx context.Context) reap.Options {
 		Self:   self,
 		RateRun: func(_ []string, p bus.Paths, c string, so, se io.Writer) int {
 			return rate.Run(rate.Request{}, p, c, so, se, rate.Options{
-				ClassCheck: func(rows []any, w io.Writer) { classes.Check(rows, classEnv(ctx, c, p, proc.OS{}), w) },
+				ClassCheck: func(rows []any, w io.Writer) { classes.Check(rows, classEnv(ctx, env{proc: proc.OS{}}, c, p), w) },
 			})
 		},
 	}
@@ -1579,16 +1600,16 @@ func runMigrate(ctx context.Context, p crewArgs, e env, paths bus.Paths, cwd str
 	switch strings.Fields(p.cmd)[1] {
 	case "stop":
 		c := m.Stop
-		req := migrate.StopRequest{Request: migrate.Request{Crew: cmp.Or(str(c.Crew), bus.CrewID(ctx, cwd)), Branch: c.Branch}, Timeout: c.Timeout}
+		req := migrate.StopRequest{Request: migrate.Request{Crew: e.crewID(ctx, cwd, str(c.Crew), false), Branch: c.Branch}, Timeout: c.Timeout}
 		return migrate.Stop(ctx, req, paths, cwd, stdout, stderr, o)
 	case "snapshot":
 		c := m.Snapshot
-		req := migrate.Request{Crew: cmp.Or(str(c.Crew), bus.CrewID(ctx, cwd)), Branch: c.Branch}
+		req := migrate.Request{Crew: e.crewID(ctx, cwd, str(c.Crew), false), Branch: c.Branch}
 		return migrate.Snapshot(ctx, req, paths, cwd, stdout, stderr, o)
 	default:
 		c := m.Mark
 		req := migrate.MarkRequest{
-			Request: migrate.Request{Crew: cmp.Or(str(c.Crew), bus.CrewID(ctx, cwd)), Branch: c.Branch},
+			Request: migrate.Request{Crew: e.crewID(ctx, cwd, str(c.Crew), false), Branch: c.Branch},
 			ToHost:  c.ToHost, Mode: c.Mode, Tip: c.Tip, Tree: c.Tree, Dir: c.Dir, Patch: c.Patch,
 		}
 		return migrate.Mark(ctx, req, paths, cwd, stdout, stderr, o)
@@ -1597,13 +1618,13 @@ func runMigrate(ctx context.Context, p crewArgs, e env, paths bus.Paths, cwd str
 
 // classEnv is the production classes.Env: the baked resolver, this crew's id
 // and bus. Getenv, Settings and Now take the classes defaults.
-func classEnv(ctx context.Context, cwd string, paths bus.Paths, t proc.Table) classes.Env {
+func classEnv(ctx context.Context, e env, cwd string, paths bus.Paths) classes.Env {
 	return classes.Env{
 		Bash:   bashBin,
 		Script: cmp.Or(os.Getenv("MODEL_RESOLVE_SCRIPT"), modelResolveScript),
-		CrewID: bus.CrewID(ctx, cwd),
+		CrewID: e.crewID(ctx, cwd, "", false),
 		Paths:  paths,
-		Sender: senderProbes(t),
+		Sender: senderProbes(e.proc),
 	}
 }
 
