@@ -40,6 +40,7 @@ type OverviewScope struct {
 	Source string  `json:"source"`
 	Known  bool    `json:"known"`
 	Crews  int     `json:"crews"`
+	Error  string  `json:"error,omitempty"`
 }
 
 type Summary struct {
@@ -436,7 +437,7 @@ func recentSince(ring []data.RecentEvent, now int64) []data.RecentEvent {
 }
 
 func overviewScope(sc data.Scope) OverviewScope {
-	out := OverviewScope{Crew: nil, Source: sc.Source, Known: sc.Known, Crews: sc.Crews}
+	out := OverviewScope{Crew: nil, Source: sc.Source, Known: sc.Known, Crews: sc.Crews, Error: sc.Err}
 	if sc.Crew != "" {
 		out.Crew = &sc.Crew
 	}

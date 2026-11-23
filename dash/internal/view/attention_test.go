@@ -367,6 +367,22 @@ func TestLaneItemsNeedActNow(t *testing.T) {
 	}
 }
 
+func TestLaneGraceFollowsDispatcherSince(t *testing.T) {
+	for name, tc := range map[string]struct {
+		ago  int64
+		want bool
+	}{"relaunched 100s ago": {100, false}, "relaunched 400s ago": {400, true}} {
+		t.Run(name, func(t *testing.T) {
+			in := laneInputs("1794000000-1", "dead", []map[string]any{laneWorker("working")}, nil)
+			since := in.NowMS/1000 - tc.ago
+			in.Snap.Roster.Crews[0].Dispatcher.Since = &since
+			if got := hasLane(view.BuildOverview(in)); got != tc.want {
+				t.Errorf("lane item = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestLaneItemWithoutDispatcherProbe(t *testing.T) {
 	in := laneInputs("1794000000-1", "dead", []map[string]any{laneWorker("working")}, nil)
 	in.Snap.Roster.Crews[0].Dispatcher = nil

@@ -149,6 +149,29 @@ func TestScopeTmuxOrGitFailureFallsThrough(t *testing.T) {
 	}
 }
 
+func TestScopeProbeFailureIsReported(t *testing.T) {
+	r := scopeRunner(t)
+	r.Responses[displayKey] = FakeResponse{Stderr: []byte("no server running\nmore\n"), Err: FakeExitError{Code: 1}}
+	sc := CollectRoster(context.Background(), r, scopedConfig("%9")).Scope
+	if want := "tmux display-message: no server running"; sc.Err != want {
+		t.Errorf("tmux failure Err = %q, want %q", sc.Err, want)
+	}
+
+	r = scopeRunner(t)
+	tmuxPane(r, "", 1000, "%1")
+	sc = CollectRoster(context.Background(), r, scopedConfig("%9")).Scope
+	if !strings.HasPrefix(sc.Err, "git rev-parse --git-common-dir: ") {
+		t.Errorf("git failure Err = %q", sc.Err)
+	}
+
+	r = scopeRunner(t)
+	paneBus(t, r, nil, nil)
+	tmuxPane(r, "", 1000, "%1")
+	if sc := CollectRoster(context.Background(), r, scopedConfig("%9")).Scope; sc.Err != "" {
+		t.Errorf("no pane files is not an error, got Err %q", sc.Err)
+	}
+}
+
 func TestScopedRosterHoldsOnlyThatCrewAndItsPeers(t *testing.T) {
 	r := scopeRunner(t)
 	cfg := baseConfig()
@@ -224,10 +247,40 @@ func TestScopeSurvivesCrewsFailure(t *testing.T) {
 	r.Responses["crew crews"] = FakeResponse{Stderr: []byte("boom\n"), Err: FakeExitError{Code: 1}}
 	cfg := baseConfig()
 	cfg.CrewID, cfg.CrewIDSource = "c1", "flag"
-	if sc := CollectRoster(context.Background(), r, cfg).Scope; sc.Crew != "c1" || sc.Source != "flag" {
+	if sc := CollectRoster(context.Background(), r, cfg).Scope; sc.Crew != "c1" || sc.Source != "flag" || !sc.Known {
 		t.Errorf("Scope = %+v, want flag c1", sc)
 	}
 	if sc := CollectRoster(context.Background(), r, baseConfig()).Scope; sc.Source != "none" {
 		t.Errorf("Scope = %+v, want none", sc)
+	}
+}
+
+func TestDispatcherSinceIsPidFileMtime(t *testing.T) {
+	r := scopeRunner(t)
+	common := t.TempDir()
+	r.Responses[gitKey] = FakeResponse{Stdout: []byte(common + "\n")}
+	dir := filepath.Join(common, "crew", "crews", "c1")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	pid := filepath.Join(dir, "pid")
+	if err := os.WriteFile(pid, []byte("1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(pid, time.Unix(1234, 0), time.Unix(1234, 0)); err != nil {
+		t.Fatal(err)
+	}
+	sec := CollectRoster(context.Background(), r, baseConfig())
+	for _, c := range sec.Crews {
+		switch c.ID {
+		case "c1":
+			if c.Dispatcher.Since == nil || *c.Dispatcher.Since != 1234 {
+				t.Errorf("c1 Since = %v, want 1234", c.Dispatcher.Since)
+			}
+		case "c2":
+			if c.Dispatcher.Since != nil {
+				t.Errorf("c2 without pid file: Since = %d, want nil", *c.Dispatcher.Since)
+			}
+		}
 	}
 }

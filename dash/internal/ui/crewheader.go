@@ -44,7 +44,11 @@ func (m Model) crewHeader() string {
 		if len(parts) > 0 {
 			line += " "
 		}
-		return truncateLine(line+fg(colDim).Render("· "+label), m.width)
+		line += fg(colDim).Render("· " + label)
+		if sc.Err != "" {
+			line += fg(colAmber).Render(" · scope probe failed")
+		}
+		return truncateLine(line, m.width)
 	}
 	parts = append(parts, cleanText(sc.Crew))
 	line += lipgloss.NewStyle().Bold(true).Render(strings.Join(parts, " "))

@@ -4,9 +4,9 @@ Terminal dashboard over the crew bus: Overview (attention strip), roster,
 budget, holds, retro, and Fleet (machine-wide attention, crews, capacity,
 holds, hosts).
 
-  --crew <id>    Scope the crew tabs to one crew (default: $CREW_ID, else the
-                 crew whose dispatcher pane shares this tmux window; none →
-                 unscoped)
+  --crew <id>    Scope the crew tabs to one crew (default: $CREW_ID, else this
+                 tmux window's crew (@crew_id, or the dispatcher pane's
+                 crew); none → unscoped)
   --narrow       Force the stacked narrow layout (for a side pane) at any width
   --once         Print one snapshot and exit instead of running the UI
   --json         Emit that snapshot as JSON

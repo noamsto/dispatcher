@@ -477,3 +477,22 @@ func TestAge(t *testing.T) {
 		}
 	}
 }
+
+func TestOverviewScopeErrorOnlyWhenProbeFailed(t *testing.T) {
+	in := viewtest.Inputs()
+	b, err := json.Marshal(view.BuildOverview(in).Scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), `"error"`) {
+		t.Errorf("clean scope carries error: %s", b)
+	}
+	in.Snap.Roster.Scope = data.Scope{Source: "none", Err: "tmux list-panes: boom"}
+	b, err = json.Marshal(view.BuildOverview(in).Scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), `"error":"tmux list-panes: boom"`) {
+		t.Errorf("scope lacks the probe error: %s", b)
+	}
+}

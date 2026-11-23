@@ -75,6 +75,15 @@ func TestCrewHeaderUnscoped(t *testing.T) {
 	}
 }
 
+func TestCrewHeaderUnscopedProbeFailed(t *testing.T) {
+	asciiProfile(t)
+	m := headerModel(t, data.Scope{Source: "none", Crews: 2, Err: "tmux display-message: no server"},
+		data.RosterCrew{ID: "c1"}, data.RosterCrew{ID: "c2"})
+	if out := stripped(m.View()); !strings.Contains(out, "crew › myrepo · unscoped (2 crews) · scope probe failed\n") {
+		t.Errorf("probe failure not flagged:\n%s", out)
+	}
+}
+
 func TestCrewHeaderEmpty(t *testing.T) {
 	asciiProfile(t)
 	m := headerModel(t, data.Scope{Source: "none"})

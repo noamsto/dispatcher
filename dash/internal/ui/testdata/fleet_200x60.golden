@@ -33,22 +33,22 @@
 │                                                                                                                      ││ phone    offline                                                             │
 │                                                                                                                      │╰──────────────────────────────────────────────────────────────────────────────╯
 │                                                                                                                      │╭ RECENT EVENTS ───────────────────────────────────────── 16 in the last hour ─╮
-│                                                                                                                      ││  now a/c1 feat/a progress note                                               │
-│                                                                                                                      ││  now a/c1 pr-watch:12 PR #12 changed checks                                  │
-│                                                                                                                      ││   1m a/c1 pr-watch:12 PR #12 changed checks                                  │
-│                                                                                                                      ││   1m a/c1 feat/b pr_open AC1 pass(go test); AC2 pass(bats); AC3 waived(dispa…│
-│                                                                                                                      ││   2m b/c1 pr-watch:12 PR #12 changed checks                                  │
-│                                                                                                                      ││   3m b/c1 feat/b2 pr_open AC1 pass(go test)                                  │
-│                                                                                                                      ││   5m b/c5 feat/c5 blocked awaiting owner decision (cycle 1 of 24)            │
-│                                                                                                                      ││   6m a/c1 feat/b:reviewer failed role reviewer engine exited (pane %9)       │
-│                                                                                                                      ││   6m b/c5 feat/c5 working execute                                            │
-│                                                                                                                      ││   8m a/c1 feat/b working execute                                             │
-│                                                                                                                      ││   8m b/c1 feat/b2 working spec                                               │
-│                                                                                                                      ││  10m a/c1 feat/a working execute                                             │
-│                                                                                                                      ││  11m a/c1 feat/a:plan-critic seam plan: accept                               │
-│                                                                                                                      ││  13m a/c1 feat/a working plan                                                │
-│                                                                                                                      ││  15m a/c1 feat/b working spec                                                │
-│                                                                                                                      ││  16m a/c1 feat/a working spec                                                │
+│                                                                                                                      ││  now a c1 feat/a             progress note                                   │
+│                                                                                                                      ││  now a c1 pr-watch:12        PR #12 changed checks                           │
+│                                                                                                                      ││   1m a c1 pr-watch:12        PR #12 changed checks                           │
+│                                                                                                                      ││   1m a c1 feat/b             pr_open AC1 pass(go test); AC2 pass(bats); AC3 …│
+│                                                                                                                      ││   2m b c1 pr-watch:12        PR #12 changed checks                           │
+│                                                                                                                      ││   3m b c1 feat/b2            pr_open AC1 pass(go test)                       │
+│                                                                                                                      ││   5m b c5 feat/c5            blocked awaiting owner decision (cycle 1 of 24) │
+│                                                                                                                      ││   6m a c1 feat/b:reviewer    failed role reviewer engine exited (pane %9)    │
+│                                                                                                                      ││   6m b c5 feat/c5            working execute                                 │
+│                                                                                                                      ││   8m a c1 feat/b             working execute                                 │
+│                                                                                                                      ││   8m b c1 feat/b2            working spec                                    │
+│                                                                                                                      ││  10m a c1 feat/a             working execute                                 │
+│                                                                                                                      ││  11m a c1 feat/a:plan-critic seam plan: accept                               │
+│                                                                                                                      ││  13m a c1 feat/a             working plan                                    │
+│                                                                                                                      ││  15m a c1 feat/b             working spec                                    │
+│                                                                                                                      ││  16m a c1 feat/a             working spec                                    │
 │                                                                                                                      ││                                                                              │
 │                                                                                                                      ││                                                                              │
 │                                                                                                                      ││                                                                              │

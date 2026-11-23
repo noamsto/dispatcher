@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"math"
+	"os"
+	"path/filepath"
 	"slices"
 	"sort"
 	"strconv"
@@ -230,6 +232,28 @@ func crewArgs(cfg Config, subArgs ...string) []string {
 	return out
 }
 
+// stampSince fills Since on every here-dispatcher from its crew pid file, which
+// crew register and adopt rewrite on each (re)launch.
+func stampSince(ctx context.Context, r Runner, cfg Config, ids []string, locs map[string]*DispatcherLoc) {
+	if !slices.ContainsFunc(ids, func(id string) bool { return locs[id].Where == "here" }) {
+		return
+	}
+	events, err := EventsPath(ctx, r, cfg.Git)
+	if err != nil {
+		return
+	}
+	crewsDir := filepath.Join(filepath.Dir(events), "crews")
+	for _, id := range ids {
+		if locs[id].Where != "here" {
+			continue
+		}
+		if fi, err := os.Stat(filepath.Join(crewsDir, id, "pid")); err == nil {
+			since := fi.ModTime().Unix()
+			locs[id].Since = &since
+		}
+	}
+}
+
 // CollectRoster re-runs only the roster sources (crew crews / roster / hold
 // list) — the re-collect a live bus-change triggers, without touching
 // settings/budget/runs.
@@ -241,6 +265,8 @@ func CollectRoster(ctx context.Context, r Runner, cfg Config) RosterSection {
 		sc := explicitScope(cfg)
 		if sc.Crew == "" {
 			sc.Source = "none"
+		} else {
+			sc.Known = true
 		}
 		return RosterSection{Crews: []RosterCrew{}, Error: &msg, Scope: sc}
 	}
@@ -278,6 +304,7 @@ func CollectRoster(ctx context.Context, r Runner, cfg Config) RosterSection {
 			}
 		}
 	}
+	stampSince(ctx, r, cfg, ids, locs)
 	crews := make([]RosterCrew, len(ids))
 	peerRows := make([][]map[string]any, len(ids))
 	var wg sync.WaitGroup

@@ -435,9 +435,14 @@ func fleetLayout(w, h int, fv vm.FleetView, st fleetState) fleetRects {
 		}
 		// Events rank last: drawn only when focused or when the others keep
 		// their wanted heights and a panel still fits, then they take the rest.
-		if effectiveFleetFocus(fv, st.focus) == fpEvents || bodyH >= sum+fleetPanelMinH {
+		evFocused := effectiveFleetFocus(fv, st.focus) == fpEvents
+		if evFocused || bodyH >= sum+fleetPanelMinH {
 			right = append(right, fpEvents)
-			want = append(want, fleetPanelMinH)
+			if evFocused {
+				want = append(want, max(fleetPanelMinH, len(fv.Events)+2))
+			} else {
+				want = append(want, fleetPanelMinH)
+			}
 		}
 		py := y
 		focus := slices.Index(right, effectiveFleetFocus(fv, st.focus))
@@ -550,7 +555,7 @@ func renderFleet(w, h int, fv vm.FleetView, st fleetState, mode pillMode) string
 	}
 	fr := fleetRow{fv: fv, r: r, focus: focus, tree: ix.tree, deadN: ix.deadN, showDead: ix.showDead}
 	if pl := r.panels[fpEvents]; pl.shown {
-		fr.evLabelW = eventLabelW(fv, pl.inner.w)
+		fr.evCols = eventCols(fv, pl.inner.w)
 	}
 	if pl := r.panels[fpCrews]; pl.shown {
 		fr.cols = crewCols(fv, ix, pl.inner.w)
@@ -644,7 +649,7 @@ type fleetRow struct {
 
 	deadN    int
 	showDead bool
-	evLabelW int // the events' repo/crew column, sized to every row
+	evCols   fleetEventCols
 }
 
 // selected: the strip highlights its cursor while focused, else the chosen
@@ -723,26 +728,30 @@ func (fr fleetRow) line(it placed, iw int) string {
 		add(onlineWord(sh.Online), fg(onlineColor(sh.Online))).String()
 }
 
-func eventLabel(e vm.EventRow) string {
-	return e.Repo + "/" + shortCrew(e.Crew)
-}
+// fleetEventCols are the shared widths of the events' repo, crew tag and
+// sender columns, so every row's text starts in the same place.
+type fleetEventCols struct{ repo, crew, from int }
 
-// eventLabelW is the widest repo/crew label, capped so the text keeps room.
-func eventLabelW(fv vm.FleetView, iw int) int {
-	w := 0
+func eventCols(fv vm.FleetView, iw int) fleetEventCols {
+	var c fleetEventCols
 	for _, e := range fv.Events {
-		w = max(w, ansi.StringWidth(eventLabel(e)))
+		c.repo = max(c.repo, ansi.StringWidth(cleanText(e.Repo)))
+		c.crew = max(c.crew, ansi.StringWidth(cleanText(crewTag(e.Crew))))
+		c.from = max(c.from, ansi.StringWidth(cleanText(eventSender(e.Worker))))
 	}
-	return min(w, iw/3)
+	c.repo = min(c.repo, iw/5)
+	c.from = min(c.from, iw/4)
+	return c
 }
 
 func (fr fleetRow) eventLine(e vm.EventRow, s *spans, iw int) string {
 	sp := func() *spans { return s.add(" ", lipgloss.NewStyle()) }
-	s.col(vm.Age(fr.fv.GeneratedAt-e.TS), 4, fg(colDim), true)
-	sp().col(eventLabel(e), fr.evLabelW, fg(colDim), false)
-	from := eventSender(e.Worker)
-	sp().col(from, ansi.StringWidth(from), fg(colText).Bold(true), false)
-	used := 1 + 4 + 1 + fr.evLabelW + 1 + ansi.StringWidth(from) + 1
+	c := fr.evCols
+	s.col(vm.Age(fr.fv.GeneratedAt-e.TS), ageColW, fg(colDim), true)
+	sp().col(e.Repo, c.repo, fg(colDim), false)
+	sp().col(crewTag(e.Crew), c.crew, fg(colDim), false)
+	sp().col(eventSender(e.Worker), c.from, fg(colText).Bold(true), false)
+	used := 1 + ageColW + 1 + c.repo + 1 + c.crew + 1 + c.from + 1
 	return sp().col(e.Text, iw-used, fg(colText), false).String()
 }
 
@@ -784,6 +793,13 @@ func shortCrew(id string) string {
 		return id
 	}
 	return string(r[:8])
+}
+
+// crewTag is the last 8 runes of a crew id: ids are <epoch>-<pid>, so the tail
+// carries the pid that tells apart crews minted in the same few minutes.
+func crewTag(id string) string {
+	r := []rune(id)
+	return string(r[max(0, len(r)-8):])
 }
 
 // cloneName is the base name of a sub row's clone directory, falling back to
@@ -1049,7 +1065,7 @@ func prioColor(p string) lipgloss.Color {
 }
 
 func fleetHoldLine(hd vm.FleetHoldRow, s *spans, iw int) string {
-	const prioW, stateW, ageW = 6, 15, 4
+	const prioW, stateW = 6, 15
 	prio := ovStr(hd.Prio, hd.Kind)
 	where := hd.Repo + " " + hd.Crew
 	if hd.Branch != nil {
@@ -1066,14 +1082,14 @@ func fleetHoldLine(hd vm.FleetHoldRow, s *spans, iw int) string {
 	case hd.State == "parked":
 		sc = colDim
 	}
-	whereW := max(4, iw-1-prioW-1-1-stateW-1-ageW)
+	whereW := max(4, iw-1-prioW-1-1-stateW-1-ageColW)
 	return s.col(prio, prioW, fg(prioColor(prio)), false).
 		add(" ", lipgloss.NewStyle()).
 		col(where, whereW, fg(colText), false).
 		add(" ", lipgloss.NewStyle()).
 		col(state, stateW, fg(sc), false).
 		add(" ", lipgloss.NewStyle()).
-		col(ovAge(hd.WaitedS), ageW, fg(colDim), true).String()
+		col(ovAge(hd.WaitedS), ageColW, fg(colDim), true).String()
 }
 
 // hostNameW is the admitted hosts' name column. Suggested hosts sit under

@@ -20,7 +20,7 @@ func agedOverview(t *testing.T, base, elapsed int64) (vm.OverviewView, overviewS
 	ov.GeneratedAt = viewtest.NowMS/1000 + elapsed
 	ov.Events = append([]vm.EventRow(nil), ov.Events...)
 	for i := range ov.Events {
-		ov.Events[i].TS = ov.GeneratedAt - base - int64(i)
+		ov.Events[i].TS = viewtest.NowMS/1000 - base - int64(i)
 	}
 	ov.Attention = append([]vm.AttentionItem(nil), ov.Attention...)
 	for i := range ov.Attention {
@@ -67,6 +67,12 @@ func TestOverviewAgeChangesStayInAgeColumn(t *testing.T) {
 		a := renderAged(t, sz[0], sz[1], 125, 0)
 		b := renderAged(t, sz[0], sz[1], 125, 60)
 		changed := map[string]bool{}
+		aged, _ := agedOverview(t, 125, 0)
+		events := aged.Events
+		drawn := strings.Contains(ansi.Strip(strings.Join(a, "\n")), "RECENT EVENTS")
+		if sz[1] >= 60 && !drawn {
+			t.Fatalf("%dx%d: events panel not drawn", sz[0], sz[1])
+		}
 		for i := range a {
 			ra, rb := []rune(ansi.Strip(a[i])), []rune(ansi.Strip(b[i]))
 			if len(ra) != len(rb) {
@@ -89,7 +95,12 @@ func TestOverviewAgeChangesStayInAgeColumn(t *testing.T) {
 				t.Errorf("%dx%d line %d differs beyond a 4-cell age column (cols %d-%d):\n%q\n%q",
 					sz[0], sz[1], i, lo, hi, string(ra), string(rb))
 			}
+			isEvent := slices.ContainsFunc(events, func(e vm.EventRow) bool {
+				return strings.Contains(string(ra), string([]rune(e.Text)[:min(8, len([]rune(e.Text)))]))
+			})
 			switch {
+			case isEvent && strings.Contains(string(ra), "  2m "):
+				changed["event"] = true
 			case strings.Contains(string(ra), "ok 2m"):
 				changed["watch"] = true
 			case strings.Contains(string(ra), "  2m "):
@@ -98,6 +109,9 @@ func TestOverviewAgeChangesStayInAgeColumn(t *testing.T) {
 		}
 		if !changed["watch"] {
 			t.Errorf("%dx%d: no MONITORS watch line aged", sz[0], sz[1])
+		}
+		if drawn && !changed["event"] {
+			t.Errorf("%dx%d: no event row aged", sz[0], sz[1])
 		}
 		if !changed["row"] {
 			t.Errorf("%dx%d: no event or attention row aged", sz[0], sz[1])
@@ -148,12 +162,12 @@ func TestOverviewCrewColumnOnlyWhenUnscoped(t *testing.T) {
 	ov, st := agedOverview(t, 125, 0)
 	ov.Events[0].Crew = "crew-abcdefghij"
 	out := ansi.Strip(renderOverview(200, 60, ov, st, pillRound))
-	if !strings.Contains(out, "crew-abc ") || strings.Contains(out, "crew-abcd") {
-		t.Errorf("unscoped events lack the 8-rune crew label:\n%s", out)
+	if !strings.Contains(out, "cdefghij ") || strings.Contains(out, "bcdefghij") {
+		t.Errorf("unscoped events lack the 8-rune crew tag:\n%s", out)
 	}
 	crew := "crew-abcdefghij"
 	ov.Scope.Crew = &crew
-	if out := ansi.Strip(renderOverview(200, 60, ov, st, pillRound)); strings.Contains(out, "crew-abc") {
+	if out := ansi.Strip(renderOverview(200, 60, ov, st, pillRound)); strings.Contains(out, "cdefghij") {
 		t.Errorf("scoped events carry a crew column:\n%s", out)
 	}
 }

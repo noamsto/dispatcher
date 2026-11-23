@@ -225,7 +225,11 @@ func laneActionable(c data.RosterCrew, rows []WorkerRow, now int64) bool {
 	if c.Dispatcher != nil && c.Dispatcher.Where != "here" {
 		return false
 	}
-	if launched, ok := crewLaunched(c.ID, now); ok && now-launched < laneGraceSec {
+	launched, ok := crewLaunched(c.ID, now)
+	if c.Dispatcher != nil && c.Dispatcher.Since != nil {
+		launched, ok = max(launched, *c.Dispatcher.Since), true
+	}
+	if ok && now-launched < laneGraceSec {
 		return false
 	}
 	for _, w := range rows {

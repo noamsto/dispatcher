@@ -1202,7 +1202,7 @@ func TestFleetRecentEvents(t *testing.T) {
 		{TS: 1_000_000 - 3000, Worker: "dispatcher", Text: "hello", Crew: "c1", Repo: "alpha"},
 	})
 	out := stripped(fleetFixtureView(fv).View(200, 60))
-	for _, want := range []string{"RECENT EVENTS", "3 in the last hour", "alpha/c1c1c1c1", "beta/c5", "feat/a1", "feat/b5:reviewer", "review done", "now", "6m", "50m"} {
+	for _, want := range []string{"RECENT EVENTS", "3 in the last hour", "alpha c1c1c1c1", "beta  c5", "feat/a1", "feat/b5:reviewer", "review done", "now", "6m", "50m"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("fleet view lacks %q:\n%s", want, out)
 		}
@@ -1227,9 +1227,58 @@ func TestFleetRecentEventsAgeBucketStable(t *testing.T) {
 		t.Errorf("frames within one age bucket differ:\n%s\n---\n%s", x, y)
 	}
 	for _, l := range strings.Split(stripped(fleetFixtureView(a).View(200, 60)), "\n") {
-		if strings.Contains(l, "alpha/c1") && strings.Contains(l, "tick") && !strings.Contains(l, "│   2m alpha/c1") {
+		if strings.Contains(l, "alpha c1") && strings.Contains(l, "tick") && !strings.Contains(l, "│   2m alpha c1") {
 			t.Errorf("age is not a right-aligned 4-cell column: %q", l)
 		}
+	}
+}
+
+func TestFleetEventColumnsSharedAcrossRows(t *testing.T) {
+	asciiProfile(t)
+	long := "feat/1757-dash-explicit-fleet-vs-dispatcher-scope-extra"
+	fv := eventsFleet([]vm.EventRow{
+		{TS: 1_000_000 - 30, Worker: "worker:" + long, Text: "textone", Crew: "1794000000-1111", Repo: "alpha"},
+		{TS: 1_000_000 - 60, Worker: "dispatcher:1794000000-2222", Text: "texttwo", Crew: "1794000000-2222", Repo: "alpha"},
+		{TS: 1_000_000 - 90, Worker: "worker:feat/s", Text: "textthree", Crew: "1794000001-3333", Repo: "beta"},
+	})
+	v := fleetFixtureView(fv)
+	v.st.focus = fpEvents
+	out := stripped(v.View(120, 40))
+	col := -1
+	for _, text := range []string{"textone", "texttwo", "textthree"} {
+		var line string
+		for _, l := range strings.Split(out, "\n") {
+			if strings.Contains(l, text) {
+				line = l
+			}
+		}
+		if line == "" {
+			t.Fatalf("event text %q not visible:\n%s", text, out)
+		}
+		c := ansi.StringWidth(line[:strings.Index(line, text)])
+		if col >= 0 && c != col {
+			t.Errorf("%q starts at column %d, others at %d:\n%s", text, c, col, out)
+		}
+		col = c
+	}
+	for _, tag := range []string{"000-1111", "000-2222", "001-3333"} {
+		if !strings.Contains(out, tag) {
+			t.Errorf("crew tag %q missing:\n%s", tag, out)
+		}
+	}
+}
+
+func TestFleetFocusedEventsGetOneRowEach(t *testing.T) {
+	asciiProfile(t)
+	fv := vm.BuildFleet(viewtest.FleetInputs())
+	if len(fv.Events) < 3 {
+		t.Fatalf("fixture has %d events", len(fv.Events))
+	}
+	v := fleetFixtureView(fv)
+	v.st.focus = fpEvents
+	pl := fleetLayout(100, 30, fv, v.st).panels[fpEvents]
+	if !pl.shown || len(pl.items) < 2 {
+		t.Errorf("focused events panel draws %d rows, want more than one", len(pl.items))
 	}
 }
 

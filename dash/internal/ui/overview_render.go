@@ -272,6 +272,10 @@ func rowLabel(branch, host string) string {
 	return branch + "@" + host
 }
 
+// ageColW is the width of the right-aligned age column in event and
+// attention rows.
+const ageColW = 4
+
 func ovAge(sec int64) string {
 	return vm.Age(sec)
 }
@@ -519,7 +523,7 @@ func (r *overviewRects) placeEvents(ov vm.OverviewView, st overviewState, outer,
 	for _, e := range ov.Events {
 		r.evFromW = max(r.evFromW, ansi.StringWidth(cleanText(eventFrom(ov, e.Worker))))
 		if ov.Scope.Crew == nil {
-			r.evCrewW = max(r.evCrewW, ansi.StringWidth(cleanText(shortCrew(e.Crew))))
+			r.evCrewW = max(r.evCrewW, ansi.StringWidth(cleanText(crewTag(e.Crew))))
 		}
 	}
 	r.evFromW = min(r.evFromW, inner.w/3)
@@ -826,8 +830,7 @@ func attnStripLine(visible []vm.AttentionItem, i int, label func(vm.AttentionIte
 	if actionW > 0 {
 		actionPart = 3 + actionW
 	}
-	const ageW = 4
-	msgW := iw - 5 - workerW - 1 - 1 - ageW - actionPart - 1
+	msgW := iw - 5 - workerW - 1 - 1 - ageColW - actionPart - 1
 	glyph, gc := severityGlyph(a.Severity)
 	workerSt := fg(colText).Bold(true)
 	if a.Worker != "" {
@@ -846,7 +849,7 @@ func attnStripLine(visible []vm.AttentionItem, i int, label func(vm.AttentionIte
 		add(" ", lipgloss.NewStyle()).
 		col(msg, msgW, fg(colText), false).
 		add(" ", lipgloss.NewStyle()).
-		col(ovAge(a.AgeSec), ageW, fg(colDim), true)
+		col(ovAge(a.AgeSec), ageColW, fg(colDim), true)
 	if a.Action != nil {
 		s.add(" → ", fg(colDim)).add(a.Action.Label, fg(gc))
 	}
@@ -1036,10 +1039,10 @@ func ovEventLine(ov vm.OverviewView, r overviewRects, it placed, s *spans, iw in
 	if !r.narrow {
 		fromW = clamp(iw/4, 12, 24)
 	}
-	s.col(ovAge(ov.GeneratedAt-e.TS), 4, fg(colDim), true)
-	used := 1 + 4
+	s.col(ovAge(ov.GeneratedAt-e.TS), ageColW, fg(colDim), true)
+	used := 1 + ageColW
 	if r.evCrewW > 0 {
-		sp().col(shortCrew(e.Crew), r.evCrewW, fg(colDim), false)
+		sp().col(crewTag(e.Crew), r.evCrewW, fg(colDim), false)
 		used += 1 + r.evCrewW
 	}
 	sp().col(eventFrom(ov, e.Worker), fromW, codenameStyle(eventTmux(ov, e.Worker), fg(colText).Bold(true)), false)

@@ -247,4 +247,7 @@ type DispatcherLoc struct {
 	Where  string
 	Repo   *string
 	Common *string
+	// Since is the unix time the here-dispatcher last (re)launched, from the
+	// mtime of its crew pid file; nil when unknown.
+	Since *int64
 }

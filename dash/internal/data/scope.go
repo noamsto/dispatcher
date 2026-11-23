@@ -16,6 +16,9 @@ type Scope struct {
 	Source string
 	Known  bool
 	Crews  int
+	// Err is why the pane probe could not run; empty when it ran, even if it
+	// found no dispatcher.
+	Err string
 }
 
 // resolveScope picks the crew to scope to: an explicit id first, then the
@@ -26,7 +29,7 @@ func resolveScope(ctx context.Context, r Runner, cfg Config, rows []crewRow) Sco
 		sc = paneScope(ctx, r, cfg, rows)
 	}
 	if sc.Crew == "" {
-		return Scope{Source: "none"}
+		return Scope{Source: "none", Err: sc.Err}
 	}
 	for _, row := range rows {
 		if row.id == sc.Crew {
@@ -46,9 +49,9 @@ func explicitScope(cfg Config) Scope {
 // paneScope reads the window's @crew_id, else matches the window's other
 // panes against each crew's recorded dispatcher pane file.
 func paneScope(ctx context.Context, r Runner, cfg Config, rows []crewRow) Scope {
-	out, _, err := r.Run(ctx, "tmux", "display-message", "-p", "-t", cfg.Pane, "#{@crew_id}\t#{start_time}")
+	out, errb, err := r.Run(ctx, "tmux", "display-message", "-p", "-t", cfg.Pane, "#{@crew_id}\t#{start_time}")
 	if err != nil {
-		return Scope{}
+		return Scope{Err: "tmux display-message: " + firstLineOrExit(errb, exitCode(err))}
 	}
 	crew, start, _ := strings.Cut(strings.TrimRight(string(out), "\n"), "\t")
 	if crew != "" {
@@ -56,15 +59,15 @@ func paneScope(ctx context.Context, r Runner, cfg Config, rows []crewRow) Scope 
 	}
 	started, err := strconv.ParseInt(start, 10, 64)
 	if err != nil {
-		return Scope{}
+		return Scope{Err: "tmux display-message: unparseable start_time"}
 	}
-	out, _, err = r.Run(ctx, "tmux", "list-panes", "-t", cfg.Pane, "-F", "#{pane_id}")
+	out, errb, err = r.Run(ctx, "tmux", "list-panes", "-t", cfg.Pane, "-F", "#{pane_id}")
 	if err != nil {
-		return Scope{}
+		return Scope{Err: "tmux list-panes: " + firstLineOrExit(errb, exitCode(err))}
 	}
 	events, err := EventsPath(ctx, r, cfg.Git)
 	if err != nil {
-		return Scope{}
+		return Scope{Err: err.Error()}
 	}
 	crewsDir := filepath.Join(filepath.Dir(events), "crews")
 	panes := map[string]bool{}
