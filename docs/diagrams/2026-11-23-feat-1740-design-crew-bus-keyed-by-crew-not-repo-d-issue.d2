@@ -1,0 +1,36 @@
+direction: right
+
+classes: {
+  proc: {style: {stroke: "#1565C0"; stroke-width: 2}}
+  store: {shape: cylinder; style: {stroke: "#2E7D32"; stroke-width: 2}}
+  fanin: {style: {stroke: "#E65100"; stroke-width: 2; stroke-dash: 3}}
+  broken: {style: {stroke: "#C62828"; stroke-width: 2}}
+}
+
+dispatcher: "dispatcher pane\n(cwd: repo A)" {class: proc}
+workerA: "worker in repo A" {class: proc}
+workerB: "worker in repo B\n(cd B && dispatch)" {class: proc}
+
+busA: "A/.git/crew/events.jsonl\nbus.Locate(cwd)" {class: store}
+busB: "B/.git/crew/events.jsonl\nbus.Locate(cwd)" {class: store}
+
+registry: "XDG_DATA_HOME/crew/repos\n+ HOME walk" {class: store}
+fleet: "crew fleet stream / watch\nfleet status" {class: fanin}
+hint: "cross-repo-hint.sh\ncd B && crew stream" {class: fanin}
+reply: "crew reply worker:<branch>\n(cwd must be B)" {class: broken}
+houston: "houston / dash\none bus per repo" {class: fanin}
+
+workerA -> busA: "status, msg" {style.animated: true}
+workerB -> busB: "status, msg" {style.animated: true}
+dispatcher -> busA: "crew stream (own repo)"
+busB -> dispatcher: "pr_open never seen" {class: broken}
+dispatch_reg: "dispatch.sh _registry_add" {class: proc}
+dispatch_reg -> registry: append common dir
+registry -> fleet: discover buses
+busA -> fleet
+busB -> fleet
+fleet -> dispatcher: merged lane
+hint -> dispatcher: "arm a second lane"
+reply -> busB: "only from B"
+busA -> houston
+busB -> houston

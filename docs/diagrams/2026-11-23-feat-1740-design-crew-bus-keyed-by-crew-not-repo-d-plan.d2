@@ -1,0 +1,39 @@
+direction: right
+
+classes: {
+  proc: {style: {stroke: "#1565C0"; stroke-width: 2}}
+  store: {shape: cylinder; style: {stroke: "#2E7D32"; stroke-width: 2}}
+  new: {style: {stroke: "#2E7D32"; stroke-width: 3}}
+  derived: {shape: cylinder; style: {stroke: "#6A1B9A"; stroke-width: 2; stroke-dash: 3}}
+  repo: {shape: cylinder; style: {stroke: "#757575"; stroke-width: 2}}
+}
+
+dispatcher: "dispatcher pane\n(any cwd)" {class: proc}
+workerA: "worker in repo A" {class: proc}
+workerB: "worker in repo B" {class: proc}
+
+crewlog: "XDG_STATE_HOME/crew/crews/<crew>/\nevents.jsonl + meta.json\n(new: one log per crew)" {class: store}
+index: "index/repos/<repo key>\ncrew ids per repo\n(new, derived)" {class: derived}
+
+repoA: "A/.git/crew/\nartifacts, grants, baseline,\npeers (worker + repo state)" {class: repo}
+repoB: "B/.git/crew/\nartifacts, grants, baseline,\npeers (worker + repo state)" {class: repo}
+
+stream: "crew stream / watch\none lane per crew" {class: new}
+reply: "crew reply --crew\nworks from any cwd" {class: new}
+fleet: "fleet status / queue\nreads live crews" {class: new}
+consumers: "houston / dash\nread crew dir via\ncrew where --json" {class: new}
+remote: "remote host H\nvisiting crew dir\n(same crew id)" {class: proc}
+
+workerA -> crewlog: "status, msg" {style.animated: true}
+workerB -> crewlog: "status, msg" {style.animated: true}
+workerA -> repoA: "artifacts"
+workerB -> repoB: "artifacts"
+crewlog -> stream: "one cursor" {style.animated: true}
+stream -> dispatcher: wakes
+dispatcher -> reply
+reply -> crewlog: append
+crewlog -> index: "rebuildable from\ndispatch rows"
+index -> fleet: "repo questions\n(peers, reap)"
+crewlog -> fleet
+crewlog -> consumers
+remote -> stream: "crew relay --crew" {style.animated: true}
