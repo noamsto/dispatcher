@@ -106,10 +106,7 @@ var ErrMissing = errors.New("no such standing policy")
 // Dir is the policy dir of the repo whose git common dir is common, and that
 // common dir's realpath (a record's Repo).
 func Dir(common string, getenv func(string) string) (dir, real string, err error) {
-	if real, err = filepath.EvalSymlinks(common); err != nil {
-		return "", "", err
-	}
-	if real, err = filepath.Abs(real); err != nil {
+	if real, err = bus.RepoTag(common); err != nil {
 		return "", "", err
 	}
 	state := getenv("XDG_STATE_HOME")
