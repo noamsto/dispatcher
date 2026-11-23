@@ -88,6 +88,8 @@ func ReleaseWindows(ctx context.Context, d Deps, branch, session, state string, 
 		d.keep(branch, "pane busy: "+why)
 		return 3, nil
 	}
+	// Read before the kill below removes the stamps.
+	crewID := rowCrewID(ctx, d.P.Tmux, windows, wt, branch, eventDocs(d.Log))
 	for _, w := range windows {
 		if dry {
 			d.Say("would release " + w + " at " + wt + " (" + branch + " " + state + ")")
@@ -102,7 +104,9 @@ func ReleaseWindows(ctx context.Context, d Deps, branch, session, state string, 
 	row := releaseRow{
 		TS:      d.P.Clock.Now().UnixMilli(),
 		Kind:    "release",
+		CrewID:  crewID,
 		Branch:  branch,
+		Repo:    repoTag(d.Common),
 		Session: session,
 		State:   state,
 		Windows: append([]string{}, windows...),
@@ -114,7 +118,9 @@ func ReleaseWindows(ctx context.Context, d Deps, branch, session, state string, 
 type releaseRow struct {
 	TS      int64    `json:"ts"`
 	Kind    string   `json:"kind"`
+	CrewID  string   `json:"crew_id,omitempty"`
 	Branch  string   `json:"branch"`
+	Repo    string   `json:"repo,omitempty"`
 	Session string   `json:"session"`
 	State   string   `json:"state"`
 	Windows []string `json:"windows"`

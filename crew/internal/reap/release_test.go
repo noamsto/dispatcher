@@ -87,6 +87,7 @@ type rel struct {
 	says     []string
 	notes    []string
 	capSeen  map[string]int
+	stamps   map[string]string // window id → @crew_id
 }
 
 func newRel(t *testing.T) *rel {
@@ -155,6 +156,8 @@ func (r *rel) tmux(args []string) (string, error) {
 		return r.wins, nil
 	case args[0] == "list-panes":
 		return r.panes, nil
+	case args[0] == "display-message" && args[len(args)-1] == "#{@crew_id}":
+		return r.stamps[args[3]], nil
 	}
 	return "", nil
 }
@@ -532,8 +535,8 @@ func TestReleaseWritesRowAndKills(t *testing.T) {
 		t.Fatalf("log %q", path)
 	}
 	sameJSON(t, line, fmt.Sprintf(
-		`{"ts":%d,"kind":"release","branch":"feat/x","session":"sess-1","state":"done","windows":["@5","@6"]}`,
-		fakeNow*1000+123))
+		`{"ts":%d,"kind":"release","branch":"feat/x","repo":%q,"session":"sess-1","state":"done","windows":["@5","@6"]}`,
+		fakeNow*1000+123, r.common))
 	if strings.ContainsAny(line, "\n ") {
 		t.Fatalf("row is not compact: %q", line)
 	}

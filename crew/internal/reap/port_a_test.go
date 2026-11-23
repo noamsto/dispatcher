@@ -117,7 +117,7 @@ func TestPortAIdleReleaseFailedKeepsWorktree(t *testing.T) {
 	if len(rows) != 1 {
 		t.Fatalf("appended %q", f.appended)
 	}
-	wantJSON(t, rows[0], fmt.Sprintf(`{"ts":%d,"kind":"release","branch":"feat/r","session":"s1","state":"failed","windows":["@23"]}`, nowUnix*1000))
+	wantJSON(t, rows[0], fmt.Sprintf(`{"ts":%d,"kind":"release","branch":"feat/r","repo":%q,"session":"s1","state":"failed","windows":["@23"]}`, nowUnix*1000, f.paths.Common))
 }
 
 // Sessions that must not release a window, however long the idle.
@@ -277,7 +277,7 @@ func TestPortASquashMergedReap(t *testing.T) {
 	if len(rows) != 1 {
 		t.Fatalf("appended %q", f.appended)
 	}
-	wantJSON(t, rows[0], fmt.Sprintf(`{"ts":%d,"kind":"reap","branch":"feat/r","pr":%q,"pr_state":"MERGED","worktree":%q}`, nowUnix*1000, prURL, f.wt))
+	wantJSON(t, rows[0], fmt.Sprintf(`{"ts":%d,"kind":"reap","branch":"feat/r","repo":%q,"pr":%q,"pr_state":"MERGED","worktree":%q}`, nowUnix*1000, f.paths.Common, prURL, f.wt))
 	if f.portAExists(f.wt) || f.portABranchExists(rb) {
 		t.Fatal("worktree or branch survived")
 	}

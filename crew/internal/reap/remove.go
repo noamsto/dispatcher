@@ -28,14 +28,16 @@ const tampered = "its .git changed during the reap; possible tampering: tell the
 // status and scratch-index tree. A non-zero code is a cwd-discovered git that
 // failed (the arm's `set -e`).
 func (r *run) remove(ctx context.Context, c *candidate) (removed bool, code int) {
+	// The resume record is keyed by the worktree's own realpath, so it must be
+	// computed while the directory still exists (#556).
+	anchor, _ := wtgit.AnchorPath(c.wtpath)
+	// The row's crew id comes from sources the kills and removal below destroy.
+	c.crewID = rowCrewID(ctx, r.p.Tmux, worktreeWindows(ctx, r.p.Tmux, c.wtpath), c.wtpath, c.branch, r.busDocs)
+
 	// Leftover processes reparented out of the pane but still rooted in this
 	// worktree (the #187 class). Before the --dry-run return so dry runs
 	// report them too.
 	killLeftovers(ctx, r.p.Proc, c.wtpath, r.dry, r.say)
-
-	// The resume record is keyed by the worktree's own realpath, so it must be
-	// computed while the directory still exists (#556).
-	anchor, _ := wtgit.AnchorPath(c.wtpath)
 
 	if r.dry {
 		r.say("would reap " + c.branch + " (" + c.label + ") @ " + c.wtpath)
@@ -189,13 +191,22 @@ func (r *run) trashScaffold(ctx context.Context, c *candidate) {
 
 // killWindows kills every window whose pane path or @worktree is wt.
 func killWindows(ctx context.Context, tm tmux.Client, wt string) {
+	for _, w := range worktreeWindows(ctx, tm, wt) {
+		_, _ = tm.Run(ctx, "kill-window", "-t", w)
+	}
+}
+
+// worktreeWindows lists the ids of the windows whose pane path or @worktree is wt.
+func worktreeWindows(ctx context.Context, tm tmux.Client, wt string) []string {
+	var ids []string
 	rows, _ := tm.Run(ctx, "list-windows", "-a", "-F", "#{window_id} #{pane_current_path} #{@worktree}")
 	for line := range strings.SplitSeq(rows, "\n") {
 		f := strings.Fields(line)
 		if (len(f) > 1 && f[1] == wt) || (len(f) > 2 && f[2] == wt) {
-			_, _ = tm.Run(ctx, "kill-window", "-t", f[0])
+			ids = append(ids, f[0])
 		}
 	}
+	return ids
 }
 
 // discardRecheck is --discard's keep gate before the removal: a new path or
@@ -282,7 +293,9 @@ func (r *run) reapRow(c *candidate) string {
 	row := reapRowJSON{
 		TS:       r.p.Clock.Now().UnixMilli(),
 		Kind:     "reap",
+		CrewID:   c.crewID,
 		Branch:   c.branch,
+		Repo:     repoTag(r.paths.Common),
 		PR:       c.pr,
 		PRState:  c.prState,
 		Worktree: c.wtpath,
@@ -303,7 +316,9 @@ func (r *run) reapRow(c *candidate) string {
 type reapRowJSON struct {
 	TS         int64    `json:"ts"`
 	Kind       string   `json:"kind"`
+	CrewID     string   `json:"crew_id,omitempty"`
 	Branch     string   `json:"branch"`
+	Repo       string   `json:"repo,omitempty"`
 	PR         string   `json:"pr"`
 	PRState    string   `json:"pr_state"`
 	Worktree   string   `json:"worktree"`
