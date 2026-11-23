@@ -455,11 +455,11 @@ func TestFleetCollector(t *testing.T) {
 		return b
 	}
 	r := &data.FakeRunner{Responses: map[string]data.FakeResponse{
-		"dispatch-config --show-origin":  {Stdout: read("settings_show_origin.json")},
-		"dispatch-config --layers":       {Stdout: read("settings_layers.json")},
-		"refresh-budget --report --json": {Stdout: read("budget_report.json")},
-		"crew fleet status --json":       {Stdout: read("fleet_status.json")},
-		"crew fleet queue --json":        {Stdout: read("fleet_queue.json")},
+		"dispatch-config --show-origin":         {Stdout: read("settings_show_origin.json")},
+		"dispatch-config --layers":              {Stdout: read("settings_layers.json")},
+		"refresh-budget --report --json":        {Stdout: read("budget_report.json")},
+		"crew fleet status --json --max-age 15": {Stdout: read("fleet_status.json")},
+		"crew fleet queue --json":               {Stdout: read("fleet_queue.json")},
 	}}
 	cfg := data.Config{Crew: []string{"crew"}, DispatchConfigBin: "dispatch-config", RefreshBudget: "refresh-budget", Now: 1794800010}
 	fc := newFleetCollector(r, cfg)
@@ -518,11 +518,11 @@ func TestFleetCollectorKeepsCommonsAcrossFailedStatus(t *testing.T) {
 	}
 	failing := data.FakeResponse{Err: data.FakeExitError{Code: 1}}
 	r := &data.FakeRunner{Responses: map[string]data.FakeResponse{
-		"dispatch-config --show-origin":  {Stdout: settings},
-		"dispatch-config --layers":       {Stdout: layers},
-		"refresh-budget --report --json": {Stdout: budget},
-		"crew fleet status --json":       failing,
-		"crew fleet queue --json":        {Stdout: queue},
+		"dispatch-config --show-origin":         {Stdout: settings},
+		"dispatch-config --layers":              {Stdout: layers},
+		"refresh-budget --report --json":        {Stdout: budget},
+		"crew fleet status --json --max-age 15": failing,
+		"crew fleet queue --json":               {Stdout: queue},
 	}}
 	cfg := data.Config{Crew: []string{"crew"}, DispatchConfigBin: "dispatch-config", RefreshBudget: "refresh-budget", Now: 1794800010}
 	fc := newFleetCollector(r, cfg)
@@ -532,14 +532,14 @@ func TestFleetCollectorKeepsCommonsAcrossFailedStatus(t *testing.T) {
 		t.Fatalf("commons after a failed first collect = %v, want none", known)
 	}
 
-	r.Responses["crew fleet status --json"] = data.FakeResponse{Stdout: status}
+	r.Responses["crew fleet status --json --max-age 15"] = data.FakeResponse{Stdout: status}
 	fc.collect(context.Background(), cfg.Now)
 	recovered := fc.knownCommons()
 	if len(recovered) == 0 {
 		t.Fatal("commons not recorded after recovery")
 	}
 
-	r.Responses["crew fleet status --json"] = failing
+	r.Responses["crew fleet status --json --max-age 15"] = failing
 	fc.collect(context.Background(), cfg.Now)
 	if got := fc.knownCommons(); !slices.Equal(got, recovered) {
 		t.Errorf("commons after a failed collect = %v, want the last known %v", got, recovered)
@@ -585,11 +585,22 @@ func fleetFixtures(t *testing.T) map[string]data.FakeResponse {
 		return data.FakeResponse{Stdout: b}
 	}
 	return map[string]data.FakeResponse{
-		"dispatch-config --show-origin":  read("settings_show_origin.json"),
-		"dispatch-config --layers":       read("settings_layers.json"),
-		"refresh-budget --report --json": read("budget_report.json"),
-		"crew fleet status --json":       read("fleet_status.json"),
-		"crew fleet queue --json":        read("fleet_queue.json"),
+		"dispatch-config --show-origin":         read("settings_show_origin.json"),
+		"dispatch-config --layers":              read("settings_layers.json"),
+		"refresh-budget --report --json":        read("budget_report.json"),
+		"crew fleet status --json --max-age 15": read("fleet_status.json"),
+		"crew fleet queue --json":               read("fleet_queue.json"),
+	}
+}
+
+func TestFleetCollectorStatusRecordsMaxAge(t *testing.T) {
+	r := &data.FakeRunner{Responses: fleetFixtures(t)}
+	cfg := data.Config{Crew: []string{"crew"}, DispatchConfigBin: "dispatch-config", RefreshBudget: "refresh-budget", Now: 1794800010}
+	newFleetCollector(r, cfg).collect(context.Background(), cfg.Now)
+	if !slices.ContainsFunc(r.CallsSnapshot(), func(c data.FakeCall) bool {
+		return slices.Equal(c.Args, []string{"fleet", "status", "--json", "--max-age", "15"})
+	}) {
+		t.Errorf("no fleet status call with --max-age 15: %+v", r.CallsSnapshot())
 	}
 }
 
@@ -601,7 +612,7 @@ func TestFleetStreamFinalMatchesSerialComposition(t *testing.T) {
 
 	for i, failStatus := range []bool{false, true} {
 		if failStatus {
-			r.Responses["crew fleet status --json"] = data.FakeResponse{Err: data.FakeExitError{Code: 1}}
+			r.Responses["crew fleet status --json --max-age 15"] = data.FakeResponse{Err: data.FakeExitError{Code: 1}}
 		}
 		got := fleetJSON(t, fc.collect(context.Background(), cfg.Now))
 		want := fleetJSON(t, serialFleetInputs(context.Background(), ref, cfg.Now))

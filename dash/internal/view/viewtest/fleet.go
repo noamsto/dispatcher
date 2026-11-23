@@ -64,13 +64,13 @@ func FleetInputsNoTailscale() view.FleetInputs {
 
 func fleetInputs(tailscale data.FakeResponse) view.FleetInputs {
 	r := &data.FakeRunner{Responses: map[string]data.FakeResponse{
-		"crew fleet status --json": {Stdout: dataTestdata("fleet_status.json")},
-		"crew fleet queue --json":  {Stdout: dataTestdata("fleet_queue.json")},
-		"tailscale status --json":  tailscale,
-		sshKey("halo.lan"):         {},
-		sshKey("tp"):               {Stderr: []byte("ssh: connect to host tp port 22: No route to host\n"), Err: data.FakeExitError{Code: 255}},
-		sshKey("mbp.lan"):          {},
-		sshKey("box.lan"):          {},
+		"crew fleet status --json --max-age 15": {Stdout: dataTestdata("fleet_status.json")},
+		"crew fleet queue --json":               {Stdout: dataTestdata("fleet_queue.json")},
+		"tailscale status --json":               tailscale,
+		sshKey("halo.lan"):                      {},
+		sshKey("tp"):                            {Stderr: []byte("ssh: connect to host tp port 22: No route to host\n"), Err: data.FakeExitError{Code: 255}},
+		sshKey("mbp.lan"):                       {},
+		sshKey("box.lan"):                       {},
 	}}
 	settings := fleetSettings()
 	cfg := data.Config{Crew: []string{"crew"}, Now: FleetNowMS / 1000}

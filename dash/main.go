@@ -495,7 +495,7 @@ func (fc *fleetCollector) stream(ctx context.Context, nowSec int64, emit func(vi
 	}()
 	go func() {
 		defer wg.Done()
-		st, stErr := data.CollectFleetStatus(ctx, fc.runner, cfg)
+		st, stErr := data.CollectFleetStatus(ctx, fc.runner, cfg, data.FleetViewMaxAge)
 		sec := data.FleetSection{Status: st}
 		digests, digestErrs := fc.scanners.Scan(view.ActiveCommons(sec), nowMS)
 

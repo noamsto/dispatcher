@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -600,7 +601,7 @@ func foreignRunner(t *testing.T) *FakeRunner {
 	r := allOKRunner(t)
 	r.Responses["crew crews"] = FakeResponse{Stdout: []byte(foreignCrewsTSV)}
 	r.Responses["crew crews --home"] = FakeResponse{Stdout: []byte("crew_id\tlast_event_s\tfirst_event_s\tworkers\tpid\talive\nc1\t0\t0\t1\t1\tyes\n")}
-	r.Responses["crew fleet status --json"] = FakeResponse{Stdout: []byte(foreignFleet)}
+	r.Responses["crew fleet status --json --max-age 60"] = FakeResponse{Stdout: []byte(foreignFleet)}
 	r.Responses["crew roster c1 --peers"] = FakeResponse{Stdout: []byte(`[{"name":"w0","branch":"feat/0"}]`)}
 	r.Responses["crew roster f1 --peers"] = FakeResponse{Stdout: []byte(`[{"name":"w1","branch":"feat/1"},{"name":"w2","branch":"feat/2"}]`)}
 	for _, id := range []string{"c1", "f1"} {
@@ -634,8 +635,18 @@ func TestCollectRosterListsCrewWhoseDispatcherIsElsewhere(t *testing.T) {
 	}
 }
 
+func TestCollectRosterForeignStatusRecordsMaxAge(t *testing.T) {
+	r := foreignRunner(t)
+	CollectRoster(context.Background(), r, baseConfig())
+	if !slices.ContainsFunc(r.CallsSnapshot(), func(c FakeCall) bool {
+		return slices.Equal(c.Args, []string{"fleet", "status", "--json", "--max-age", "60"})
+	}) {
+		t.Errorf("no fleet status call with --max-age 60: %+v", r.CallsSnapshot())
+	}
+}
+
 func TestCollectRosterForeignLookupFailureOmitsCandidates(t *testing.T) {
-	for _, key := range []string{"crew crews --home", "crew fleet status --json"} {
+	for _, key := range []string{"crew crews --home", "crew fleet status --json --max-age 60"} {
 		t.Run(key, func(t *testing.T) {
 			r := foreignRunner(t)
 			r.Responses[key] = FakeResponse{Stderr: []byte("boom\n"), Err: FakeExitError{Code: 1}}
@@ -673,7 +684,7 @@ func TestCollectRosterForeignLookupTimeout(t *testing.T) {
 	fleetStatusTimeout = 20 * time.Millisecond
 	t.Cleanup(func() { fleetStatusTimeout = old })
 	r := foreignRunner(t)
-	r.Responses["crew fleet status --json"] = FakeResponse{Wait: make(chan struct{})}
+	r.Responses["crew fleet status --json --max-age 60"] = FakeResponse{Wait: make(chan struct{})}
 	sec := CollectRoster(context.Background(), r, baseConfig())
 	if sec.ForeignError == nil || *sec.ForeignError != "foreign crews: timed out after 20ms" {
 		t.Errorf("ForeignError = %v", sec.ForeignError)
@@ -682,7 +693,7 @@ func TestCollectRosterForeignLookupTimeout(t *testing.T) {
 
 func TestCollectRosterForeignLookupParentCancelIsNotTimeout(t *testing.T) {
 	r := foreignRunner(t)
-	r.Responses["crew fleet status --json"] = FakeResponse{Wait: make(chan struct{})}
+	r.Responses["crew fleet status --json --max-age 60"] = FakeResponse{Wait: make(chan struct{})}
 	ctx, cancel := context.WithCancel(context.Background())
 	time.AfterFunc(20*time.Millisecond, cancel)
 	sec := CollectRoster(ctx, r, baseConfig())

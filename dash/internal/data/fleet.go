@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"math"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"time"
 )
@@ -170,7 +171,7 @@ func CollectFleet(ctx context.Context, r Runner, cfg Config, tailscale bool, set
 	wg.Add(3)
 	go func() {
 		defer wg.Done()
-		sec.Status, sec.StatusError = CollectFleetStatus(ctx, r, cfg)
+		sec.Status, sec.StatusError = CollectFleetStatus(ctx, r, cfg, FleetViewMaxAge)
 	}()
 	go func() {
 		defer wg.Done()
@@ -184,8 +185,18 @@ func CollectFleet(ctx context.Context, r Runner, cfg Config, tailscale bool, set
 	return sec
 }
 
-func CollectFleetStatus(ctx context.Context, r Runner, cfg Config) (*FleetStatus, *string) {
-	out, errb, err := r.Run(ctx, cfg.Crew[0], crewArgs(cfg, "fleet", "status", "--json")...)
+// FleetViewMaxAge is the cache age in seconds the fleet view accepts from
+// `crew fleet status`.
+const FleetViewMaxAge = 15
+
+// CollectFleetStatus runs `crew fleet status --json`; maxAge > 0 adds
+// `--max-age` so the crew side may serve a cached scan up to that many seconds old.
+func CollectFleetStatus(ctx context.Context, r Runner, cfg Config, maxAge int) (*FleetStatus, *string) {
+	args := []string{"fleet", "status", "--json"}
+	if maxAge > 0 {
+		args = append(args, "--max-age", strconv.Itoa(maxAge))
+	}
+	out, errb, err := r.Run(ctx, cfg.Crew[0], crewArgs(cfg, args...)...)
 	if rc := exitCode(err); rc != 0 {
 		msg := firstLineOrExit(errb, rc)
 		return nil, &msg

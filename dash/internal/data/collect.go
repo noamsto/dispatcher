@@ -273,6 +273,9 @@ func CollectRoster(ctx context.Context, r Runner, cfg Config) RosterSection {
 // stall every roster refresh.
 var fleetStatusTimeout = 10 * time.Second
 
+// foreignMaxAge is the cache age in seconds foreignCrews accepts from fleet status.
+const foreignMaxAge = 60
+
 // foreignCrews finds the candidates whose dispatcher is live in another repo's
 // bus: crews with workers on this bus but no live pid here, not homed here,
 // that `crew fleet status` lists under a repo with a live dispatcher. Either
@@ -301,7 +304,7 @@ func foreignCrews(ctx context.Context, r Runner, cfg Config, candidates []crewRo
 	}
 	fleetCtx, cancel := context.WithTimeout(ctx, fleetStatusTimeout)
 	defer cancel()
-	st, errMsg := CollectFleetStatus(fleetCtx, r, cfg)
+	st, errMsg := CollectFleetStatus(fleetCtx, r, cfg, foreignMaxAge)
 	if errMsg != nil {
 		msg := "foreign crews: " + *errMsg
 		if ctx.Err() == nil && errors.Is(fleetCtx.Err(), context.DeadlineExceeded) {
