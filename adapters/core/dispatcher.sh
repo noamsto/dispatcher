@@ -1228,7 +1228,9 @@ _handoff_prompt() {
 # protocol-less `claude --resume`. Set before the first engine so its
 # SessionStart hook sees the pin; a restore re-enters as the protocol's crash
 # relaunch (--fresh --no-note). The EXIT trap clears both options on every exit
-# but a signal kill, where remux_keep leaves the stamp for the restore.
+# but a signal kill, where remux_keep leaves the stamp for the restore. The
+# same trap closes the dash even then: the dispatcher is gone either way, and a
+# --fresh handoff stays in the relaunch loop, so it never fires the trap.
 if [ -n "${TMUX:-}" ] && [ -n "${TMUX_PANE:-}" ] && [ "$overseer" = 0 ]; then
   remux_cmd=''
   if [ "$registered" = 1 ] && _plain_crew_id; then
@@ -1241,7 +1243,7 @@ if [ -n "${TMUX:-}" ] && [ -n "${TMUX_PANE:-}" ] && [ "$overseer" = 0 ]; then
   else
     remux_pin_clear "$TMUX_PANE"
   fi
-  trap '[ -n "${remux_keep:-}" ] || remux_clear "$TMUX_PANE"' EXIT
+  trap '[ -n "${remux_keep:-}" ] || remux_clear "$TMUX_PANE"; _close_crew_dash_children "$TMUX_PANE"' EXIT
 fi
 
 # A side dash replaces the roster diagram beside the dispatcher pane from the

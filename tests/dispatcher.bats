@@ -20,6 +20,7 @@ setup() {
   stub_bin tmux
   stub_bin crew
   stub_bin tmux-crew-dash
+  stub_bin tmux-pane-chain
   # The standalone wrapper resolves a root then execs `dispatcher`; this stub
   # records the cwd it chose and the argv it forwarded.
   cat >"$STUB_DIR/dispatcher" <<'STUB'
@@ -3132,6 +3133,47 @@ _remux_launch() { # engine [launcher args...]
   eng=$(_engine_line)
   [ "$(_remux_set_lines | wc -l)" = 1 ]
   if tail -n +"$((eng + 1))" "$STUB_LOG" | grep -q '@remux_relaunch'; then return 1; fi
+}
+
+@test "1744: a final exit closes the dash children of the pane, after the remux clear" {
+  _remux_launch claude
+  [ "$status" -eq 0 ]
+  [ "$(grep -cx 'close-children %1' "$STUB_LOG")" = 1 ]
+  clear=$(grep -nx 'set-option -pu -t %1 @remux_relaunch' "$STUB_LOG" | tail -1 | cut -d: -f1)
+  close=$(grep -nx 'close-children %1' "$STUB_LOG" | cut -d: -f1)
+  eng=$(_engine_line)
+  [ "$eng" -lt "$clear" ] && [ "$clear" -lt "$close" ]
+}
+
+@test "1744: a hung-up launcher still closes the dash children" {
+  _real_crew_logged
+  REMUX_BODY='kill -HUP $PPID; sleep 5' _remux_launch claude
+  [ "$status" -eq 129 ]
+  [ "$(grep -cx 'close-children %1' "$STUB_LOG")" = 1 ]
+}
+
+@test "1744: a --fresh handoff iteration does not close the dash, the final exit does" {
+  _handoff_setup
+  _engine_stub claude "$_handoff_body"
+  TMUX=/tmp/fake,1,0 TMUX_PANE=%1 CREW_ID=c1 run --separate-stderr run_launcher
+  [ "$status" -eq 0 ]
+  [ "$(_launches)" = 2 ]
+  [ "$(grep -cx 'close-children %1' "$STUB_LOG")" = 1 ]
+}
+
+@test "1744: with tmux-pane-chain absent the exit still succeeds" {
+  rm "$STUB_DIR/tmux-pane-chain"
+  _remux_engine claude
+  PATH="$(path_without_real tmux-pane-chain)" TMUX=/tmp/fake,1,0 TMUX_PANE=%1 CREW_ID=c1 run run_launcher
+  [ "$status" -eq 0 ]
+  if grep -q 'close-children' "$STUB_LOG"; then return 1; fi
+}
+
+@test "1744: outside tmux nothing is closed" {
+  _remux_engine claude
+  CREW_ID=c1 run run_launcher
+  [ "$status" -eq 0 ]
+  if grep -q 'close-children' "$STUB_LOG"; then return 1; fi
 }
 
 @test "1588: launcher pin-clears when crew register is refused" {
