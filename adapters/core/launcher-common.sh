@@ -812,6 +812,17 @@ _ensure_crew_dash() {
   tmux-crew-dash "${flags[@]}" "$1" >/dev/null 2>&1 || true
 }
 
+# _close_crew_dash_children <pane or empty> — close the panes parented to the
+# dispatcher pane (the dash) when the launcher exits for good. tmux-og closes
+# children on pane exit, but the launcher's pane shell outlives the dispatcher.
+# Unconditional on settings: it is a no-op when no dash was opened. Never fails
+# the exit.
+_close_crew_dash_children() {
+  [ -n "${TMUX:-}" ] && [ -n "${1:-}" ] || return 0
+  command -v tmux-pane-chain >/dev/null 2>&1 || return 0
+  tmux-pane-chain close-children "$1" >/dev/null 2>&1 || true
+}
+
 # shell_quote <var> <text> — set <var> to <text> as ONE single-quoted shell word,
 # for splicing into a tmux send-keys command line the pane's own shell re-parses.
 # ' and \ are closed out of the quotes and escaped outside them, the one form
