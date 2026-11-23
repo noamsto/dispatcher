@@ -887,6 +887,8 @@ A handoff relaunch (`--fresh`, or a crash's `--fresh --no-note`) carries policie
 force into its first prompt, and a crash takes its queue from them; `crew merge <N>
 --policy <name>` records the policy a merge relied on. Scope and limits (never
 force-push, deploy, close or owner-auth): skill `standing-policy`.
+`/dispatcher:night-shift` opens and closes an unattended shift on a policy in force; it
+never sets or clears the policy itself.
 
 From inside a dispatcher session:
 
@@ -918,12 +920,13 @@ dispatch resume --exec              # relaunch in this lead pane by exec (what a
 dispatch resume the review comments are the priority
 ```
 
-Four commands ship with the plugin — `/dispatcher`, `/autopilot`, `/finish-prs`,
-`/project-autopilot`. Claude Code gets all four (namespaced `/dispatcher:*`).
-Codex and cursor get only `/dispatcher` and `/autopilot`: `/finish-prs` and
-`/project-autopilot` are **Claude Code only**, since they drive Claude Code
-agent teams (`TaskCreate`, `SendMessage`, `teammateMode`). Codex and cursor
-users get the same fan-out from the engine-neutral `dispatcher` launcher —
+Five commands ship with the plugin — `/dispatcher`, `/autopilot`, `/finish-prs`,
+`/project-autopilot`, `/night-shift`. Claude Code gets all five (namespaced
+`/dispatcher:*`). Codex and cursor get only `/dispatcher`, `/autopilot` and
+`/night-shift`: `/finish-prs` and `/project-autopilot` are **Claude Code only**,
+since they drive Claude Code agent teams (`TaskCreate`, `SendMessage`,
+`teammateMode`). Codex and cursor users get the same fan-out from the
+engine-neutral `dispatcher` launcher —
 `dispatch` once per ticket or PR.
 
 ### tmux-remux restore
