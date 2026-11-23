@@ -1,0 +1,48 @@
+usage: crew cleanup [--fleet] [--repo DIR] [--list] [--json]
+       crew cleanup --prune-archive [--older-than AGE]
+
+Review, one worktree at a time, the finished worker worktrees `crew reap`
+keeps and flags "stale: needs human cleanup" (uncommitted changes, unpushed
+commits, or an issue closed without a PR), plus branches whose tip has commits
+past their merged PR. Reap's own classifier picks them; nothing is removed
+without a key from you.
+
+Each item shows its repo, branch, codename, age since the last status, the reap
+reason, issue and PR state, the uncommitted files, the unpushed commits and the
+diffstat. Type a key and Enter:
+
+  r   Remove: save a recovery bundle, then remove the worktree and local branch
+  k   Keep: snooze for 14 days; neither `crew cleanup` nor reap's stale report
+      raises it again before then
+  d   Show the full uncommitted diff in $PAGER (untracked files included)
+  s   Skip: ask again next time
+  q   Quit (end of input also quits)
+
+A summary line ends the run.
+
+The recovery bundle is written before anything is deleted, under
+${XDG_DATA_HOME:-~/.local/share}/crew/cleanup-archive/<repo>/<branch>-<UTC ts>/:
+
+  uncommitted.patch   tracked, staged and untracked changes (`git apply` it on
+                      the branch tip)
+  commits.bundle      the commits on no remote (`git fetch` it); absent if none
+  info.json           repo, branch, issue, PR, reason and restore commands
+
+Removal then goes through the same git-config baseline and worktree-record
+checks reap uses, and never a bare rm. The archive path is printed. A drifted
+git config (see `crew git-baseline`) refuses the removal.
+
+  --fleet           Cover every repo `crew reap --fleet` covers (ignores cwd)
+  --repo DIR        Use the repo at DIR instead of the current one
+  --list            Print the items and exit; read-only, no keys
+  --json            Print one {"items":[...]} document and exit; read-only
+  --prune-archive   Delete archives older than --older-than; human-only
+  --older-than AGE  With --prune-archive: a number and h, d or w (default 30d)
+
+Human-only. It refuses when CREW_WORKER_ID or CREW_ROLE_ID is set, or when
+stdin or stdout is not a terminal. --list and --json only read, so workers and
+dispatchers may run them.
+
+  crew cleanup --list --json
+  crew cleanup --fleet
+  crew cleanup --prune-archive --older-than 60d

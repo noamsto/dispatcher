@@ -1385,13 +1385,13 @@ func TestAdmittedSubcommands(t *testing.T) {
 		"git-baseline", "occupants", "reap", "reap-autosweep", "stack", "help",
 		"id", "new", "engine-cmd", "dash", "pi-agent-dir", "relay",
 		"remote-run", "remote-exec", "dispatch-row", "spec-lint",
-		"merge", "followups", "peer-sync", "peer-claims", "decide", "decisions", "class", "overseer", "completion", "role-watch", "queue", "policy", "migrate", // added after that revision
+		"merge", "followups", "peer-sync", "peer-claims", "decide", "decisions", "class", "overseer", "completion", "role-watch", "queue", "policy", "migrate", "cleanup", // added after that revision
 	}
 	for _, name := range []string{"engine-cmd", "id", "new", "occupants",
 		"where", "identity", "resolve-target", "crews", "register", "deregister", "log", "sessions", "inbox",
 		"roster", "report", "retro", "rate", "fleet", "stack", "roster-render", "pi-agent-dir",
 		"status", "msg", "reply", "hold", "nudge", "await", "watch", "relay", "stream", "git-guard", "git-baseline", "reap", "reap-autosweep", "adopt", "merge", "pr-watch", "role-watch", "stall-watch", "help",
-		"remote-run", "remote-exec", "dispatch-row", "peer-sync", "peer-claims", "decide", "decisions", "spec-lint", "followups", "class", "overseer", "completion", "queue", "policy", "migrate"} {
+		"remote-run", "remote-exec", "dispatch-row", "peer-sync", "peer-claims", "decide", "decisions", "spec-lint", "followups", "class", "overseer", "completion", "queue", "policy", "migrate", "cleanup"} {
 		if !typedSubcommands[name] {
 			t.Errorf("%s types no argv", name)
 		}
@@ -1882,6 +1882,14 @@ var preLocateRefusalRows = []struct {
 	msg  string
 	code int
 }{
+	{"cleanup fleet with repo", []string{"cleanup", "--fleet", "--repo", "x"}, wantCleanupUsage, 1},
+	{"cleanup repo missing value", []string{"cleanup", "--repo"}, wantCleanupUsage, 1},
+	{"cleanup older-than without prune", []string{"cleanup", "--older-than", "7d"}, wantCleanupUsage, 1},
+	{"cleanup prune with list", []string{"cleanup", "--prune-archive", "--list"}, wantCleanupUsage, 1},
+	{"cleanup prune with fleet", []string{"cleanup", "--prune-archive", "--fleet"}, wantCleanupUsage, 1},
+	{"cleanup bad age", []string{"cleanup", "--prune-archive", "--older-than", "soon"}, "crew: cleanup: --older-than \"soon\": want a number and h, d or w (30d)", 1},
+	{"cleanup unknown flag", []string{"cleanup", "--bogus"}, "crew: cleanup: unknown flag '--bogus' (" + wantCleanupUsage + ")", 1},
+	{"cleanup extra positional", []string{"cleanup", "x"}, "crew: cleanup: unexpected argument 'x' (" + wantCleanupUsage + ")", 1},
 	{"role-watch unknown flag", []string{"role-watch", "reviewer", "--bogus"}, "dispatch: --role-watch: unexpected argument '--bogus'", 1},
 	{"role-watch extra positional", []string{"role-watch", "reviewer", "extra"}, "dispatch: --role-watch: unexpected argument 'extra'", 1},
 	{"role-watch trailing interval", []string{"role-watch", "reviewer", "--interval"}, "dispatch: --role-watch: --interval needs a value", 1},
@@ -1960,6 +1968,7 @@ const (
 	wantDecideUsage      = `usage: crew decide "<text>"`
 	wantDecisionsUsage   = "usage: crew decisions [--json] [--since <ms|duration> | --all]"
 	wantSpecLintUsage    = "usage: crew spec-lint <file> [--issue N]... [--no-host-checks]"
+	wantCleanupUsage     = "usage: crew cleanup [--fleet] [--repo DIR] [--list] [--json] | --prune-archive [--older-than AGE]"
 	wantFollowupsUsage   = "usage: crew followups <PR> (--entries FILE [--apply] [--tracker github|linear] | --draft [--crew ID])"
 	guardUsage           = "crew-go: git-guard: usage: crew-go git-guard check|check-cwd|init|commondir|pairs|union|show-url|show-key|show-pair|canon …"
 )
@@ -2701,5 +2710,35 @@ func TestRosterClampsNonFiniteTimes(t *testing.T) {
 		if !strings.Contains(out, `"ts": 1e400`) || !strings.Contains(out, `"age_s": -1.7976931348623157e+308`) {
 			t.Errorf("%v: stdout = %s, want ts 1e400 and age_s clamped", args, out)
 		}
+	}
+}
+
+// cleanup is human-only: without a terminal it refuses before reading any repo,
+// while its read-only --list/--json get as far as the repo check.
+func TestCleanupHumanOnly(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("GIT_CEILING_DIRECTORIES", dir)
+	t.Setenv("CREW_WORKER_ID", "")
+	t.Setenv("CREW_ROLE_ID", "")
+	e := env{getwd: func() (string, error) { return dir, nil }}
+	for _, tc := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"cleanup"}, "must both be a terminal"},
+		{[]string{"cleanup", "--prune-archive"}, "must both be a terminal"},
+		{[]string{"cleanup", "--list"}, "crew: not in a git repo"},
+		{[]string{"cleanup", "--json"}, "crew: not in a git repo"},
+	} {
+		var stdout, stderr bytes.Buffer
+		code := run(context.Background(), tc.args, &stdout, &stderr, e)
+		if code != exitFailure || !strings.Contains(stderr.String(), tc.want) {
+			t.Errorf("%v: code %d stderr %q, want %q", tc.args, code, stderr.String(), tc.want)
+		}
+	}
+	t.Setenv("CREW_WORKER_ID", "worker:x#s1")
+	var stdout, stderr bytes.Buffer
+	if code := run(context.Background(), []string{"cleanup"}, &stdout, &stderr, e); code != exitFailure || !strings.Contains(stderr.String(), "CREW_WORKER_ID is set") {
+		t.Errorf("worker: code %d stderr %q", code, stderr.String())
 	}
 }

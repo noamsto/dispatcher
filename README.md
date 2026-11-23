@@ -92,11 +92,23 @@ crew watch --states blocked  # block until something needs you
 crew inbox dispatcher:<id>   # messages addressed to you
 crew where nova              # a human-usable address for a worker's pane
 crew reap --dry-run          # reclaim worktrees whose PRs have landed
+crew cleanup --list          # stale worktrees reap keeps for a human (read-only)
+crew cleanup                 # review them: remove (with a recovery bundle), keep 14d, diff
 ```
 
 Full surface: `id`, `new`, `crews`, `adopt`, `identity`, `status`, `msg`, `reply`,
 `await`, `register`, `deregister`, `watch`, `stream`, `hold`, `roster`, `fleet`, `inbox`,
-`where`, `stall-watch`, `pr-watch`, `log`, `report`, `rate`, `reap`.
+`where`, `stall-watch`, `pr-watch`, `log`, `report`, `rate`, `reap`, `cleanup`.
+
+`crew cleanup` is the human-only counterpart of reap's "stale: needs human cleanup"
+keeps (uncommitted changes, unpushed commits, an issue closed without a PR). It walks
+each one with its status, unpushed commits and diffstat; `r` first writes a recovery
+bundle (`uncommitted.patch`, `commits.bundle`, `info.json`) under
+`~/.local/share/crew/cleanup-archive/<repo>/<branch>-<ts>/`, then removes the worktree and
+branch behind reap's git-config baseline checks; `k` snoozes it for 14 days in cleanup
+and in reap's stale report. `--fleet` covers every repo, `--list`/`--json` are read-only
+and open to dispatchers, and `--prune-archive [--older-than 30d]` drops old bundles. It
+refuses when `CREW_WORKER_ID` or `CREW_ROLE_ID` is set or there is no terminal.
 
 Three design notes worth knowing. `reap` gates on **the PR having landed**, never
 on elapsed time — a worker sits in `done` for as long as review takes, and a
