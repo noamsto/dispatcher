@@ -30,7 +30,7 @@ first (4.9).
 2. Designs compared: A, A+, B, C (SQLite), D (broker) and E (NATS JetStream) on nine criteria, and why other libraries are in or
    out.
 3. Recommendation: A+, with its data model, trust model, multi-host story, what stays repo-local, and where a proposed PR-event
-   listener writes.
+   listener writes, and how readers wake on new rows (3.8).
 4. Migration phases: the phase table, notes per phase, the deletion schedule, programme size.
 5. Open questions, each with a recommended answer.
 
@@ -609,7 +609,7 @@ long-lived process anyway. That lowers two of D's costs:
 - Supervision is no longer new. A user service (home-manager unit, nix-darwin launchd job) with restart and upgrade handling will
   exist for the listener, so `crewd` would copy a pattern instead of introducing one (inference: the listener's packaging is not
   built yet).
-- Push for PR events no longer needs D. The listener plus the feed in 3.7 wakes PR parks without polling, which was part of D's
+- Push for PR events no longer needs D. The listener appending `github:` rows to crew logs (3.7) wakes PR parks without polling, which was part of D's
   steelman.
 
 Three costs stay, and they dominate:
@@ -623,7 +623,7 @@ Three costs stay, and they dominate:
 
 This doc does not assume the listener's process is the broker. It belongs to tmux-og with tmux-og's release cycle; making it the
 write path would tie every crew append to another repo's process. Where D still wins is push for bus rows, and that is the only
-gain left that A+ lacks. A+ can add a file-change wake per crew log without a daemon (inference; dash already watches its bus with
+gain left that A+ lacks. A+ plans a file-change wake per crew log without a daemon (phase 10, 3.8; dash already watches its bus with
 fsnotify, `dash/main.go:242-248`). The re-weigh moves D's migration cell (criteria table) and does not change the outcome.
 
 ### Design E: NATS JetStream
@@ -690,12 +690,13 @@ per row.
   A mirror or source names a stream in another domain and copies it, and leaf node domains are supported through the API prefix
   ([source and mirror](https://github.com/nats-io/nats.docs/blob/master/nats-concepts/jetstream/source_and_mirror.md),
   [JetStream leaf nodes](https://github.com/nats-io/nats.docs/blob/master/running-a-nats-service/configuration/leafnodes/jetstream_leafnodes.md)).
-  Mirroring `CREW_<id>` from the home host to a visiting host would stand in for relay batches and the v2 peer cursors of 3.4.
+  Mirroring `CREW_<id>` from the home host to a visiting host would stand in for relay batches. Peer sync is removed (3.4), so
+  there are no peer cursors left for it to replace.
 - Identity that is enforced, not checked. Users carry publish and subscribe allow and deny lists; once an allow list exists every
   other subject is denied ([authorization](https://docs.nats.io/running-a-nats-service/configuration/securing_nats/authorization)).
   A worker user allowed to publish only `crew.<id>.from.worker.<branch>` cannot post as the dispatcher, whatever its env says.
 - A sink for PR events. The listener of 3.7 could publish `gh event listen` lines to `pr.<owner>.<repo>.<pr>`, and any interested
-  crew or `pr-watch` session subscribes, with no per-PR feed file.
+  crew or `pr-watch` session subscribes, instead of ingest appending rows to crew logs.
 
 **What the steelman does not survive.**
 
@@ -729,10 +730,10 @@ per row.
 
 **Migration.** E cannot run per-crew alongside legacy buses without a pin, so it reuses A+'s shape: phase 1 as written; a phase 2 that
 creates a stream instead of a crew dir behind the same per-crew pin; every reader moved to consumers (phase 3); peers and relay
-replaced by mirrors or kept on files for legacy crews (3p); houston on nats.go (3h); then the flip and deletions. Two steps have no A+
+replaced by mirrors (peer sync is removed, 3.4); houston on nats.go (3h); then the flip and deletions. Two steps have no A+
 counterpart and are the risky ones: installing and supervising the server on every host before the first E crew, and a rollback that
 must export each E crew's stream back to a file, because an old binary reads only files. History import is a publish of each
-legacy crew's rows into a stream, keyed by `(bus, offset)` so a re-run adds nothing (inference). The size is A+'s 8,000-16,000 lines
+legacy crew's rows into a stream, keyed by `(bus, offset)` so a re-run adds nothing (inference). The size is A+'s 6,800-13,500 lines (4.11, without the peer deletion)
 plus the service packaging, the subject and permission design, the export path and the mirror topology; it is not estimated here.
 
 **Failure modes.** Server down, store full or a stuck consumer stops every crew on the host. A server upgrade across a
@@ -772,21 +773,47 @@ Choosing it means choosing one of those backends as well, with that backend's co
 above). Only crew's Go code would use the interface; the shell writers, houston and dash would not. It would matter only as a seam
 if E or C were adopted and a later backend swap were planned; neither is recommended.
 
+### Prior art
+
+A sweep of existing solutions on 2026-11-23 looked for something that replaces the bus. None does. Every serious candidate either puts
+a server on the write path (D's cost) or allows one writer process (the bbolt and Badger cost above), and crew needs many
+short-lived writers, fan-out readers and `jq` over plain files. The claims below come from each project's own README or docs at the
+time of the sweep; none was re-verified in code, and "unverified" marks a cost nobody measured.
+
+| candidate                                                                      | category                 | verdict                                                                                                                                        |
+| ------------------------------------------------------------------------------ | ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| [beads](https://github.com/steveyegge/beads)                                   | agent coordination       | Reject as the bus: an issue tracker on Dolt, and its embedded mode allows one writer. Optional interop: a bead id on dispatch rows.            |
+| [MCP Agent Mail](https://github.com/Dicklesworthstone/mcp_agent_mail)          | agent coordination       | Reject: an HTTP server and SQLite sit on the write path, and the project is deprecated for a Rust rewrite.                                     |
+| [agent-message-queue](https://github.com/avivsinai/agent-message-queue)        | agent coordination       | Borrow the idea: one file per message (temp write, fsync, rename), no daemon. It has the shape crew already has, so adopting it gains nothing. |
+| Claude Code agent teams                                                        | agent coordination       | Reject: experimental, Claude-only, per-agent JSON inboxes that are polled.                                                                     |
+| claude-squad                                                                   | agent coordination       | Reject: a tmux and worktree UI with no message layer.                                                                                          |
+| DBOS Go                                                                        | durable execution        | Reject: its state is a SQLite or Postgres file, which is C's machine-wide blast radius, and the shell writers lose their append.               |
+| Restate, Temporal, Inngest, Hatchet                                            | durable execution        | Reject: each puts a server on the write path. Their local-deployment costs are unverified.                                                     |
+| [Electric Durable Streams](https://github.com/durable-streams/durable-streams) | durable streams          | Borrow the semantics (catch up from any offset, then tail live). Reject adoption: it needs a server and is in beta.                            |
+| S2 / s2-lite                                                                   | durable streams          | Reject: a server process over a binary LSM store.                                                                                              |
+| goqite, backlite                                                               | SQLite queues            | Reject: consume-once queues, where crew needs fan-out reads.                                                                                   |
+| [tidwall/wal](https://github.com/tidwall/wal)                                  | append-only log library  | Reject: one process owns the segments.                                                                                                         |
+| [fsnotify](https://github.com/fsnotify/fsnotify) (v1.10.1)                     | file-change notification | **Adopt** for push wakes, keeping a poll fallback (phase 10, 3.8).                                                                             |
+
+NATS JetStream, modernc SQLite, bbolt, Badger and Watermill are covered above. The sweep confirms A+: the two ideas worth taking
+(Durable Streams' offset catch-up and agent-message-queue's rename-into-place) are what the offset cursor (3.2) and `bus.Append`
+already do, and the one piece worth adopting is a library for push wakes (fsnotify), not a store.
+
 ### Criteria table
 
 Markers compare each design with today's per-repo buses at the pin: `+` better, `0` about the same, `−` worse.
 
-| criterion                            | A                                                                       | A+                                           | B                                                          | C                                              | D                                                   | E                                                                                                                                          |
-| ------------------------------------ | ----------------------------------------------------------------------- | -------------------------------------------- | ---------------------------------------------------------- | ---------------------------------------------- | --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| correctness and ordering guarantees  | `+` one file per crew, one cursor, row written once                     | `+` as A; untagged rows in machine log       | `0` per-file order, cross-file ts merge, vector cursor     | `+` total order, real ids, atomic txns         | `+` single writer assigns order and ids             | `+` server-assigned stream sequence per crew; acked publish; KV compare-and-set                                                            |
-| cross-repo ergonomics                | `+` any cwd; repo questions scan crew dirs                              | `+` any cwd; repo questions read one index   | `0` one library, still N buses and a repo lookup for reply | `+` any cwd, SQL by repo or crew               | `+` as C, plus push                                 | `+` any cwd, subjects per crew, a `repos` KV bucket as index, push                                                                         |
-| trust boundary and tamper resistance | `0` same uid; check unchanged; creation rule needed                     | `0` as A                                     | `0` unchanged                                              | `0` same uid; FK rejects unknown crews         | `0` same uid; `+` only as another uid, at high cost | `0` permissions bind a connection, and same-uid workers can read each other's credentials; `+` only as another uid with issued credentials |
-| concurrency and locking              | `+` contention per crew; no new lock                                    | `+` as A; index append is dispatch-only      | `0` unchanged; merge adds no locks                         | `0` one machine-wide write lock; busy handling | `0` serialized through one process                  | `+` server serializes appends; KV TTL locks expire on their own; `−` only while the server is up                                           |
-| cleanup and retention                | `+` archive a crew dir; no row for untagged                             | `+` archive crew dir; prune machine segments | `−` mixed logs need rewrites that reset peers and houston  | `+` DELETE by crew, ids stable                 | `0` inherits store                                  | `+` stream limits and stream delete per crew; KV TTL                                                                                       |
-| remote-host and peer story           | `0` visiting crew dir; peer cursor per (host, crew); export scans crews | `0` as A; export reads repo index            | `+` unchanged                                              | `0` peer seq = id; remote host has its own db  | `0` local only; a networked socket is new surface   | `0` mirrors over leaf nodes could replace relay and peer code; a hub, credentials and open ports are new surface                           |
-| performance at today's scale ×10     | `+` reads bounded by live crews                                         | `+` as A                                     | `−` grows with total history                               | `+` indexed, bounded by live rows              | `+` push, near-zero idle cost                       | `+` consumer fetch wakes on a new row; new rows only                                                                                       |
-| migration cost and risk              | `−` resolver, layout pin, houston, peers                                | `−` as A, slightly more                      | `+` smallest; houston untouched                            | `−` new dependency, all shell writers, houston | `−` C or A plus a mandatory write-path service      | `−` A's work plus a write-path service per host, a client in houston, shell via `crew` or `nats`, export for rollback                      |
-| operator debuggability               | `+` `jq` one file per crew                                              | `+` as A; index is plain text                | `0` jq per bus; crew view needs the library                | `−` binary db, `sqlite3` needed                | `−` daemon state, sockets, logs                     | `−` binary file store; `nats` CLI with the server up instead of `jq`                                                                       |
+| criterion                            | A                                                                  | A+                                               | B                                                          | C                                              | D                                                   | E                                                                                                                                          |
+| ------------------------------------ | ------------------------------------------------------------------ | ------------------------------------------------ | ---------------------------------------------------------- | ---------------------------------------------- | --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| correctness and ordering guarantees  | `+` one file per crew, one cursor, row written once                | `+` as A; untagged rows in machine log           | `0` per-file order, cross-file ts merge, vector cursor     | `+` total order, real ids, atomic txns         | `+` single writer assigns order and ids             | `+` server-assigned stream sequence per crew; acked publish; KV compare-and-set                                                            |
+| cross-repo ergonomics                | `+` any cwd; repo questions scan crew dirs                         | `+` any cwd; repo questions read one index       | `0` one library, still N buses and a repo lookup for reply | `+` any cwd, SQL by repo or crew               | `+` as C, plus push                                 | `+` any cwd, subjects per crew, a `repos` KV bucket as index, push                                                                         |
+| trust boundary and tamper resistance | `0` same uid; check unchanged; creation rule needed                | `0` as A                                         | `0` unchanged                                              | `0` same uid; FK rejects unknown crews         | `0` same uid; `+` only as another uid, at high cost | `0` permissions bind a connection, and same-uid workers can read each other's credentials; `+` only as another uid with issued credentials |
+| concurrency and locking              | `+` contention per crew; no new lock                               | `+` as A; index append is dispatch-only          | `0` unchanged; merge adds no locks                         | `0` one machine-wide write lock; busy handling | `0` serialized through one process                  | `+` server serializes appends; KV TTL locks expire on their own; `−` only while the server is up                                           |
+| cleanup and retention                | `+` archive a crew dir; no row for untagged                        | `+` archive crew dir; prune machine segments     | `−` mixed logs need rewrites that reset peers and houston  | `+` DELETE by crew, ids stable                 | `0` inherits store                                  | `+` stream limits and stream delete per crew; KV TTL                                                                                       |
+| remote-host and peer story           | `0` visiting crew dir; peer sync removed (3.4), so no peer cursors | `0` as A; the index no longer serves peer export | `+` unchanged                                              | `0` peer seq = id; remote host has its own db  | `0` local only; a networked socket is new surface   | `0` mirrors over leaf nodes could replace relay and peer code; a hub, credentials and open ports are new surface                           |
+| performance at today's scale ×10     | `+` reads bounded by live crews                                    | `+` as A                                         | `−` grows with total history                               | `+` indexed, bounded by live rows              | `+` push, near-zero idle cost                       | `+` consumer fetch wakes on a new row; new rows only                                                                                       |
+| migration cost and risk              | `−` resolver, layout pin, houston                                  | `−` as A, slightly more                          | `+` smallest; houston untouched                            | `−` new dependency, all shell writers, houston | `−` C or A plus a mandatory write-path service      | `−` A's work plus a write-path service per host, a client in houston, shell via `crew` or `nats`, export for rollback                      |
+| operator debuggability               | `+` `jq` one file per crew                                         | `+` as A; index is plain text                    | `0` jq per bus; crew view needs the library                | `−` binary db, `sqlite3` needed                | `−` daemon state, sockets, logs                     | `−` binary file store; `nats` CLI with the server up instead of `jq`                                                                       |
 
 ### Correctness and ordering guarantees
 
@@ -851,6 +878,10 @@ a stream to a file, since a deleted stream is gone.
 
 ### Remote-host and peer story
 
+**Owner decision (2026-11-23): remove peer sync** (3.4). The comparison below was written when peers were a v2 migration; the
+peer row's A and A+ cells in the criteria table are restated for the decision (the `0` markers stay as the earlier comparison
+scored them), and the rest of this section describes the peer link as it exists at the pin.
+
 Today a remote worker runs through `crew remote-run`/`remote-exec` against a clone matched by origin slug (T17), relays forward batches
 without appending locally, and peers keep the other host's rows in `peers/<host>.jsonl` with one offset and one epoch per (repo bus, host)
 (F11, 1.9). B changes none of it, which is its strongest column. A and A+ need a visiting crew dir on the remote host, created by the remote
@@ -889,7 +920,7 @@ C's per-poll cost without a database.
 B is the cheapest: one library, its callers, and an index append; houston, the shell writers, peers and remote are untouched, and
 rollback is reverting the callers. A and A+ need a resolver seam for every Go writer (W1-W11), a per-crew layout pin so running crews never
 switch mid-flight, shell writers that ask `crew` for the log path (L8, S1-S9 and the byte-copy drift guards in 1.4), a houston change
-from in-repo minting to the CLI (X4), and a peer cursor change. A+ adds the index and machine log. C needs all of A's reader changes plus
+from in-repo minting to the CLI (X4). A+ adds the index and machine log. C needs all of A's reader changes plus
 a new driver dependency (`crew/go.mod:5-9`), shell writers that cannot stay one-line appends, houston on SQL or the CLI, and a one-way
 data conversion. D needs C or A plus a service on every host and a fallback story. The PR-event listener (1.15) will bring a
 supervised user service to each host, so D's packaging cost drops. Its write-path cost does not: the listener can fail into
@@ -919,7 +950,7 @@ max 2,816,976; 7 crews active in 24 h, 75 in 7 days; 0 (crew, branch) pairs disp
 ### What the extra work buys
 
 The cheapest viable design is B; the recommended direction is A+. The extra work is the resolver seam, the per-crew layout pin, shell
-writers asking `crew` for a path, houston minting through the CLI, the peer cursor change, the index and the machine log. In exchange:
+writers asking `crew` for a path, houston minting through the CLI, the index and the machine log (peer sync is removed rather than migrated, 3.4). In exchange:
 
 - Fan-in layers disappear instead of being consolidated: `fleet stream` and `fleet watch` (F4, F5), `cross-repo-hint.sh` (F6), the
   per-repo lanes of roster-render sources (F8), the hand-built bus paths (R4), the registry and `$HOME` walk for crew questions (F1), the
@@ -928,7 +959,7 @@ writers asking `crew` for a path, houston minting through the CLI, the peer curs
   dispatcher's cwd; cross-file `ts` ties and at-least-once vector cursors (F4); a crew dir present in several buses with no known home
   (`crewHomes` drops it, X3); retention that resets peer epochs and houston offsets (1.10, X2).
 - Read cost is bounded by live crews instead of total history (performance table).
-- What remains: same-uid tamper resistance is unchanged; peers need per-(host, crew) cursors; worker ids are unique per crew only by the
+- What remains: same-uid tamper resistance is unchanged; worker ids are unique per crew only by the
   same-branch refusal; commands outside a crew context must refuse; untagged rows need the machine log; the repo index is a cache to keep
   rebuildable; houston must migrate before the default flips.
 
@@ -941,11 +972,12 @@ compare-and-set and TTL, retention as stream configuration, and a ready-made mir
 the natural sink for PR events. It costs a mandatory write-path service on every host, a TCP listener with its own authentication, a
 NATS client in crew and houston, `jq`-free debugging, and A's whole migration on top. Its sender permissions do not buy tamper
 resistance while every session shares one uid. Of its gains, only push for bus rows has a reader asking for it today (the 2 s polls
-of `watch` and `await`), and A+ can approach it with a file-change wake (D, "Re-weighed with a PR-event listener").
+of `watch` and `await`), and A+ approaches it with the planned file-change wake (phase 10, 3.8).
 
 **Outcome of the comparison.** A+ wins on six of the nine criteria (correctness, cross-repo ergonomics, concurrency, retention,
 performance, debuggability) and ties on trust; it loses only on migration cost to B and on the peer story to B, which keeps today's
-per-repo model. C matches A+ on ordering, performance and retention and adds ids and atomicity, but pays with a machine-wide blast radius,
+per-repo model. (The owner has since decided to remove peer sync, 3.4, so the peer story no longer differentiates the designs;
+the peer row's markers stay as scored.) C matches A+ on ordering, performance and retention and adds ids and atomicity, but pays with a machine-wide blast radius,
 a new dependency in every writer including the shell copies, and `jq`-free debugging, while still needing A's per-crew directories for
 locks and pane files. The evidence supports A+; D is worth its cost only if tamper resistance becomes a requirement,
 and then only as a separate uid. A machine that runs a supervised PR-event listener lowers D's supervision cost but leaves D on the
@@ -956,8 +988,9 @@ that D would have to write. It does not change the outcome, for two decisive cos
 A+ avoids and which the optional PR-event listener does not make acceptable (D's asymmetry, unchanged). And the identity enforcement
 that would justify a broker needs a separate uid, as it does for D. E becomes the right move when the owner accepts a supervised
 service on the bus write path on every host for another reason: tamper resistance as a requirement (with the server and credentials
-under another uid), several hosts that need continuous crew sync beyond ssh relay, or measured push latency that a file-change wake
-cannot meet. A+ keeps that door open. Its per-crew log maps one-to-one onto a per-crew stream, and its resolver, creation rule,
+under another uid), several hosts that need continuous crew sync beyond ssh relay (weaker now that peer sync is removed, 3.4: the
+working model is one dispatcher per repo, and other hosts only run workers), or measured push latency that the phase 10 file-change
+wake cannot meet. A+ keeps that door open. Its per-crew log maps one-to-one onto a per-crew stream, and its resolver, creation rule,
 `meta.json`, repo index and `crew where` are what E needs first. A later phase could publish each crew log into JetStream keyed by
 `(crew, offset)` from phase 8, giving push readers and mirrors while the files stay the source of truth (inference: no such phase is
 planned or sized). The remaining step to E as the store would be moving the shell writers from appending to the path `crew where
@@ -980,16 +1013,17 @@ keeps `jq` over plain files. Read cost is bounded by live crews, not by total hi
 
 What A+ is not:
 
-- **No daemon.** Writers stay lock-free `O_APPEND` appenders. Readers keep polling, or tail by offset as dash and houston
-  already do (H4, X2). The proposed PR-event listener (3.7) is a separate process off the bus write path.
+- **No daemon.** Writers stay lock-free `O_APPEND` appenders. Go readers poll today and gain a push wake from file-change events in
+  phase 10 (3.8), with the poll kept as the safety net; dash and houston already tail by offset (H4, X2). The proposed PR-event
+  listener (3.7) is a separate process whose only bus role is appending ordinary rows to a crew log.
 - **No SQLite.** There is no new dependency (`crew/go.mod:5-9`), and the shell writers and houston need no driver. A derived
   SQLite index stays possible later as a rebuildable cache, never as the source of truth (open questions).
 - **No NATS or other broker library.** No server, client or `nats` CLI is added, and no host runs a bus service. A per-crew stream
   mirrored from the crew log stays possible later, and adopting JetStream as the store is open question 16, tied to accepting a
   supervised write-path service on every host (section 2, outcome).
 - **No dual-write.** A crew is pinned to one layout for its whole life, and the pin is the presence of `meta.json` (3.2). A
-  dual-written row would have two positions, which means two peer `seq` values and two houston entry ids (X2,
-  `crew/internal/peer/peer.go:59-62`). Any divergence between the copies would be a split brain that no reader could
+  dual-written row would have two positions, which means two houston entry ids (X2) and, while peer sync still exists at the pin,
+  two peer `seq` values (`crew/internal/peer/peer.go:59-62`). Any divergence between the copies would be a split brain that no reader could
   arbitrate. Per-crew pinning has neither problem, and a running legacy crew never changes layout.
 
 ### 3.2 Data model
@@ -1019,9 +1053,6 @@ ${XDG_STATE_HOME:-~/.local/state}/crew/
 ├── index/repos/<sha256(realpath common)>   derived repo index
 ├── machine/<yyyy-mm>.jsonl           rows with no resolvable crew; gc audit rows
 ├── archive/<id>/                     ended crews: meta.json, events.jsonl.gz, msg-bodies/, pidfile.log, handoff/, archived
-├── pr-events/<owner>/<repo>/<pr>.jsonl  per-PR event feed, pointers only (3.7, phase 9)
-├── pr-events/<owner>/<repo>/<pr>.subscribed  listener follows this PR; mtime is its freshness (3.7)
-├── pr-events/listener.alive          listener heartbeat (3.7)
 ├── gc.lock.d
 ├── overseer/                         unchanged, except buses/*/cursor (removed in phase 6)
 ├── policy/<sha256(realpath common)>  unchanged: owner policy is per repo
@@ -1165,20 +1196,22 @@ The per-repo `dispatch-<cksum>.lock` is still held at that point, so no other di
 The alternative, taking the crew lock at `:4603` and holding it through `wt switch`, was rejected for the queueing cost above.
 
 Dispatch, `claim-issue`, `reap` and `release` rows gain a `repo` field, the realpath of the common dir as `policy.Dir` computes
-it (`crew/internal/policy/policy.go:108-114`). So do the two other kinds peers export (`crew/internal/peer/admit.go:62-72`, msg
-and decision at `:70-71`): `msg` rows addressed to `peer:*` and `decision` rows (`crew decide`,
-`crew/internal/status/decide.go:30-39`; `class promote`, W11). Their `repo` is the writer's cwd common dir. That field
-disambiguates history and drives the peer filter (3.4). Qualifying worker ids with a repo is left as an open question.
+it (`crew/internal/policy/policy.go:108-114`). The two other kinds peers export (`crew/internal/peer/admit.go:62-72`, msg
+and decision at `:70-71`), `msg` rows addressed to `peer:*` and `decision` rows (`crew decide`,
+`crew/internal/status/decide.go:30-39`; `class promote`, W11), would take the writer's cwd common dir as `repo` only to select
+rows for peer export. Peer sync is removed (3.4), so those two stamps are dropped unless it is still alive when phase 1 ships.
+Qualifying worker ids with a repo is left as an open question.
 
 #### Event identity and ordering
 
 Phase 1 keeps rows byte-compatible apart from the added `repo` and `crew_id` fields. A row is still identified by `ts` plus file
 position, and readers still order by `(ts, .i)` (`crew/internal/watch/watch.jq:63-64`). That order now spans one crew's rows only,
 and no reader at the pin needs more (`crew/internal/watch/watch.jq:66-71` filters by crew). `ts` stays unenforced (1.10). An
-optional later phase adds offset cursors `(epoch, byte offset)` per crew log. The epoch is the one peers already compute
-(`crew/internal/peer/admit.go:317-345`), and houston's entry id `epoch.byte-offset` (X2) has the same shape. Rows relayed from
-or exported to another host are identified by `(host, crew, offset)`. Peer `seq` is that offset today
-(`crew/internal/peer/peer.go:59-62`), extended with the crew.
+optional later phase (8) adds offset cursors `(gen, byte offset)` per crew log. `gen` is the generation marker `epochOf` computes
+today, the sha256 of the log's inode and first line (`crew/internal/peer/admit.go:317-345`), and houston's entry id
+`epoch.byte-offset` (X2) has the same shape. The helper moves out of the peer package into `bus` in phase 8, because peer sync is
+removed (3.4) and its package goes in phase 6. Rows relayed to another host are identified by `(host, crew, offset)`. Peer `seq`
+is that offset at the pin (`crew/internal/peer/peer.go:59-62`).
 
 #### Cursors and delivered marks
 
@@ -1189,6 +1222,45 @@ per (repo, crew) (F4). `--since` semantics are unchanged. Marks keep `marks.Path
 (`crew/internal/marks/marks.go:74-96`) and the undelivered gate (`crew/internal/status/gate.go:224-267`) do not change. Relay
 cursors stay at `crews/<id>/relay/<host>.cursor`. The overseer cursor becomes `crews/<id>/overseer.cursor`. It stays a separate
 file from `cursor` for the reason given at `crew/internal/lane/lane.go:139-141`, and it now ages out with the crew.
+
+**Offset cursor form (phase 8).** The target cursor is `{gen, off}`: `off` is the byte offset just past the last row the reader
+handled, and `gen` is the generation marker of the file it was read from (inode plus first-line hash, 3.2, event identity). It is
+written by temp-file-and-rename like today's `ts` cursor, so a reader killed mid-write sees the old value or the new one and never
+a torn one. On every read the reader computes `gen` and the file size, then:
+
+- `gen` equal and `off` at or below the size: read from `off`. This is the normal case, and appends never change `gen`.
+- `gen` changed (the log was replaced by rename, or truncated and rewritten), or the size is below `off` (truncated in place):
+  reset to offset 0 of the file now at the path and read it whole. Rows already handled may be seen again, so consumers keep
+  their at-least-once rules (the `ts` dedupe in `watch`, delivered marks in `await`). An empty file has no first line and an
+  unknown `gen`, which counts as no change until a first row lands, so the first row never reads as a reset.
+- A missing log reads as no rows and keeps the cursor.
+
+The `ts` cursor stays authoritative until every reader takes the offset form (phase 8), and `--since` semantics are unchanged.
+
+**Rotation and segments.** Phase 7 does not rotate a live crew's log. A crew log is small (median 35.5 KB per active crew, section
+2), and retention is by crew: `crew gc` archives an ended crew's dir whole and prunes archives (retention lifecycle, below). So no
+live reader sees a segment boundary under this design, and no live writer holds a file descriptor across a rotation: every writer
+opens the path per append (`bus.Append` calls `os.OpenFile` each time, `crew/internal/bus/append.go:39-54`; the shell writers use
+`>>`). The machine log is the one segmented file, `machine/<yyyy-mm>.jsonl`, and its writers never rewrite a segment (machine log,
+below).
+
+If a later change rotates a live log into segments (`events-<first-off>.jsonl`, the active file
+`events.jsonl`), the rules are:
+
+- **Writers.** Rotation renames `events.jsonl` to `events-<first-off>.jsonl`, where `<first-off>` is the log's cumulative byte offset
+  of that segment's first byte (not a `ts`, which is unenforced, 1.10), so segments order by it and `(host, crew, offset)` stays
+  unique across segments (the row's offset is `<first-off>` plus its offset in the file). The
+  next append creates a fresh `events.jsonl`. A writer that opened the path before the rename holds a descriptor on the renamed
+  file and lands one straggler row in a closed segment. That is the only effect: nothing is lost and no second file is written.
+- **Readers.** The cursor names the segment (its file name) as well as `{gen, off}`. When the reader finds its segment renamed
+  (its `gen` now sits on an `events-*.jsonl` file, or the active file's `gen` changed), it finishes that segment from `off` to its
+  end, keeps re-checking that closed segment's size on each poll until a later segment has rows (so a straggler written by a
+  writer that opened the path before the rename is picked up), then continues with the next segment in `<first-off>` order and
+  ends on the active file at offset 0. A reader whose segment was pruned resets to the oldest remaining
+  segment at offset 0.
+- **Archive and prune** treat segments as part of the crew dir: archive gzips each, prune deletes the dir.
+
+This is a design for a change that is not planned or sized (inference); phases 7 and 8 do not depend on it.
 
 #### Locks
 
@@ -1217,7 +1289,7 @@ the origin host too.
 
 `crew index rebuild` regenerates every file from `crews/*/meta.json`, `archive/*/meta.json` and the `repo` field of dispatch
 rows, and replaces each file by rename. Staleness rule: the logs win. A reader ignores an index line whose crew has no dispatch
-row for that repo, and a missing line is restored by rebuild, which `crew gc` runs. The index answers peer export, `reap --fleet`,
+row for that repo, and a missing line is restored by rebuild, which `crew gc` runs. The index answers `reap --fleet`,
 `rate --sweep-all` and houston's repo view, and its file list is the repo enumeration for fleet views. It replaces the registry
 and the `$HOME` walk (`crew/internal/repos/repos.go:83-156`, F1) for those questions in phase 6.
 
@@ -1285,7 +1357,7 @@ archives transparently. `msg-bodies/` is archived, so a spilled body stays resol
 | T15 `--spawn-role` from window stamps                                      | `adapters/core/dispatch.sh:2126-2136`                                                                                                                                                                                                        | `@crew_dir` still supplies the repo-local dirs; the crew log comes from `@crew_id`                                                                           | none                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | T16 `crew_dir:` header                                                     | worker-writable; trusted by `adapters/core/directive-delivery.sh:65-100` after a `-d` check                                                                                                                                                  | still read for repo-local paths only; the log path is derived from the crew id and requires `meta.json`                                                      | gained: the header can no longer point the hook at an arbitrary log                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | T17 `remote-exec`                                                          | argv allowlist and origin-slug clone check (`crew/internal/remote/exec.go:170-205`, `:350-387`)                                                                                                                                              | repo scope unchanged; a new crew scope (3.4) refuses a crew with no visiting `meta.json`                                                                     | gained: relay is bound to an existing visiting crew whose recorded home matches the request's self-asserted origin (`DISPATCH_ORIGIN_HOST` is caller-set and only regex-checked, `crew/internal/remote/remote.go:58`); ssh access remains the authentication                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| T18 peer rows                                                              | allowlist, caps, skew drop, pinned bus id (`crew/internal/peer/admit.go:26-28`, `crew/internal/peer/sync.go:429-449`)                                                                                                                        | unchanged admission; cursors per (host, crew)                                                                                                                | none                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| T18 peer rows                                                              | allowlist, caps, skew drop, pinned bus id (`crew/internal/peer/admit.go:26-28`, `crew/internal/peer/sync.go:429-449`)                                                                                                                        | removed with peer sync (3.4, phase 6)                                                                                                                        | none                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | T19 overseer trust                                                         | bus from the pane's cwd and `@crew_id` (`crew/internal/overseer/trust.go:137-185`)                                                                                                                                                           | crew dir from `@crew_id`, no git call                                                                                                                        | none in strength; one fewer probe that can fail                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | L12 `@crew_dir` comparers                                                  | string equality with `paths.Dir` (`crew/internal/nudge/arm.go:156-158`, `crew/internal/where/where.go:224-233`, `crew/internal/reap/reap.go:317-323`, `crew/internal/reap/stale.go:302-311`)                                                 | repo-scoped comparers (reap, stale) keep `@crew_dir`; crew-scoped ones (nudge arm, `where`, roster-render) drop the `@crew_dir` term and keep `@crew_id`     | none; nudge and `where` work from any cwd                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 
@@ -1301,7 +1373,7 @@ Who may write what:
 | houston                                                                                   | not after phase 3h (CLI); before it, legacy `<c>/crew/crews/<id>` only | none                                                            | none                                                                                                |
 | `remote-exec` on a visiting host                                                          | yes, only through the remote `dispatch` (3.4)                          | rows of the visiting crew                                       | the clone's worktree and worker state                                                               |
 | `crew gc`                                                                                 | no                                                                     | archive, prune                                                  | none; machine log, index rebuild                                                                    |
-| PR-event listener through `crew pr-events ingest` (3.7)                                   | no                                                                     | none                                                            | none; the machine-level per-PR feed only                                                            |
+| PR-event listener through `crew pr-events ingest` (3.7)                                   | no                                                                     | `github:` rows, only into logs of live existing crews           | none                                                                                                |
 
 Same-uid tamper resistance is equal before and after. Every session runs as one uid, `sender.Check` is a tripwire
 (`crew/internal/sender/sender.go:1-13`), and any process can write `<c>/crew/events.jsonl` today and
@@ -1330,42 +1402,55 @@ and runs `crew relay`, `reply`, `nudge`, `where`, `roster` or `dispatch-row`. `a
 `meta.json`, one with `visiting: false`, and one whose `home_host` differs from the request's origin. That origin is
 `DISPATCH_ORIGIN_HOST`, which the caller sets and `EnvAllow` only regex-checks (`crew/internal/remote/remote.go:58`), so the
 match binds a request to a recorded crew and is not authentication; ssh access remains the authentication. `dispatch`, `reap`,
-`peer-sync` and `permission-check` stay repo-scoped because they act on a checkout.
+`peer-sync` (removed in phase 6, 3.4) and `permission-check` stay repo-scoped because they act on a checkout.
 
 **Reply routing from any cwd.** `routeHost` reads the newest dispatch row for the branch (`crew/internal/reply/reply.go:136-152`).
 Under A+ it reads the crew log, so `crew reply worker:<b>` routes local or remote from any cwd. The appended row lands in the log
 the worker reads, which removes the F10 failure where reply refuses with `no session on <branch>` and appends to a log the
 worker never reads (`crew/internal/reply/reply.go:124`, `:291`).
 
-**Peers, model (b).** Peers stay repo-paired, and `peers/` stays repo-local. Export walks the live crews the repo index lists for
-the repo and selects rows whose `repo` field equals this common dir. The kinds are every kind the export switch passes at the pin
-(`crew/internal/peer/admit.go:380-390`): dispatch, `claim-issue`, `reap`, `msg` to `peer:*` (the identity rule at `:159`) and
-`decision`. Phase 1 stamps `repo` on all five (3.2), so a crew log that spans repos still has one answer for which repo's link
-carries each row. A `msg` or `decision` posted outside any repo has no `repo` and no link would carry it, so for layout-2 crews
-`crew msg --to peer:*` and `crew decide` refuse outside a repo instead of dropping the row silently. `repo` only selects rows
-for export: the allowlist (`crew/internal/peer/admit.go:62-72`) does not list it, and both `exportRow` (`:397-398`) and
-admission project onto that allowlist, so the wire rows stay as they are. The cursor becomes one
-offset and one epoch per (host, crew) instead of one per (repo bus, host) (`crew/internal/peer/peer.go:102-112`). Each crew's
-stream drives the peer link for every repo in its join set that has `hosts.<h>.peer`. The existing `peers/<host>.lock.d` plus
-mutex (`crew/internal/peer/peer.go:156-175`) dedupes concurrent drivers. Legacy-layout crews keep exporting from the repo bus.
+**Peers: remove peer sync (owner decision, 2026-11-23).** This is a decision, not an open question. An earlier draft migrated the peer
+link to layout 2 as phase 3p (wire `v: 2`, per-(host, crew) cursors); that phase is dropped. Peer sync is deleted in phase 6
+instead (4.9). The reasons:
 
-Cursor-kind tagging and the mixed period:
+- **It was never enabled.** `hosts.*.peer` (the option, `nix/hm-module.nix:483-487` at the pin) is unset on both hosts, per the owner.
+- **Zero use.** Over the last 30 days both hosts recorded no peer rows (peer messages, claims, decisions) and no migrations
+  (measured on halo and tp-g6, 2026-11-23; halo 952 dispatches, tp-g6 252).
 
-- **Wire.** Peer messages carry `v`, and `decodeOne` refuses any version other than 1 (`crew/internal/peer/sync.go:429-449`).
-  Per-crew cursors ship as `v: 2`. `Request.Cursors` and `Response.Acks` become maps keyed by crew id, each holding
-  `{since, since_epoch}` or `{ack, ack_epoch}`, and every `Entry` gains `crew`. The version alone tells a per-bus cursor from
-  a per-crew one; no field is reinterpreted.
-- **Stored state.** `peers/<host>.state` keeps its v1 shape and meaning (per-bus `HWM`, `Scan`, `Ack`, epochs). Per-crew state
-  goes to a new `peers/<host>.crews.json` with `"kind":"crew"` and one `State` per crew id. New code never writes per-crew values
-  into the v1 file.
-- **Old peer, new peer.** A new peer speaks both versions. To an old partner, a v2 request fails with `unsupported version 2`.
-  That is today's fail-closed path; offsets are never misread. The new peer records a peer sync error, which the `peers` skill
-  already handles, and keeps a v1 link for legacy-crew rows. Layout-2 rows for that repo are withheld, not lost: the first v2
-  contact starts each live crew's cursor at 0, and the HWM dedupes per crew.
-- **Rollback.** A host rolled back to an old binary reads only the v1 file, which stayed current for legacy crews, and ignores
-  `.crews.json`. It exports nothing for layout-2 crews, because their rows are not on the repo bus. Layout-2 crews on that host
-  stop working anyway under an old binary, so the supported rollback is flipping the layout setting back (new crews legacy) while
-  keeping the binary. Downgrading the binary while layout-2 crews are live is unsupported (phase 4 row).
+  | measure (last 30 days)                       | halo | tp-g6 |
+  | -------------------------------------------- | ---- | ----- |
+  | dispatches                                   | 952  | 252   |
+  | `--host` (remote) dispatches                 | 8    | 4     |
+  | peer rows (peer messages, claims, decisions) | 0    | 0     |
+  | migrations                                   | 0    | 0     |
+
+- **The working model is one dispatcher per repo at a time.** Other hosts only run workers. Two dispatchers racing on one repo is
+  not a supported mode, so there is nothing for a peer link to reconcile.
+- **Double claims are already prevented.** The GitHub `dispatched` label is the claim, and it is visible to every host with no
+  peer link.
+- **The remaining cross-host traffic is small.** Remote workers are about 1% of dispatches (12 of 1,204 above). They keep the ssh
+  relay (`crew remote-run`, `crew remote-exec`, `relay`, above), which needs only forwarding of the worker's rows into the home
+  crew's log, not replication of two logs.
+
+What this changes in the design:
+
+- **Removed:** the peer package and its stream lane, `peers/` (self id, per-host jsonl, state, seen, reset, link, roster),
+  `hosts.<h>.peer`, the peer skill copies, and the peer paths of `decide`, `fleet` and `overseer` (about 6,000 lines at the pin in
+  `crew/internal/peer`, `crew/internal/fleet/peers.go` and `crew/internal/stream/peers.go` with their tests; their callers add to that,
+  measured as a line count of those files only). See 4.9 for the deletion schedule.
+- **Dropped from the migration:** phase 3p, the v1/v2 wire versions, `peers/<host>.crews.json`, the outside-a-repo refusal for
+  `crew msg --to peer:*` and `crew decide`, and phase 4's wait on 3p. Phase 8 no longer depends on peer ids.
+- **Unchanged:** the `repo` stamp phase 1 puts on dispatch, `claim-issue`, `reap` and `release` rows still serves the repo index
+  rebuild and `reap --fleet`. Stamping `msg` to `peer:*` and `decision` rows with `repo` was for peer export only and can be
+  dropped from phase 1 (inference: no other reader of that stamp was found).
+- **Weaker:** JetStream's trigger "several hosts that need continuous crew sync beyond ssh relay" (section 2, outcome). With one
+  dispatcher per repo and no peer link, nothing asks for continuous sync, so that trigger no longer exists in the working model.
+
+A future multi-dispatcher setup (two hosts each running a dispatcher on one repo) would need, at minimum: a shared claim that beats
+the `dispatched` label's race window, a way for each dispatcher to see the other's workers (read-only replication of a crew log, not
+two writers), and an identity rule so a second dispatcher cannot post into the first's crew. The pieces this design leaves in place
+for that are the per-crew log, the offset cursor `(gen, off)` (3.2) and `(host, crew, offset)` row ids (phase 8), and the crew-scope
+relay below. A later design would start from those; it would not revive the peer link.
 
 **Overseer by crew id.** The overseer reaches buses through registry discovery and `onBus(common, crew)`
 (`crew/internal/overseer/msg.go:108-114`, `:337-343`). The far host picks a bus from `fleet.ServedRepos` (F12). Under A+ both
@@ -1389,7 +1474,7 @@ Worker state (`artifacts/`, `grants/`, `protocol-dirs/`, `leads/`, `launch/`, `a
 grant (`adapters/core/launcher-common.sh:1301-1308`) and the grant-check refusals (`adapters/core/grant-check.sh:385-391`) keep
 working unchanged. So do the protocols, which tell workers to find `<crew_dir>/artifacts/<branch>/` from the task header
 (`adapters/core/protocols/WORKER_PROTOCOL.md:45-47`, `adapters/core/protocols/WORKER_PLAN.md:20-21`). The baseline and commondir
-pins guard the repo's own git config. Peers pair two clones of one repo.
+pins guard the repo's own git config. Peer pairing of two clones (`peers/`) is removed in phase 6 (3.4).
 
 `crew_dir` keeps its meaning: the repo-local `<c>/crew`. The shell's `${crew_dir%/crew}` recovery of the common dir (L9)
 therefore stays valid, and worktree records keep line 2 (T11). The crew log gets a new name: `crew_log` in shell, printed by
@@ -1411,76 +1496,125 @@ bats guard comparing it to `crew where --log`.
 The owner approved design input for a listener that pushes PR events (1.15, noamsto/tmux-og#1220, open). Everything in this
 subsection is a proposal. tmux-og would own the listener; this repo owns where its events land and how crew code consumes them.
 
-**Sender identity.** Feed rows carry `from: github:<owner>/<repo>#<pr>`. The listener is neither a worker nor a dispatcher, and the
+**The listener is a plain writer.** `gh event listen --follow` output is piped into `crew pr-events ingest`, which appends each
+accepted event to the log of the crew that owns the PR, as an ordinary row through `bus.Append`
+(`crew/internal/bus/append.go:39-54`). There is no per-PR feed file, no `.subscribed` marker and no heartbeat file: the crew log is
+the only store, so the cursor, rotation and retention rules of 3.2 apply to these rows unchanged, and phase 7 retires them with the
+crew. An earlier draft of this section wrote a separate `pr-events/` tree; open questions 13 and 17 record why that was dropped.
+
+**Sender identity.** The row carries `from: github:<owner>/<repo>#<pr>`. The listener is neither a worker nor a dispatcher, and the
 identity names what it speaks for: one PR.
 
-**Where it writes: a per-PR feed, not crew logs and not the machine log.** The listener pipes its lines into
-`crew pr-events ingest`, which appends to `${XDG_STATE_HOME}/crew/pr-events/<owner>/<repo>/<pr>.jsonl` with `bus.Append`
-(`crew/internal/bus/append.go:39-54`) and refreshes `pr-events/listener.alive`. For each PR the listener subscribes to, ingest
-also writes `pr-events/<owner>/<repo>/<pr>.subscribed`; the listener re-reports its subscribed PRs every heartbeat period, and each
-report refreshes the marker's mtime. Reasons:
+**Which crew owns a PR.** Ingest appends only to a crew that already exists and is live (3.2, creation rule); it never creates a
+crew dir, so an outside process is a writer to existing logs and not a crew creator. The owner of a PR is every live crew whose log
+already names it, for example through a `pr_open` status row or a `pr-watch` post (inference: the exact row fields are chosen when
+phase 9 is built). Ingest finds those crews through the repo index (3.2) and a read of each live crew's log, and may cache the result.
+Two cases follow:
 
-- The listener knows PRs, not crews. Writing to crew logs would need a PR-to-crew map built from dispatch rows, and it would make an
-  outside process a crew-log writer and, for an unknown crew, a creator, against the creation rule (3.2).
-- One PR can matter to several readers: the author's dispatcher, a reviewing crew, a plain `pr-watch` session with no crew
-  (P1 needs none, `adapters/core/pr-watch.sh:9-12`). One feed serves all of them; per-crew copies would duplicate every event.
-- The machine log holds rows with no resolvable crew, read by reap's folds (3.2). PR events would bury those rows, and a reader
-  would scan a monthly segment to find one PR.
-- The feed sits under `${XDG_STATE_HOME}/crew`, where `grant-check.sh` already refuses engine write grants
-  (`adapters/core/grant-check.sh:389-391`), so a sandboxed worker engine cannot write it through a grant.
-- Going through `crew` keeps the feed format and its checks in this repo; tmux-og does not learn the file layout.
+- Several crews name one PR (the author's dispatcher and a reviewing crew): the event is appended to each, once per crew. This is
+  the per-crew duplication the old feed avoided; the rows are small pointers (below), so the cost is a few lines per event.
+- No live crew names the PR (a plain `pr-watch` session with no crew, which P1 allows, `adapters/core/pr-watch.sh:9-12`): the event
+  is dropped and that session polls as today. Push is an optimisation, never the only path.
 
-**Trust rule: events are pointers.** A consumer uses only `(owner/repo, pr, event type)` from a feed row, to decide that it should
-re-fetch with `gh`. It never reads PR state from the payload. Ingest checks that the resource is
+Row volume per busy PR was not measured (unverified). The mitigation, if it matters, is to coalesce identical `(pr, type)` events
+that arrive within a short window before appending; this is not part of the first cut.
+
+**Trust rule: events are pointers.** A consumer uses only `(owner/repo, pr, event type)` from a `github:` row, to decide that it
+should re-fetch with `gh`. It never reads PR state from the payload. Ingest checks that the resource is
 `https://github.com/<owner>/<repo>/pull/<n>`, that the type is one of the five events in 1.15, and that the line fits `LineMax`
-(`crew/internal/bus/append.go:18-20`). Before it joins the feed or marker path, it checks each segment's charset: owner
-`[A-Za-z0-9-]+`, repo `[A-Za-z0-9._-]+` and not `.` or `..`, pr `[0-9]+`. A row that fails is dropped, so no value from the
-listener can move the path out of `pr-events/` (the T7 rule, applied to this join). It projects each row onto a fixed field list, as peer admission does
-(`crew/internal/peer/admit.go:62-72`), and drops anything else. A forged row therefore costs at most one extra `gh` read.
+(`crew/internal/bus/append.go:18-20`). It checks each segment's charset: owner `[A-Za-z0-9-]+`, repo `[A-Za-z0-9._-]+` and not `.`
+or `..`, pr `[0-9]+`. A row that fails is dropped. The path no longer depends on these values (the log is chosen by crew id, not by
+PR), so the check now only keeps garbage out of the log. Ingest projects each row onto a fixed field list, as peer admission did
+at the pin (`crew/internal/peer/admit.go:62-72`), and drops anything else. A forged row therefore costs at most one extra `gh` read.
 
-**`sender.Check`.** Feed rows are not crew rows, so `sender.Check` (which gates crew-log appends) does not see them. Two rules
-keep the GitHub identity out of crew logs:
+**`sender.Check`.** Rows from ingest carry the `github:` sender, so the identity must stay out of every other writer. The rule the
+doc already sets stays, and ingest is its only writer:
 
-- `crew msg` refuses `from: github:*`, as it refuses `overseer:*` (`crew/internal/status/msg.go:33-34`).
+- `crew msg` refuses `from: github:*`, as it refuses `overseer:*` (`crew/internal/status/msg.go:33-34`); phase 9 adds the same
+  refusal to every other sender path that takes a `from` (inference: `crew status` is checked when it is built).
 - `crew pr-events ingest` refuses from a crew-stamped pane and when `CREW_WORKER_ID` or `CREW_ROLE_ID` is set (the T1 and T2
-  shape, `crew/internal/sender/sender.go:148-153`).
+  shape, `crew/internal/sender/sender.go:148-153`), so a worker cannot post as GitHub through it.
+- Ingest appends with `bus.Append` directly after its own checks, the way crew code writes its other non-`crew msg` rows
+  (inference: phase 9 confirms that `sender.Check` need not be loosened for it; if it must, the exception is exactly the
+  `github:` prefix and only from this entry point).
 
-Both are same-uid tripwires like every other check (`crew/internal/sender/sender.go:1-13`). The crew-log row that a PR change
-produces stays `from: pr-watch:<N>` (`crew/internal/prwatch/prwatch.go:172`), written by crew code after its own `gh` re-fetch.
+Both refusals are same-uid tripwires like every other check (`crew/internal/sender/sender.go:1-13`). The crew-log row that a PR
+change produces for a parked reader stays `from: pr-watch:<N>` (`crew/internal/prwatch/prwatch.go:172`), written by crew code after
+its own `gh` re-fetch. A `github:` row is the wake, not the state.
 
 **Consumers.**
 
-| reader                | today                                                                                                                              | with the feed                                                                                                                                                                                                                                                                                                                                                                                 |
-| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| P1 `pr-watch`         | sleeps `--interval` (60 s default), then `_poll` (`adapters/core/pr-watch.sh:229-230`)                                             | waits for a new feed row for this PR or the interval, whichever comes first, then `_poll` as today. The fingerprint diff (`:204-224`) still decides whether anything changed, so a spurious event prints nothing. With a live listener and a fresh `.subscribed` marker for this PR, the interval is a safety net (proposed: 300 s); a PR with no fresh marker polls at `--interval` as today |
-| P2 `crew pr-watch`    | posts P1's event (`crew/internal/prwatch/prwatch.go:165-177`)                                                                      | unchanged; it wakes sooner because P1 does                                                                                                                                                                                                                                                                                                                                                    |
-| P3 `crew merge`       | no wait: refuses on `UNKNOWN` mergeability and on pending checks with "retry" (`crew/internal/merge/merge.go:161-162`, `:174-175`) | unchanged. The retry is driven by a P1 park on the same PR, which a check-suite-completed or merge-conflict event now wakes. A `crew merge --wait` is not proposed                                                                                                                                                                                                                            |
-| P4 conflict detection | a P1 `mergeable` change or a P3 refusal                                                                                            | a merge-conflict event wakes P1, whose re-fetch confirms it. GitHub computes mergeability lazily, so the re-fetch can still read `UNKNOWN` and keep the last value (`adapters/core/pr-watch.sh:143-150`)                                                                                                                                                                                      |
+| reader                | today                                                                                                                              | with `github:` rows in the crew log                                                                                                                                                                                                                                                                                                                       |
+| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| P1 `pr-watch`         | sleeps `--interval` (60 s default), then `_poll` (`adapters/core/pr-watch.sh:229-230`)                                             | waits for a new `github:` row for this PR in its crew log or the interval, whichever comes first, then `_poll` as today. The fingerprint diff (`:204-224`) still decides whether anything changed, so a spurious event prints nothing. The interval stays as it is: a shell reader cannot tell a live listener from a dead one, so it keeps polling (3.8) |
+| P2 `crew pr-watch`    | posts P1's event (`crew/internal/prwatch/prwatch.go:165-177`)                                                                      | unchanged; it wakes sooner because P1 does                                                                                                                                                                                                                                                                                                                |
+| P3 `crew merge`       | no wait: refuses on `UNKNOWN` mergeability and on pending checks with "retry" (`crew/internal/merge/merge.go:161-162`, `:174-175`) | unchanged. The retry is driven by a P1 park on the same PR, which a check-suite-completed or merge-conflict event now wakes. A `crew merge --wait` is not proposed                                                                                                                                                                                        |
+| P4 conflict detection | a P1 `mergeable` change or a P3 refusal                                                                                            | a merge-conflict event wakes P1, whose re-fetch confirms it. GitHub computes mergeability lazily, so the re-fetch can still read `UNKNOWN` and keep the last value (`adapters/core/pr-watch.sh:143-150`)                                                                                                                                                  |
+
+A `github:` row wakes any reader of that crew log, not only `pr-watch`: `watch`, `stream` and `await` return it like any other
+row. Whether the dispatcher should see it or have it filtered is decided when phase 9 is built (inference); the safe default is to
+filter `github:` rows out of the dispatcher's stream and let only `pr-watch` read them.
 
 **Fallback.** The listener runs `gh event listen --help` at start. When that fails (gh older than 2.105, such as halo's 2.96.0),
-it does not start and writes no heartbeat. Consumers treat a missing heartbeat, or one older than twice its refresh period, as "no
-listener" and poll at today's interval. A live heartbeat alone does not lengthen the interval: the listener follows only the PRs it
-subscribed to, so a `pr-watch` on any other PR (for example a worker's PR opened before tmux-og tracks it) needs that PR's
-`.subscribed` marker, younger than twice the refresh period, before it moves to the safety-net interval. Polling also stays the path on any host without tmux-og, so it remains the tested default.
+it does not start and appends nothing. Consumers need no heartbeat to notice: no `github:` row arrives and `pr-watch` polls at
+`--interval`, which is today's behaviour and stays the tested default. Dropping the heartbeat also drops the earlier proposal to
+lengthen the interval to 300 s while a listener is alive; that saved `gh` calls only and is not worth a liveness file. Polling is
+also the path on any host without tmux-og.
 
-**Relation to the bus design.** The feed is machine-level and keyed by PR. It works the same for layout-1 and layout-2 crews,
-because P2's post goes through the phase-1 resolver whatever layout the crew has. It adds no crew-log writer and does not block
-any bus phase (phase 9, section 4). Phase 9 prunes its own files: on each heartbeat refresh, ingest deletes feed and marker files untouched for N days
-(default 14, open question 17), judged by mtime alone, so retention needs no `gh` state read, does not trust a payload, and does
-not wait for `crew gc` (phase 7 does not touch `pr-events/`). If E were
-adopted later (open question 16), ingest would publish to `pr.<owner>.<repo>.<pr>` instead of appending to a feed file, with the same
-checks and projection; the listener's contract with `crew pr-events ingest` would not change.
+**Relation to the bus design.** The listener adds one writer to existing crew logs and no new store. It works the same for layout-1
+and layout-2 crews only in the sense that the resolver (phase 1) finds either log. The owner lookup is the limit: the repo index
+lists layout-2 crews only (3.2), and it is keyed by the common dir, so ingest maps the event's `owner/repo` to the index file whose
+first line carries that `slug`. Legacy crews are not in the index and are not woken until the phase 4 flip makes new crews layout
+2; they keep polling, which is correct but slower. It does not block any bus phase (phase 9, section 4).
+Retention is the crew's: `crew gc` (phase 7) archives and prunes the rows with the log, so there is no separate pruning job and no
+retention question. If E were adopted later (open question 16), ingest would publish to `pr.<owner>.<repo>.<pr>` instead of
+appending to a crew log, with the same checks and projection; the listener's contract with `crew pr-events ingest` would not change.
+
+### 3.8 Push wakes (file-change events)
+
+Readers that wait on a crew log (`crew watch`, `crew stream`, `crew await`, dash and roster-render's lanes) poll every 2 s today.
+Phase 10 adds a push wake and keeps the poll. The design is mechanism, not a store: the log stays authoritative.
+
+**Mechanism.** A reader watches the crew directory with [fsnotify](https://github.com/fsnotify/fsnotify) (v1.10.1 at the sweep),
+filters events to the log's file name (`events.jsonl`, or the active segment, 3.2), and on a matching event reads from its cursor.
+It watches the directory, not the file, because fsnotify's own guidance is that watching a single file loses the watch when an
+editor or tool replaces it by rename (unverified here: read from the project's README at the sweep). That matters for two paths in
+this design: cursor-style temp-and-rename writes inside the directory, and rotation (3.2), which replaces the log file.
+
+**The log stays authoritative.** An event only says "look now". A lost, coalesced or spurious event costs latency (the next 2 s
+poll) and never a row, because the reader always reads from its cursor and never from the event. Overflow of the OS event queue is
+handled the same way: the reader treats it as a wake and polls.
+
+**Costs and limits.**
+
+- **macOS (kqueue).** fsnotify's kqueue backend opens a file descriptor per watched file (unverified: from the project's docs).
+  Watching one directory per crew keeps that to one descriptor per directory plus descriptors for the files kqueue reports
+  inside it. A fleet view that waits on many crews would hold a few descriptors per live crew, which is within the default limit
+  at today's crew counts (inference: halo has 75 crews active in 7 days, section 2). Phase 10 measures it on macOS before
+  enabling the wake there; the poll covers a refusal to add the watch.
+- **Shell readers keep polling.** `pr-watch.sh` and the other shell loops do not link a Go library, and the phase adds no new
+  daemon or `inotifywait` dependency. Only the Go readers get the file-change wake; a shell reader that waits on `github:` rows
+  (`pr-watch.sh`, 3.7) checks the crew log on a short loop, much shorter than its `gh` interval, so it still reacts before that
+  interval.
+- **Network and special filesystems.** A state dir on NFS or a similar mount may deliver no events (inference). The poll covers it.
+- **Duplicated wake logic.** dash already watches with fsnotify (`dash/internal/buswatch/buswatch.go:37-60` at the pin: it watches the directory and
+  forwards only events whose name matches the log's base name, falling back to a 2 s poll watcher; H5). Phase 10 moves the filter-and-read
+  helper into one shared package so `crew` and dash use the same code.
+
+Rollback is removing the watch: the poll is unchanged, so a bad wake path degrades to today's latency.
 
 ## 4. Migration phases
 
-Ten phases take the system from per-repo buses to A+ (section 3), and an eleventh, phase 9, consumes PR events (3.7). Each phase
-can merge and roll back on its own. Phase 4, the default flip, waits for 3, 3p and 3h. Phases 5, 8 and 9 are optional. Phase 9
-depends on no bus phase and no bus phase depends on it. No phase moves a running crew: a crew keeps the layout it was created
+Nine phases (1, 2, 3, 3h, 4, 5, 6, 7, 8) take the system from per-repo buses to A+ (section 3). Phase 9 consumes PR events (3.7) and
+phase 10 adds push wakes (3.8). An earlier draft had a phase 3p that moved peer sync to layout 2; the owner decided to remove peer
+sync instead (3.4), and the removal is part of phase 6. Each phase can merge and roll back on its own. Phase 4, the default flip,
+waits for 3 and 3h. Phases 5, 8, 9 and 10 are optional. Phase 9 needs the repo index from phase 2 and no bus phase needs it. Phase 10
+needs the phase-1 resolver and no phase needs it. No phase moves a running crew: a crew keeps the layout it was created
 with until it ends, and the pin is the presence of `meta.json` under `crews/<id>/` or `archive/<id>/` (3.2). Legacy crews keep today's on-demand crew-dir creators
 until phase 6 (3.2, creation rule).
 
 Names this section introduces (`crew where --log`, `crew where --json`, `crew_log`, `crew index rebuild`, `crew gc`, `crew bus import`, `crew crews
---legacy`, `crew pr-events ingest`, the per-PR feed, the layout setting and its `CREW_LAYOUT` env override) do not exist at the pin. They are proposals.
+--legacy`, `crew pr-events ingest`, `github:` rows in crew logs, the layout setting and its `CREW_LAYOUT` env override, the `(gen, off)` cursor and the push-wake helper) do not exist at the pin. They are proposals.
 
 ### 4.1 Phase table
 
@@ -1502,19 +1636,19 @@ Call-site counts at the pin: 68 non-test Go files under `crew/` reference `bus.P
 name `events.jsonl` and 184 name `crew_dir`; 73 Go test files and 13 bats files or helpers name `events.jsonl` (`tests/dispatch.bats`
 alone 79 times, `tests/dispatch-resume.bats` 28).
 
-| id  | goal                                                           | changes by area                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               | tier                                                 | size (est.)                                       | depends on                                                                    | rollback                                                                             | fan-in it unlocks                                                              |
-| --- | -------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------- | ------------------------------------------------- | ----------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------ |
-| 1   | resolver seam, row tags, same-branch refusal; no layout change | Go: one crew-log resolver used by every writer and reader (W1-W11, 1.2-1.3); `repo` on dispatch, `claim-issue`, `reap`, `release`, `msg` to `peer:*` and `decision`; `crew_id` on reap/release where resolvable. Shell: `dispatch.sh` lock-free same-branch pre-check before `wt switch`, `--pr` head re-fetch moved ahead of the claim row, mandatory crew `identity.lock` (30 s bound) before the claim row with the authoritative re-check, removal of what the dispatch created on re-check refusal (keyed on `prev_wt` and `switch_mode`), `repo` field; fifth worktree-record line. Protocol: none. houston, dash: none | deep                                                 | 800-1,500                                         | none                                                                          | revert; added row fields stay and are ignored                                        | none directly; the `repo` field is what the index rebuild and peer filter need |
-| 2   | layout-2 store behind a per-crew pin                           | Go: store under `${XDG_STATE_HOME}/crew/crews/<id>/`, `meta.json`, creation rule (`register` only, layout-2 ids only; resolver classifies `crews/`, `archive/` and index hits as layout 2 and refuses archived ids), `deregister` keeps the dir, repo index, machine log, `crew where --log`, crew-scope `remote-exec`, visiting-crew creation. Shell: `crew_log` from `crew where --log` in `dispatch.sh`, `dispatch-notify.sh`, `directive-delivery.sh`, `dispatcher.sh`, `dispatch-resume.sh`. Protocol: none (opt-in). houston, dash: none                                                                                | deep                                                 | 2,000-3,500                                       | 1                                                                             | setting off; layout-2 crews already running finish on the same binary                | none yet                                                                       |
-| 3   | every consumer on layout 2                                     | Go: roster-render sources, fleet status/queue/prio from live crews, overseer by crew id, reap and `rate --sweep-all` through the repo index, `adopt`/`IsHome` from `meta.json`. dash: crew log path, watch paths, repo label. Shell: none beyond 2. Protocol: none                                                                                                                                                                                                                                                                                                                                                            | standard per PR (3 to 4 PRs); overseer and reap deep | 1,500-3,000                                       | 2                                                                             | revert per PR while the setting is off                                               | F8 lanes, F10 refusal and `cd`, F7 walk, F9 homes, for layout-2 crews          |
-| 3p  | peers on layout 2, model (b)                                   | Go: wire `v: 2`, `peers/<host>.crews.json`, export from the repo index filtered by `repo` (dispatch, `claim-issue`, `reap`, peer `msg`, `decision`), per-(host, crew) cursors; legacy v1 link kept. Protocol: peers SKILL.md re-read, expected unchanged                                                                                                                                                                                                                                                                                                                                                                      | deep                                                 | 1,200-2,500                                       | 2                                                                             | disable v2 or revert; v1 state file was never rewritten                              | legacy peer export, once no legacy crew remains                                |
-| 3h  | houston on layout 2                                            | houston (own repo): mint through `crew new`/`crew register`, locate through `crew where --json`, per-crew offset tailing, fixtures (X1-X6)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | standard                                             | 400-1,000 (inference: houston not sized at a pin) | 2 (and 3 for `crew where --json`)                                             | revert in houston; its crews mint legacy dirs again and `register` keeps them legacy | houston's per-repo `crewDir` discovery                                         |
-| 4   | default flip                                                   | Go: layout setting default 2; `crew crews --legacy` gate query. Protocol: "The bus is per repo" rewritten (D1, 7 files) plus `adapters/core/commands/dispatcher.md:29`. houston, dash: none                                                                                                                                                                                                                                                                                                                                                                                                                                   | trivial                                              | 60-200                                            | 3, 3p, 3h                                                                     | flip the setting back; crews created on layout 2 stay there                          | `cross-repo-hint.sh` goes silent for new crews                                 |
-| 5   | optional history import                                        | Go: `crew bus import` splits legacy logs by `crew_id` into `archive/<id>/`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | standard                                             | 300-700                                           | 2, 7 (archive format)                                                         | delete the `archive/<id>/` dirs it created; legacy logs untouched                    | none                                                                           |
-| 6   | delete fan-in and legacy paths                                 | Go, shell, flake, protocol, dash: section 4.9                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | standard                                             | 1,500-3,000, mostly deletions                     | 4 plus the gate in 4.9                                                        | revert; no data is deleted by this phase                                             | all of 4.9                                                                     |
-| 7   | retention                                                      | Go: lifecycle derivation, `crew gc` (rate sweep, archive, prune), index rebuild under `gc.lock.d`, machine-log segment pruning; tests that archived ids are refused                                                                                                                                                                                                                                                                                                                                                                                                                                                           | deep (deletes user state)                            | 600-1,200                                         | 2, including its archived-id resolver rule (3.2)                              | disable `gc`; an archive moves back by rename; a prune is final                      | none                                                                           |
-| 8   | optional offset cursors and event ids                          | Go: `(epoch, offset)` cursor per crew log beside the `ts` cursor; peer and relay ids `(host, crew, offset)`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | standard                                             | 500-1,200                                         | 2 (3p for peer ids)                                                           | revert; the `ts` cursor file was kept                                                | none                                                                           |
-| 9   | optional PR-event consumption (3.7)                            | Go: `crew pr-events ingest` (resource, type and path-charset checks, projection, per-PR feed, `.subscribed` markers, heartbeat, mtime pruning); `crew msg` refuses `from: github:*`. Shell: `pr-watch.sh` waits on the feed or the interval before `_poll`. Protocol: the `pr-watch` skill only if the wake latency it describes changes (inference). houston, dash: none. tmux-og (own repo): the listener pipes `gh event listen` into ingest (#1220)                                                                                                                                                                       | standard                                             | 300-700                                           | no bus phase; useful once tmux-og#1220 ships on a host with gh 2.105 or later | stop the listener or revert; `pr-watch` polls at today's interval                    | none; PR wakes no longer wait up to one poll interval                          |
+| id  | goal                                                           | changes by area                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              | tier                                                 | size (est.)                                                                                                                             | depends on                                                                                            | rollback                                                                                                                  | fan-in it unlocks                                                     |
+| --- | -------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| 1   | resolver seam, row tags, same-branch refusal; no layout change | Go: one crew-log resolver used by every writer and reader (W1-W11, 1.2-1.3); `repo` on dispatch, `claim-issue`, `reap` and `release` (`msg` to `peer:*` and `decision` rows only if peer sync is still alive, 3.4); `crew_id` on reap/release where resolvable. Shell: `dispatch.sh` lock-free same-branch pre-check before `wt switch`, `--pr` head re-fetch moved ahead of the claim row, mandatory crew `identity.lock` (30 s bound) before the claim row with the authoritative re-check, removal of what the dispatch created on re-check refusal (keyed on `prev_wt` and `switch_mode`), `repo` field; fifth worktree-record line. Protocol: none. houston, dash: none | deep                                                 | 800-1,500                                                                                                                               | none                                                                                                  | revert; added row fields stay and are ignored                                                                             | none directly; the `repo` field is what the index rebuild needs       |
+| 2   | layout-2 store behind a per-crew pin                           | Go: store under `${XDG_STATE_HOME}/crew/crews/<id>/`, `meta.json`, creation rule (`register` only, layout-2 ids only; resolver classifies `crews/`, `archive/` and index hits as layout 2 and refuses archived ids), `deregister` keeps the dir, repo index, machine log, `crew where --log`, crew-scope `remote-exec`, visiting-crew creation. Shell: `crew_log` from `crew where --log` in `dispatch.sh`, `dispatch-notify.sh`, `directive-delivery.sh`, `dispatcher.sh`, `dispatch-resume.sh`. Protocol: none (opt-in). houston, dash: none                                                                                                                               | deep                                                 | 2,000-3,500                                                                                                                             | 1                                                                                                     | setting off; layout-2 crews already running finish on the same binary                                                     | none yet                                                              |
+| 3   | every consumer on layout 2                                     | Go: roster-render sources, fleet status/queue/prio from live crews, overseer by crew id, reap and `rate --sweep-all` through the repo index, `adopt`/`IsHome` from `meta.json`. dash: crew log path, watch paths, repo label. Shell: none beyond 2. Protocol: none                                                                                                                                                                                                                                                                                                                                                                                                           | standard per PR (3 to 4 PRs); overseer and reap deep | 1,500-3,000                                                                                                                             | 2                                                                                                     | revert per PR while the setting is off                                                                                    | F8 lanes, F10 refusal and `cd`, F7 walk, F9 homes, for layout-2 crews |
+| 3h  | houston on layout 2                                            | houston (own repo): mint through `crew new`/`crew register`, locate through `crew where --json`, per-crew offset tailing, fixtures (X1-X6)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | standard                                             | 400-1,000 (inference: houston not sized at a pin)                                                                                       | 2 (and 3 for `crew where --json`)                                                                     | revert in houston; its crews mint legacy dirs again and `register` keeps them legacy                                      | houston's per-repo `crewDir` discovery                                |
+| 4   | default flip                                                   | Go: layout setting default 2; `crew crews --legacy` gate query. Protocol: "The bus is per repo" rewritten (D1, 7 files) plus `adapters/core/commands/dispatcher.md:29`. houston, dash: none                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | trivial                                              | 60-200                                                                                                                                  | 3, 3h                                                                                                 | flip the setting back; crews created on layout 2 stay there                                                               | `cross-repo-hint.sh` goes silent for new crews                        |
+| 5   | optional history import                                        | Go: `crew bus import` splits legacy logs by `crew_id` into `archive/<id>/`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | standard                                             | 300-700                                                                                                                                 | 2, 7 (archive format)                                                                                 | delete the `archive/<id>/` dirs it created; legacy logs untouched                                                         | none                                                                  |
+| 6   | delete fan-in, legacy paths and peer sync                      | Go, shell, flake, protocol, dash: section 4.9 (includes the peer package, `peers/`, `hosts.<h>.peer` and the peer skill)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     | standard                                             | 7,500-10,500 (inference: 1,500-3,000 for fan-in plus 6,000-7,500 for peer code and tests, 3.4, and their callers), nearly all deletions | 4 plus the gate in 4.9                                                                                | revert; no data is deleted by this phase                                                                                  | all of 4.9                                                            |
+| 7   | retention                                                      | Go: lifecycle derivation, `crew gc` (rate sweep, archive, prune), index rebuild under `gc.lock.d`, machine-log segment pruning; tests that archived ids are refused                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | deep (deletes user state)                            | 600-1,200                                                                                                                               | 2, including its archived-id resolver rule (3.2)                                                      | disable `gc`; an archive moves back by rename; a prune is final                                                           | none                                                                  |
+| 8   | optional offset cursors and event ids                          | Go: `(gen, off)` cursor per crew log beside the `ts` cursor, with reset on a changed inode or first line or a shrunk file (3.2); `epochOf` moved from `peer` into `bus`; relay ids `(host, crew, offset)`                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | standard                                             | 500-1,200                                                                                                                               | 2                                                                                                     | revert; the `ts` cursor file was kept                                                                                     | none                                                                  |
+| 9   | optional PR-event consumption (3.7)                            | Go: `crew pr-events ingest` (resource, type and charset checks, projection, owner-crew lookup through the repo index, append of `github:` rows to live existing crews' logs, no new files); `crew msg` and `crew status` refuse `from: github:*`. Shell: `pr-watch.sh` waits on a new `github:` row in its crew log or the interval before `_poll`. Protocol: the `pr-watch` skill only if the wake latency it describes changes (inference). houston, dash: none. tmux-og (own repo): the listener pipes `gh event listen` into ingest (#1220)                                                                                                                              | standard                                             | 300-700                                                                                                                                 | 2 (repo index, `meta.json` liveness); useful once tmux-og#1220 ships on a host with gh 2.105 or later | stop the listener or revert; `pr-watch` polls at today's interval; rows already appended stay in the logs and are ignored | none; PR wakes no longer wait up to one poll interval                 |
+| 10  | optional push wakes (3.8)                                      | Go: shared helper that watches the crew directory with fsnotify, filters on the log name and reads from the cursor; `watch`, `stream`, `await`, roster-render and dash take it, the 2 s poll stays; a macOS descriptor-count check. Shell readers: none, they keep polling. Protocol, houston: none                                                                                                                                                                                                                                                                                                                                                                          | standard                                             | 400-900 (estimate: dash already has the fsnotify code, `dash/main.go:242-248`; the work is one helper, four readers and tests)          | 1 (the resolver gives the log path); best after 3, so one crew dir per crew is watched                | remove the watch; the poll was never changed, so latency returns to today's                                               | none; wakes drop from up to 2 s to the event latency                  |
 
 ### 4.2 Test strategy for every phase
 
@@ -1540,7 +1674,7 @@ alone 79 times, `tests/dispatch-resume.bats` 28).
   role-watch and reap onto the resolver (W1, F23, F24, `tests/trust-pins.tsv:91-95`; CR1, CR2, `:57-58`). D5a and D5b
   (`:70-74`, `:90`) pin anchor lines 0-3 and must stay unchanged, because the fifth line is appended. New pins: the layout-2
   creation-rule refusal (phase 2), `admitCrew` (phase 2), the mandatory identity lock and the same-branch pre-check and re-check
-  (phase 1), the T16 log derivation (phase 2), the peer `repo` stamp and the outside-a-repo refusal (phases 1 and 3p), and the
+  (phase 1), the T16 log derivation (phase 2), and the
   two `github:*` refusals (phase 9). Phase 6 drops rows whose sites it deletes.
 
 ### 4.3 Phase 1: resolver seam, row tags, same-branch refusal
@@ -1549,7 +1683,7 @@ alone 79 times, `tests/dispatch-resume.bats` 28).
 At the pin it still returns `<c>/crew/events.jsonl` and `<c>/crew/crews/<id>/`. Every Go writer and reader that builds a bus path
 moves onto it: the `status.begin` and `reply.Run` creators, `watch`, `stream`, `spill`, roster-render, relay, `adopt` (3.2), and the
 readers in 1.3. Crew-id resolution gains `--crew` first and the window `@crew_id` last (3.2). Dispatch, `claim-issue`, `reap`,
-`release`, `msg` to `peer:*` and `decision` rows gain `repo` (3.2, 3.4). `reap` and `release` gain `crew_id` when the window, the worktree record or a dispatch row names it
+`release` rows gain `repo` (3.2; `msg` to `peer:*` and `decision` rows only while peer sync is alive, 3.4). `reap` and `release` gain `crew_id` when the window, the worktree record or a dispatch row names it
 (3.2, settled table). `dispatch` writes a fifth worktree-record line with the crew id (`_record_worktree_anchor`,
 `adapters/core/dispatch.sh:1963-1967`). Every reader indexes lines 0-3 only (T11), so old readers ignore it.
 
@@ -1591,7 +1725,7 @@ worktree, the branch and its `branch.<b>.remote`/`branch.<b>.merge` config, a re
 `--pr` re-fetch runs before the crew lock is taken, a lock held past 30 s refuses, `repo` field), `tests/dispatch-resume.bats` and
 `tests/worktree-git.bats` (a five-line record is accepted), `tests/dispatch-migrate.bats` (`_migrate_retry_wt` and
 `crew/internal/migrate/migrate.go:160-170` accept five lines). Go: `status` tests that `msg` to `peer:*` and `decide` rows carry
-`repo`. Trust pins: as 4.2. Drift guards: none change.
+`repo` (only while peer sync exists; phase 6 deletes the check). Trust pins: as 4.2. Drift guards: none change.
 
 **Rollback.** Revert. Rows written with `repo` and `crew_id` stay in the logs, and older readers ignore them. Five-line worktree
 records stay valid for older readers.
@@ -1659,7 +1793,7 @@ current binary. Reverting the code while layout-2 crews are live is unsupported:
 index and machine log are derived or auxiliary and can be deleted.
 
 **Mixed period.** The opt-in is for dogfooding. Until phase 3 a layout-2 crew is invisible to dash (H1), `fleet status` (F7) and
-roster-render's other-repo lanes (F8). Until 3h it is invisible to houston (X1). Until 3p its rows are withheld from peers (3.4). A
+roster-render's other-repo lanes (F8). Until 3h it is invisible to houston (X1). A
 remote host on an older binary prints no `crew_layout` line, so the origin treats that crew as layout 1 on H and relays through the
 repo scope, as today. Turn the opt-in on only for crews that need none of these views.
 
@@ -1690,25 +1824,16 @@ layout. bats: `tests/overseer.bats`, `tests/fleet-holds.bats`, `tests/remote-hos
 **Rollback.** Revert one PR while the setting is off. With layout-2 crews live, reverting a consumer makes it blind to them. This is
 the same hazard as phase 2, with the same remedy: end those crews first.
 
-### 4.6 Phase 3p: peers on layout 2
+### 4.6 Phase 3p: dropped (peer sync is removed)
 
-**What ships.** Model (b) from 3.4: export from the repo index's live crews filtered by `repo` over all five exported kinds
-(dispatch, `claim-issue`, `reap`, `msg` to `peer:*`, `decision`), the outside-a-repo refusal for `crew msg --to peer:*` and
-`crew decide` on layout-2 crews, wire `v: 2` with per-crew cursor and
-ack maps, `peers/<host>.crews.json` for per-crew state, `peers/<host>.state` left in its v1 shape. Each crew stream drives the peer
-link for every repo in its join set; `peers/<host>.lock.d` dedupes drivers.
+An earlier draft moved the peer link to layout 2 (wire `v: 2`, `peers/<host>.crews.json`, per-(host, crew) cursors, export filtered
+by `repo`, a mixed period with `unsupported version 2`). The owner decided on 2026-11-23 to remove peer sync instead, so none of
+that ships (3.4 records the decision and its evidence). There is no mixed period for peers, and no phase waits on 3p.
 
-**Mixed period.** A v1 partner refuses a v2 request with `unsupported version 2` (`crew/internal/peer/sync.go:429-449`). The new side
-records a peer sync error and keeps the v1 link for legacy-crew rows. Layout-2 rows for that repo are withheld until both sides speak
-v2, and the first v2 contact starts each live crew's cursor at 0. While rows are withheld, the two hosts cannot see each other's
-issue claims for layout-2 crews. Keep the layout setting off on peered repos until both hosts run 3p.
-
-**Tests.** Go: `crew/internal/peer` (v1/v2 decode, the `.crews.json` round trip, a v1 file never rewritten with per-crew values,
-export filter by `repo` for each of the five kinds; a layout-2 crew's peer `msg` and `crew decide` decision reach the partner),
-`crew/internal/stream/peers_test.go`. Protocol: re-read `adapters/core/skills/peers/SKILL.md:8`. Peer rows
-still land in repo-local `peers/`, so no text change is expected; if one is needed, it goes through the generator.
-
-**Rollback.** Disable v2, or revert. The v1 state file stayed current for legacy crews. `.crews.json` is ignored by older code.
+What replaces it is a deletion, scheduled in phase 6 (4.9): the peer package, its stream lane, `peers/`, the `hosts.<h>.peer`
+option and the peer skill copies. Until phase 6 the peer link keeps working for legacy crews exactly as at the pin, and layout-2
+crews' rows are never exported (nothing enables peers, so nothing is lost). Rollback of phase 6 is a revert, as for the rest of
+that phase.
 
 ### 4.7 Phase 3h: houston
 
@@ -1742,14 +1867,14 @@ working with no flag. Ownership and timing are open questions (section 5).
 `scripts/bats-affected.sh` selects for `adapters/core/protocols/*.md`.
 
 **Rollback.** Flip the setting back. Crews created on layout 2 stay on layout 2 and finish there. Downgrading the binary while layout-2
-crews are live is unsupported (3.4, peers rollback); the supported rollback keeps the binary and flips the setting.
+crews are live is unsupported (phase 2 rollback); the supported rollback keeps the binary and flips the setting.
 
-**Mixed period.** Every host that a layout-2 crew dispatches to, and every peer of a repo it touches, must run a binary with phases
-1-3p. A host that does not falls back as described in phases 2 and 3p.
+**Mixed period.** Every host that a layout-2 crew dispatches to must run a binary with phases
+1-3. A host that does not falls back as described in phase 2.
 
 ### 4.9 Phase 6: deletion schedule
 
-**Gate.** All four must hold, on every host in settings:
+**Gate.** All five must hold, on every host in settings:
 
 1. `crew crews --legacy` prints nothing. Houston-minted crews are layout-1 dirs under `<c>/crew/crews/` (X4), so the query counts them.
    It must run on every host, locally and on remotes through a host-scope request.
@@ -1757,26 +1882,28 @@ crews are live is unsupported (3.4, peers rollback); the supported rollback keep
 3. Houston runs a 3h build.
 4. The legacy crews' runs are folded into `ratings.jsonl` (`rate --sweep-all` over the legacy buses). After this phase nothing
    discovers those buses again unless phase 5 imported them.
+5. No host sets `hosts.<h>.peer`. Removing peer sync then changes nothing a host depends on (3.4: unset on both hosts, 0 peer rows
+   in 30 days); a host that sets it is asked first. Existing `peers/` dirs stay on disk like the legacy buses.
 
 Phase 6 deletes code. The legacy `<c>/crew/events.jsonl` files and legacy crew dirs stay on disk. They remain readable with `jq`, and
 phase 5 can import them later.
 
-| layer or workaround                | files to delete or change                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `crew fleet stream --crew`         | crew lanes in `crew/internal/stream/fleet.go:183-212`, `:328-446`, yielder `:449-466`; tests in `crew/internal/stream/fleet_test.go`; lane dirs `${XDG_STATE_HOME}/crew/fleet-stream/<crew>/`. `crew fleet stream --overseer` lives in the same file (`crew/internal/stream/fleet.go:125-149`) and stays, because it is the host lane, not a crew merge                                                                                                         |
-| `crew fleet watch` (#1734)         | `crew/internal/stream/fleetwatch.go`, `crew/internal/stream/fleetwatch_test.go`; dispatch arms `crew/main.go:363-364`, `:399`, `:1377`; `${XDG_STATE_HOME}/crew/fleet-watch/`                                                                                                                                                                                                                                                                                   |
-| fleet status registry walk         | `crew/internal/fleet/status.go:274-278`, `:339-420`; `crew/internal/fleet/fleet.go:105`, `:126`; `crew/internal/fleet/queue.go:176`; `crew/internal/fleet/prio.go:162` (enumeration becomes live crews, including crews with an outstanding hold, plus the repo index file list)                                                                                                                                                                                |
-| `repos.Discover` walk and registry | `crew/internal/repos/repos.go:83-156` and its tests; remaining callers in F2; `_registry_add` in `adapters/core/dispatch.sh:1002-1010` and its call in `_crew_append` (`:1013-1020`); `CREW_SWEEP_ROOTS` text in `nix/hm-module.nix:609`                                                                                                                                                                                                                        |
-| `cross-repo-hint.sh`               | `adapters/core/cross-repo-hint.sh`; call sites `adapters/core/dispatch.sh:5504-5508` and `adapters/core/dispatch-resume.sh:1302`; flake bake `@crossRepoHintLib@` at `flake.nix:133-134`; test wiring `tests/dispatch.bats:54`, `:2194-2203`, `tests/dispatch-resume.bats:63`, `:577-585`, `tests/model-map.bats:76`, `tests/remote-host-helpers.bash:58`, `tests/module.bats:604-637`; map row `scripts/bats-affected.sh:80` and `tests/bats-affected.bats:52` |
-| reply cross-repo refusal           | the legacy branch of `crew/internal/reply/reply.go:67-130` that reads only the cwd log, the append to the cwd log at `:124`; the `no session` refusal at `:291` stays for a branch never dispatched                                                                                                                                                                                                                                                             |
-| homes and `pidfile.log` fallback   | `crew/internal/crews/home.go:14-150`; `crew/internal/adopt/reattach.go:96-105` reads `meta.home_repo`                                                                                                                                                                                                                                                                                                                                                           |
-| dash repo-bus paths                | `dash/internal/data/bus.go:18-27`; `dash/internal/ui/crewheader.go:12-22`                                                                                                                                                                                                                                                                                                                                                                                       |
-| overseer per-common cursor         | `crew/internal/lane/lane.go:139-143`; `fleet.ServedRepos` (`crew/internal/fleet/status.go:274-276`)                                                                                                                                                                                                                                                                                                                                                             |
-| legacy peer export                 | the v1 export path from the repo bus; v1 decode kept for one release so an older peer gets a clean error                                                                                                                                                                                                                                                                                                                                                        |
-| resolver legacy branch             | the layout-1 fallback in the phase-1 resolver and in shell `crew_log`, with the legacy on-demand crew-dir creators; from here every id must name a crew with `meta.json` (T6 gain for every id, 3.3); the literal guard's allowlist shrinks to the store package                                                                                                                                                                                                |
-| protocol text                      | the legacy sentence in D1 (7 files) and the `fleet stream --crew` paragraph at `DISPATCHER_PROTOCOL.md:165` and counterparts                                                                                                                                                                                                                                                                                                                                    |
-| #1737 cache, if merged             | `crew/internal/fleet/statuscache.go`, its test, the `--max-age` flag, the dash callers (`dash/internal/data/collect.go`, `dash/internal/data/fleet.go`, `dash/main.go`)                                                                                                                                                                                                                                                                                         |
-| #1739 text, if merged              | the `crew fleet watch` park-lane text in the seven `DISPATCHER_PROTOCOL*.md` files                                                                                                                                                                                                                                                                                                                                                                              |
+| layer or workaround                | files to delete or change                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `crew fleet stream --crew`         | crew lanes in `crew/internal/stream/fleet.go:183-212`, `:328-446`, yielder `:449-466`; tests in `crew/internal/stream/fleet_test.go`; lane dirs `${XDG_STATE_HOME}/crew/fleet-stream/<crew>/`. `crew fleet stream --overseer` lives in the same file (`crew/internal/stream/fleet.go:125-149`) and stays, because it is the host lane, not a crew merge                                                                                                                                                                                                                                                                                                        |
+| `crew fleet watch` (#1734)         | `crew/internal/stream/fleetwatch.go`, `crew/internal/stream/fleetwatch_test.go`; dispatch arms `crew/main.go:363-364`, `:399`, `:1377`; `${XDG_STATE_HOME}/crew/fleet-watch/`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| fleet status registry walk         | `crew/internal/fleet/status.go:274-278`, `:339-420`; `crew/internal/fleet/fleet.go:105`, `:126`; `crew/internal/fleet/queue.go:176`; `crew/internal/fleet/prio.go:162` (enumeration becomes live crews, including crews with an outstanding hold, plus the repo index file list)                                                                                                                                                                                                                                                                                                                                                                               |
+| `repos.Discover` walk and registry | `crew/internal/repos/repos.go:83-156` and its tests; remaining callers in F2; `_registry_add` in `adapters/core/dispatch.sh:1002-1010` and its call in `_crew_append` (`:1013-1020`); `CREW_SWEEP_ROOTS` text in `nix/hm-module.nix:609`                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `cross-repo-hint.sh`               | `adapters/core/cross-repo-hint.sh`; call sites `adapters/core/dispatch.sh:5504-5508` and `adapters/core/dispatch-resume.sh:1302`; flake bake `@crossRepoHintLib@` at `flake.nix:133-134`; test wiring `tests/dispatch.bats:54`, `:2194-2203`, `tests/dispatch-resume.bats:63`, `:577-585`, `tests/model-map.bats:76`, `tests/remote-host-helpers.bash:58`, `tests/module.bats:604-637`; map row `scripts/bats-affected.sh:80` and `tests/bats-affected.bats:52`                                                                                                                                                                                                |
+| reply cross-repo refusal           | the legacy branch of `crew/internal/reply/reply.go:67-130` that reads only the cwd log, the append to the cwd log at `:124`; the `no session` refusal at `:291` stays for a branch never dispatched                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| homes and `pidfile.log` fallback   | `crew/internal/crews/home.go:14-150`; `crew/internal/adopt/reattach.go:96-105` reads `meta.home_repo`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| dash repo-bus paths                | `dash/internal/data/bus.go:18-27`; `dash/internal/ui/crewheader.go:12-22`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| overseer per-common cursor         | `crew/internal/lane/lane.go:139-143`; `fleet.ServedRepos` (`crew/internal/fleet/status.go:274-276`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| peer sync (owner decision, 3.4)    | `crew/internal/peer/` (admit, claims, decisions, peer, snapshot, sync and tests), `crew/internal/fleet/peers.go`, `crew/internal/stream/peers.go` and their tests (about 6,000 lines at the pin, measured as file line counts); callers in `crew/decisions_cli.go`, `crew/internal/classes/promote.go`, `crew/internal/fleet/federate.go`, `crew/internal/overseer/msg.go`; `peer-sync` in the `remote-exec` subcommand list (`crew/internal/remote/remote.go:65`); the `peers/` dirs stay on disk; `hosts.<h>.peer` (`nix/hm-module.nix:483-487`); the peer `msg` and `decision` stamps; the `peers` skill and its copies (`scripts/gen-adapters.sh:235-242`) |
+| resolver legacy branch             | the layout-1 fallback in the phase-1 resolver and in shell `crew_log`, with the legacy on-demand crew-dir creators; from here every id must name a crew with `meta.json` (T6 gain for every id, 3.3); the literal guard's allowlist shrinks to the store package                                                                                                                                                                                                                                                                                                                                                                                               |
+| protocol text                      | the legacy sentence in D1 (7 files) and the `fleet stream --crew` paragraph at `DISPATCHER_PROTOCOL.md:165` and counterparts                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| #1737 cache, if merged             | `crew/internal/fleet/statuscache.go`, its test, the `--max-age` flag, the dash callers (`dash/internal/data/collect.go`, `dash/internal/data/fleet.go`, `dash/main.go`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| #1739 text, if merged              | the `crew fleet watch` park-lane text in the seven `DISPATCHER_PROTOCOL*.md` files                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 
 `fleet stream` and `fleet watch` keep their names as aliases for one release. The alias prints a one-line deprecation notice and runs
 `crew stream` or `crew watch` for the crew. Whether to keep them longer is an open question.
@@ -1786,7 +1913,7 @@ makes `bats-affected.sh` answer "full suite", which CI runs. The literal guard r
 
 **Rollback.** Revert. Nothing in this phase deletes data, so a revert restores the layers over the same files.
 
-### 4.10 Phases 5, 7, 8 and 9
+### 4.10 Phases 5, 7, 8, 9 and 10
 
 **Phase 5, history import (optional).** `crew bus import` reads each legacy bus, groups rows by `crew_id`, and writes
 `archive/<id>/events.jsonl.gz` with `meta.json` (`created_by: import`, `home_repo` from the bus with the crew's dispatcher rows).
@@ -1796,33 +1923,51 @@ in a temp tree only.
 
 **Phase 7, retention.** `crew gc` derives each crew's state (3.2), runs the rate sweep before archive, archives ended crews past the
 grace period, rebuilds the repo index, and prunes archives and machine-log segments past the window. The first release archives only
-and leaves pruning off until the owner sets a window (section 5). It does not touch `pr-events/`, which phase 9 prunes itself (3.7).
+and leaves pruning off until the owner sets a window (section 5). `github:` rows that phase 9 appends (3.7) age out with the crew log, so there is no separate prune. It does not rotate a live crew's log: retention is by crew, and segments are a later option (3.2, rotation and segments).
 Phase 7 depends on the phase-2 resolver rule that classifies `archive/<id>/meta.json` as layout 2 (3.2): without it, an archived
 crew's id would fall through to the legacy creators. Tests: `crew adopt`, `crew stream` and `crew status` for an archived id each
 refuse with `crew <id> is archived` and create no legacy `<c>/crew/crews/<id>/`. Tests run against a temp `XDG_STATE_HOME`, and
 `gc` refuses to run when `XDG_STATE_HOME` resolves under a path it did not get from the test. A prune cannot be rolled back; an archive moves back with
 one rename.
 
-**Phase 8, offset cursors and event ids (optional).** Adds an `(epoch, offset)` cursor file per crew beside the `ts` cursor. The epoch
-is the one peers compute (`crew/internal/peer/admit.go:317-345`). Relay and peer rows get `(host, crew, offset)`. The `ts` cursor stays
-the source until every reader takes the offset form. Rollback is a revert.
+**Phase 8, offset cursors and event ids (optional).** Adds a `(gen, off)` cursor file per crew beside the `ts` cursor (3.2, "Offset
+cursor form"). `gen` is the generation marker `epochOf` computes, the sha256 of the log's inode and first line
+(`crew/internal/peer/admit.go:317-345` at the pin); the phase moves that helper into `bus`, because phase 6 deletes the peer package
+(3.4). A reader resets to offset 0 when `gen` changes or the file is shorter than `off`, and writes the cursor by temp file and
+rename. Relay rows get `(host, crew, offset)`. The `ts` cursor stays the source until every reader takes the offset form. Tests:
+Go tests that an append keeps `gen`, a rename-replace and a truncate-and-rewrite each reset, an empty file never reads as a reset,
+and a killed temp-file write leaves the old cursor. Rollback is a revert.
 
-**Phase 9, PR-event consumption (optional, independent).** Ships 3.7: `crew pr-events ingest` with its resource, type, size and
-path-charset checks, its `.subscribed` markers, its mtime pruning of feed and marker files, and its refusals from crew panes and worker env; `crew msg` refusing `from: github:*`; `pr-watch.sh` waiting on the feed or
-the interval before `_poll` (`adapters/core/pr-watch.sh:229-230`). Tier standard, 300-700 lines (estimated from the P1 loop and one
-new subcommand). It depends on no bus phase and blocks none: the feed is machine-level and P2's post goes through whatever resolver
-the binary has. It is useful only once tmux-og#1220 ships the listener on a host with gh 2.105 or later. Tests: Go tests for
-ingest (malformed resource; a malformed path, such as owner or repo `..`, a `/` in a segment, or a non-numeric pr, is dropped
-and writes nothing outside `pr-events/`; unknown type, oversize line, stamped-pane and worker-env refusals, projection; files
-older than N days are pruned and newer ones kept); `tests/pr-watch.bats` (a feed row wakes the park before the interval; a
-spurious row prints nothing; no heartbeat or a stale one polls at the interval; a live heartbeat without a fresh `.subscribed`
-marker for the PR polls at the interval); trust pins for the two refusals (4.2). Every feed and heartbeat path comes from a temp `XDG_STATE_HOME`,
-and no test runs `gh event listen`. Rollback: stop the listener or revert; `pr-watch` polls at today's interval.
+**Phase 9, PR-event consumption (optional).** Ships 3.7: `crew pr-events ingest` with its resource, type, size and charset checks,
+its projection, its lookup of the live crews that name the PR (through the repo index), its append of `github:` rows to those
+crews' logs, and its refusals from crew panes and worker env; `crew msg` and `crew status` refusing `from: github:*`;
+`pr-watch.sh` waiting on a new `github:` row in its crew log or the interval before `_poll` (`adapters/core/pr-watch.sh:229-230`).
+Tier standard, 300-700 lines (estimated from the P1 loop and one new subcommand). It needs the phase-2 repo index and `meta.json`
+liveness, and blocks nothing. It adds no files beside the logs, so there is no pruning code and no retention question. It is useful
+only once tmux-og#1220 ships the listener on a host with gh 2.105 or later. Tests: Go tests for ingest (malformed resource, unknown
+type, oversize line, stamped-pane and worker-env refusals, projection; an event for a PR no live crew names writes nothing and
+creates no crew dir; an event for a PR two crews name lands once in each; an archived crew is never written); `tests/pr-watch.bats`
+(a `github:` row wakes the park before the interval; a spurious row prints nothing; with no row the park polls at the interval);
+trust pins for the two refusals (4.2). Every path comes from a temp `XDG_STATE_HOME`, and no test runs `gh event listen`.
+Rollback: stop the listener or revert; `pr-watch` polls at today's interval, and appended rows stay in the logs.
+
+**Phase 10, push wakes (optional).** Ships 3.8: one shared helper that watches a crew directory with fsnotify, filters events to
+the log's file name and reads from the cursor, taken by `watch`, `stream`, `await`, roster-render and dash (dash's existing
+fsnotify code moves into it, `dash/internal/buswatch/buswatch.go:37-60`). The 2 s poll stays as the safety net, and the log stays authoritative, so a
+lost or coalesced event costs latency only. Shell readers keep polling. Tier standard, 400-900 lines (estimated). It needs the
+phase-1 resolver for the log path; it is best after phase 3, when each crew has one directory to watch. Tests: Go tests that an
+append wakes a parked reader before the poll, that a dropped event is recovered by the poll, that a rename-replace of the log is
+seen because the directory (not the file) is watched, and that a refused watch (descriptor limit) falls back to polling; a macOS
+run counts descriptors per live crew before the wake is enabled there. Rollback: remove the watch; the poll is unchanged.
 
 ### 4.11 Programme size and decisions
 
-Estimated total: 8,000-16,000 changed lines across 12-18 PRs for the required phases (1, 2, 3, 3p, 3h, 4, 6, 7). Add 1,100-2,600 for the
-optional phases 5, 8 and 9. Excluded: houston's QA scenarios beyond fixtures, tmux-og (X8, not a bus consumer; its PR-event listener for
+Estimated total: 12,800-21,000 changed lines across 12-18 PRs for the required phases (1, 2, 3, 3h, 4, 6, 7). That is the earlier
+8,000-16,000 minus phase 3p (1,200-2,500, dropped) and plus the peer deletion now inside phase 6 (about 6,000-7,500 lines: the 6,000
+measured as file line counts of the peer code and tests, 3.4, plus callers). Nearly all of the peer part is deletion, which is
+cheap to review and AI-friendly, so the programme without it is 6,800-13,500 lines. The PR count is unchanged (inference: the peer
+removal replaces the 3p PRs). Add 1,500-3,500 for the optional phases 5, 8, 9 and 10 (300-700, 500-1,200, 300-700 and 400-900).
+Excluded: houston's QA scenarios beyond fixtures, tmux-og (X8, not a bus consumer; its PR-event listener for
 phase 9 is tmux-og#1220's work), and filing the phase issues.
 The range is wide because phase 2's shell surface (184 `crew_dir` lines) and phase 3's consumer count could each go either way.
 
@@ -1833,7 +1978,7 @@ AI acceleration applies most to:
 - the phase 6 deletions, which follow the table above;
 - protocol copies, which the generator writes.
 
-It applies least to phases 2 and 3p, where creation-rule and wire-version mistakes are trust or data-loss bugs and need deep-tier
+It applies least to phases 2 and 7, where creation-rule and retention mistakes are trust or data-loss bugs and need deep-tier
 review.
 
 Human decisions:
@@ -1848,7 +1993,7 @@ Human decisions:
 
 Each question needs the owner because it trades data kept, operator habit or cross-repo coordination against implementation cost.
 Each has a recommended answer. Questions 1-8 cover the core design, 9-12 come out of sections 3 and 4, 13-15 come from the
-PR-event input (3.7), 16 comes from the library evaluation (Design E), and 17 comes from the PR-event feed retention (3.7).
+PR-event input (3.7), 16 comes from the library evaluation (Design E), and 17 is resolved by 13. Decisions the owner has made are listed under "Decided" at the end.
 
 1. **Import legacy history (phase 5) or not?**
    - Why the owner: it decides whether pre-migration crews remain queryable through `crew log`, or only with `jq` over old files.
@@ -1866,10 +2011,10 @@ PR-event input (3.7), 16 comes from the library evaluation (Design E), and 17 co
      ended.
 
 3. **Event ids and offset cursors now, or later (phase 8)?**
-   - Why the owner: it widens phases 2 and 3p, or leaves `ts` cursors with at-least-once delivery in place for longer.
+   - Why the owner: it widens phase 2, or leaves `ts` cursors with at-least-once delivery in place for longer.
    - Options: (a) in phase 2; (b) phase 8, optional; (c) never.
    - Recommended: (b). With one log per crew, the cross-bus `ts` ties that make today's vector cursors at-least-once (F4) are gone, and
-     peers and houston already use offsets. Trigger: a reader that must not see a row twice across restarts.
+     houston already uses offsets, and the cursor text (3.2, "Offset cursor form") now specifies the reset rule. Trigger: a reader that must not see a row twice across restarts.
 
 4. **Same-branch refusal or repo-qualified worker ids?**
    - Why the owner: it is a protocol-visible identity choice. `worker:<branch>` appears in protocols, tmux stamps and the sender
@@ -1909,7 +2054,7 @@ PR-event input (3.7), 16 comes from the library evaluation (Design E), and 17 co
 
 9. **File the phase issues after this doc is accepted?**
    - Why the owner: the spec leaves issue filing out of scope.
-   - Recommended: yes. File one issue per phase (1, 2, 3, 3p, 3h in houston, 4, 6, 7; 5 and 8 as optional), each linked to #1740 and
+   - Recommended: yes. File one issue per phase (1, 2, 3, 3h in houston, 4, 6, 7; 5, 8, 9 and 10 as optional), each linked to #1740 and
      to its dependencies, with the tier and size from 4.1. That makes the dispatch order and the phase 4 gate visible.
 
 10. **Make the identity lock mandatory (phase 1)?**
@@ -1934,18 +2079,20 @@ PR-event input (3.7), 16 comes from the library evaluation (Design E), and 17 co
 
 13. **How does the PR-event listener hand events to crew code?**
     - Why the owner: the format decides whether the listener touches the bus at all, and it is a contract between two repos.
-    - Options: (a) a per-PR feed file written through `crew pr-events ingest`; (b) a socket the listener serves and consumers
-      connect to; (c) bus rows in each interested crew's log.
-    - Recommended: (a). It leaves the bus design unchanged: no new crew-log writer, no PR-to-crew map, no exception to the creation
-      rule (3.2). A file can be read in the same loop that polls, so the fallback costs nothing extra. (b) ties every consumer to
-      the listener's liveness and adds a protocol to version. (c) makes an outside process a crew-log writer and duplicates each
-      event per crew (3.7).
+    - Options: (a) `crew pr-events ingest` appends each event to the owning live crews' logs as an ordinary `github:` row; (b) a socket
+      the listener serves and consumers connect to; (c) a separate per-PR feed file tree under `${XDG_STATE_HOME}/crew/pr-events/`.
+    - Recommended: (a). The listener is a plain writer under the `github:` sender rule (3.7): no feed files, no new store, and the
+      cursor, rotation and retention rules of 3.2 apply unchanged. Ingest never creates a crew, so the creation rule (3.2) holds, and
+      an event for a PR no live crew names is dropped and that session polls. The cost is one small row per crew that names the PR,
+      where (c) kept one copy for all readers; row volume per busy PR is unmeasured (3.7). (b) ties every consumer to the
+      listener's liveness and adds a protocol to version. (c) needs its own checks, heartbeat, markers and pruning, a second
+      retention scheme beside phase 7, and path-charset rules to keep listener-supplied values out of file names (3.7, earlier draft).
 
 14. **Who owns the listener?**
     - Why the owner: it is a supervised long-lived process on every host, and the owner picks which repo carries it.
     - Options: (a) tmux-og, as noamsto/tmux-og#1220 proposes; (b) this repo, as a `crew pr-events listen` lane.
     - Recommended: (a). tmux-og tracks the widest set of PRs on the machine (#1220; its picker already groups windows by repo,
-      `tmux-og:picker/prenrich/pass.go:66`, unpinned). This repo owns only the ingest contract and the feed, and a host without
+      `tmux-og:picker/prenrich/pass.go:66`, unpinned). This repo owns only the ingest contract and the rows it appends, and a host without
       tmux-og polls as today.
 
 15. **Set a gh version floor?**
@@ -1964,12 +2111,16 @@ PR-event input (3.7), 16 comes from the library evaluation (Design E), and 17 co
       with a decision to run the server, and the credentials it issues, under a separate uid; without that, E's permissions are a
       tripwire like `sender.Check` (`crew/internal/sender/sender.go:1-13`) and its main gain over A+ is push, which (b) also gives.
 
-17. **How long does the PR-event feed keep files?**
-    - Why the owner: pruning deletes feed history. Feed rows are pointers (3.7), so a pruned row costs no PR state, only the record
-      that an event arrived.
-    - Options: N = 7 / 14 / 30 days since a feed or `.subscribed` file was last touched.
-    - Recommended: 14 days. Phase 9 prunes by mtime on its own (3.7), so the choice is independent of the phase 7 windows in
-      question 2, and a PR untouched for two weeks gets a fresh file on its next event.
+17. **How long does the PR-event feed keep files?** Resolved by question 13: there is no feed. `github:` rows live in crew logs and
+    age out with the crew (phase 7), so no separate window is needed. The owner's retention choice stays question 2.
+
+### Decided
+
+- **Remove peer sync (owner, 2026-11-23).** Not an open question. Peer sync was never enabled (`hosts.*.peer` is unset), recorded no peer rows and no migrations
+  in 30 days on halo and tp-g6, and the working model is one dispatcher per repo with other hosts only running workers; the GitHub
+  `dispatched` label already prevents double claims, and remote workers (about 1% of dispatches) keep the ssh relay. Phase 3p becomes
+  "remove peer sync" in the phase-6 deletion schedule (4.9), the programme size is restated (4.11), and a future multi-dispatcher
+  setup is sketched in 3.4. The earlier draft's v2 migration question is withdrawn.
 
 ## Appendix A. git-common-dir / CommonDir hits
 

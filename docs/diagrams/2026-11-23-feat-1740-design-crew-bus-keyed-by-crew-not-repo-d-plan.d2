@@ -15,8 +15,8 @@ workerB: "worker in repo B" {class: proc}
 crewlog: "XDG_STATE_HOME/crew/crews/<crew>/\nevents.jsonl + meta.json\n(new: one log per crew)" {class: store}
 index: "index/repos/<repo key>\ncrew ids per repo\n(new, derived)" {class: derived}
 
-repoA: "A/.git/crew/\nartifacts, grants, baseline,\npeers (worker + repo state)" {class: repo}
-repoB: "B/.git/crew/\nartifacts, grants, baseline,\npeers (worker + repo state)" {class: repo}
+repoA: "A/.git/crew/\nartifacts, grants, baseline,\nworker + repo state" {class: repo}
+repoB: "B/.git/crew/\nartifacts, grants, baseline,\nworker + repo state" {class: repo}
 
 stream: "crew stream / watch\none lane per crew" {class: new}
 reply: "crew reply --crew\nworks from any cwd" {class: new}
@@ -33,7 +33,7 @@ stream -> dispatcher: wakes
 dispatcher -> reply
 reply -> crewlog: append
 crewlog -> index: "rebuildable from\ndispatch rows"
-index -> fleet: "repo questions\n(peers, reap)"
+index -> fleet: "repo questions\n(reap, rate)"
 crewlog -> fleet
 crewlog -> consumers
 remote -> stream: "crew relay --crew" {style.animated: true}
