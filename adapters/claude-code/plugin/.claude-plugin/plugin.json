@@ -7,5 +7,21 @@
   },
   "commands": "./commands",
   "skills": "./skills",
-  "types": "./types/index.d.ts"
+  "types": "./types/index.d.ts",
+  "experimental": {
+    "monitors": [
+      {
+        "name": "crew-bus",
+        "description": "Keeps this dispatcher session's crew bus stream running past the Monitor tool's 30 minute deadline.",
+        "when": "always",
+        "command": "\"${CLAUDE_PLUGIN_ROOT}\"/scripts/crew-bus-monitor.sh"
+      },
+      {
+        "name": "crew-bus-promoted",
+        "description": "Same stream for a session promoted in place with /dispatcher:dispatcher.",
+        "when": "on-skill-invoke:dispatcher",
+        "command": "\"${CLAUDE_PLUGIN_ROOT}\"/scripts/crew-bus-monitor.sh --promoted"
+      }
+    ]
+  }
 }
