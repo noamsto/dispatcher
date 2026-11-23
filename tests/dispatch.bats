@@ -8541,6 +8541,7 @@ EOF
   log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
   run jq -r 'select(.kind=="claim-issue") | .issue' "$log"
   [ "$output" = "42" ]
+  [ "$(jq -r 'select(.kind=="claim-issue") | .repo' "$log")" = "$(realpath -e -- "$TEST_REPO/.git")" ]
 }
 
 @test "claim: '#42' canonicalises to issue 42 (#320)" {
@@ -11662,6 +11663,9 @@ ROWS
   [ "${lines[1]}" = "$(realpath -m -- "$TEST_REPO/.git/crew")" ]
   [ "${lines[2]}" = feat/42-anchor-record ]
   [ "${lines[3]}" = "$(realpath -e -- "$(git -C "$wt" rev-parse --absolute-git-dir)")" ]
+  [ "${lines[4]}" = c1 ]
+  [ "${#lines[@]}" -eq 5 ]
+  [ "$(jq -r 'select(.kind=="dispatch") | .repo' "$TEST_REPO/.git/crew/events.jsonl")" = "$(realpath -e -- "$TEST_REPO/.git")" ]
 }
 
 # git >=2.48 can link a worktree by a relative gitdir back-pointer

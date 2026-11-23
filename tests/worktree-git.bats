@@ -740,6 +740,16 @@ write_anchor() {
   [ "$(pwd -P)" = "$(realpath -e "$TEST_REPO")" ]
 }
 
+@test "_wt_trusted_cwd accepts a five-line record" {
+  add_worktree w
+  write_anchor "$WT" "$COMMON" "$ADMIN"
+  printf 'c1\n' >>"$(_worktree_anchor_path "$WT")"
+  mkdir "$WT/sub"
+  cd "$WT/sub"
+  _wt_trusted_cwd "$COMMON"
+  [ "$(pwd -P)" = "$(realpath -e "$TEST_REPO")" ]
+}
+
 @test "_wt_trusted_cwd refuses a recorded worktree whose git resolves elsewhere (#633)" {
   local rc=0 before other="$BATS_TEST_TMPDIR/other"
   add_worktree w

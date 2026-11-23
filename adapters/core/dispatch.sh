@@ -1960,6 +1960,10 @@ split_role_pane() {
   printf '%s' "$pane"
 }
 
+# _crew_repo — the repo (git common dir) whose bus $crew_dir is, tagged on the rows
+# that name a branch so a shared bus can tell repos apart.
+_crew_repo() { realpath -e -- "${crew_dir%/crew}"; }
+
 # _record_worktree_anchor <worktree> <admin-dir> — write the record `dispatch
 # resume` checks its git discovery against (#518).
 _record_worktree_anchor() {
@@ -1979,7 +1983,7 @@ _record_worktree_anchor() {
     umask 077
     mkdir -p "$dir"
     tmp="$(mktemp "$dir/.anchor.XXXXXX")"
-    printf '%s\n' "$(realpath -e -- "$wt")" "$(realpath -m -- "$crew_dir")" "$branch" "$admin_real" >"$tmp"
+    printf '%s\n' "$(realpath -e -- "$wt")" "$(realpath -m -- "$crew_dir")" "$branch" "$admin_real" "$crew_id" >"$tmp"
     mv -f -- "$tmp" "$anchor"
   )
 }
@@ -2658,7 +2662,7 @@ _remote_recover_row() {
 # bus as this host's route to it, its claims-index mirror, then the window.
 _remote_finish() {
   mkdir -p "$crew_dir"
-  _crew_append "$(jq -c --arg h "$remote_host" '. + {ts:(now*1000|floor), host:$h, remote:true}' <<<"$1")"
+  _crew_append "$(jq -c --arg h "$remote_host" --arg repo "$(_crew_repo)" '. + {ts:(now*1000|floor), host:$h, remote:true, repo:$repo}' <<<"$1")"
   branch="$(jq -r .branch <<<"$1")"
   mapfile -t also_closes < <(jq -r '.also_closes // [] | .[] | tostring' <<<"$1")
   num=""
@@ -4408,8 +4412,8 @@ if [ -n "$gh_issue" ]; then
   claim_added=()
   for claim_i in "${!claim_issues[@]}"; do
     claim_n="${claim_issues[$claim_i]}"
-    line=$(jq -nc --arg crew "$crew_id" --arg issue "$claim_n" --arg branch "$branch" --arg pid "$$" \
-      '{ts:(now*1000|floor), crew_id:$crew, kind:"claim-issue", issue:$issue, branch:$branch, pid:($pid|tonumber)}')
+    line=$(jq -nc --arg crew "$crew_id" --arg issue "$claim_n" --arg branch "$branch" --arg pid "$$" --arg repo "$(_crew_repo)" \
+      '{ts:(now*1000|floor), crew_id:$crew, kind:"claim-issue", issue:$issue, branch:$branch, pid:($pid|tonumber), repo:$repo}')
     _crew_append "$line"
     _claim_index_append "$claim_n" "$branch"
     if ! gh issue edit "$claim_n" --add-label dispatched; then
@@ -4520,8 +4524,8 @@ else
     _ensure_dispatched_label
     # Row before label, as on the existing-issue path above (and inert the same
     # way if the label write fails; see #322).
-    line=$(jq -nc --arg crew "$crew_id" --arg issue "$num" --arg branch "$branch" --arg pid "$$" \
-      '{ts:(now*1000|floor), crew_id:$crew, kind:"claim-issue", issue:$issue, branch:$branch, pid:($pid|tonumber)}')
+    line=$(jq -nc --arg crew "$crew_id" --arg issue "$num" --arg branch "$branch" --arg pid "$$" --arg repo "$(_crew_repo)" \
+      '{ts:(now*1000|floor), crew_id:$crew, kind:"claim-issue", issue:$issue, branch:$branch, pid:($pid|tonumber), repo:$repo}')
     _crew_append "$line"
     _claim_index_append "$num" "$branch"
     gh issue edit "$num" --add-label dispatched || {
@@ -5020,7 +5024,7 @@ line=$(jq -nc --arg crew "$crew_id" --arg branch "$branch" --arg session "$sessi
   --arg worker "$worker_id" --arg engine_session "$lead_sid" \
   --arg engine "$agent" --arg model "$model" --arg tier "$tier" --arg effort "$effort" \
   --arg shape "$dispatch_shape" --arg title "$title" --arg task_kind "$kind" \
-  --arg host "${HOSTNAME:-$(uname -n)}" \
+  --arg host "${HOSTNAME:-$(uname -n)}" --arg repo "$(_crew_repo)" \
   --arg plan "$plan_val" --argjson resume "$([ "$switch_mode" = resume ] && echo true || echo false)" \
   --argjson ident "$ident" \
   --arg escalated_from "$escalated_from_event" \
@@ -5034,7 +5038,7 @@ line=$(jq -nc --arg crew "$crew_id" --arg branch "$branch" --arg session "$sessi
   --arg pushed_oid "$pushed_oid" \
   --arg task_profile "$task_profile" \
   --arg migrated_from "$mig_from" --arg engine_context "$engine_context" --arg engine_context_why "$engine_context_why" \
-  '{ts:(now*1000|floor), crew_id:$crew, kind:"dispatch", branch:$branch, session:$session, worker_id:$worker, engine:$engine, model:$model, tier:$tier, effort:$effort, shape:$shape, task_kind:$task_kind, host:$host, title:$title, plan:$plan, resume:$resume, owner_auth:$owner_auth, engine_session:(if $engine_session == "" then null else $engine_session end)} + $ident
+  '{ts:(now*1000|floor), crew_id:$crew, kind:"dispatch", repo:$repo, branch:$branch, session:$session, worker_id:$worker, engine:$engine, model:$model, tier:$tier, effort:$effort, shape:$shape, task_kind:$task_kind, host:$host, title:$title, plan:$plan, resume:$resume, owner_auth:$owner_auth, engine_session:(if $engine_session == "" then null else $engine_session end)} + $ident
    + if $escalated_from != "" then {escalated_from:$escalated_from} else {} end
    + if $base != "" then {base:$base, base_oid:(if $base_oid == "" then null else $base_oid end)} else {} end
    + if (($also_closes | length) > 0 or $also_closes_explicit) then {also_closes:$also_closes} else {} end
