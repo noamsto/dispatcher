@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"math"
+	"os"
+	"path/filepath"
 	"slices"
 	"sort"
 	"strconv"
@@ -24,6 +26,11 @@ type Config struct {
 	RefreshBudget     string
 	Git               string
 	Now               int64
+	// CrewID scopes the roster to one crew; CrewIDSource is "flag" or "env".
+	CrewID       string
+	CrewIDSource string
+	// Pane is the dash's own tmux pane ($TMUX_PANE), used to infer the scope.
+	Pane string
 }
 
 // Collect runs every read-only source through r concurrently and folds the
@@ -225,6 +232,35 @@ func crewArgs(cfg Config, subArgs ...string) []string {
 	return out
 }
 
+// stampSince fills Since on every here-dispatcher from its crew pid file, which
+// crew register and adopt rewrite on each (re)launch.
+func stampSince(ctx context.Context, r Runner, cfg Config, ids []string, locs map[string]*DispatcherLoc) {
+	if !slices.ContainsFunc(ids, func(id string) bool { return locs[id].Where == "here" }) {
+		return
+	}
+	events, err := EventsPath(ctx, r, cfg.Git)
+	if err != nil {
+		return
+	}
+	crewsDir := filepath.Join(filepath.Dir(events), "crews")
+	for _, id := range ids {
+		if locs[id].Where != "here" {
+			continue
+		}
+		locs[id].Since = pidSince(crewsDir, id)
+	}
+}
+
+// pidSince is the mtime of a crew's pid file in unix seconds, nil when unreadable.
+func pidSince(crewsDir, id string) *int64 {
+	fi, err := os.Stat(filepath.Join(crewsDir, id, "pid"))
+	if err != nil {
+		return nil
+	}
+	since := fi.ModTime().Unix()
+	return &since
+}
+
 // CollectRoster re-runs only the roster sources (crew crews / roster / hold
 // list) — the re-collect a live bus-change triggers, without touching
 // settings/budget/runs.
@@ -233,28 +269,49 @@ func CollectRoster(ctx context.Context, r Runner, cfg Config) RosterSection {
 	rc := exitCode(err)
 	if rc != 0 {
 		msg := firstLineOrExit(errb, rc)
-		return RosterSection{Crews: []RosterCrew{}, Error: &msg}
+		sc := explicitScope(cfg)
+		if sc.Crew == "" {
+			sc.Source = "none"
+		} else {
+			sc.Known = true
+		}
+		return RosterSection{Crews: []RosterCrew{}, Error: &msg, Scope: sc}
 	}
 
 	rows := parseCrewRows(out)
+	sc := resolveScope(ctx, r, cfg, rows)
 	var candidates []crewRow
 	for _, row := range rows {
-		if row.alive != "yes" && row.workers > 0 {
+		if row.alive != "yes" && row.workers > 0 && (sc.Crew == "" || row.id == sc.Crew) {
 			candidates = append(candidates, row)
 		}
 	}
 	elsewhere, foreignErr := foreignCrews(ctx, r, cfg, candidates)
 	var ids []string
 	locs := map[string]*DispatcherLoc{}
-	for _, row := range rows {
-		if row.alive == "yes" {
-			ids = append(ids, row.id)
-			locs[row.id] = &DispatcherLoc{Where: "here"}
-		} else if loc, ok := elsewhere[row.id]; ok {
-			ids = append(ids, row.id)
-			locs[row.id] = loc
+	if sc.Crew != "" {
+		ids = []string{sc.Crew}
+		locs[sc.Crew] = &DispatcherLoc{Where: "none"}
+		for _, row := range rows {
+			if row.id == sc.Crew && row.alive == "yes" {
+				locs[sc.Crew] = &DispatcherLoc{Where: "here"}
+			}
+		}
+		if loc, ok := elsewhere[sc.Crew]; ok {
+			locs[sc.Crew] = loc
+		}
+	} else {
+		for _, row := range rows {
+			if row.alive == "yes" {
+				ids = append(ids, row.id)
+				locs[row.id] = &DispatcherLoc{Where: "here"}
+			} else if loc, ok := elsewhere[row.id]; ok {
+				ids = append(ids, row.id)
+				locs[row.id] = loc
+			}
 		}
 	}
+	stampSince(ctx, r, cfg, ids, locs)
 	crews := make([]RosterCrew, len(ids))
 	peerRows := make([][]map[string]any, len(ids))
 	var wg sync.WaitGroup
@@ -266,7 +323,15 @@ func CollectRoster(ctx context.Context, r Runner, cfg Config) RosterSection {
 		}()
 	}
 	wg.Wait()
-	return RosterSection{Crews: crews, Peers: mergePeers(peerRows), ForeignError: foreignErr}
+	peers := mergePeers(peerRows)
+	if sc.Crew != "" {
+		peers = slices.DeleteFunc(peers, func(row map[string]any) bool {
+			crew, _ := row["crew_id"].(string)
+			return crew != sc.Crew
+		})
+	}
+	sc.Crews = len(crews)
+	return RosterSection{Crews: crews, Peers: peers, ForeignError: foreignErr, Scope: sc}
 }
 
 // fleetStatusTimeout bounds the fleet-status lookup so a stuck call cannot

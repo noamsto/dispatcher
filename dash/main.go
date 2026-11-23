@@ -52,7 +52,7 @@ func run() int {
 		}
 	}
 
-	cfg := resolveConfig()
+	cfg := resolveConfig(o)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	collect := func() data.Snapshot {
@@ -549,14 +549,14 @@ func busDigest(s *data.BusScanner, pathErr error, nowMS int64) data.BusDigest {
 }
 
 type opts struct {
-	mode, view string
-	watch      bool
-	keeps      bool // one-shot --json probes crew reap for keep reasons
-	narrow     bool // force the stacked narrow layout in the interactive UI
+	mode, view, crew string
+	watch            bool
+	keeps            bool // one-shot --json probes crew reap for keep reasons
+	narrow           bool // force the stacked narrow layout in the interactive UI
 }
 
 func usage() string {
-	return "usage: crew dash [--narrow | --once | --json [--view <name> [--watch] [--keeps]]]\n" +
+	return "usage: crew dash [--crew <id>] [--narrow | --once | --json [--view <name> [--watch] [--keeps]]]\n" +
 		"views: " + strings.Join(view.Names, ", ") + "\n"
 }
 
@@ -591,6 +591,16 @@ func parseArgs(args []string) (opts, error) {
 			if !slices.Contains(view.Names, o.view) {
 				return opts{}, fmt.Errorf("unknown view %q (valid: %s)", o.view, strings.Join(view.Names, ", "))
 			}
+			continue
+		case "--crew":
+			if o.crew != "" {
+				return opts{}, errors.New("--crew given twice")
+			}
+			if i+1 == len(args) || args[i+1] == "" {
+				return opts{}, errors.New("--crew needs an id")
+			}
+			i++
+			o.crew = args[i]
 			continue
 		default:
 			return opts{}, fmt.Errorf("unknown argument %q", args[i])
@@ -635,14 +645,30 @@ func colorEnabled() bool {
 	return term.IsTerminal(int(os.Stdout.Fd()))
 }
 
-func resolveConfig() data.Config {
+func resolveConfig(o opts) data.Config {
+	crewID, crewSource := resolveCrewID(o.crew)
 	return data.Config{
 		Crew:              resolveCrew(),
 		DispatchConfigBin: resolveDispatchConfig(),
 		RefreshBudget:     "refresh-budget",
 		Git:               "git",
 		Now:               resolveNow(),
+		CrewID:            crewID,
+		CrewIDSource:      crewSource,
+		Pane:              os.Getenv("TMUX_PANE"),
 	}
+}
+
+// resolveCrewID: the --crew flag wins over $CREW_ID; neither leaves the scope
+// to the tmux window probe.
+func resolveCrewID(flag string) (id, source string) {
+	switch {
+	case flag != "":
+		return flag, "flag"
+	case os.Getenv("CREW_ID") != "":
+		return os.Getenv("CREW_ID"), "env"
+	}
+	return "", ""
 }
 
 func resolveNow() int64 {

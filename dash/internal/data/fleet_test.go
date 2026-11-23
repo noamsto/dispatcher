@@ -304,3 +304,50 @@ func TestCollectReapKeepsAmbiguousBranchHasNoFallback(t *testing.T) {
 		t.Errorf("unique branch lost its fallback: %v", got)
 	}
 }
+
+func TestCollectFleetStatusStampsSince(t *testing.T) {
+	common := filepath.Join(t.TempDir(), ".git")
+	crews := filepath.Join(common, "crew", "crews")
+	if err := os.MkdirAll(filepath.Join(crews, "c-live"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	pid := filepath.Join(crews, "c-live", "pid")
+	if err := os.WriteFile(pid, []byte("1"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mtime := time.Unix(1794799900, 0)
+	if err := os.Chtimes(pid, mtime, mtime); err != nil {
+		t.Fatal(err)
+	}
+	doc, err := json.Marshal(map[string]any{"host": "lap", "repos": []map[string]any{
+		{"host": "lap", "repo": "a", "common": common, "crews": []map[string]any{
+			{"crew_id": "c-live", "dispatcher": map[string]any{"state": "live"}},
+			{"crew_id": "c-nopid", "dispatcher": map[string]any{"state": "live"}},
+			{"crew_id": "c-dead", "dispatcher": map[string]any{"state": "dead"}},
+		}},
+		{"host": "far", "repo": "a", "common": common, "crews": []map[string]any{
+			{"crew_id": "c-live", "dispatcher": map[string]any{"state": "live"}},
+		}},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := &FakeRunner{Responses: map[string]FakeResponse{fleetStatusKey: {Stdout: doc}}}
+	st, errMsg := CollectFleetStatus(context.Background(), r, baseConfig(), FleetViewMaxAge)
+	if errMsg != nil {
+		t.Fatal(*errMsg)
+	}
+	local, far := st.Repos[0].Crews, st.Repos[1].Crews[0]
+	if s := local[0].Dispatcher.Since; s == nil || *s != mtime.Unix() {
+		t.Errorf("live local Since = %v, want %d", s, mtime.Unix())
+	}
+	if local[1].Dispatcher.Since != nil {
+		t.Errorf("missing pid file Since = %v, want nil", *local[1].Dispatcher.Since)
+	}
+	if local[2].Dispatcher.Since != nil {
+		t.Errorf("dead dispatcher Since = %v, want nil", *local[2].Dispatcher.Since)
+	}
+	if far.Dispatcher.Since != nil {
+		t.Errorf("other-host Since = %v, want nil", *far.Dispatcher.Since)
+	}
+}

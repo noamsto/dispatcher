@@ -1,5 +1,5 @@
   Overview │   Live │   Board │   Budget │   Runs │   Settings │ ▸ Map │   Fleet
- crew › c1, c2
+ crew › · unscoped (2 crews)
 Map unavailable: needs kitty or ghostty
 The Map tab needs kitty or ghostty.
 Under tmux, also run: tmux set -g allow-passthrough on

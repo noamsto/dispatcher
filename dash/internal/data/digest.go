@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"math"
 	"os"
 	"slices"
 	"strconv"
@@ -15,6 +16,7 @@ import (
 const (
 	activityWindowMS = 3600000
 	recentCap        = 50
+	maxCrewRings     = 64
 	subagentCap      = 16
 	labelMax         = 80
 	fieldMax         = 64
@@ -66,6 +68,9 @@ type PRWatch struct {
 type RecentEvent struct {
 	TS                        int64
 	From, Kind, State, Detail string
+	// Crew is the row's crew: its crew_id, else the dispatcher sender's, else
+	// the last crew seen on the same branch; "" when none can be inferred.
+	Crew string
 	// Ev is the decoded bus row, read-only; nil for rows built without one.
 	Ev Event
 }
@@ -80,7 +85,10 @@ type BusDigest struct {
 	// Subagents holds each worker's runs in spawn order.
 	Subagents map[WorkerKey][]SubagentRun
 	Recent    []RecentEvent
-	Err       *string
+	// RecentByCrew holds each attributed crew's last recentCap rows, so a busy
+	// crew cannot push a quiet one out of its ring.
+	RecentByCrew map[string][]RecentEvent
+	Err          *string
 }
 
 // BusScanner folds events.jsonl incrementally: it keeps a byte offset and only
@@ -91,6 +99,9 @@ type BusScanner struct {
 	off       int64
 	d         BusDigest
 	lastState map[WorkerKey]string
+	// branchCrew is each branch's last-known crew, for rows (reap) that carry
+	// a branch but no crew_id.
+	branchCrew map[string]string
 }
 
 func NewBusScanner(path string) *BusScanner {
@@ -102,13 +113,15 @@ func NewBusScanner(path string) *BusScanner {
 func (s *BusScanner) reset() {
 	s.off = 0
 	s.d = BusDigest{
-		Workers:   map[WorkerKey]*WorkerDigest{},
-		Roles:     map[RoleKey]*RoleDigest{},
-		PRs:       map[int]*PRWatch{},
-		Subagents: map[WorkerKey][]SubagentRun{},
-		Recent:    []RecentEvent{},
+		Workers:      map[WorkerKey]*WorkerDigest{},
+		Roles:        map[RoleKey]*RoleDigest{},
+		PRs:          map[int]*PRWatch{},
+		Subagents:    map[WorkerKey][]SubagentRun{},
+		Recent:       []RecentEvent{},
+		RecentByCrew: map[string][]RecentEvent{},
 	}
 	s.lastState = map[WorkerKey]string{}
+	s.branchCrew = map[string]string{}
 }
 
 // Scan reads any lines appended since the last call and returns a deep copy of
@@ -166,6 +179,22 @@ func (s *BusScanner) apply(ev Event) {
 	kind, _ := ev["kind"].(string)
 	body := BodyObject(ev["body"])
 
+	branch, _ := ev["branch"].(string)
+	if b, ok := strings.CutPrefix(from, "worker:"); ok {
+		branch, _, _ = strings.Cut(b, "#")
+	}
+	evCrew := crew
+	if evCrew == "" {
+		if id, ok := strings.CutPrefix(from, "dispatcher:"); ok {
+			evCrew = id
+		} else {
+			evCrew = s.branchCrew[branch]
+		}
+	}
+	if evCrew != "" && branch != "" {
+		s.branchCrew[branch] = evCrew
+	}
+
 	state, _ := body["state"].(string)
 	detail, _ := body["detail"].(string)
 	to, _ := ev["to"].(string)
@@ -175,9 +204,10 @@ func (s *BusScanner) apply(ev Event) {
 		if str, ok := ev["body"].(string); ok && kind != "status" {
 			summary = str
 		}
-		s.d.Recent = append(s.d.Recent, RecentEvent{TS: ts, From: from, Kind: kind, State: state, Detail: summary, Ev: ev})
-		if len(s.d.Recent) > recentCap {
-			s.d.Recent = slices.Clone(s.d.Recent[len(s.d.Recent)-recentCap:])
+		re := RecentEvent{TS: ts, From: from, Kind: kind, State: state, Detail: summary, Crew: evCrew, Ev: ev}
+		s.d.Recent = capRecent(append(s.d.Recent, re))
+		if evCrew != "" {
+			s.addCrewRecent(re)
 		}
 	}
 
@@ -224,6 +254,27 @@ func (s *BusScanner) apply(ev Event) {
 		mergeable, _ := ps["mergeable"].(string)
 		s.d.PRs[pr] = &PRWatch{PR: pr, URL: url, State: st, Checks: checks, Mergeable: mergeable, TS: ts}
 	}
+}
+
+func capRecent(rs []RecentEvent) []RecentEvent {
+	if len(rs) > recentCap {
+		return slices.Clone(rs[len(rs)-recentCap:])
+	}
+	return rs
+}
+
+func (s *BusScanner) addCrewRecent(re RecentEvent) {
+	rings := s.d.RecentByCrew
+	if _, ok := rings[re.Crew]; !ok && len(rings) >= maxCrewRings {
+		stalest, oldest := "", int64(math.MaxInt64)
+		for id, r := range rings {
+			if ts := r[len(r)-1].TS; ts < oldest {
+				stalest, oldest = id, ts
+			}
+		}
+		delete(rings, stalest)
+	}
+	rings[re.Crew] = capRecent(append(rings[re.Crew], re))
 }
 
 func (s *BusScanner) applyWorker(key WorkerKey, session string, ts int64, kind, state, detail string, watchdog bool) {
@@ -364,6 +415,12 @@ func (d BusDigest) clone() BusDigest {
 		PRs:       make(map[int]*PRWatch, len(d.PRs)),
 		Subagents: make(map[WorkerKey][]SubagentRun, len(d.Subagents)),
 		Recent:    append([]RecentEvent{}, d.Recent...),
+	}
+	if len(d.RecentByCrew) > 0 {
+		out.RecentByCrew = make(map[string][]RecentEvent, len(d.RecentByCrew))
+		for k, r := range d.RecentByCrew {
+			out.RecentByCrew[k] = slices.Clone(r)
+		}
 	}
 	for k, w := range d.Workers {
 		c := *w

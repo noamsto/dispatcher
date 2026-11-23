@@ -712,7 +712,7 @@
         "host": "",
         "origin": "local",
         "state": "working",
-        "label": "ok 20s",
+        "label": "ok now",
         "activity": [
           0,
           0,
@@ -792,7 +792,7 @@
         "host": "halo",
         "origin": "remote_worker",
         "state": "working",
-        "label": "ok 15s",
+        "label": "ok now",
         "activity": null
       },
       {
@@ -810,7 +810,7 @@
         "host": "far",
         "origin": "remote_worker",
         "state": "",
-        "label": "? 10s",
+        "label": "? now",
         "activity": null
       }
     ],
@@ -849,39 +849,76 @@
     {
       "ts": 1794799990,
       "worker": "worker:feat/a#s1",
-      "text": "progress note"
+      "text": "progress note",
+      "crew": "c1"
+    },
+    {
+      "ts": 1794799980,
+      "worker": "pr-watch:12",
+      "text": "PR #12 changed checks",
+      "crew": "c1"
+    },
+    {
+      "ts": 1794799950,
+      "worker": "pr-watch:12",
+      "text": "PR #12 changed checks",
+      "crew": "c1"
     },
     {
       "ts": 1794799900,
       "worker": "worker:feat/b#s1",
-      "text": "pr_open AC1 pass(go test); AC2 pass(bats); AC3 waived(dispatcher: n/a)"
+      "text": "pr_open AC1 pass(go test); AC2 pass(bats); AC3 waived(dispatcher: n/a)",
+      "crew": "c1"
+    },
+    {
+      "ts": 1794799600,
+      "worker": "role:feat/b:reviewer",
+      "text": "failed role reviewer engine exited (pane %9)",
+      "crew": "c1"
     },
     {
       "ts": 1794799500,
       "worker": "worker:feat/b#s1",
-      "text": "working execute"
+      "text": "working execute",
+      "crew": "c1"
     },
     {
       "ts": 1794799400,
       "worker": "worker:feat/a#s1",
-      "text": "working execute"
+      "text": "working execute",
+      "crew": "c1"
+    },
+    {
+      "ts": 1794799300,
+      "worker": "role:feat/a:plan-critic",
+      "text": "seam plan: accept",
+      "crew": "c1"
     },
     {
       "ts": 1794799200,
       "worker": "worker:feat/a#s1",
-      "text": "working plan"
+      "text": "working plan",
+      "crew": "c1"
     },
     {
       "ts": 1794799100,
       "worker": "worker:feat/b#s1",
-      "text": "working spec"
+      "text": "working spec",
+      "crew": "c1"
     },
     {
       "ts": 1794799000,
       "worker": "worker:feat/a#s1",
-      "text": "working spec"
+      "text": "working spec",
+      "crew": "c1"
     }
   ],
+  "scope": {
+    "crew": "c1",
+    "source": "fleet",
+    "known": true,
+    "crews": 1
+  },
   "errors": [
     "host far: ssh: connect to host far port 22: timed out"
   ]

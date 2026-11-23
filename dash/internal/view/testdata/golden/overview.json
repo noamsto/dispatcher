@@ -1815,7 +1815,7 @@
         "host": "",
         "origin": "local",
         "state": "working",
-        "label": "ok 45s",
+        "label": "ok now",
         "activity": [
           0,
           0,
@@ -2064,7 +2064,7 @@
         "host": "",
         "origin": "local",
         "state": "working",
-        "label": "ok 30s",
+        "label": "ok now",
         "activity": [
           0,
           0,
@@ -2161,99 +2161,124 @@
     {
       "ts": 1794800500,
       "worker": "worker:feat/a#s1",
-      "text": "working execute"
+      "text": "working execute",
+      "crew": "c1"
     },
     {
       "ts": 1794800350,
       "worker": "worker:feat/j#s1",
-      "text": "working execute"
+      "text": "working execute",
+      "crew": "c2"
     },
     {
       "ts": 1794800300,
       "worker": "worker:feat/d#s1",
-      "text": "blocked prompt: permission dialog"
+      "text": "blocked prompt: permission dialog",
+      "crew": "c1"
     },
     {
       "ts": 1794800200,
       "worker": "role:feat/a:reviewer",
-      "text": "blocked role reviewer engine exited (pane %9)"
+      "text": "blocked role reviewer engine exited (pane %9)",
+      "crew": "c1"
     },
     {
       "ts": 1794800100,
       "worker": "worker:feat/a#s1",
-      "text": "progress note"
+      "text": "progress note",
+      "crew": "c1"
     },
     {
       "ts": 1794799990,
       "worker": "pr-watch:12",
-      "text": "PR #12 changed checks"
+      "text": "PR #12 changed checks",
+      "crew": "c1"
     },
     {
       "ts": 1794799920,
       "worker": "role:feat/c:spec-critic",
-      "text": "failed no assignment"
+      "text": "failed no assignment",
+      "crew": "c1"
     },
     {
       "ts": 1794799910,
       "worker": "pr-watch:12",
-      "text": "PR #12 changed checks"
+      "text": "PR #12 changed checks",
+      "crew": "c1"
     },
     {
       "ts": 1794799900,
       "worker": "worker:feat/b#s1",
-      "text": "pr_open AC1 pass(go test); AC2-4 pass(bats); AC5 waived(dispatcher: n/a)"
+      "text": "pr_open AC1 pass(go test); AC2-4 pass(bats); AC5 waived(dispatcher: n/a)",
+      "crew": "c1"
     },
     {
       "ts": 1794799800,
       "worker": "worker:feat/b#s1",
-      "text": "working gate"
+      "text": "working gate",
+      "crew": "c1"
     },
     {
       "ts": 1794799700,
       "worker": "worker:feat/j#s1",
-      "text": "working spec"
+      "text": "working spec",
+      "crew": "c2"
     },
     {
       "ts": 1794799560,
       "worker": "worker:feat/b#s1",
-      "text": "working execute"
+      "text": "working execute",
+      "crew": "c1"
     },
     {
       "ts": 1794799500,
       "worker": "worker:feat/a#s1",
-      "text": "working execute"
+      "text": "working execute",
+      "crew": "c1"
     },
     {
       "ts": 1794799380,
       "worker": "worker:feat/b#s1",
-      "text": "working plan"
+      "text": "working plan",
+      "crew": "c1"
     },
     {
       "ts": 1794799330,
       "worker": "role:feat/a:plan-critic",
-      "text": "seam plan: accept"
+      "text": "seam plan: accept",
+      "crew": "c1"
     },
     {
       "ts": 1794799325,
       "worker": "role:feat/a:plan-critic",
-      "text": "working plan review"
+      "text": "working plan review",
+      "crew": "c1"
     },
     {
       "ts": 1794799320,
       "worker": "worker:feat/a#s1",
-      "text": "working plan"
+      "text": "working plan",
+      "crew": "c1"
     },
     {
       "ts": 1794799260,
       "worker": "worker:feat/b#s1",
-      "text": "working spec"
+      "text": "working spec",
+      "crew": "c1"
     },
     {
       "ts": 1794799200,
       "worker": "worker:feat/a#s1",
-      "text": "working spec"
+      "text": "working spec",
+      "crew": "c1"
     }
   ],
+  "scope": {
+    "crew": null,
+    "source": "none",
+    "known": false,
+    "crews": 0
+  },
   "errors": [
     "peer nuc: sync stale: last ok 900s ago",
     "peer halo: no snapshot yet"

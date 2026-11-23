@@ -11,14 +11,14 @@
 ╰───────────────────│   ○ spec ○ plan ○ execute ○ gate ○ review ○ ship                                                           │───────────────────╯
 ╭ ▸ CHECKLISTS ─────│ ACCEPTANCE —                                                                                               │────── 11 watched ─╮
 │ ● otter standard  │ AGENTS                                                                                                     │───────────────────│
-│   ●─●─◉─○─○─○ exec│   lead sonnet standard failed                                                                              │▁▁▁▁▁▁█▄ ok 45s    │
+│   ●─●─◉─○─○─○ exec│   lead sonnet standard failed                                                                              │▁▁▁▁▁▁█▄ ok now    │
 │ ● heron standard  │   execute subagents: none                                                                                  │▁▁▁▁▁▁▁▁ ok 10m    │
 │   ●─●─●─●─●─● pr_o│ ATTENTION                                                                                                  │▁▁▁▁▁▁▁▁ ok 5m     │
 │ ● feat/c standard │   ✗ exit 1 after test failure → crew where --crew c1 -- feat/h                                             │▁▁▁▁▁▁▁▁ prompt 3m │
 │   ○─○─○─○─○─○ bloc│     To clear: reaped once its PR merges/closes or its issue closes (crew reap), or re-dispatch             │▁▁▁▁▁▁▁▁ stall 4m  │
 │ ● feat/d standard │ RECENT EVENTS                                                                                              │▁▁▁▁▁▁▁▁ runaway 2m│
 │   ○─○─○─○─○─○ bloc│   none                                                                                                     │········ ok 7m     │
-│ ● feat/e standard ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────╯▁▁▁█▁▁▁▁ ok 30s    │
+│ ● feat/e standard ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────╯▁▁▁█▁▁▁▁ ok now    │
 │   ○─○─○─○─○─○ blocked                                    ││   roles —                                 ││ feat/p@mbp ···················· ok        │
 │ ● feat/f standard                                    AC —││ ● feat/f sonnet standard                  ││ feat/q@nuc ···················· ?         │
 │   ○─○─○─○─○─○ blocked                                    ││   roles —                                 ││ @halo      ···················· ?         │

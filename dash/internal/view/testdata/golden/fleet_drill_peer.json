@@ -64,7 +64,7 @@
         "host": "box",
         "origin": "peer",
         "state": "pr_open",
-        "label": "ok 10s",
+        "label": "ok now",
         "activity": null
       }
     ],
@@ -89,5 +89,11 @@
     ]
   },
   "events": [],
+  "scope": {
+    "crew": null,
+    "source": "none",
+    "known": false,
+    "crews": 0
+  },
   "errors": []
 }

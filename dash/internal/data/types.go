@@ -209,6 +209,8 @@ type RosterSection struct {
 	// ForeignError says why the foreign-crew lookup failed; the here crews are
 	// still listed, so it is not a whole-roster Error.
 	ForeignError *string `json:"-"`
+	// Scope is json:"-" like Lane, so the --json snapshot never carries it.
+	Scope Scope `json:"-"`
 }
 
 // LaneStatus is one crew's `crew stream --status` probe: State is alive,
@@ -245,4 +247,7 @@ type DispatcherLoc struct {
 	Where  string
 	Repo   *string
 	Common *string
+	// Since is the unix time the here-dispatcher last (re)launched, from the
+	// mtime of its crew pid file; nil when unknown.
+	Since *int64
 }

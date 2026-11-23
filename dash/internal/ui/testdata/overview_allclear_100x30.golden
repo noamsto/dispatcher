@@ -1,7 +1,7 @@
  ✓ all clear
 ╭ ▸ CHECKLISTS ───────── 0 of 11 done ─╮╭ AGENTS ──────── 12 agents ─╮╭ MONITORS ───── 11 watched ─╮
 │▌● otter standard                 AC —││▌● otter sonnet standard    ││ WATCHDOG ──────────────────│
-│▌  ●─●─◉─○─○─○ execute                ││▌  roles —  sub ●1          ││▌otter      ▁▁▁█▄ ok 45s    │
+│▌  ●─●─◉─○─○─○ execute                ││▌  roles —  sub ●1          ││▌otter      ▁▁▁█▄ ok now    │
 │ ● heron standard               AC 5/5││ ● heron sonnet standard    ││ heron      ▁▁▁▁▁ ok 10m    │
 │   ●─●─●─◉─○─○ gate                   ││   roles —                  ││ feat/c     ▁▁▁▁▁ ok 5m     │
 │ ● feat/c standard                AC —││ ● feat/c sonnet standard   ││ feat/d     ▁▁▁▁▁ prompt 3m │
@@ -11,7 +11,7 @@
 │ ● feat/e standard                AC —││ ● feat/e sonnet standard   ││ feat/h     ▁▁▁▁▁ ok 20m    │
 │   ○─○─○─○─○─○ working                ││   roles —                  ││ feat/i     ▁▁▁▁▁ ok 50m    │
 │ ● feat/f standard                AC —││ ● feat/f sonnet standard   ││ feat/r@ha… ····· ok 7m     │
-│   ○─○─○─○─○─○ working                ││   roles —                  ││ feat/j     █▁▁▁▁ ok 30s    │
+│   ○─○─○─○─○─○ working                ││   roles —                  ││ feat/j     █▁▁▁▁ ok now    │
 │ ● feat/g standard                AC —││ ● feat/g sonnet standard   ││ PR CHECKS ─────────────────│
 │   ○─○─○─○─○─○ working                ││   roles —                  ││ #12 ● checks ● merge 10m   │
 │ ● feat/h standard                AC —││ ● feat/h sonnet standard   ││ BUDGET ────────────────────│

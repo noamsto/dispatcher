@@ -461,3 +461,38 @@ func TestRosterViewCarriesForeignError(t *testing.T) {
 		t.Errorf("ForeignError = %v, want %q", got, msg)
 	}
 }
+
+func TestAge(t *testing.T) {
+	cases := []struct {
+		sec  int64
+		want string
+	}{
+		{0, "now"}, {4, "now"}, {5, "now"}, {59, "now"}, {-3, "now"},
+		{60, "1m"}, {119, "1m"}, {3599, "59m"},
+		{3600, "1h"}, {7200, "2h"},
+	}
+	for _, c := range cases {
+		if got := view.Age(c.sec); got != c.want {
+			t.Errorf("Age(%d) = %q, want %q", c.sec, got, c.want)
+		}
+	}
+}
+
+func TestOverviewScopeErrorOnlyWhenProbeFailed(t *testing.T) {
+	in := viewtest.Inputs()
+	b, err := json.Marshal(view.BuildOverview(in).Scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), `"error"`) {
+		t.Errorf("clean scope carries error: %s", b)
+	}
+	in.Snap.Roster.Scope = data.Scope{Source: "none", Err: "tmux list-panes: boom"}
+	b, err = json.Marshal(view.BuildOverview(in).Scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), `"error":"tmux list-panes: boom"`) {
+		t.Errorf("scope lacks the probe error: %s", b)
+	}
+}
