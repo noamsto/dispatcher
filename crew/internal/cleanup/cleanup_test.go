@@ -511,3 +511,33 @@ func TestForeignPRAndNonNumericIssueAreNotQueried(t *testing.T) {
 		}
 	}
 }
+
+func TestChangedWhileSavingIsNotRemoved(t *testing.T) {
+	f := newFx(t)
+	f.dirty(false)
+	buses, cwds, _ := f.opts().repos(context.Background(), Request{}, f.main, io.Discard)
+	items, _ := f.opts().gather(context.Background(), buses, cwds, f.main, io.Discard)
+	o := f.opts()
+	before, err := o.treeState(context.Background(), mustAdmin(t, f), items[0], io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Rewrite an already-dirty file: status lines stay the same, content differs.
+	if err := os.WriteFile(filepath.Join(f.wt, "notes.txt"), []byte("newer\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	after, err := o.treeState(context.Background(), mustAdmin(t, f), items[0], io.Discard)
+	if err != nil || after == before {
+		t.Fatalf("content change not seen: %v", err)
+	}
+}
+
+func mustAdmin(t *testing.T, f *fx) string {
+	t.Helper()
+	dirs, _ := filepath.Glob(filepath.Join(f.paths.Common, "worktrees", "*"))
+	if len(dirs) != 1 {
+		t.Fatalf("admin dirs %v", dirs)
+	}
+	real, _ := filepath.EvalSymlinks(dirs[0])
+	return real
+}

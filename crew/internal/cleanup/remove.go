@@ -60,7 +60,7 @@ func (o Options) remove(ctx context.Context, it *Item, stderr io.Writer) (string
 	if !filekind.IsDir(wt) {
 		return "", fmt.Errorf("%s is already gone", wt)
 	}
-	if strings.HasPrefix(it.callerCwd+"/", wt+"/") {
+	if inside(it.callerCwd, wt) {
 		return "", errors.New("it is the current worktree")
 	}
 	admin, err := wtgit.AdminDir(common, wt)
@@ -74,7 +74,7 @@ func (o Options) remove(ctx context.Context, it *Item, stderr io.Writer) (string
 		return "", err
 	}
 
-	before, err := treeState(ctx, admin, it, stderr)
+	before, err := o.treeState(ctx, admin, it, stderr)
 	if err != nil {
 		return "", err
 	}
@@ -85,7 +85,7 @@ func (o Options) remove(ctx context.Context, it *Item, stderr io.Writer) (string
 		return "", fmt.Errorf("archive failed, nothing removed: %w", err)
 	}
 
-	if after, err := treeState(ctx, admin, it, stderr); err != nil || after != before {
+	if after, err := o.treeState(ctx, admin, it, stderr); err != nil || after != before {
 		return dir, errors.New("changed while saving; archived, but nothing removed — review it again")
 	}
 	anchor, _ := wtgit.AnchorPath(wt)
@@ -147,14 +147,18 @@ func (o Options) archive(ctx context.Context, it *Item, admin, rel string, stder
 		Root: root, Dir: rel, Name: patchName, FreshDir: true, IgnoredScaffold: true, Stderr: stderr,
 	})
 	if err != nil {
+		// Snapshot may have made the dir before failing; rmdir only takes it
+		// while empty, and never a dir that already existed with content.
+		_ = os.Remove(filepath.Join(root, rel))
 		return "", err
 	}
-	dir = filepath.Join(root, rel)
+	// A named result is zeroed by `return "", err`, so the cleanup keeps its own path.
+	out := filepath.Join(root, rel)
+	dir = out
 	// An archive that did not finish is no archive: never leave one that looks real.
 	defer func() {
 		if err != nil {
-			_ = os.RemoveAll(dir)
-			dir = ""
+			_ = os.RemoveAll(out)
 		}
 	}()
 	opts := wtgit.Opts{Stderr: stderr}
@@ -227,13 +231,10 @@ func (o Options) patchText(ctx context.Context, it *Item, tmp string, stderr io.
 // shq is a single-quoted shell word.
 func shq(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
 
-// treeState is the worktree's porcelain status and branch tip, compared before
-// and after the archive so work written meanwhile is never deleted unsaved.
-func treeState(ctx context.Context, admin string, it *Item, stderr io.Writer) (string, error) {
-	st, err := wtgit.Status(ctx, admin, it.Worktree, wtgit.Opts{Stderr: stderr}, "--untracked-files=all")
-	if err != nil {
-		return "", errors.New("git status failed")
-	}
+// treeState is the worktree's content (a scratch-index tree, as the archive
+// saves it) and branch tip, compared before and after the archive so work
+// written meanwhile is never deleted unsaved.
+func (o Options) treeState(ctx context.Context, admin string, it *Item, stderr io.Writer) (string, error) {
 	cmd, err := wtgit.CommonCommand(ctx, it.paths.Common, wtgit.Opts{Stderr: stderr}, "rev-parse", "--verify", "refs/heads/"+it.Branch)
 	if err != nil {
 		return "", errDrift
@@ -242,5 +243,30 @@ func treeState(ctx context.Context, admin string, it *Item, stderr io.Writer) (s
 	if err != nil {
 		return "", errors.New("could not read the branch tip")
 	}
-	return st + "\n" + string(tip), nil
+	root := o.archiveRoot()
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		return "", err
+	}
+	tmp, err := os.MkdirTemp(root, ".tmp-")
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = os.RemoveAll(tmp) }()
+	tree, err := reap.ScratchTree(ctx, admin, it.Worktree, strings.TrimSpace(string(tip)), filepath.Join(tmp, "index"), true, stderr)
+	if err != nil {
+		return "", errors.New("could not read its uncommitted state")
+	}
+	return tree + "\n" + string(tip), nil
+}
+
+// inside reports whether dir is wt or below it, through symlinks.
+func inside(dir, wt string) bool {
+	for _, p := range [][2]string{{dir, wt}} {
+		d, errD := filepath.EvalSymlinks(p[0])
+		w, errW := filepath.EvalSymlinks(p[1])
+		if errD == nil && errW == nil {
+			return strings.HasPrefix(d+"/", w+"/")
+		}
+	}
+	return strings.HasPrefix(dir+"/", wt+"/")
 }

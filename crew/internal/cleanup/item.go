@@ -169,12 +169,12 @@ func plain(s string) string {
 
 // render is the block a human reads before deciding.
 func (it *Item) render(w io.Writer) {
+	it = it.sanitized()
 	name := it.Branch
 	if it.Codename != "" {
 		name += " (" + it.Codename + ")"
 	}
 	p := func(format string, a ...any) { _, _ = fmt.Fprintf(w, format, a...) }
-	it = it.sanitized()
 	p("%s: %s\n", filepath.Base(filepath.Dir(it.Repo)), name)
 	p("  reason:   %s\n", it.Reason)
 	last := "no status on the bus"
@@ -204,6 +204,7 @@ func (it *Item) render(w io.Writer) {
 // sanitized is a copy whose text fields are safe to print.
 func (it *Item) sanitized() *Item {
 	c := *it
+	c.State = plain(it.State)
 	c.Branch, c.Codename, c.Reason, c.Worktree, c.Diffstat = plain(it.Branch), plain(it.Codename), plain(it.Reason), plain(it.Worktree), plain(it.Diffstat)
 	c.Status, c.Unpushed = mapLines(it.Status), mapLines(it.Unpushed)
 	return &c

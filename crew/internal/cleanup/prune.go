@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"time"
 )
 
@@ -29,6 +30,13 @@ func (o Options) prune(age time.Duration, stdout, stderr io.Writer) int {
 	for _, repo := range repos {
 		repoDir := filepath.Join(root, repo.Name())
 		if !repo.IsDir() {
+			continue
+		}
+		// A scratch dir a killed cleanup left behind; a fresh one is in use.
+		if strings.HasPrefix(repo.Name(), ".tmp-") {
+			if fi, err := os.Stat(repoDir); err == nil && fi.ModTime().Before(o.now().Add(-time.Hour)) {
+				_ = os.RemoveAll(repoDir)
+			}
 			continue
 		}
 		entries, err := os.ReadDir(repoDir)
