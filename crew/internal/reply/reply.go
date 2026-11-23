@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -71,9 +72,20 @@ func Run(ctx context.Context, req Request, paths bus.Paths, stderr io.Writer, o 
 		crew = o.CrewID()
 	}
 
+	// With no crew yet, the whole bus is read until a target resolves one.
+	log, dir := paths.Log, paths.Dir
+	if crew != "" {
+		c, err := paths.Crew(crew)
+		if err != nil {
+			say(stderr, "crew: reply: invalid crew id %s\n", crew)
+			return exitFailure
+		}
+		log, dir = c.Log, filepath.Dir(c.Log)
+	}
+
 	// The arm's `mkdir -p "$dir"` runs before it resolves anything: a refusal
 	// still leaves the bus dir, and the append needs it on a repo with no bus yet.
-	if err := os.MkdirAll(paths.Dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		say(stderr, "crew: reply: %v\n", err)
 		return exitFailure
 	}
@@ -86,7 +98,7 @@ func Run(ctx context.Context, req Request, paths bus.Paths, stderr io.Writer, o 
 
 	// The remote writes the row to its own bus, where the worker reads it. The
 	// `--` keeps a body that starts with a dash from reading there as a flag.
-	host, as, err := routeHost(paths, crew, to, o)
+	host, as, err := routeHost(log, crew, to, o)
 	if err != nil {
 		say(stderr, "crew: reply: CREW_ID not set and %v\n", err)
 		return exitFailure
@@ -97,11 +109,11 @@ func Run(ctx context.Context, req Request, paths bus.Paths, stderr io.Writer, o 
 
 	if strings.HasPrefix(to, "worker:") && !bus.IsSessionID(to) {
 		branch := strings.TrimPrefix(to, "worker:")
-		events, code := read(paths, stderr)
+		events, code := read(log, stderr)
 		if code != 0 {
 			return code
 		}
-		newest, resolved, code := resolve(branch, crew, events, paths, stderr, o)
+		newest, resolved, code := resolve(branch, crew, log, events, paths, stderr, o)
 		if code != 0 {
 			return code
 		}
@@ -110,6 +122,11 @@ func Run(ctx context.Context, req Request, paths bus.Paths, stderr io.Writer, o 
 	}
 	if crew == "" {
 		say(stderr, "crew: CREW_ID not set and no WORKER_TASK.md crew_id — pass --crew <id>\n")
+		return exitFailure
+	}
+	c, err := paths.Crew(crew)
+	if err != nil {
+		say(stderr, "crew: reply: invalid crew id %s\n", crew)
 		return exitFailure
 	}
 
@@ -121,7 +138,7 @@ func Run(ctx context.Context, req Request, paths bus.Paths, stderr io.Writer, o 
 			TS: ts, CrewID: crew, From: "dispatcher:" + crew, To: to, Kind: "msg", Body: b,
 		})
 	}, body)
-	if err := bus.Append(paths.Log, line); err != nil {
+	if err := bus.Append(c.Log, line); err != nil {
 		say(stderr, "crew: reply: %v\n", err)
 		return exitFailure
 	}
@@ -133,7 +150,7 @@ func Run(ctx context.Context, req Request, paths bus.Paths, stderr io.Writer, o 
 // With no crew named, the crew is the one the remote dispatch row names. The
 // bus is read tolerantly, so a bus the local path would refuse routes nothing
 // and the local path refuses it.
-func routeHost(paths bus.Paths, crew, to string, o Options) (host, as string, err error) {
+func routeHost(log, crew, to string, o Options) (host, as string, err error) {
 	branch, ok := strings.CutPrefix(to, "worker:")
 	if o.Remote == nil || !ok {
 		return "", "", nil
@@ -143,7 +160,7 @@ func routeHost(paths bus.Paths, crew, to string, o Options) (host, as string, er
 	if bus.IsSessionID(to) {
 		branch = branch[:strings.LastIndex(branch, "#")]
 	}
-	events, _ := bus.ReadEventsTolerant(paths.Log)
+	events, _ := bus.ReadEventsTolerant(log)
 	if crew == "" {
 		return remote.RouteAny(events, branch)
 	}
@@ -163,14 +180,14 @@ type msgRow struct {
 // read is the log `_sessions` reads: `jq -s`, so no torn-tail tolerance, and
 // where the arm's `[ -f "$log" ]` misses, no rows at all — the fold then answers
 // `[]` and the caller refuses for want of a session.
-func read(paths bus.Paths, stderr io.Writer) ([]bus.Event, int) {
-	events, err := bus.ReadEvents(paths.Log)
+func read(log string, stderr io.Writer) ([]bus.Event, int) {
+	events, err := bus.ReadEvents(log)
 	if errors.Is(err, bus.ErrNoLog) {
 		return nil, 0
 	}
 	if err != nil {
 		msg, code := bus.JQFailure(err)
-		say(stderr, "crew: reply: %s: %s\n", paths.Log, msg)
+		say(stderr, "crew: reply: %s: %s\n", log, msg)
 		return nil, code
 	}
 	return events, 0
@@ -189,9 +206,9 @@ type candidate struct {
 // session row to address and the crew to post as — the second only the cross-crew
 // path can supply — with a non-zero code when it printed a refusal or a fold
 // failure.
-func resolve(branch, crew string, events []bus.Event, paths bus.Paths, stderr io.Writer, o Options) (any, string, int) {
+func resolve(branch, crew, log string, events []bus.Event, paths bus.Paths, stderr io.Writer, o Options) (any, string, int) {
 	if crew != "" {
-		newest, code := newestSession(events, branch, crew, paths.Log, stderr, o)
+		newest, code := newestSession(events, branch, crew, log, stderr, o)
 		if code != 0 {
 			return nil, "", code
 		}
@@ -214,12 +231,14 @@ func resolve(branch, crew string, events []bus.Event, paths bus.Paths, stderr io
 		if newest == nil || text(newest, "terminal") == "true" {
 			continue
 		}
-		pidfile := paths.CrewDir(c) + "/pid"
-		pid, _ := crews.PidFileText(pidfile)
-		cands = append(cands, candidate{
-			row: newest, crew: c,
-			alive: crews.PidAlive(o.Proc, o.Clock.Now(), pidfile, pid),
-		})
+		cand := candidate{row: newest, crew: c}
+		// A log can carry an id no crew dir answers to; it stays a candidate with no pid.
+		if cd, err := paths.Crew(c); err == nil {
+			pidfile := cd.Dir + "/pid"
+			pid, _ := crews.PidFileText(pidfile)
+			cand.alive = crews.PidAlive(o.Proc, o.Clock.Now(), pidfile, pid)
+		}
+		cands = append(cands, cand)
 	}
 	// Drop known-dead crews only while a not-known-dead candidate remains. If every
 	// candidate's crew is dead, keep them all: one still delivers, several still

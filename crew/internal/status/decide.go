@@ -14,10 +14,11 @@ import (
 // drop is refused here rather than looking shared.
 func RunDecide(ctx context.Context, text string, paths bus.Paths, stderr io.Writer, o Options) int {
 	o = o.withDefaults()
-	crew, ok := begin("decide", paths, stderr, o)
+	c, ok := begin("decide", paths, stderr, o)
 	if !ok {
 		return exitFailure
 	}
+	crew := c.ID
 	ts := o.Clock.RealMS()
 	if refuseSender(ctx, "decide", "dispatcher:"+crew, crew, o, stderr) {
 		return exitFailure
@@ -35,5 +36,5 @@ func RunDecide(ctx context.Context, text string, paths bus.Paths, stderr io.Writ
 		say(stderr, "crew: decide: peers would drop this row as %s (the encoded row is %d bytes; the peer row limit is %d)\n", reason, len(row), peer.MaxRow)
 		return exitFailure
 	}
-	return post("decide", paths, stderr, func(b string) string { return peer.DecisionRow(ts, crew, b) }, text)
+	return post("decide", c.Log, stderr, func(b string) string { return peer.DecisionRow(ts, crew, b) }, text)
 }

@@ -21,10 +21,11 @@ type MsgRequest struct{ From, To, Body string }
 // RunMsg posts a message.
 func RunMsg(ctx context.Context, req MsgRequest, paths bus.Paths, stderr io.Writer, o Options) int {
 	o = o.withDefaults()
-	crew, ok := begin("msg", paths, stderr, o)
+	c, ok := begin("msg", paths, stderr, o)
 	if !ok {
 		return exitFailure
 	}
+	crew := c.ID
 	from, to, body := req.From, req.To, req.Body
 	ts := o.Clock.RealMS()
 	if refuseSender(ctx, "msg", from, crew, o, stderr) {
@@ -55,22 +56,22 @@ func RunMsg(ctx context.Context, req MsgRequest, paths bus.Paths, stderr io.Writ
 			return exitFailure
 		}
 	}
-	if line := reviewSeamRefusal(ctx, from, to, body, crew, paths, o); line != "" {
+	if line := reviewSeamRefusal(ctx, from, to, body, crew, c.Log, o); line != "" {
 		say(stderr, "%s\n", line)
 		return exitFailure
 	}
 
 	build := func(b string) string { return msgLine(ts, crew, from, to, b) }
 	// An overseer may read the bus from another host, where the file is not.
-	if len(build(body)) > bus.LineMax && bus.ValidCrewID(crew) && !strings.HasPrefix(to, "overseer:") {
+	if len(build(body)) > bus.LineMax && !strings.HasPrefix(to, "overseer:") {
 		// The row keeps a head; a failed spill falls back to the elision.
-		if rel, err := spill.Write(paths.CrewDir(crew), ts, body); err != nil {
+		if rel, err := spill.Write(c.Dir, ts, body); err != nil {
 			say(stderr, "crew: msg: cannot spill the long body (%v); it is elided on the bus line\n", err)
 		} else {
 			build = func(b string) string { return spillLine(ts, crew, from, to, b, rel) }
 		}
 	}
-	return post("msg", paths, stderr, build, body)
+	return post("msg", c.Log, stderr, build, body)
 }
 
 // spillLine is a msg row whose body_file names the full body.
@@ -127,7 +128,7 @@ func hasC0(s string) bool {
 // a worker session is checked; every other msg, and every session the status
 // gate exempts, posts as before. The check is the status gate's own — same
 // task-doc condition, same plan.jq fold — and it fails closed.
-func reviewSeamRefusal(ctx context.Context, from, to, body, crew string, paths bus.Paths, o Options) string {
+func reviewSeamRefusal(ctx context.Context, from, to, body, crew, log string, o Options) string {
 	if !strings.HasPrefix(from, "worker:") || to != "review:"+crew || !isReviewSeam(body) {
 		return ""
 	}
@@ -135,7 +136,7 @@ func reviewSeamRefusal(ctx context.Context, from, to, body, crew string, paths b
 	if !ok || !planGated(doc) {
 		return ""
 	}
-	posted, err := foldSeam(o, planProg, readLog(paths.Log), seamVars(crew, from, doc))
+	posted, err := foldSeam(o, planProg, readLog(log), seamVars(crew, from, doc))
 	switch {
 	case err == nil && posted:
 		return ""

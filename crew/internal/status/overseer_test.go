@@ -187,3 +187,14 @@ func TestOverseerMsgRefusesARowThatWouldBeElided(t *testing.T) {
 	}
 	f.wantNoRow()
 }
+
+func TestOverseerMsgInvalidCrewID(t *testing.T) {
+	f := newFixture(t)
+	f.overseer("h1")
+	f.log()
+	code, stderr := f.overseerMsg("h1", "bad id", "hi")
+	if code != 1 || stderr != "crew: overseer msg: invalid crew id bad id\n" {
+		t.Errorf("got %d %q", code, stderr)
+	}
+	f.wantNoRow()
+}

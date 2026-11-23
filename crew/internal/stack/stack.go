@@ -117,6 +117,10 @@ func Run(ctx context.Context, req Request, paths bus.Paths, cwd string, stdout, 
 		_, _ = fmt.Fprint(stderr, noCrewID)
 		return 1
 	}
+	if _, err := paths.Crew(crew); err != nil {
+		_, _ = fmt.Fprintf(stderr, "crew: stack: invalid crew id %s\n", crew)
+		return 1
+	}
 
 	s := &stackCmd{
 		paths: paths, stdout: stdout, stderr: stderr, o: wtgit.Opts{Stderr: stderr},
@@ -155,10 +159,15 @@ func (s *stackCmd) busLines() ([]string, error) {
 		return s.lines, nil
 	}
 	s.logRead = true
-	if st, err := os.Stat(s.paths.Log); err != nil || !st.Mode().IsRegular() {
+	c, err := s.paths.Crew(s.crew)
+	if err != nil {
+		s.logErr = true
+		return nil, err
+	}
+	if st, err := os.Stat(c.Log); err != nil || !st.Mode().IsRegular() {
 		return nil, nil
 	}
-	data, err := os.ReadFile(s.paths.Log)
+	data, err := os.ReadFile(c.Log)
 	if err != nil {
 		s.logErr = true
 		return nil, errBus

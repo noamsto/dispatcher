@@ -760,3 +760,52 @@ func TestReplyToASessionShapedBranch(t *testing.T) {
 		t.Fatalf("stderr %q, want %q", errs, want)
 	}
 }
+
+func TestInvalidOwnCrewID(t *testing.T) {
+	tr := setup(t)
+	errs, code := tr.runReq(t, Options{}, Request{Crew: "bad id", To: "role:a", Body: "go"})
+	if code != 1 {
+		t.Fatalf("code %d, want 1 (%s)", code, errs)
+	}
+	if want := "crew: reply: invalid crew id bad id\n"; errs != want {
+		t.Fatalf("stderr\n got %q\nwant %q", errs, want)
+	}
+	if _, err := os.Stat(tr.paths.Dir); err == nil {
+		t.Error("bus dir created for a refused crew id")
+	}
+}
+
+// A crew_id the log carries but ValidCrewID refuses (a worker can plant one)
+// is still a candidate: it only loses the pid read.
+func TestMalformedLogCrewIDStaysACandidate(t *testing.T) {
+	tr := setup(t)
+	tr.crewDir(t, "c-a", "4321")
+	tr.write(t,
+		status(1785951000000, "c-a", "worker:feat/x#s1-1", "working"),
+		status(1785951100000, "bad id", "worker:feat/x#s2-2", "working"),
+	)
+	errs, code := tr.run(t, Options{CrewID: func() string { return "" }, Proc: proctest.New(map[int]bool{4321: true}, nil)}, "worker:feat/x", "go")
+	if code != 1 {
+		t.Fatalf("code %d, want 1 (%s)", code, errs)
+	}
+	if want := "crew: CREW_ID not set and feat/x has live sessions in crews: bad id, c-a — pass --crew <id>\n"; errs != want {
+		t.Fatalf("stderr\n got %q\nwant %q", errs, want)
+	}
+}
+
+// Only the chosen crew is posted as, so a malformed one that wins is refused
+// rather than given a crew directory.
+func TestMalformedLogCrewIDChosenIsRefused(t *testing.T) {
+	tr := setup(t)
+	tr.write(t, status(1785951100000, "bad id", "worker:feat/x#s2-2", "working"))
+	errs, code := tr.run(t, Options{CrewID: func() string { return "" }}, "worker:feat/x", "go")
+	if code != 1 {
+		t.Fatalf("code %d, want 1 (%s)", code, errs)
+	}
+	if want := "crew: reply: invalid crew id bad id\n"; errs != want {
+		t.Fatalf("stderr\n got %q\nwant %q", errs, want)
+	}
+	if got := len(tr.rows(t)); got != 1 {
+		t.Fatalf("%d rows, want the bus untouched at 1", got)
+	}
+}

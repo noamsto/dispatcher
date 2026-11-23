@@ -1591,3 +1591,15 @@ func TestUndeliveredDirectiveLeavesOtherStates(t *testing.T) {
 		})
 	}
 }
+
+func TestInvalidCrewID(t *testing.T) {
+	f := newFixture(t)
+	f.crew = "bad id"
+	code, stderr := f.status(worker, "working")
+	if code != 1 || stderr != "crew: status: invalid crew id bad id\n" {
+		t.Errorf("got %d %q", code, stderr)
+	}
+	if _, err := os.Stat(f.paths.Dir); err == nil {
+		t.Error("bus dir created for a refused crew id")
+	}
+}

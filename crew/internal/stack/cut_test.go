@@ -303,3 +303,13 @@ func TestCutNoCrewID(t *testing.T) {
 		t.Fatalf("cut with no crew id = %d, %q, %q", code, out, errOut)
 	}
 }
+
+func TestCutInvalidCrewID(t *testing.T) {
+	f := newFixture(t)
+	f.cutStack(t)
+	t.Setenv("CREW_ID", "bad id")
+	code, out, errOut := f.stackRun(t, Request{Child: "feat/child"})
+	if code != 1 || out != "" || errOut != "crew: stack: invalid crew id bad id\n" {
+		t.Fatalf("cut with an invalid crew id = %d, %q, %q", code, out, errOut)
+	}
+}
