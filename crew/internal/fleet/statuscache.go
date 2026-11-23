@@ -2,6 +2,7 @@ package fleet
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"fmt"
@@ -9,11 +10,13 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"syscall"
 	"time"
 
 	"github.com/noamsto/dispatcher/crew/internal/lock"
+	"github.com/noamsto/dispatcher/crew/internal/repos"
 )
 
 // CacheOptions are the status cache's outside reads, so tests use a temp dir
@@ -23,8 +26,8 @@ type CacheOptions struct {
 	Dir string
 	// User is part of the key: the output names that user's private paths.
 	User string
-	// Variant is part of the key: it names an input that changes the scan's
-	// host set.
+	// Variant is part of the key: it names the inputs that change the scan
+	// (see ScanVariant).
 	Variant string
 	// Now is the clock the file's age is read against; nil is time.Now.
 	Now func() time.Time
@@ -167,4 +170,30 @@ func writeCacheFile(path string, b []byte) error {
 		_ = os.Remove(name)
 	}
 	return err
+}
+
+// ScanVariant names the effective value of every environment input that
+// changes what the status scan finds, so callers whose scans would differ never
+// share a cache file while an unset variable and its default still do. Paths
+// are resolved the way the scan resolves them.
+func ScanVariant(lookup func(string) string) string {
+	roots := lookup("CREW_SWEEP_ROOTS")
+	if roots == "" {
+		roots = lookup("HOME")
+	}
+	statusDir := lookup("CLAUDE_STATUS_DIR")
+	if statusDir == "" {
+		statusDir = "/tmp/claude-status-" + strconv.Itoa(os.Getuid())
+	}
+	loadavg := lookup("DISPATCH_LOADAVG_FILE")
+	if loadavg == "" {
+		loadavg = "/proc/loadavg"
+	}
+	// $TMUX names the caller's own server socket, ahead of the default one.
+	socket, _, _ := strings.Cut(lookup("TMUX"), ",")
+	if socket == "" {
+		socket = filepath.Join(cmp.Or(lookup("TMUX_TMPDIR"), "/tmp"), "tmux-"+strconv.Itoa(os.Getuid()))
+	}
+	return fmt.Sprintf("overseer=%t roots=%q registry=%q state=%q status=%q loadavg=%q tmux=%q clock=%q",
+		lookup("CREW_OVERSEER") != "", roots, repos.RegistryPath(lookup), stateHome(lookup), statusDir, loadavg, socket, lookup("CREW_CLOCK"))
 }

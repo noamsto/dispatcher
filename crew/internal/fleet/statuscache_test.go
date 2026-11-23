@@ -257,3 +257,54 @@ func TestCachedStatusSymlinkDirScansPlainly(t *testing.T) {
 		t.Error("cached through a symlinked dir")
 	}
 }
+
+func TestCachedStatusKeysDifferByScanEnv(t *testing.T) {
+	home := t.TempDir()
+	envOf := func(over map[string]string) func(string) string {
+		return func(k string) string {
+			if v, ok := over[k]; ok {
+				return v
+			}
+			if k == "HOME" {
+				return home
+			}
+			return ""
+		}
+	}
+	for _, c := range []struct {
+		name string
+		env  map[string]string
+		same bool
+	}{
+		{"identical", nil, true},
+		{"default registry spelled out", map[string]string{"XDG_DATA_HOME": home + "/.local/share"}, true},
+		{"default state spelled out", map[string]string{"XDG_STATE_HOME": home + "/.local/state"}, true},
+		{"default roots spelled out", map[string]string{"CREW_SWEEP_ROOTS": home}, true},
+		{"default tmux dir spelled out", map[string]string{"TMUX_TMPDIR": "/tmp"}, true},
+		{"sweep roots", map[string]string{"CREW_SWEEP_ROOTS": "/srv/other"}, false},
+		{"registry", map[string]string{"XDG_DATA_HOME": "/srv/data"}, false},
+		{"state", map[string]string{"XDG_STATE_HOME": "/srv/state"}, false},
+		{"tmux tmpdir", map[string]string{"TMUX_TMPDIR": "/srv/tmux"}, false},
+		{"tmux socket", map[string]string{"TMUX": "/srv/sock,123,0"}, false},
+		{"overseer", map[string]string{"CREW_OVERSEER": "1"}, false},
+		{"status dir", map[string]string{"CLAUDE_STATUS_DIR": "/srv/status"}, false},
+		{"loadavg", map[string]string{"DISPATCH_LOADAVG_FILE": "/srv/loadavg"}, false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			o := cacheOpts(t)
+			var n atomic.Int32
+			a, b := o, o
+			a.Variant = ScanVariant(envOf(nil))
+			b.Variant = ScanVariant(envOf(c.env))
+			CachedStatus(context.Background(), StatusRequest{}, time.Minute, io.Discard, io.Discard, a, countingScan(&n, 0))
+			CachedStatus(context.Background(), StatusRequest{}, time.Minute, io.Discard, io.Discard, b, countingScan(&n, 0))
+			want := int32(2)
+			if c.same {
+				want = 1
+			}
+			if n.Load() != want {
+				t.Errorf("scans %d, want %d", n.Load(), want)
+			}
+		})
+	}
+}
