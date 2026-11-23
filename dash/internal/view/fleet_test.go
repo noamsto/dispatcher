@@ -538,8 +538,8 @@ func TestCrewInputsDrill(t *testing.T) {
 		t.Errorf("repo a digest = %+v", ci.Bus.PRs[12])
 	}
 	for _, e := range ci.Bus.Recent {
-		if !strings.HasPrefix(e.From, "worker:feat/a#") && !strings.HasPrefix(e.From, "worker:feat/b#") && e.From != "dispatcher:c1" {
-			t.Errorf("recent event from %q kept", e.From)
+		if e.Crew != "c1" {
+			t.Errorf("recent event of crew %q kept", e.Crew)
 		}
 	}
 	if !slices.ContainsFunc(view.BuildOverview(ci).Attention, func(a view.AttentionItem) bool { return a.Kind == view.KindHoldMatured }) {
@@ -558,8 +558,8 @@ func TestCrewInputsDrill(t *testing.T) {
 		t.Errorf("repo b row reads PR 12 checks %s", ci.Bus.PRs[12].Checks)
 	}
 	for _, e := range ci.Bus.Recent {
-		if !strings.HasPrefix(e.From, "worker:feat/b2#") {
-			t.Errorf("repo b c1 recent from %q", e.From)
+		if e.Crew != "c1" {
+			t.Errorf("repo b c1 recent of crew %q", e.Crew)
 		}
 	}
 

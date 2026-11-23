@@ -89,5 +89,11 @@
     ]
   },
   "events": [],
+  "scope": {
+    "crew": null,
+    "source": "none",
+    "known": false,
+    "crews": 0
+  },
   "errors": []
 }
