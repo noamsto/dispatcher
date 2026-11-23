@@ -139,8 +139,8 @@ teardown() {
   [ "$before" = "$after" ]
 }
 
-@test "all four commands reach claude-code" {
-  for n in dispatcher autopilot finish-prs project-autopilot; do
+@test "all five commands reach claude-code" {
+  for n in dispatcher autopilot finish-prs project-autopilot night-shift; do
     [ -f "$ROOT/adapters/claude-code/plugin/commands/$n.md" ]
   done
 }
@@ -201,8 +201,8 @@ finish_rows() {
   fi
 }
 
-# F01: engine-neutral dispatcher and autopilot commands reach cursor and codex.
-# Read-only file checks; no per-row reset.
+# F01: engine-neutral dispatcher, autopilot and night-shift commands reach cursor
+# and codex. Read-only file checks; no per-row reset.
 @test "the engine-neutral commands reach cursor and codex" {
   begin_rows
   local row path
@@ -218,7 +218,7 @@ ROWS
 
 commands_reach_row() { # path template containing $ROOT and $n
   local n path
-  for n in dispatcher autopilot; do
+  for n in dispatcher autopilot night-shift; do
     path=$1
     path=${path//\$ROOT/$ROOT}
     path=${path//\$n/$n}
