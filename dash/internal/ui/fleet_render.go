@@ -22,6 +22,7 @@ const (
 	fpCapacity
 	fpHolds
 	fpHosts
+	fpEvents
 	numFleetPanels
 )
 
@@ -43,6 +44,7 @@ const (
 	eHold
 	eHost
 	eSuggested
+	eFleetEvent
 )
 
 // fleetSections are the eSection titles, by entry idx.
@@ -67,6 +69,7 @@ type fleetState struct {
 	hold     string
 	host     string
 	capOff   int // Capacity has no selectable rows, so it scrolls
+	evOff    int // so do the events
 	filter   string
 	showDead bool // the dead crews section is expanded
 }
@@ -200,12 +203,12 @@ func effectiveFleetFocus(fv vm.FleetView, f fleetPanel) fleetPanel {
 	return f
 }
 
-// fleetShown is the body panels drawn at width w: all four when wide, else
+// fleetShown is the body panels drawn at width w: all five when wide, else
 // only the focused one (the crews while the strip has focus).
 func fleetShown(w int, focus fleetPanel) []fleetPanel {
 	switch {
 	case w >= wideWidth:
-		return []fleetPanel{fpCrews, fpCapacity, fpHolds, fpHosts}
+		return []fleetPanel{fpCrews, fpCapacity, fpHolds, fpHosts, fpEvents}
 	case focus == fpAttention:
 		return []fleetPanel{fpCrews}
 	}
@@ -324,8 +327,18 @@ func hostEntries(fv vm.FleetView) []entry {
 	return es
 }
 
+func fleetEventEntries(fv vm.FleetView) []entry {
+	es := make([]entry, len(fv.Events))
+	for i := range fv.Events {
+		es[i] = entry{kind: eFleetEvent, idx: i, worker: -1, lines: 1}
+	}
+	return es
+}
+
 func fleetEntries(p fleetPanel, fv vm.FleetView, ix fleetIndex) []entry {
 	switch p {
+	case fpEvents:
+		return fleetEventEntries(fv)
 	case fpCrews:
 		return crewEntries(fv, ix)
 	case fpCapacity:
@@ -415,8 +428,16 @@ func fleetLayout(w, h int, fv vm.FleetView, st fleetState) fleetRects {
 		rects[fpCrews] = rect{0, y, crewsW, bodyH}
 		right := []fleetPanel{fpCapacity, fpHolds, fpHosts}
 		want := make([]int, len(right))
+		sum := 0
 		for i, p := range right {
 			want[i] = max(1, totalLines(fleetEntries(p, fv, ix))) + 2
+			sum += want[i]
+		}
+		// Events rank last: drawn only when focused or when the others keep
+		// their wanted heights and a panel still fits, then they take the rest.
+		if effectiveFleetFocus(fv, st.focus) == fpEvents || bodyH >= sum+fleetPanelMinH {
+			right = append(right, fpEvents)
+			want = append(want, fleetPanelMinH)
 		}
 		py := y
 		focus := slices.Index(right, effectiveFleetFocus(fv, st.focus))
@@ -443,6 +464,8 @@ func fleetLayout(w, h int, fv vm.FleetView, st fleetState) fleetRects {
 			selIdx = r.sel.host
 		case fpCapacity:
 			es = es[clamp(st.capOff, 0, max0(len(es)-inner.h)):]
+		case fpEvents:
+			es = es[clamp(st.evOff, 0, max0(len(es)-inner.h)):]
 		}
 		placeIn := inner
 		if p == fpCrews && hasLegend(inner) {
@@ -523,8 +546,12 @@ func renderFleet(w, h int, fv vm.FleetView, st fleetState, mode pillMode) string
 		fpCapacity:  {title: "CAPACITY", count: capCount, color: colPurple},
 		fpHolds:     {title: "HOLDS", count: fmt.Sprintf("%d holds", len(fv.Holds)), color: colBlue},
 		fpHosts:     {title: "HOSTS", count: fmt.Sprintf("%d unhealthy of %d", fv.Summary.HostsUnhealthy, fv.Summary.Hosts), color: colGreen},
+		fpEvents:    {title: "RECENT EVENTS", count: fmt.Sprintf("%d in the last hour", len(fv.Events)), color: colTeal},
 	}
 	fr := fleetRow{fv: fv, r: r, focus: focus, tree: ix.tree, deadN: ix.deadN, showDead: ix.showDead}
+	if pl := r.panels[fpEvents]; pl.shown {
+		fr.evLabelW = eventLabelW(fv, pl.inner.w)
+	}
 	if pl := r.panels[fpCrews]; pl.shown {
 		fr.cols = crewCols(fv, ix, pl.inner.w)
 	}
@@ -543,6 +570,9 @@ func renderFleet(w, h int, fv vm.FleetView, st fleetState, mode pillMode) string
 		}
 		if len(pl.items) == 0 && p != fpAttention {
 			empty := " none"
+			if p == fpEvents {
+				empty = " no events in the last hour"
+			}
 			if pending[p] {
 				empty = " loading…"
 			}
@@ -562,7 +592,7 @@ func renderFleet(w, h int, fv vm.FleetView, st fleetState, mode pillMode) string
 	}
 	if left := r.panels[fpCrews]; left.shown && left.rect.w < w {
 		var right []string
-		for _, p := range []fleetPanel{fpCapacity, fpHolds, fpHosts} {
+		for _, p := range []fleetPanel{fpCapacity, fpHolds, fpHosts, fpEvents} {
 			pl := r.panels[p]
 			if !pl.shown {
 				continue
@@ -581,7 +611,7 @@ func renderFleet(w, h int, fv vm.FleetView, st fleetState, mode pillMode) string
 			lines = append(lines, l+rl)
 		}
 	} else {
-		for _, p := range []fleetPanel{fpCrews, fpCapacity, fpHolds, fpHosts} {
+		for _, p := range []fleetPanel{fpCrews, fpCapacity, fpHolds, fpHosts, fpEvents} {
 			if r.panels[p].shown {
 				lines = append(lines, body(p)...)
 			}
@@ -614,6 +644,7 @@ type fleetRow struct {
 
 	deadN    int
 	showDead bool
+	evLabelW int // the events' repo/crew column, sized to every row
 }
 
 // selected: the strip highlights its cursor while focused, else the chosen
@@ -684,10 +715,51 @@ func (fr fleetRow) line(it placed, iw int) string {
 		return fleetHoldLine(fv.Holds[it.idx], s, iw)
 	case eHost:
 		return fleetHostLine(fv.Hosts, it.idx, s, fv.Pending.Reach)
+	case eFleetEvent:
+		return fr.eventLine(fv.Events[it.idx], s, iw)
 	}
 	sh := fv.SuggestedHosts[it.idx]
 	return s.col(sh.Name, suggestedNameW(fv.SuggestedHosts), fg(colDim), false).add(" ", lipgloss.NewStyle()).
 		add(onlineWord(sh.Online), fg(onlineColor(sh.Online))).String()
+}
+
+func eventLabel(e vm.EventRow) string {
+	return e.Repo + "/" + shortCrew(e.Crew)
+}
+
+// eventLabelW is the widest repo/crew label, capped so the text keeps room.
+func eventLabelW(fv vm.FleetView, iw int) int {
+	w := 0
+	for _, e := range fv.Events {
+		w = max(w, ansi.StringWidth(eventLabel(e)))
+	}
+	return min(w, iw/3)
+}
+
+func (fr fleetRow) eventLine(e vm.EventRow, s *spans, iw int) string {
+	sp := func() *spans { return s.add(" ", lipgloss.NewStyle()) }
+	s.col(vm.Age(fr.fv.GeneratedAt-e.TS), 4, fg(colDim), true)
+	sp().col(eventLabel(e), fr.evLabelW, fg(colDim), false)
+	from := eventSender(e.Worker)
+	sp().col(from, ansi.StringWidth(from), fg(colText).Bold(true), false)
+	used := 1 + 4 + 1 + fr.evLabelW + 1 + ansi.StringWidth(from) + 1
+	return sp().col(e.Text, iw-used, fg(colText), false).String()
+}
+
+// eventSender names a bus sender as the Overview's events do, without a
+// roster: worker:<branch>[#session] is the branch and role:<branch>:<role> is
+// the branch with the role after a colon.
+func eventSender(from string) string {
+	if rest, ok := strings.CutPrefix(from, "worker:"); ok {
+		branch, _, _ := strings.Cut(rest, "#")
+		return branch
+	}
+	if rest, ok := strings.CutPrefix(from, "role:"); ok {
+		if branch, role, ok := strings.Cut(rest, ":"); ok {
+			return branch + ":" + role
+		}
+	}
+	return from
 }
 
 // fleetAttnLabel names who an attention item is about: the worker, else the

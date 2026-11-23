@@ -31,10 +31,10 @@
 │                                                                      ││ suggested (not admitted) ────────────────────│
 │                                                                      ││ evilhost online                              │
 │                                                                      ││ phone    offline                             │
-│                                                                      ││                                              │
-│                                                                      ││                                              │
-│                                                                      ││                                              │
-│                                                                      ││                                              │
-│                                                                      ││                                              │
-│ w working · b blocked · f failed · pr pr_open · N! attention         ││                                              │
+│                                                                      │╰──────────────────────────────────────────────╯
+│                                                                      │╭ RECENT EVENTS ───────── 16 in the last hour ─╮
+│                                                                      ││  now a/c1 feat/a progress note               │
+│                                                                      ││  now a/c1 pr-watch:12 PR #12 changed checks  │
+│                                                                      ││   1m a/c1 pr-watch:12 PR #12 changed checks  │
+│ w working · b blocked · f failed · pr pr_open · N! attention         ││   1m a/c1 feat/b pr_open AC1 pass(go test); …│
 ╰──────────────────────────────────────────────────────────────────────╯╰──────────────────────────────────────────────╯

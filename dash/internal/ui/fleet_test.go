@@ -346,7 +346,7 @@ const (
 
 func TestFleetFocusCycle(t *testing.T) {
 	v, _ := flFixture(t, 120, 40, false)
-	want := []fleetPanel{fpCrews, fpCapacity, fpHolds, fpHosts, fpAttention, fpCrews}
+	want := []fleetPanel{fpCrews, fpCapacity, fpHolds, fpHosts, fpEvents, fpAttention, fpCrews}
 	for i, p := range want {
 		v, _ = flKeys(v, "tab")
 		if v.st.focus != p {
@@ -354,8 +354,8 @@ func TestFleetFocusCycle(t *testing.T) {
 		}
 	}
 	v, _ = flKeys(v, "shift+tab", "shift+tab")
-	if v.st.focus != fpHosts {
-		t.Errorf("shift+tab x2: focus = %v, want hosts", v.st.focus)
+	if v.st.focus != fpEvents {
+		t.Errorf("shift+tab x2: focus = %v, want events", v.st.focus)
 	}
 
 	e, _ := flFixture(t, 120, 40, false)
@@ -1185,4 +1185,92 @@ func TestFleetSubTreeLastAndDupesCountVisibleRows(t *testing.T) {
 			t.Errorf("s2 is the only visible sub row on its repo, dupe = true")
 		}
 	})
+}
+
+func eventsFleet(events []vm.EventRow) vm.FleetView {
+	fv := vm.BuildFleet(viewtest.FleetInputs())
+	fv.GeneratedAt = 1_000_000
+	fv.Events = events
+	return fv
+}
+
+func TestFleetRecentEvents(t *testing.T) {
+	asciiProfile(t)
+	fv := eventsFleet([]vm.EventRow{
+		{TS: 1_000_000 - 30, Worker: "worker:feat/a1#2", Text: "pushed the branch", Crew: "c1c1c1c1c1c1", Repo: "alpha"},
+		{TS: 1_000_000 - 400, Worker: "role:feat/b5:reviewer", Text: "review done", Crew: "c5", Repo: "beta"},
+		{TS: 1_000_000 - 3000, Worker: "dispatcher", Text: "hello", Crew: "c1", Repo: "alpha"},
+	})
+	out := stripped(fleetFixtureView(fv).View(200, 60))
+	for _, want := range []string{"RECENT EVENTS", "3 in the last hour", "alpha/c1c1c1c1", "beta/c5", "feat/a1", "feat/b5:reviewer", "review done", "now", "6m", "50m"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("fleet view lacks %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestFleetRecentEventsEmpty(t *testing.T) {
+	asciiProfile(t)
+	out := stripped(fleetFixtureView(eventsFleet(nil)).View(200, 60))
+	if !strings.Contains(out, "no events in the last hour") {
+		t.Errorf("empty events: no empty-state text:\n%s", out)
+	}
+}
+
+func TestFleetRecentEventsAgeBucketStable(t *testing.T) {
+	asciiProfile(t)
+	ev := []vm.EventRow{{TS: 1_000_000 - 130, Worker: "dispatcher", Text: "tick", Crew: "c1", Repo: "alpha"}}
+	a := eventsFleet(ev)
+	b := a
+	b.GeneratedAt += 5
+	if x, y := fleetFixtureView(a).View(200, 60), fleetFixtureView(b).View(200, 60); x != y {
+		t.Errorf("frames within one age bucket differ:\n%s\n---\n%s", x, y)
+	}
+	for _, l := range strings.Split(stripped(fleetFixtureView(a).View(200, 60)), "\n") {
+		if strings.Contains(l, "alpha/c1") && strings.Contains(l, "tick") && !strings.Contains(l, "│   2m alpha/c1") {
+			t.Errorf("age is not a right-aligned 4-cell column: %q", l)
+		}
+	}
+}
+
+func TestFleetEventsYieldToOtherPanels(t *testing.T) {
+	asciiProfile(t)
+	fv := vm.BuildFleet(viewtest.FleetInputs())
+	if len(fv.Events) == 0 {
+		t.Fatal("fixture has no events")
+	}
+	bare := fv
+	bare.Events = nil
+	hostsOf := func(v fleetView) []string {
+		var out []string
+		in := false
+		for _, l := range strings.Split(stripped(v.View(100, 30)), "\n") {
+			r := []rune(l)
+			if len(r) < 60 {
+				continue
+			}
+			l = string(r[60:])
+			switch {
+			case strings.Contains(l, "╭ HOSTS"):
+				in = true
+			case strings.Contains(l, "╭ RECENT EVENTS"), strings.Contains(l, "╰"):
+				in = in && !strings.Contains(l, "╰")
+			}
+			if in {
+				out = append(out, l)
+			}
+		}
+		return out
+	}
+	v := fleetFixtureView(fv)
+	if out := stripped(v.View(100, 30)); strings.Contains(out, "RECENT EVENTS") {
+		t.Errorf("100x30: events drawn without spare rows or focus:\n%s", out)
+	}
+	if got, want := hostsOf(v), hostsOf(fleetFixtureView(bare)); strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Errorf("Hosts differs from the no-events frame:\n%s\n---\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+	v.st.focus = fpEvents
+	if out := stripped(v.View(100, 30)); !strings.Contains(out, "RECENT EVENTS") {
+		t.Errorf("100x30: focused events panel not drawn:\n%s", out)
+	}
 }
