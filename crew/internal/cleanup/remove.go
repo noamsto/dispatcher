@@ -261,12 +261,10 @@ func (o Options) treeState(ctx context.Context, admin string, it *Item, stderr i
 
 // inside reports whether dir is wt or below it, through symlinks.
 func inside(dir, wt string) bool {
-	for _, p := range [][2]string{{dir, wt}} {
-		d, errD := filepath.EvalSymlinks(p[0])
-		w, errW := filepath.EvalSymlinks(p[1])
-		if errD == nil && errW == nil {
-			return strings.HasPrefix(d+"/", w+"/")
-		}
+	d, errD := filepath.EvalSymlinks(dir)
+	w, errW := filepath.EvalSymlinks(wt)
+	if errD != nil || errW != nil {
+		d, w = dir, wt
 	}
-	return strings.HasPrefix(dir+"/", wt+"/")
+	return strings.HasPrefix(d+"/", w+"/")
 }
