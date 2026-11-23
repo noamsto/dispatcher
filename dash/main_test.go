@@ -270,7 +270,7 @@ func TestRetroReportWithoutRowsRendersNoNotesYet(t *testing.T) {
 	}
 }
 
-const usageText = "usage: crew dash [--narrow | --once | --json [--view <name> [--watch] [--keeps]]]\n" +
+const usageText = "usage: crew dash [--crew <id>] [--narrow | --once | --json [--view <name> [--watch] [--keeps]]]\n" +
 	"views: overview, roster, budget, runs, settings, map, fleet\n"
 
 func TestUnknownArgumentExits2WithUsage(t *testing.T) {
@@ -326,6 +326,13 @@ func TestParseArgs(t *testing.T) {
 		{args: []string{"--narrow", "--json"}, wantErr: "--narrow takes no other flags"},
 		{args: []string{"--json", "extra"}, wantErr: `unknown argument "extra"`},
 		{args: []string{"--json", "--json"}, wantErr: "--json given twice"},
+		{args: []string{"--crew", "abc"}, want: opts{crew: "abc"}},
+		{args: []string{"--once", "--crew", "abc"}, want: opts{mode: "once", crew: "abc"}},
+		{args: []string{"--json", "--view", "overview", "--crew", "abc"}, want: opts{mode: "json", view: "overview", crew: "abc"}},
+		{args: []string{"--narrow", "--crew", "abc"}, want: opts{narrow: true, crew: "abc"}},
+		{args: []string{"--crew", "a", "--crew", "b"}, wantErr: "--crew given twice"},
+		{args: []string{"--crew"}, wantErr: "--crew needs an id"},
+		{args: []string{"--crew", ""}, wantErr: "--crew needs an id"},
 	} {
 		t.Run(strings.Join(tc.args, " "), func(t *testing.T) {
 			got, err := parseArgs(tc.args)
@@ -725,6 +732,32 @@ func TestResolveCrewMakesRelativeCrewBinAbsolute(t *testing.T) {
 	}
 	if !slices.Equal(got, []string{want}) {
 		t.Errorf("resolveCrew = %v, want [%s]", got, want)
+	}
+}
+
+func TestResolveConfigCrewScope(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		env        string
+		o          opts
+		wantID     string
+		wantSource string
+	}{
+		{name: "flag over env", env: "env-crew", o: opts{crew: "flag-crew"}, wantID: "flag-crew", wantSource: "flag"},
+		{name: "env without flag", env: "env-crew", wantID: "env-crew", wantSource: "env"},
+		{name: "neither", wantID: "", wantSource: ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("CREW_ID", tc.env)
+			t.Setenv("TMUX_PANE", "%7")
+			cfg := resolveConfig(tc.o)
+			if cfg.CrewID != tc.wantID || cfg.CrewIDSource != tc.wantSource {
+				t.Errorf("CrewID/Source = %q/%q, want %q/%q", cfg.CrewID, cfg.CrewIDSource, tc.wantID, tc.wantSource)
+			}
+			if cfg.Pane != "%7" {
+				t.Errorf("Pane = %q, want %%7", cfg.Pane)
+			}
+		})
 	}
 }
 

@@ -98,12 +98,12 @@ func TestFleetSizeSweep(t *testing.T) {
 func TestFleetShortWideFocusDrawn(t *testing.T) {
 	asciiProfile(t)
 	titles := map[fleetPanel]string{
-		fpAttention: "ATTENTION", fpCrews: "CREWS", fpCapacity: "CAPACITY", fpHolds: "HOLDS", fpHosts: "HOSTS",
+		fpAttention: "ATTENTION", fpCrews: "CREWS", fpCapacity: "CAPACITY", fpHolds: "HOLDS", fpHosts: "HOSTS", fpEvents: "RECENT EVENTS",
 	}
 	for _, h := range []int{10, 12, 14} {
 		m := sized(fleetRootModel(t, viewtest.FleetInputs()), 120, h)
 		seen := map[fleetPanel]bool{}
-		for range 6 {
+		for range int(numFleetPanels) {
 			m = sweepKeys(m, keyType(tea.KeyTab))
 			f := m.views[fleetTab].(fleetView).st.focus
 			seen[f] = true
@@ -135,7 +135,7 @@ func TestSplitHeightsFocusFirst(t *testing.T) {
 func TestFleetPanelsDrawnAtLayoutRects(t *testing.T) {
 	asciiProfile(t)
 	titles := map[fleetPanel]string{
-		fpAttention: "ATTENTION", fpCrews: "CREWS", fpCapacity: "CAPACITY", fpHolds: "HOLDS", fpHosts: "HOSTS",
+		fpAttention: "ATTENTION", fpCrews: "CREWS", fpCapacity: "CAPACITY", fpHolds: "HOLDS", fpHosts: "HOSTS", fpEvents: "RECENT EVENTS",
 	}
 	withAttn := vm.BuildFleet(viewtest.FleetInputs())
 	allClear := withAttn

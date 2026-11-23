@@ -456,3 +456,139 @@ func TestScanSubagentsIncremental(t *testing.T) {
 		t.Fatalf("second scan = %+v, %v", d.Subagents[key], err)
 	}
 }
+
+func rawRow(ts int64, crew, from, branch, kind string) string {
+	m := map[string]any{"ts": ts, "from": from, "kind": kind, "body": map[string]any{"state": "working"}}
+	if crew != "" {
+		m["crew_id"] = crew
+	}
+	if branch != "" {
+		m["branch"] = branch
+	}
+	b, _ := json.Marshal(m)
+	return string(b)
+}
+
+func TestRecentCrewAttribution(t *testing.T) {
+	d := scanRows(t,
+		rawRow(digestBase, "c1", "worker:feat/a#s1", "", "status"),
+		rawRow(digestBase+1, "", "dispatcher:c2", "", "msg"),
+		rawRow(digestBase+2, "", "crew", "feat/a", "reap"),
+		rawRow(digestBase+3, "", "worker:feat/a#s1", "", "status"),
+		rawRow(digestBase+4, "", "crew", "feat/none", "reap"),
+		rawRow(digestBase+5, "", "someone", "", "msg"),
+	)
+	want := []string{"c1", "c2", "c1", "c1", "", ""}
+	if len(d.Recent) != len(want) {
+		t.Fatalf("recent = %d rows, want %d", len(d.Recent), len(want))
+	}
+	for i, w := range want {
+		if d.Recent[i].Crew != w {
+			t.Errorf("row %d crew = %q, want %q", i, d.Recent[i].Crew, w)
+		}
+	}
+	if got := len(d.RecentByCrew["c1"]); got != 3 {
+		t.Errorf("c1 ring = %d, want 3", got)
+	}
+	if got := len(d.RecentByCrew["c2"]); got != 1 {
+		t.Errorf("c2 ring = %d, want 1", got)
+	}
+	if _, ok := d.RecentByCrew[""]; ok {
+		t.Error("unattributed rows must not get a ring")
+	}
+}
+
+func TestRecentByCrewBusyDoesNotEvictQuiet(t *testing.T) {
+	rows := []string{}
+	for i := range 3 {
+		rows = append(rows, rawRow(digestBase+int64(i), "quiet", "worker:feat/q#s1", "", "status"))
+	}
+	for i := range 200 {
+		rows = append(rows, rawRow(digestBase+100+int64(i), "busy", "worker:feat/b#s1", "", "status"))
+	}
+	d := scanRows(t, rows...)
+	if got := len(d.RecentByCrew["quiet"]); got != 3 {
+		t.Errorf("quiet ring = %d, want 3", got)
+	}
+	if got := len(d.RecentByCrew["busy"]); got != recentCap {
+		t.Errorf("busy ring = %d, want %d", got, recentCap)
+	}
+	if got := d.RecentByCrew["busy"][0].TS; got != digestBase+100+200-recentCap {
+		t.Errorf("busy ring keeps oldest row ts=%d", got)
+	}
+}
+
+func TestRecentByCrewEvictsStalest(t *testing.T) {
+	rows := []string{}
+	// c10 is the stalest: its only row has the smallest TS, though it is written last.
+	for i := range maxCrewRings {
+		rows = append(rows, rawRow(digestBase+100+int64(i), fmt.Sprintf("c%d", i), "dispatcher:x", "", "msg"))
+	}
+	rows[10] = rawRow(digestBase, "c10", "dispatcher:x", "", "msg")
+	rows = append(rows, rawRow(digestBase+500, "new", "dispatcher:x", "", "msg"))
+	d := scanRows(t, rows...)
+	if len(d.RecentByCrew) != maxCrewRings {
+		t.Fatalf("rings = %d, want %d", len(d.RecentByCrew), maxCrewRings)
+	}
+	if _, ok := d.RecentByCrew["c10"]; ok {
+		t.Error("stalest ring survived")
+	}
+	if _, ok := d.RecentByCrew["new"]; !ok {
+		t.Error("new crew has no ring")
+	}
+}
+
+func TestRecentCrewBranchMapIncremental(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "events.jsonl")
+	write := func(flag int, rows ...string) {
+		t.Helper()
+		f, err := os.OpenFile(path, flag, 0o600)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = f.Close() }()
+		if _, err := f.WriteString(strings.Join(rows, "\n") + "\n"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s := NewBusScanner(path)
+	write(os.O_CREATE|os.O_WRONLY, rawRow(digestBase, "c1", "worker:feat/a#s1", "", "status"))
+	if _, err := s.Scan(digestBase); err != nil {
+		t.Fatal(err)
+	}
+	write(os.O_APPEND|os.O_WRONLY, rawRow(digestBase+1, "", "crew", "feat/a", "reap"))
+	d, err := s.Scan(digestBase)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := d.Recent[len(d.Recent)-1].Crew; got != "c1" {
+		t.Errorf("reap crew after incremental scan = %q, want c1", got)
+	}
+
+	// Truncation drops the branch map along with the rest of the digest.
+	write(os.O_TRUNC|os.O_WRONLY, rawRow(digestBase, "", "crew", "feat/a", "reap"))
+	d, err = s.Scan(digestBase)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(d.Recent) != 1 || d.Recent[0].Crew != "" || len(d.RecentByCrew) != 0 {
+		t.Errorf("after truncate: recent=%+v byCrew=%v", d.Recent, d.RecentByCrew)
+	}
+}
+
+func TestRecentByCrewCloneIsolation(t *testing.T) {
+	_, s := digestFixture(t)
+	d, _ := s.Scan(digestBase + 10000)
+	for k := range d.RecentByCrew {
+		d.RecentByCrew[k][0].Detail = "mutated"
+	}
+	d2, _ := s.Scan(digestBase + 10000)
+	for k, v := range d2.RecentByCrew {
+		if v[0].Detail == "mutated" {
+			t.Errorf("ring %q aliases scanner state", k)
+		}
+	}
+	if len(d2.RecentByCrew) == 0 {
+		t.Fatal("fixture produced no rings")
+	}
+}

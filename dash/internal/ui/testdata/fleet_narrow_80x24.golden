@@ -2,7 +2,7 @@
 │ 1 ✗ @tp relay to tp lost (1 remote workers)         2h                       │
 │ 2 ✗ c3  dispatcher gone, 2 workers                  2h → relaunch dispatcher │
 │▌3 ✗ w-b reviewer: role reviewer engine exited (p…   6m → peek                │
-│▌4 ✗ far far on far: ssh: connect to host far por…  10s → peek                │
+│▌4 ✗ far far on far: ssh: connect to host far por…  now → peek                │
 ╰──────────────────────────────────────────────────────────────────────────────╯
 ╭ ▸ CREWS ────────────────────────────────────────────── 7 crews · 13 workers ─╮
 │▌● c1 @lap a alive 3w 1pr 1? 4!                                               │

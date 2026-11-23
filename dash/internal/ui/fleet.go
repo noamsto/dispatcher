@@ -308,7 +308,7 @@ func (v *fleetView) drillKey(msg tea.KeyMsg) tea.Cmd {
 
 // cycle moves focus through the panels, skipping the strip when it is empty.
 func (v *fleetView) cycle(d int) {
-	order := []fleetPanel{fpCrews, fpCapacity, fpHolds, fpHosts}
+	order := []fleetPanel{fpCrews, fpCapacity, fpHolds, fpHosts, fpEvents}
 	if len(v.fv.Attention) > 0 {
 		order = append([]fleetPanel{fpAttention}, order...)
 	}
@@ -367,6 +367,9 @@ func (v *fleetView) move(d int) {
 	case fpCapacity:
 		maxOff := max0(len(capacityEntries(v.fv)) - r.panels[fpCapacity].inner.h)
 		v.st.capOff = clamp(clamp(v.st.capOff, 0, maxOff)+d, 0, maxOff)
+	case fpEvents:
+		maxOff := max0(len(v.fv.Events) - r.panels[fpEvents].inner.h)
+		v.st.evOff = clamp(clamp(v.st.evOff, 0, maxOff)+d, 0, maxOff)
 	}
 }
 

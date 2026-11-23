@@ -721,6 +721,120 @@
       }
     }
   ],
+  "events": [
+    {
+      "ts": 1794799990,
+      "worker": "worker:feat/a#s1",
+      "text": "progress note",
+      "crew": "c1",
+      "repo": "a"
+    },
+    {
+      "ts": 1794799980,
+      "worker": "pr-watch:12",
+      "text": "PR #12 changed checks",
+      "crew": "c1",
+      "repo": "a"
+    },
+    {
+      "ts": 1794799950,
+      "worker": "pr-watch:12",
+      "text": "PR #12 changed checks",
+      "crew": "c1",
+      "repo": "a"
+    },
+    {
+      "ts": 1794799900,
+      "worker": "worker:feat/b#s1",
+      "text": "pr_open AC1 pass(go test); AC2 pass(bats); AC3 waived(dispatcher: n/a)",
+      "crew": "c1",
+      "repo": "a"
+    },
+    {
+      "ts": 1794799850,
+      "worker": "pr-watch:12",
+      "text": "PR #12 changed checks",
+      "crew": "c1",
+      "repo": "b"
+    },
+    {
+      "ts": 1794799800,
+      "worker": "worker:feat/b2#s1",
+      "text": "pr_open AC1 pass(go test)",
+      "crew": "c1",
+      "repo": "b"
+    },
+    {
+      "ts": 1794799700,
+      "worker": "worker:feat/c5#s1",
+      "text": "blocked awaiting owner decision (cycle 1 of 24)",
+      "crew": "c5",
+      "repo": "b"
+    },
+    {
+      "ts": 1794799600,
+      "worker": "role:feat/b:reviewer",
+      "text": "failed role reviewer engine exited (pane %9)",
+      "crew": "c1",
+      "repo": "a"
+    },
+    {
+      "ts": 1794799600,
+      "worker": "worker:feat/c5#s1",
+      "text": "working execute",
+      "crew": "c5",
+      "repo": "b"
+    },
+    {
+      "ts": 1794799500,
+      "worker": "worker:feat/b#s1",
+      "text": "working execute",
+      "crew": "c1",
+      "repo": "a"
+    },
+    {
+      "ts": 1794799500,
+      "worker": "worker:feat/b2#s1",
+      "text": "working spec",
+      "crew": "c1",
+      "repo": "b"
+    },
+    {
+      "ts": 1794799400,
+      "worker": "worker:feat/a#s1",
+      "text": "working execute",
+      "crew": "c1",
+      "repo": "a"
+    },
+    {
+      "ts": 1794799300,
+      "worker": "role:feat/a:plan-critic",
+      "text": "seam plan: accept",
+      "crew": "c1",
+      "repo": "a"
+    },
+    {
+      "ts": 1794799200,
+      "worker": "worker:feat/a#s1",
+      "text": "working plan",
+      "crew": "c1",
+      "repo": "a"
+    },
+    {
+      "ts": 1794799100,
+      "worker": "worker:feat/b#s1",
+      "text": "working spec",
+      "crew": "c1",
+      "repo": "a"
+    },
+    {
+      "ts": 1794799000,
+      "worker": "worker:feat/a#s1",
+      "text": "working spec",
+      "crew": "c1",
+      "repo": "a"
+    }
+  ],
   "suggested_hosts": [],
   "errors": [
     "tailscale: exit 127"

@@ -16,6 +16,9 @@ var (
 
 const activityBuckets = 30
 
+// eventWindowSec bounds the unscoped and fleet event lists.
+const eventWindowSec = 3600
+
 type OverviewView struct {
 	SchemaVersion int              `json:"schema_version"`
 	View          string           `json:"view"`
@@ -26,7 +29,18 @@ type OverviewView struct {
 	Agents        []AgentRow       `json:"agents"`
 	Monitors      Monitors         `json:"monitors"`
 	Events        []EventRow       `json:"events"`
+	Scope         OverviewScope    `json:"scope"`
 	Errors        []string         `json:"errors"`
+}
+
+// OverviewScope reports which crew the view is narrowed to; Crew is null when
+// unscoped.
+type OverviewScope struct {
+	Crew   *string `json:"crew"`
+	Source string  `json:"source"`
+	Known  bool    `json:"known"`
+	Crews  int     `json:"crews"`
+	Error  string  `json:"error,omitempty"`
 }
 
 type Summary struct {
@@ -147,6 +161,8 @@ type EventRow struct {
 	TS     int64  `json:"ts"`
 	Worker string `json:"worker"`
 	Text   string `json:"text"`
+	Crew   string `json:"crew,omitempty"`
+	Repo   string `json:"repo,omitempty"`
 }
 
 func boolRank(b bool) int {
@@ -329,10 +345,12 @@ func activityOf(d *data.WorkerDigest, now int64) []int {
 	return buckets
 }
 
-func fmtDur(sec int64) string {
+// Age is coarse on purpose: a row's text only changes at minute and hour
+// boundaries, so a live refresh does not reflow it every second.
+func Age(sec int64) string {
 	switch {
 	case sec < 60:
-		return fmt.Sprintf("%ds", max(sec, 0))
+		return "now"
 	case sec < 3600:
 		return fmt.Sprintf("%dm", sec/60)
 	}
@@ -354,7 +372,7 @@ func watchdogLabel(w WorkerRow) string {
 	if w.AgeS == nil {
 		return word
 	}
-	return word + " " + fmtDur(*w.AgeS)
+	return word + " " + Age(*w.AgeS)
 }
 
 func paceOf(ahead *int64) string {
@@ -393,14 +411,40 @@ func budgetRows(r *data.BudgetReport) []BudgetRow {
 	return rows
 }
 
-func eventRows(recent []data.RecentEvent) []EventRow {
-	rows := make([]EventRow, 0, len(recent))
-	for i := len(recent) - 1; i >= 0; i-- {
-		e := recent[i]
+// eventRows lists a ring newest first; repo labels fleet rows.
+func eventRows(ring []data.RecentEvent, repo string) []EventRow {
+	rows := make([]EventRow, 0, len(ring))
+	for i := len(ring) - 1; i >= 0; i-- {
+		e := ring[i]
 		from, text := summarizeEvent(e)
-		rows = append(rows, EventRow{TS: e.TS / 1000, Worker: from, Text: text})
+		rows = append(rows, EventRow{TS: e.TS / 1000, Worker: from, Text: text, Crew: e.Crew, Repo: repo})
 	}
 	return rows
+}
+
+// overviewEvents is the scoped crew's whole ring, or the last hour of the
+// repo's rows when unscoped.
+func overviewEvents(in Inputs, now int64) []EventRow {
+	if crew := in.Snap.Roster.Scope.Crew; crew != "" {
+		return eventRows(in.Bus.RecentByCrew[crew], "")
+	}
+	return eventRows(recentSince(in.Bus.Recent, now), "")
+}
+
+func recentSince(ring []data.RecentEvent, now int64) []data.RecentEvent {
+	cut := (now - eventWindowSec) * 1000
+	return slices.DeleteFunc(slices.Clone(ring), func(e data.RecentEvent) bool { return e.TS < cut })
+}
+
+func overviewScope(sc data.Scope) OverviewScope {
+	out := OverviewScope{Crew: nil, Source: sc.Source, Known: sc.Known, Crews: sc.Crews, Error: sc.Err}
+	if sc.Crew != "" {
+		out.Crew = &sc.Crew
+	}
+	if out.Source == "" {
+		out.Source = "none"
+	}
+	return out
 }
 
 func overviewErrors(in Inputs, rows []WorkerRow) []string {
@@ -456,7 +500,8 @@ func BuildOverview(in Inputs) OverviewView {
 		Workers:       make([]OverviewWorker, 0, len(rows)),
 		Agents:        make([]AgentRow, 0, len(rows)),
 		Monitors:      Monitors{Watchdogs: []WatchdogRow{}, PRChecks: []PRCheckRow{}, Budgets: budgetRows(in.Snap.Budget.Report)},
-		Events:        eventRows(in.Bus.Recent),
+		Events:        overviewEvents(in, now),
+		Scope:         overviewScope(in.Snap.Roster.Scope),
 		Errors:        overviewErrors(in, rows),
 	}
 	dispatchers := map[string]*WorkerDispatcher{}

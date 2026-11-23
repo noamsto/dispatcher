@@ -13,6 +13,9 @@ import (
 // peerSyncStaleSec matches crew's PeerStale: an older last good sync is stale.
 const peerSyncStaleSec = 300
 
+// fleetEventsCap bounds the fleet view's merged event list.
+const fleetEventsCap = 30
+
 // FleetInputs is everything the machine-wide view reads. Digests and
 // DigestErrs are keyed by repo common dir; Snap supplies budget and settings.
 type FleetInputs struct {
@@ -49,6 +52,7 @@ type FleetView struct {
 	Capacity       FleetCapacity        `json:"capacity"`
 	Holds          []FleetHoldRow       `json:"holds"`
 	Hosts          []FleetHostRow       `json:"hosts"`
+	Events         []EventRow           `json:"events"`
 	SuggestedHosts []data.SuggestedHost `json:"suggested_hosts"`
 	Errors         []string             `json:"errors"`
 	Pending        FleetPending         `json:"-"`
@@ -396,6 +400,7 @@ func (c fleetCrew) inputs(f FleetInputs) Inputs {
 		rc.Lane = &data.LaneStatus{State: *lane}
 	}
 	in.Snap.Roster.Crews = []data.RosterCrew{rc}
+	in.Snap.Roster.Scope = data.Scope{Crew: c.crew, Source: "fleet", Known: true, Crews: 1}
 	in.Bus = c.digest(f)
 	in.Dir = c.dir()
 	return in
@@ -406,12 +411,12 @@ func (c fleetCrew) dispatcherLoc() *data.DispatcherLoc {
 	case !c.live():
 		return &data.DispatcherLoc{Where: "none"}
 	case c.homeRepo == c.repo:
-		return &data.DispatcherLoc{Where: "here"}
+		return &data.DispatcherLoc{Where: "here", Since: c.home.Dispatcher.Since}
 	}
 	return &data.DispatcherLoc{Where: "elsewhere", Repo: &c.homeRepo.Repo, Common: &c.homeRepo.Common}
 }
 
-// digest is the repo's digest with Recent cut to this crew's own events.
+// digest is the repo's digest with Recent set to this crew's own ring.
 func (c fleetCrew) digest(f FleetInputs) data.BusDigest {
 	d, ok := f.Digests[c.repo.Common]
 	if !ok {
@@ -420,23 +425,7 @@ func (c fleetCrew) digest(f FleetInputs) data.BusDigest {
 		}
 		return d
 	}
-	branches := map[string]bool{}
-	for _, w := range c.local.Workers {
-		branches[str(w, "branch")] = true
-	}
-	recent := make([]data.RecentEvent, 0, len(d.Recent))
-	for _, e := range d.Recent {
-		if e.From == "dispatcher:"+c.crew {
-			recent = append(recent, e)
-			continue
-		}
-		if b, worker := strings.CutPrefix(e.From, "worker:"); worker {
-			if b, _, _ = strings.Cut(b, "#"); branches[b] {
-				recent = append(recent, e)
-			}
-		}
-	}
-	d.Recent = recent
+	d.Recent = slices.Clone(d.RecentByCrew[c.crew])
 	return d
 }
 
@@ -572,6 +561,7 @@ func BuildFleet(f FleetInputs) FleetView {
 		Summary:        FleetSummary{ByState: map[string]int{}},
 		Attention:      []AttentionItem{},
 		Crews:          []FleetCrewRow{},
+		Events:         []EventRow{},
 		Capacity:       fleetCapacity(f),
 		Holds:          fleetHolds(f),
 		SuggestedHosts: nonNil(f.Fleet.Suggested),
@@ -602,6 +592,10 @@ func BuildFleet(f FleetInputs) FleetView {
 			v.Summary.HiddenCrews++
 			continue
 		}
+		if c.origin == OriginLocal {
+			ring := f.Digests[c.repo.Common].RecentByCrew[c.crew]
+			v.Events = append(v.Events, eventRows(recentSince(ring, now), c.repo.Repo)...)
+		}
 		key := c.key
 		for i := range items {
 			items[i].CrewKey = &key
@@ -620,6 +614,8 @@ func BuildFleet(f FleetInputs) FleetView {
 	v.Attention = append(v.Attention, hostItems...)
 	sortAttention(v.Attention)
 
+	slices.SortStableFunc(v.Events, func(a, b EventRow) int { return cmp.Compare(b.TS, a.TS) })
+	v.Events = v.Events[:min(len(v.Events), fleetEventsCap)]
 	v.Crews, v.Summary.Crews = groupCrews(built)
 	v.Summary.Attention = len(v.Attention)
 	v.Summary.Hosts = len(v.Hosts)
@@ -924,7 +920,7 @@ func fleetHosts(f FleetInputs, locals []builtCrew, now int64) ([]FleetHostRow, [
 			})
 		}
 		if s := row.Sync; s.State == "stale" || s.State == "failed" {
-			msg := fmt.Sprintf("peer %s sync stale %s", h.Name, fmtDur(*s.LagSec))
+			msg := fmt.Sprintf("peer %s sync stale %s", h.Name, Age(*s.LagSec))
 			if s.State == "failed" {
 				msg = fmt.Sprintf("peer %s sync failed", h.Name)
 				if s.Error != nil {
