@@ -105,6 +105,7 @@ type FleetDispatcher struct {
 	LastEventS *int64  `json:"last_event_s"`
 	Home       *string `json:"home"`
 	PaneState  *string `json:"pane_state"`
+	Since      *int64  `json:"-"`
 }
 
 type FleetCrewHold struct {
@@ -207,7 +208,26 @@ func CollectFleetStatus(ctx context.Context, r Runner, cfg Config, maxAge int) (
 		return nil, &msg
 	}
 	st.normalize(cfg.Now)
+	st.stampSince()
 	return &st, nil
+}
+
+// stampSince fills Since on live dispatchers of this host's repos from the
+// crew pid file; other hosts' paths are not on this disk.
+func (st *FleetStatus) stampSince() {
+	for i := range st.Repos {
+		repo := &st.Repos[i]
+		if repo.Host != st.Host {
+			continue
+		}
+		crewsDir := filepath.Join(repo.Common, "crew", "crews")
+		for j := range repo.Crews {
+			c := &repo.Crews[j]
+			if c.Dispatcher.State == "live" {
+				c.Dispatcher.Since = pidSince(crewsDir, c.CrewID)
+			}
+		}
+	}
 }
 
 // CollectFleetQueue treats any non-zero exit as failure: the queue exits 0

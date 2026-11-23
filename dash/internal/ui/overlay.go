@@ -219,7 +219,7 @@ func detailLines(ov vm.OverviewView, wi, iw int) []string {
 			continue
 		}
 		n++
-		out = append(out, "   "+fg(colDim).Render(ovAge(ov.GeneratedAt-e.TS))+" "+cleanText(e.Text))
+		out = append(out, "   "+fg(colDim).Render(fmt.Sprintf("%*s", ageColW, ovAge(ov.GeneratedAt-e.TS)))+" "+cleanText(e.Text))
 	}
 	if n == 0 {
 		out = append(out, "   "+fg(colDim).Render("none"))

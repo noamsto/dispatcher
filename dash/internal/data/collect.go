@@ -247,11 +247,18 @@ func stampSince(ctx context.Context, r Runner, cfg Config, ids []string, locs ma
 		if locs[id].Where != "here" {
 			continue
 		}
-		if fi, err := os.Stat(filepath.Join(crewsDir, id, "pid")); err == nil {
-			since := fi.ModTime().Unix()
-			locs[id].Since = &since
-		}
+		locs[id].Since = pidSince(crewsDir, id)
 	}
+}
+
+// pidSince is the mtime of a crew's pid file in unix seconds, nil when unreadable.
+func pidSince(crewsDir, id string) *int64 {
+	fi, err := os.Stat(filepath.Join(crewsDir, id, "pid"))
+	if err != nil {
+		return nil
+	}
+	since := fi.ModTime().Unix()
+	return &since
 }
 
 // CollectRoster re-runs only the roster sources (crew crews / roster / hold

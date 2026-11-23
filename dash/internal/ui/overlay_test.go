@@ -7,6 +7,8 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/muesli/termenv"
+
+	vm "github.com/noamsto/dispatcher/dash/internal/view"
 )
 
 func TestOverlayComposite(t *testing.T) {
@@ -70,6 +72,33 @@ func TestOverlayCompositeWideCharEdges(t *testing.T) {
 		out := composite(base, []string{strings.Repeat("X", tc.bw)}, tc.x, 0, w)
 		if got := ansi.StringWidth(out[0]); got != w {
 			t.Errorf("x=%d bw=%d: row is %d cells, want %d: %q", tc.x, tc.bw, got, w, ansi.Strip(out[0]))
+		}
+	}
+}
+
+func TestDetailEventTextColumnIsStable(t *testing.T) {
+	const text = "pushed fix"
+	render := func(now, ts int64) string {
+		ov := vm.OverviewView{
+			GeneratedAt: now,
+			Workers:     []vm.OverviewWorker{{Branch: "feat/x"}},
+			Events:      []vm.EventRow{{TS: ts, Worker: "worker:feat/x", Text: text}},
+		}
+		for _, l := range detailLines(ov, 0, 80) {
+			if p := ansi.Strip(l); strings.Contains(p, text) {
+				return p
+			}
+		}
+		t.Fatal("no event line")
+		return ""
+	}
+	if a, b := render(1000, 990), render(1005, 990); a != b {
+		t.Errorf("same bucket differs: %q vs %q", a, b)
+	}
+	for _, tc := range []struct{ from, to int64 }{{50, 70}, {540, 600}} {
+		a, b := render(1000+tc.from, 1000), render(1000+tc.to, 1000)
+		if ia, ib := strings.Index(a, text), strings.Index(b, text); ia != ib {
+			t.Errorf("%ds->%ds: text column %d -> %d: %q vs %q", tc.from, tc.to, ia, ib, a, b)
 		}
 	}
 }

@@ -829,3 +829,32 @@ func countHeads(v view.FleetView) int {
 	}
 	return n
 }
+
+func TestFleetLaneGraceFollowsDispatcherSince(t *testing.T) {
+	for name, tc := range map[string]struct {
+		ago  int64
+		want bool
+	}{"relaunched 100s ago": {100, false}, "relaunched 400s ago": {400, true}} {
+		t.Run(name, func(t *testing.T) {
+			c := crewIn("1794000000-1", "live", map[string]any{"branch": "feat/w", "name": "feat/w", "state": "working", "tier": "standard", "engine": "claude", "live": true, "age_s": float64(30)})
+			c.Dispatcher.Lane = strp("dead")
+			since := viewtest.FleetNowMS/1000 - tc.ago
+			c.Dispatcher.Since = &since
+			in := fleetIn(data.FleetRepo{Host: "lap", Repo: "a", Common: "/r/a/.git", Crews: []data.FleetCrew{c}})
+			key := "lap|/r/a/.git|1794000000-1"
+			hasDead := func(items []view.AttentionItem) bool {
+				return slices.ContainsFunc(items, func(a view.AttentionItem) bool { return a.Kind == view.KindLaneDead })
+			}
+			if got := hasDead(view.BuildFleet(in).Attention); got != tc.want {
+				t.Errorf("fleet lane_dead = %v, want %v", got, tc.want)
+			}
+			ci, ok := view.CrewInputs(in, key)
+			if !ok {
+				t.Fatalf("no crew inputs for %s", key)
+			}
+			if got := hasDead(view.BuildOverview(ci).Attention); got != tc.want {
+				t.Errorf("drill-down lane_dead = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
