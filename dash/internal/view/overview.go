@@ -329,10 +329,12 @@ func activityOf(d *data.WorkerDigest, now int64) []int {
 	return buckets
 }
 
-func fmtDur(sec int64) string {
+// Age is coarse on purpose: a row's text only changes at minute and hour
+// boundaries, so a live refresh does not reflow it every second.
+func Age(sec int64) string {
 	switch {
 	case sec < 60:
-		return fmt.Sprintf("%ds", max(sec, 0))
+		return "now"
 	case sec < 3600:
 		return fmt.Sprintf("%dm", sec/60)
 	}
@@ -354,7 +356,7 @@ func watchdogLabel(w WorkerRow) string {
 	if w.AgeS == nil {
 		return word
 	}
-	return word + " " + fmtDur(*w.AgeS)
+	return word + " " + Age(*w.AgeS)
 }
 
 func paceOf(ahead *int64) string {

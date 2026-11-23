@@ -1815,7 +1815,7 @@
         "host": "",
         "origin": "local",
         "state": "working",
-        "label": "ok 45s",
+        "label": "ok now",
         "activity": [
           0,
           0,
@@ -2064,7 +2064,7 @@
         "host": "",
         "origin": "local",
         "state": "working",
-        "label": "ok 30s",
+        "label": "ok now",
         "activity": [
           0,
           0,

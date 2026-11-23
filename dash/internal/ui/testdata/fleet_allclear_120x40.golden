@@ -14,7 +14,7 @@
 │                                                                      ││ low    b/feat/q3         parked:oversize  16m│
 │                                                                      │╰──────────────────────────────────────────────╯
 │                                                                      │╭ HOSTS ──────────────────── 3 unhealthy of 4 ─╮
-│                                                                      ││ box  ○ ts  relay idle sync ok 5s             │
+│                                                                      ││ box  ○ ts  relay idle sync ok now            │
 │                                                                      ││ halo ● ts  relay up   sync —                 │
 │                                                                      ││ mbp  ● ts  relay idle sync failed 10m        │
 │                                                                      ││ tp   ○ ts  relay down sync —                 │

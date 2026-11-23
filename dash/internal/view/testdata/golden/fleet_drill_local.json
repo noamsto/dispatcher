@@ -712,7 +712,7 @@
         "host": "",
         "origin": "local",
         "state": "working",
-        "label": "ok 20s",
+        "label": "ok now",
         "activity": [
           0,
           0,
@@ -792,7 +792,7 @@
         "host": "halo",
         "origin": "remote_worker",
         "state": "working",
-        "label": "ok 15s",
+        "label": "ok now",
         "activity": null
       },
       {
@@ -810,7 +810,7 @@
         "host": "far",
         "origin": "remote_worker",
         "state": "",
-        "label": "? 10s",
+        "label": "? now",
         "activity": null
       }
     ],

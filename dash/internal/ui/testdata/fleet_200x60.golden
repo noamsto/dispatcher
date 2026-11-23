@@ -2,7 +2,7 @@
 │▌1 ✗ @tp  relay to tp lost (1 remote workers) — restore the relay link to the host                                                                                           2h                       │
 │ 2 ✗ c3   dispatcher gone, 2 workers — relaunch the dispatcher or finish its workers                                                                                         2h → relaunch dispatcher │
 │ 3 ✗ w-b  reviewer: role reviewer engine exited (pane %9) — restart the role pane or `crew nudge` the worker                                                                 6m → peek                │
-│ 4 ✗ far  far on far: ssh: connect to host far port 22: timed out — re-arm the remote watch for the host                                                                    10s → peek                │
+│ 4 ✗ far  far on far: ssh: connect to host far port 22: timed out — re-arm the remote watch for the host                                                                    now → peek                │
 │ 5 ! @mbp peer mbp sync failed: ssh: Connection refused — clears when the peer's next sync succeeds                                                                         10m                       │
 │ 6 ! w-c5 blocked — a `crew reply` to its question                                                                                                                           5m → reply               │
 │ 7 ! c1   hold h-q1 matured — release or drop the hold                                                                                                                       2m → inspect             │
@@ -24,7 +24,7 @@
 │                                                                                                                      ││ low    b/feat/q3                                         parked:oversize  16m│
 │                                                                                                                      │╰──────────────────────────────────────────────────────────────────────────────╯
 │                                                                                                                      │╭ HOSTS ──────────────────────────────────────────────────── 3 unhealthy of 4 ─╮
-│                                                                                                                      ││ box  ○ ts  relay idle sync ok 5s                                             │
+│                                                                                                                      ││ box  ○ ts  relay idle sync ok now                                            │
 │                                                                                                                      ││ halo ● ts  relay up   sync —                                                 │
 │                                                                                                                      ││ mbp  ● ts  relay idle sync failed 10m                                        │
 │                                                                                                                      ││ tp   ○ ts  relay down sync —                                                 │

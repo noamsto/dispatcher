@@ -924,7 +924,7 @@ func fleetHosts(f FleetInputs, locals []builtCrew, now int64) ([]FleetHostRow, [
 			})
 		}
 		if s := row.Sync; s.State == "stale" || s.State == "failed" {
-			msg := fmt.Sprintf("peer %s sync stale %s", h.Name, fmtDur(*s.LagSec))
+			msg := fmt.Sprintf("peer %s sync stale %s", h.Name, Age(*s.LagSec))
 			if s.State == "failed" {
 				msg = fmt.Sprintf("peer %s sync failed", h.Name)
 				if s.Error != nil {

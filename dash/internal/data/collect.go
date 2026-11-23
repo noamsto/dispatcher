@@ -24,6 +24,11 @@ type Config struct {
 	RefreshBudget     string
 	Git               string
 	Now               int64
+	// CrewID scopes the roster to one crew; CrewIDSource is "flag" or "env".
+	CrewID       string
+	CrewIDSource string
+	// Pane is the dash's own tmux pane ($TMUX_PANE), used to infer the scope.
+	Pane string
 }
 
 // Collect runs every read-only source through r concurrently and folds the
@@ -233,26 +238,44 @@ func CollectRoster(ctx context.Context, r Runner, cfg Config) RosterSection {
 	rc := exitCode(err)
 	if rc != 0 {
 		msg := firstLineOrExit(errb, rc)
-		return RosterSection{Crews: []RosterCrew{}, Error: &msg}
+		sc := explicitScope(cfg)
+		if sc.Crew == "" {
+			sc.Source = "none"
+		}
+		return RosterSection{Crews: []RosterCrew{}, Error: &msg, Scope: sc}
 	}
 
 	rows := parseCrewRows(out)
+	sc := resolveScope(ctx, r, cfg, rows)
 	var candidates []crewRow
 	for _, row := range rows {
-		if row.alive != "yes" && row.workers > 0 {
+		if row.alive != "yes" && row.workers > 0 && (sc.Crew == "" || row.id == sc.Crew) {
 			candidates = append(candidates, row)
 		}
 	}
 	elsewhere, foreignErr := foreignCrews(ctx, r, cfg, candidates)
 	var ids []string
 	locs := map[string]*DispatcherLoc{}
-	for _, row := range rows {
-		if row.alive == "yes" {
-			ids = append(ids, row.id)
-			locs[row.id] = &DispatcherLoc{Where: "here"}
-		} else if loc, ok := elsewhere[row.id]; ok {
-			ids = append(ids, row.id)
-			locs[row.id] = loc
+	if sc.Crew != "" {
+		ids = []string{sc.Crew}
+		locs[sc.Crew] = &DispatcherLoc{Where: "none"}
+		for _, row := range rows {
+			if row.id == sc.Crew && row.alive == "yes" {
+				locs[sc.Crew] = &DispatcherLoc{Where: "here"}
+			}
+		}
+		if loc, ok := elsewhere[sc.Crew]; ok {
+			locs[sc.Crew] = loc
+		}
+	} else {
+		for _, row := range rows {
+			if row.alive == "yes" {
+				ids = append(ids, row.id)
+				locs[row.id] = &DispatcherLoc{Where: "here"}
+			} else if loc, ok := elsewhere[row.id]; ok {
+				ids = append(ids, row.id)
+				locs[row.id] = loc
+			}
 		}
 	}
 	crews := make([]RosterCrew, len(ids))
@@ -266,7 +289,15 @@ func CollectRoster(ctx context.Context, r Runner, cfg Config) RosterSection {
 		}()
 	}
 	wg.Wait()
-	return RosterSection{Crews: crews, Peers: mergePeers(peerRows), ForeignError: foreignErr}
+	peers := mergePeers(peerRows)
+	if sc.Crew != "" {
+		peers = slices.DeleteFunc(peers, func(row map[string]any) bool {
+			crew, _ := row["crew_id"].(string)
+			return crew != sc.Crew
+		})
+	}
+	sc.Crews = len(crews)
+	return RosterSection{Crews: crews, Peers: peers, ForeignError: foreignErr, Scope: sc}
 }
 
 // fleetStatusTimeout bounds the fleet-status lookup so a stuck call cannot

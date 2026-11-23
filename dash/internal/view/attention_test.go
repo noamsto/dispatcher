@@ -295,3 +295,93 @@ func TestAttentionMigratedIsNotAttention(t *testing.T) {
 		}
 	}
 }
+
+// laneInputs is a one-crew roster whose lane is in state; peers are dropped so
+// only the crew under test can raise items.
+func laneInputs(id, state string, workers []map[string]any, holds []map[string]any) view.Inputs {
+	in := viewtest.Inputs()
+	in.Snap.Roster.Peers = nil
+	in.Snap.Roster.Crews = []data.RosterCrew{{
+		ID: id, Workers: workers, Holds: holds,
+		Lane: &data.LaneStatus{State: state}, Dispatcher: &data.DispatcherLoc{Where: "here"},
+	}}
+	return in
+}
+
+func laneWorker(state string) map[string]any {
+	return map[string]any{"branch": "feat/w", "name": "feat/w", "state": state, "tier": "standard", "engine": "claude", "live": true, "age_s": float64(30)}
+}
+
+func maturedHold() map[string]any {
+	return map[string]any{"id": "h1", "wait": map[string]any{"kind": "quota", "resets_at": float64(1794800000)}}
+}
+
+func hasLane(v view.OverviewView) bool {
+	return slices.ContainsFunc(v.Attention, func(a view.AttentionItem) bool {
+		return a.Kind == view.KindLaneDead || a.Kind == view.KindLaneStale
+	})
+}
+
+func TestLaneItemsNeedActNow(t *testing.T) {
+	const (
+		old    = "1794000000-123"
+		recent = "1794800500-123"
+		past   = "1794800200-123"
+	)
+	work, done := []map[string]any{laneWorker("working")}, []map[string]any{laneWorker("done")}
+	cases := []struct {
+		name    string
+		id      string
+		state   string
+		workers []map[string]any
+		holds   []map[string]any
+		where   string
+		want    view.Kind
+	}{
+		{"dead, nothing running", old, "dead", nil, nil, "here", ""},
+		{"dead, terminal workers only", old, "dead", done, nil, "here", ""},
+		{"dead with a working worker", old, "dead", work, nil, "here", view.KindLaneDead},
+		{"stale with a working worker", old, "stale", work, nil, "here", view.KindLaneStale},
+		{"matured hold, no worker", old, "dead", nil, []map[string]any{maturedHold()}, "here", view.KindLaneDead},
+		{"launched 100s ago", recent, "dead", work, nil, "here", ""},
+		{"launched 400s ago", past, "dead", work, nil, "here", view.KindLaneDead},
+		{"unparseable id", "c1", "dead", work, nil, "here", view.KindLaneDead},
+		{"dispatcher elsewhere", old, "dead", work, nil, "elsewhere", ""},
+		{"no dispatcher", old, "dead", work, nil, "none", ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			in := laneInputs(c.id, c.state, c.workers, c.holds)
+			in.Snap.Roster.Crews[0].Dispatcher.Where = c.where
+			v := view.BuildOverview(in)
+			var got view.Kind
+			for _, a := range v.Attention {
+				if a.Kind == view.KindLaneDead || a.Kind == view.KindLaneStale {
+					got = a.Kind
+				}
+			}
+			if got != c.want {
+				t.Errorf("lane item = %q, want %q (items %v)", got, c.want, ids(v))
+			}
+		})
+	}
+}
+
+func TestLaneItemWithoutDispatcherProbe(t *testing.T) {
+	in := laneInputs("1794000000-1", "dead", []map[string]any{laneWorker("working")}, nil)
+	in.Snap.Roster.Crews[0].Dispatcher = nil
+	if v := view.BuildOverview(in); !hasLane(v) {
+		t.Errorf("unprobed crew lost its lane item: %v", ids(v))
+	}
+}
+
+func TestRoleFailedNeedsWorkingWorker(t *testing.T) {
+	for state, want := range map[string]bool{"done": false, "working": true} {
+		in := viewtest.Inputs()
+		setWorker(in, "feat/a", map[string]any{"state": state})
+		got := slices.Contains(ids(view.BuildOverview(in)), "role_failed:c1:feat/a")
+		if got != want {
+			t.Errorf("state %s: role_failed raised = %v, want %v", state, got, want)
+		}
+	}
+}

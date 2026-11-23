@@ -271,15 +271,7 @@ func rowLabel(branch, host string) string {
 }
 
 func ovAge(sec int64) string {
-	switch {
-	case sec < 5:
-		return "now"
-	case sec < 60:
-		return fmt.Sprintf("%ds", sec)
-	case sec < 3600:
-		return fmt.Sprintf("%dm", sec/60)
-	}
-	return fmt.Sprintf("%dh", sec/3600)
+	return vm.Age(sec)
 }
 
 // checklistEntries is one card per visible worker. A peer placeholder with no

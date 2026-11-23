@@ -11,14 +11,14 @@
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭ CHECKLISTS ─────────────────────────────────────────────────── 0 of 13 done ─╮╭ AGENTS ────────────────────────────────────── 17 agents ─╮╭ MONITORS ─────────────────────────────────── 11 watched ─╮
 │ ● otter standard                                                         AC —││ ● otter sonnet standard                                  ││ WATCHDOG ────────────────────────────────────────────────│
-│   ●─●─◉─○─○─○ execute                                                        ││   roles ● pla ✗ rev   sub ●1                             ││ otter      ▁▁▁▁▁▁▄▁▄▁▁▄▁▁▁▁▁▁▁▁▁▄▁▁▁▁▁▁█▄ ok 45s         │
+│   ●─●─◉─○─○─○ execute                                                        ││   roles ● pla ✗ rev   sub ●1                             ││ otter      ▁▁▁▁▁▁▄▁▄▁▁▄▁▁▁▁▁▁▁▁▁▄▁▁▁▁▁▁█▄ ok now         │
 │   Task feat/a                                                                ││ ● heron sonnet standard                                  ││ heron      ▁▁▁▁▁▁▁█▁█▁▁█▁▁▁█▁█▁▁▁▁▁▁▁▁▁▁▁ ok 10m         │
 │ ● heron standard                                                       AC 5/5││   roles —                                                ││ feat/c     ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁ ok 5m          │
 │   ●─●─●─●─●─● pr_open                                                        ││ ● feat/c sonnet standard                                 ││ feat/d     ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁ prompt 3m      │
 │   Task feat/b                                                                ││   roles ✗ spe                                            ││ feat/e     ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁ stall 4m       │
 │ ● feat/c standard                                                        AC —││ ● feat/d sonnet standard                                 ││ feat/f     ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁ runaway 2m     │
 │   ○─○─○─○─○─○ blocked                                                        ││   roles —                                                ││ feat/r@ha… ······························ ok 7m          │
-│   Task feat/c                                                                ││ ● feat/e sonnet standard                                 ││ feat/j     ▁▁▁▁▁▁▁▁▁▁▁▁▁▁█▁▁▁▁▁▁▁▁▁▁█▁▁▁▁ ok 30s         │
+│   Task feat/c                                                                ││ ● feat/e sonnet standard                                 ││ feat/j     ▁▁▁▁▁▁▁▁▁▁▁▁▁▁█▁▁▁▁▁▁▁▁▁▁█▁▁▁▁ ok now         │
 │ ● feat/d standard                                                        AC —││   roles —                                                ││ feat/p@mbp ······························ ok             │
 │   ○─○─○─○─○─○ blocked                                                        ││ ● feat/f sonnet standard                                 ││ feat/q@nuc ······························ ?              │
 │   Task feat/d                                                                ││   roles —                                                ││ @halo      ······························ ?              │

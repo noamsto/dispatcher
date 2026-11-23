@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/noamsto/dispatcher/dash/internal/data"
@@ -200,6 +201,41 @@ func mergeReady(w WorkerRow, in Inputs) bool {
 
 var severityRank = map[Severity]int{SeverityCritical: 0, SeverityWarning: 1, SeverityReady: 2}
 
+// laneGraceSec is how long a freshly launched crew may take to bring its lane up.
+const laneGraceSec = 300
+
+var crewIDRe = regexp.MustCompile(`^(\d{10})-\d+$`)
+
+// crewLaunched parses the launch time out of a crew id of the form <unix>-<n>.
+func crewLaunched(id string, now int64) (int64, bool) {
+	m := crewIDRe.FindStringSubmatch(id)
+	if m == nil {
+		return 0, false
+	}
+	t, err := strconv.ParseInt(m[1], 10, 64)
+	if err != nil || t < now-10*365*86400 || t > now+60 {
+		return 0, false
+	}
+	return t, true
+}
+
+// laneActionable reports whether a bad lane needs a human now: the dispatcher
+// is here, something depends on it, and the crew is past its launch grace.
+func laneActionable(c data.RosterCrew, rows []WorkerRow, now int64) bool {
+	if c.Dispatcher != nil && c.Dispatcher.Where != "here" {
+		return false
+	}
+	if launched, ok := crewLaunched(c.ID, now); ok && now-launched < laneGraceSec {
+		return false
+	}
+	for _, w := range rows {
+		if w.Crew == c.ID && w.Origin != OriginPeer && w.working() {
+			return true
+		}
+	}
+	return slices.ContainsFunc(c.Holds, func(h map[string]any) bool { return HoldRowOf(h, now).Matured })
+}
+
 func buildAttention(in Inputs, rows []WorkerRow) []AttentionItem {
 	now := in.nowSec()
 	items := []AttentionItem{}
@@ -234,7 +270,7 @@ func buildAttention(in Inputs, rows []WorkerRow) []AttentionItem {
 	failedRoles := map[data.WorkerKey][]string{}
 	for k, r := range in.Bus.Roles {
 		wk := data.WorkerKey{Crew: k.Crew, Branch: k.Branch}
-		if _, live := byKey[wk]; live && roleFailed(k.Role, r) {
+		if w, live := byKey[wk]; live && w.working() && roleFailed(k.Role, r) {
 			failedRoles[wk] = append(failedRoles[wk], k.Role)
 		}
 	}
@@ -254,7 +290,7 @@ func buildAttention(in Inputs, rows []WorkerRow) []AttentionItem {
 	}
 
 	for _, c := range in.Snap.Roster.Crews {
-		if c.Lane != nil && (c.Lane.State == "dead" || c.Lane.State == "stale") {
+		if c.Lane != nil && (c.Lane.State == "dead" || c.Lane.State == "stale") && laneActionable(c, rows, now) {
 			kind, sev := KindLaneDead, SeverityCritical
 			if c.Lane.State == "stale" {
 				kind, sev = KindLaneStale, SeverityWarning
