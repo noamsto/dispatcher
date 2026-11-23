@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/clock"
 	"github.com/noamsto/dispatcher/crew/internal/frame"
 	"github.com/noamsto/dispatcher/crew/internal/git"
@@ -149,6 +150,9 @@ func (r *rel) tmux(args []string) (string, error) {
 		return seq[i], nil
 	}
 	r.calls = append(r.calls, "tmux "+strings.Join(args, " "))
+	if len(args) == 3 && args[0] == "kill-window" {
+		r.dropWindow(args[2])
+	}
 	switch {
 	case args[0] == "list-windows" && strings.Contains(args[3], "window_active"):
 		return r.wlist, nil
@@ -160,6 +164,21 @@ func (r *rel) tmux(args []string) (string, error) {
 		return r.stamps[args[3]], nil
 	}
 	return "", nil
+}
+
+// dropWindow is what a kill does to the fake server: the window's @crew_id
+// stamp and list entries are gone for every later read.
+func (r *rel) dropWindow(w string) {
+	delete(r.stamps, w)
+	for _, list := range []*string{&r.wins, &r.panes} {
+		var keep []string
+		for _, line := range strings.Split(*list, "\n") {
+			if id, _, _ := strings.Cut(line, "\t"); id != w {
+				keep = append(keep, line)
+			}
+		}
+		*list = strings.Join(keep, "\n")
+	}
 }
 
 func (r *rel) probes() Probes {
@@ -189,7 +208,7 @@ func (r *rel) probes() Probes {
 func (r *rel) release(state string, grace int64, dry bool) (int, error) {
 	r.t.Helper()
 	d := Deps{
-		Common: r.common, Log: r.log, P: r.probes(),
+		Paths: bus.Paths{Common: r.common, Log: r.log}, P: r.probes(),
 		Say:  func(s string) { r.says = append(r.says, s) },
 		Note: func(s string) { r.notes = append(r.notes, s) },
 	}
@@ -224,7 +243,7 @@ func TestReleaseNoWorktreeDoesNothing(t *testing.T) {
 	g := &gittest.Fake{Out: map[string]string{"--git-dir=" + r.common + " worktree list --porcelain": ""}}
 	p := r.probes()
 	p.Git = g
-	d := Deps{Common: r.common, Log: r.log, P: p, Say: func(string) {}, Note: func(string) {}}
+	d := Deps{Paths: bus.Paths{Common: r.common, Log: r.log}, P: p, Say: func(string) {}, Note: func(string) {}}
 	rc, err := ReleaseWindows(context.Background(), d, "feat/unknown", "s", "done", statusTS, 300, false)
 	if rc != 0 || err != nil || len(r.calls) != 0 {
 		t.Fatalf("rc=%d err=%v calls=%q", rc, err, r.calls)

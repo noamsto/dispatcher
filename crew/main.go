@@ -17,6 +17,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/alecthomas/kong"
@@ -799,7 +800,10 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 	if sub == "stack" {
 		st := parsed.typed.Stack
 		req := stack.Request{Record: st.Cut.Record, Child: st.Cut.Child, Oid: st.Cut.Oid, Top: st.Align.Top}
-		return stack.Run(ctx, req, paths, cwd, stdout, stderr, stack.Options{Probes: stack.DefaultProbes()})
+		return stack.Run(ctx, req, paths, cwd, stdout, stderr, stack.Options{
+			Probes: stack.DefaultProbes(),
+			CrewID: func(ctx context.Context, cwd string) string { return e.crewID(ctx, cwd, "", false) },
+		})
 	}
 
 	// crews emits TSV, reads the log with its own torn-line tolerance, and
@@ -1095,7 +1099,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 	if sub == "nudge" {
 		n := parsed.typed.Nudge
 		req, _ := nudge.NewRequest(str(n.Crew), n.Target, n.Wait)
-		crewID := func() string { return e.crewID(ctx, cwd, str(n.Crew), false) }
+		crewID := sync.OnceValue(func() string { return e.crewID(ctx, cwd, str(n.Crew), false) })
 		o := nudge.Default(paths, stderr, os.Getpid(), crewID)
 		o.Sender = senderProbes(e.proc)
 		o.Remote = func(host string, argv []string) int {
@@ -1234,8 +1238,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 			},
 			Release: func(ctx context.Context, branch, session, state string, tsMS, grace int64) (int, error) {
 				return reap.ReleaseWindows(ctx, reap.Deps{
-					Common: paths.Common, Log: paths.Log,
-					Say: func(string) {}, Note: func(string) {},
+					Paths: paths,
+					Say:   func(string) {}, Note: func(string) {},
 					P: reap.DefaultProbes(),
 				}, branch, session, state, tsMS, grace, false)
 			},

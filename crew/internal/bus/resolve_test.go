@@ -66,6 +66,7 @@ func TestResolveCrewID(t *testing.T) {
 		{name: "nil window", wantErr: ErrNoCrew},
 		{name: "empty window", l: Lookup{Window: window("")}, wantErr: ErrNoCrew},
 		{name: "invalid flag", l: Lookup{Flag: "a/b"}, want: "a/b", invalid: true},
+		{name: "invalid header", task: ptr("crew_id: ../x\n"), want: "../x", invalid: true},
 		{name: "invalid env", env: "-x", want: "-x", invalid: true},
 		{name: "invalid window", l: Lookup{Window: window("..")}, want: "..", invalid: true},
 	}

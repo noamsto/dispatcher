@@ -205,7 +205,7 @@ func (r *run) appendStale(c *candidate, row staleRow) {
 	}
 	now := r.p.Clock.Now().UnixMilli()
 	row.TS, row.CrewID, row.Kind, row.Branch, row.Session = now, c.scrow, "stale", c.branch, c.session
-	if err := r.p.Append(r.paths.Log, rowLine(row)); err != nil {
+	if err := r.p.Append(rowLog(r.paths, c.scrow), rowLine(row)); err != nil {
 		return
 	}
 	if r.staleRecs == nil {

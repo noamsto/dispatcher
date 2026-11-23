@@ -126,9 +126,9 @@ func (w *watcher) loop() int {
 	return 0
 }
 
-// logPath is the crew's log. The crew comes from a window stamp, which is
-// enumerated, not the caller's own id, so a bad one reads the repo log rather
-// than failing the watcher.
+// logPath is the crew's log. An invalid window stamp is enumerated, not the
+// caller's own id, so it reads the repo log rather than failing the watcher;
+// an invalid own id was refused at start.
 func (w *watcher) logPath() string {
 	if bc, err := w.o.Paths.Crew(w.crew); err == nil {
 		return bc.Log

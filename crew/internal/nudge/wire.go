@@ -100,7 +100,7 @@ func Default(paths bus.Paths, stderr io.Writer, pid int, crewID func() string) O
 			}
 			return probe.BusRows(log, 0, maxLines)
 		},
-		Git:  git.Exec{},
+		Git: git.Exec{},
 		Exists: func(path string) bool {
 			st, err := os.Stat(path)
 			return err == nil && st.Mode().IsRegular()

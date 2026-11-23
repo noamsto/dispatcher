@@ -112,7 +112,11 @@ func Run(ctx context.Context, req Request, paths bus.Paths, cwd string, stdout, 
 		}
 		return 1
 	}
-	crew := bus.CrewID(ctx, cwd)
+	crewID := o.CrewID
+	if crewID == nil {
+		crewID = bus.CrewID
+	}
+	crew := crewID(ctx, cwd)
 	if crew == "" {
 		_, _ = fmt.Fprint(stderr, noCrewID)
 		return 1

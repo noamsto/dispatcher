@@ -186,6 +186,9 @@ func TestStartupRefusals(t *testing.T) {
 			opts: func(o *Options) {
 				o.CurrentBranch = func() (string, error) { return "", errors.New("git: not a repository") }
 			}},
+		{name: "invalid own id without a stamp", reads: map[string]string{readCrew: ""},
+			want: "crew: role-watch: invalid crew id ../x",
+			opts: func(o *Options) { o.CrewID = func() string { return "../x" } }},
 		{name: "no bus", want: "dispatch: --role-watch: no crew bus: not in a git repository", code: 128,
 			opts: func(o *Options) { o.LogErr = errors.New("not a repo") }},
 	}

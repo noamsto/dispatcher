@@ -36,6 +36,15 @@ func rowCrewID(ctx context.Context, tm tmux.Client, windows []string, wt, branch
 	return ""
 }
 
+// rowLog is the log a row carrying crew id goes to; an id that does not resolve
+// keeps the repo log.
+func rowLog(paths bus.Paths, id string) string {
+	if c, err := paths.Crew(id); err == nil {
+		return c.Log
+	}
+	return paths.Log
+}
+
 // recordCrewID is line 5 of wt's worktree record, "" when the record is
 // missing, not a regular file or has no fifth line.
 func recordCrewID(wt string) string {

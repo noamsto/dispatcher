@@ -239,7 +239,7 @@ func deliver(paths bus.Paths, c call, o Options, stdout, stderr io.Writer, orpha
 	if orphaned() {
 		return true, 1
 	}
-	writeCursor(paths.Dir, filepath.Join(c.bc.Dir, "cursor"), cursorText(out))
+	writeCursor(c.bc.Dir, filepath.Join(c.bc.Dir, "cursor"), cursorText(out))
 	return true, 0
 }
 
@@ -410,7 +410,7 @@ func cursorText(out map[string]any) string {
 }
 
 // writeCursor is the arm's `mktemp "$dir/.cursor.XXXXXX"` + `printf` + `mv -f`:
-// one tmp file under the bus dir renamed over the crew's cursor, so a reader
+// one tmp file beside the cursor renamed over the crew's cursor, so a reader
 // never sees a half-written cursor.
 func writeCursor(dir, path, text string) {
 	tmp, err := os.CreateTemp(dir, ".cursor.")

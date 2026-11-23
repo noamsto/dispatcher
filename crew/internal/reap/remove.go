@@ -125,7 +125,7 @@ func (r *run) remove(ctx context.Context, c *candidate) (removed bool, code int)
 	}
 	r.say("reaped " + c.branch + " (" + c.label + suffix + ")")
 	removeAnchor(anchor)
-	if err := r.p.Append(r.paths.Log, r.reapRow(c)); err != nil {
+	if err := r.p.Append(rowLog(r.paths, c.crewID), r.reapRow(c)); err != nil {
 		// Best-effort: the tree is gone, so the reaped row, forget, branch
 		// delete and label release must still run, and the sweep go on.
 		_, _ = fmt.Fprintf(r.stderr, "crew reap: could not record the reap row for %s: %v\n", c.branch, err)
@@ -338,7 +338,7 @@ func (r *run) postReaped(c *candidate) {
 	if c.mode == "pr" {
 		detail = "PR #" + c.pr[strings.LastIndex(c.pr, "/")+1:] + " " + c.prState
 	}
-	_ = r.p.Append(r.paths.Log, rowLine(reapedRow{
+	_ = r.p.Append(rowLog(r.paths, c.scrow), rowLine(reapedRow{
 		TS:     r.p.Clock.Now().UnixMilli(),
 		CrewID: c.scrow,
 		From:   c.session,

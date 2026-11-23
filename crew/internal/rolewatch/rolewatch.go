@@ -143,6 +143,9 @@ func start(ctx context.Context, req Request, o Options) (*watcher, *refusal) {
 	if w.crew == "" {
 		w.crew = o.CrewID()
 	}
+	if w.wCrew == "" && w.crew != "" && !bus.ValidCrewID(w.crew) {
+		return nil, refuse("crew: role-watch: invalid crew id " + w.crew)
+	}
 	if o.LogErr != nil {
 		return nil, &refusal{"dispatch: --role-watch: no crew bus: not in a git repository", 128}
 	}
