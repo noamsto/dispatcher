@@ -319,3 +319,11 @@ func TestCachedStatusKeysDifferByScanEnv(t *testing.T) {
 		})
 	}
 }
+
+func TestScanVariantKeysOverseerByValue(t *testing.T) {
+	a := ScanVariant([]string{"HOME=/h", "CREW_OVERSEER=a"})
+	b := ScanVariant([]string{"HOME=/h", "CREW_OVERSEER=b"})
+	if a == b {
+		t.Error("CREW_OVERSEER value is not part of the variant")
+	}
+}
