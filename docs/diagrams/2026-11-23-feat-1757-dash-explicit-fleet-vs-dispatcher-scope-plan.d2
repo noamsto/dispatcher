@@ -1,0 +1,23 @@
+direction: right
+
+inputs: "--crew flag → CREW_ID →\nwindow @crew_id →\ncrews/<id>/pane in window" {class: good}
+resolve: "data.resolveScope\none crew or unscoped" {class: good}
+roster: "data.CollectRoster\nscoped: exactly that crew\nunscoped: union, labelled" {class: good}
+header: "ui.crewHeader\none id / unscoped (n) /\nunknown crew" {class: good}
+attn: "view.buildAttention\nlane item only with live work,\ndispatcher here, past 300s grace" {class: good}
+scanner: "data.BusScanner\nRecentEvent.Crew +\nper-crew rings (≤64)" {class: good}
+events: "Overview events\nscoped: crew ring\nunscoped: 1h, crew label" {class: good}
+fleet: "Fleet view\n+ RECENT EVENTS (repo/crew)\ndrill-down scope=fleet" {class: good}
+age: "view.Age (now/Nm/Nh)\nfixed 4-cell age column" {class: good}
+panel: "side panel frame\nbyte-stable rows"
+
+inputs -> resolve
+resolve -> roster: scope
+roster -> header
+roster -> attn
+scanner -> events: crew ring
+scanner -> fleet: rings per crew
+header -> panel
+attn -> panel: act-now items only
+events -> panel
+age -> panel: no tick jitter
