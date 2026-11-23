@@ -2007,6 +2007,9 @@ _branch_live_elsewhere() {
   }
   while IFS= read -r repo; do
     [ -n "$repo" ] && [ "$repo" != "$here" ] || continue
+    # A candidate repo's own bus holds its dispatch rows only while each repo
+    # keeps its own log; once a crew's repos share one log, confirming needs a
+    # fact the candidate repo holds in every layout (e.g. its worktrees' HEADs).
     [ -f "$repo/crew/events.jsonl" ] && [ ! "$repo/crew/events.jsonl" -ef "$events" ] || continue
     [ -n "$(_branch_live_repos "$repo/crew/events.jsonl" "$repo" "$repo" 2>/dev/null)" ] || continue
     printf '%s\n' "$repo"

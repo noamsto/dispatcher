@@ -1,12 +1,17 @@
 package stack
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/noamsto/dispatcher/crew/internal/bus"
+	"github.com/noamsto/dispatcher/crew/internal/clock"
+	"github.com/noamsto/dispatcher/crew/internal/gh/ghtest"
 	"github.com/noamsto/dispatcher/crew/internal/wtgit"
 )
 
@@ -311,5 +316,66 @@ func TestCutInvalidCrewID(t *testing.T) {
 	code, out, errOut := f.stackRun(t, Request{Child: "feat/child"})
 	if code != 1 || out != "" || errOut != "crew: stack: invalid crew id bad id\n" {
 		t.Fatalf("cut with an invalid crew id = %d, %q, %q", code, out, errOut)
+	}
+}
+
+// runWithCrewID is stackRunIn with Options.CrewID set, so a test can see the
+// cwd the crew id was read for and choose the crew the command then uses.
+func (f *fixture) runWithCrewID(cwd string, req Request, crewID func(context.Context, string) string) (int, string, string) {
+	f.t.Helper()
+	f.stdout.Reset()
+	f.stderr.Reset()
+	p := Probes{
+		Gh:     &ghtest.Fake{Func: f.gh},
+		Clock:  clock.Clock{Now: func() time.Time { return f.now }},
+		Append: bus.Append,
+	}
+	paths := bus.Paths{Common: f.common(), Dir: f.common() + "/crew", Log: f.log}
+	code := Run(context.Background(), req, paths, cwd, f.stdout, f.stderr, Options{Probes: p, CrewID: crewID})
+	_ = os.Chdir(f.main)
+	return code, f.stdout.String(), f.stderr.String()
+}
+
+// TestCutCrewIDIsReadForTheTrustedCwd runs from a worker worktree whose anchor
+// record points at the main checkout: the injected crew id source is handed that
+// trusted directory, not the worktree, and the cut is read for the crew it names
+// (the planted dispatch row is keyed w1, while CREW_ID says c1).
+func TestCutCrewIDIsReadForTheTrustedCwd(t *testing.T) {
+	f := newFixture(t)
+	parent := f.cutStack(t)
+	f.bus(strings.Replace(dispatchRow(1, "feat/child", "feat/parent", parent), `"crew_id":"c1"`, `"crew_id":"w1"`, 1))
+
+	wt := filepath.Join(f.root, "wt-x")
+	f.git(f.main, "worktree", "add", "-q", "-b", "feat/wt-x", wt)
+	rec, err := wtgit.AnchorPath(wt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(rec), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(rec, []byte("record\n"+f.common()+"/crew\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var gotCwd string
+	code, out, errOut := f.runWithCrewID(wt, Request{Child: "feat/child"}, func(_ context.Context, cwd string) string {
+		gotCwd = cwd
+		return "w1"
+	})
+	if code != 0 || out != parent+"\n" {
+		t.Fatalf("cut for crew w1 = %d, %q (%s); want %s", code, out, errOut, parent)
+	}
+	if gotCwd != f.main {
+		t.Fatalf("crew id read for %q, want the trusted directory %q", gotCwd, f.main)
+	}
+}
+
+func TestCutInvalidInjectedCrewID(t *testing.T) {
+	f := newFixture(t)
+	f.cutStack(t)
+	code, out, errOut := f.runWithCrewID(f.main, Request{Child: "feat/child"}, func(context.Context, string) string { return "bad id" })
+	if code != 1 || out != "" || errOut != "crew: stack: invalid crew id bad id\n" {
+		t.Fatalf("cut with an invalid injected crew id = %d, %q, %q", code, out, errOut)
 	}
 }

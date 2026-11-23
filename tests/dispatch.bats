@@ -8382,9 +8382,14 @@ EOF
   bus_row dispatch feat/56-same-branch 100 "$other"
   jq -nc --arg r /srv/third/.git '{ts:100, kind:"dispatch", crew_id:"c1", branch:"feat/57-same-branch", repo:$r}' >>"$other/crew/events.jsonl"
   bus_row dispatch feat/57-same-branch 100 "$other"
+  # 58: its log is a FIFO, which would hang jq if it were opened; the dispatch
+  # runs under timeout so a regression fails instead of hanging.
+  mkdir -p "$BATS_TEST_TMPDIR/fifo/.git/crew"
+  mkfifo "$BATS_TEST_TMPDIR/fifo/.git/crew/events.jsonl"
+  bus_row dispatch feat/58-same-branch 100 "$BATS_TEST_TMPDIR/fifo/.git"
 
-  for n in 51 52 53 54 55 56 57; do
-    DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 "$n" "same branch"
+  for n in 51 52 53 54 55 56 57 58; do
+    DISPATCH_PROFILE=personal run timeout 60 bash -euo pipefail "$DISPATCH" standard sonnet --effort medium --crew-id c1 "$n" "same branch"
     [ "$status" -eq 0 ] || {
       echo "case $n: $output"
       false
@@ -8523,6 +8528,39 @@ EOF
   [ "$(git -C "$TEST_REPO" rev-parse feat/pr-head)" = "$tip" ]
   [ "$(git -C "$TEST_REPO" config branch.feat/pr-head.remote)" = origin ]
   [ "$(git -C "$TEST_REPO" config branch.feat/pr-head.merge)" = refs/heads/feat/pr-head ]
+}
+
+@test "same-branch: a branch that existed is kept by a lost race when the pre-switch ref check fails with a git error" {
+  stub_launch_bins
+  stub_pr_bins feat/pr-head
+  tip="$(git rev-parse feat/pr-head)"
+  stub_wt_race_row feat/pr-head
+  # Fail the one ref check that follows the worktree listing, as the pre-switch
+  # check does; every other git call reaches the real git.
+  real_git="$(type -P git)"
+  cat >"$STUB_DIR/git" <<EOF
+#!/usr/bin/env bash
+marker="$BATS_TEST_TMPDIR/after-list"
+case " \$* " in
+  *" worktree list --porcelain "*) : >"\$marker" ;;
+  *" show-ref --verify --quiet refs/heads/feat/pr-head "*)
+    if [ -e "\$marker" ]; then
+      rm -f "\$marker"
+      echo x >>"$BATS_TEST_TMPDIR/ref-fails"
+      exit 128
+    fi
+    ;;
+esac
+exec "$real_git" "\$@"
+EOF
+  chmod +x "$STUB_DIR/git"
+
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --pr 99 --crew-id c1 "Review PR 99"
+  [ "$status" -eq 1 ]
+  [ "$(wc -l <"$BATS_TEST_TMPDIR/ref-fails")" -eq 1 ]
+  [[ "$output" == *"kept: branch feat/pr-head (it existed before this dispatch)"* ]]
+  [[ "$output" != *"removed: branch feat/pr-head"* ]]
+  [ "$(git -C "$TEST_REPO" rev-parse feat/pr-head)" = "$tip" ]
 }
 
 @test "same-branch: a dispatch onto an existing worktree that loses the race touches nothing" {

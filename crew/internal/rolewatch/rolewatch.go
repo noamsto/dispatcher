@@ -7,7 +7,9 @@
 // order, because the dispatch bats stub matches argv and counts calls.
 //
 // Refusal lines keep the `dispatch: --role-watch` prefix on purpose: the
-// dispatch bats match those lines.
+// dispatch bats match those lines. The one exception is the startup refusal of
+// an invalid own crew id, which keeps crew's uniform
+// `crew: role-watch: invalid crew id <id>` line.
 //
 // Bus location: the bus is still discovered from the watcher's cwd, resolved
 // once at startup by the caller (Options.Paths). dispatch launches the watcher in
