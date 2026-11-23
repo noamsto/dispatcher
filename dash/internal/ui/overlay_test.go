@@ -95,9 +95,9 @@ func TestDetailEventTextColumnIsStable(t *testing.T) {
 	if a, b := render(1000, 990), render(1005, 990); a != b {
 		t.Errorf("same bucket differs: %q vs %q", a, b)
 	}
-	for _, tc := range []struct{ from, to int64 }{{50, 70}, {540, 600}} {
+	for _, tc := range []struct{ from, to int64 }{{50, 70}, {540, 600}, {50, 3_600_000}, {3_600_000, 3_700_000}} {
 		a, b := render(1000+tc.from, 1000), render(1000+tc.to, 1000)
-		if ia, ib := strings.Index(a, text), strings.Index(b, text); ia != ib {
+		if ia, ib := ansi.StringWidth(a[:strings.Index(a, text)]), ansi.StringWidth(b[:strings.Index(b, text)]); ia != ib {
 			t.Errorf("%ds->%ds: text column %d -> %d: %q vs %q", tc.from, tc.to, ia, ib, a, b)
 		}
 	}

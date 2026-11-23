@@ -407,14 +407,13 @@ func (c fleetCrew) inputs(f FleetInputs) Inputs {
 }
 
 func (c fleetCrew) dispatcherLoc() *data.DispatcherLoc {
-	since := c.home.Dispatcher.Since
 	switch {
 	case !c.live():
 		return &data.DispatcherLoc{Where: "none"}
 	case c.homeRepo == c.repo:
-		return &data.DispatcherLoc{Where: "here", Since: since}
+		return &data.DispatcherLoc{Where: "here", Since: c.home.Dispatcher.Since}
 	}
-	return &data.DispatcherLoc{Where: "elsewhere", Repo: &c.homeRepo.Repo, Common: &c.homeRepo.Common, Since: since}
+	return &data.DispatcherLoc{Where: "elsewhere", Repo: &c.homeRepo.Repo, Common: &c.homeRepo.Common}
 }
 
 // digest is the repo's digest with Recent set to this crew's own ring.
