@@ -104,6 +104,8 @@ type overviewRects struct {
 	evOff     int
 	cardLines int
 	narrow    bool
+	evFromW   int       // sender column width shared by every event row
+	evCrewW   int       // crew label column width; 0 when scoped
 	focus     ovPanel   // the focus the layout was resolved for
 	stack     []ovPanel // narrow only: the body panels and events, top to bottom
 	sel       ovSel
@@ -513,6 +515,14 @@ func (r *overviewRects) placeEvents(ov vm.OverviewView, st overviewState, outer,
 		r.evCursor = clamp(st.evCursor, 0, len(es)-1)
 		r.evOff = clamp(clamp(st.evOff, 0, len(es)-rows), r.evCursor-rows+1, r.evCursor)
 	}
+	r.evFromW, r.evCrewW = 0, 0
+	for _, e := range ov.Events {
+		r.evFromW = max(r.evFromW, ansi.StringWidth(cleanText(eventFrom(ov, e.Worker))))
+		if ov.Scope.Crew == nil {
+			r.evCrewW = max(r.evCrewW, ansi.StringWidth(cleanText(shortCrew(e.Crew))))
+		}
+	}
+	r.evFromW = min(r.evFromW, inner.w/3)
 	pl := panelLayout{shown: true, rect: outer, inner: inner}
 	for i := range rows {
 		pl.items = append(pl.items, placed{entry: es[r.evOff+i], rect: rect{inner.x, inner.y + i, inner.w, 1}})
@@ -788,7 +798,7 @@ func rowLines(ov vm.OverviewView, r overviewRects, st overviewState, it placed, 
 	case eBudget:
 		return []string{budgetLine(ov, it, line(), iw)}
 	}
-	return []string{ovEventLine(ov, it, line(), iw, r.narrow)}
+	return []string{ovEventLine(ov, r, it, line(), iw)}
 }
 
 func attnLine(ov vm.OverviewView, r overviewRects, it placed, s *spans) string {
@@ -1019,23 +1029,22 @@ func budgetBar(b vm.BudgetRow, s *spans, iw int) string {
 		add(pace, fg(colDim)).String()
 }
 
-func ovEventLine(ov vm.OverviewView, it placed, s *spans, iw int, narrow bool) string {
+func ovEventLine(ov vm.OverviewView, r overviewRects, it placed, s *spans, iw int) string {
 	e := ov.Events[it.idx]
-	if narrow {
-		age, from := ovAge(ov.GeneratedAt-e.TS), eventFrom(ov, e.Worker)
-		fromW := min(ansi.StringWidth(from), iw/3)
-		return s.add(age, fg(colDim)).
-			add(" ", lipgloss.NewStyle()).
-			col(from, fromW, codenameStyle(eventTmux(ov, e.Worker), fg(colText).Bold(true)), false).
-			add(" ", lipgloss.NewStyle()).
-			col(e.Text, iw-1-ansi.StringWidth(age)-1-fromW-1, fg(colText), false).String()
+	sp := func() *spans { return s.add(" ", lipgloss.NewStyle()) }
+	fromW := r.evFromW
+	if !r.narrow {
+		fromW = clamp(iw/4, 12, 24)
 	}
-	fromW := clamp(iw/4, 12, 24)
-	return s.col(ovAge(ov.GeneratedAt-e.TS), 4, fg(colDim), true).
-		add(" ", lipgloss.NewStyle()).
-		col(eventFrom(ov, e.Worker), fromW, codenameStyle(eventTmux(ov, e.Worker), fg(colText).Bold(true)), false).
-		add(" ", lipgloss.NewStyle()).
-		col(e.Text, iw-1-4-1-fromW-1, fg(colText), false).String()
+	s.col(ovAge(ov.GeneratedAt-e.TS), 4, fg(colDim), true)
+	used := 1 + 4
+	if r.evCrewW > 0 {
+		sp().col(shortCrew(e.Crew), r.evCrewW, fg(colDim), false)
+		used += 1 + r.evCrewW
+	}
+	sp().col(eventFrom(ov, e.Worker), fromW, codenameStyle(eventTmux(ov, e.Worker), fg(colText).Bold(true)), false)
+	used += 1 + fromW
+	return sp().col(e.Text, iw-used-1, fg(colText), false).String()
 }
 
 // eventFrom names a bus sender as the panels do: worker:<branch>[#session] is
