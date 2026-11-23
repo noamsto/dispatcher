@@ -1,0 +1,8 @@
+dispatcher: "claude dispatcher session (CREW_ID, DISPATCHER_LAUNCHER_PID)"
+monitor: "Monitor tool\ncrew stream --crew id"
+deadline: "30 min deadline (Claude Code 2.1.271+)" {shape: diamond}
+chores: "by hand: crew stream --status per turn,\nrefresh-budget/-scores, dispatch --engines,\ncrew decisions, handoff reminder"
+dispatcher -> monitor: re-arms by hand
+monitor -> deadline
+deadline -> dispatcher: expires, notify to re-arm
+dispatcher -> chores: repeats each session

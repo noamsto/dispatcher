@@ -1,0 +1,13 @@
+plugin: "adapters/claude-code/plugin" {
+  gate: "dispatcher-session.sh\nCREW_ID + DISPATCHER_LAUNCHER_PID,\nno worker/role/subagent id" {style.stroke: green}
+  mon: "crew-bus-monitor.sh (new)\nplugin monitor crew-bus + promoted" {style.stroke: green}
+  hook: "dispatcher-hook.sh (new)\nSessionStart / UserPromptSubmit / PreCompact" {style.stroke: green}
+  mon -> gate
+  hook -> gate
+}
+stream: "crew stream (lock stream.lock.d)"
+plugin.mon -> stream: "takes over a dead lane, backoff"
+plugin.hook -> stream: "--status: note only if dead/stale"
+session: "Claude context"
+stream -> session: notifications
+plugin.hook -> session: "digest, reminder"
