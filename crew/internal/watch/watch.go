@@ -76,6 +76,8 @@ type Options struct {
 	Sleep func(interval string, stderr io.Writer) error
 	// Hosts decides which overseer:<host> senders are read; nil refuses all.
 	Hosts *sender.OverseerHosts
+	// Repo, when set, is stamped onto the batch as top-level "repo".
+	Repo string
 }
 
 // call is one parsed invocation. sinceText and timeoutText stay the caller's
@@ -166,34 +168,14 @@ func Run(req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int 
 	deadline := start + c.timeout*1000
 
 	for {
-		if s, ok := pending(sigs); ok {
-			return signalStatus(s)
+		if s, ok := Pending(sigs); ok {
+			return SignalStatus(s)
 		}
 		if orphaned() {
 			return 1
 		}
-		if folded, ok := fold(paths.Log, c); ok {
-			spill.ExpandEvents(folded, paths, c.crew)
-			playbook.Annotate(folded)
-			out := jsonval.Clamp(folded).(map[string]any)
-			if err := jsonval.Encode(stdout, invisible.Value(out), false); err != nil {
-				say(stderr, "crew: %v\n", err)
-				return 1
-			}
-			// On the wire before the cursor moves: a reader that sees the new
-			// cursor has to have been able to see the batch it came from.
-			if o.Flush != nil {
-				if err := o.Flush(); err != nil {
-					return 1
-				}
-			}
-			// Re-checked here as well as at the loop top: the owner can die while
-			// the fold runs, and an orphan must not advance the cursor.
-			if orphaned() {
-				return 1
-			}
-			writeCursor(paths.Dir, filepath.Join(cdir, "cursor"), cursorText(out))
-			return 0
+		if found, rc := deliver(paths, c, o, stdout, stderr, orphaned); found {
+			return rc
 		}
 		if now := realMS(); now >= deadline {
 			say(stderr, "crew: watch park ended after %ss — no new events (cursor %s)\n",
@@ -206,12 +188,93 @@ func Run(req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int 
 			// when a group-directed signal (a terminal's Ctrl-C) killed it out
 			// from under the park. A signal aimed at this process too is already
 			// queued, and reports the same number either way.
-			if s, ok := pending(sigs); ok {
-				return signalStatus(s)
+			if s, ok := Pending(sigs); ok {
+				return SignalStatus(s)
 			}
-			return childStatus(err)
+			return ChildStatus(err)
 		}
 	}
+}
+
+// deliver is one fold pass: a qualifying batch is printed, flushed and only
+// then does the cursor advance. found reports a batch; rc is the exit status.
+func deliver(paths bus.Paths, c call, o Options, stdout, stderr io.Writer, orphaned func() bool) (found bool, rc int) {
+	folded, ok := fold(paths.Log, c)
+	if !ok {
+		return false, 0
+	}
+	spill.ExpandEvents(folded, paths, c.crew)
+	playbook.Annotate(folded)
+	out := jsonval.Clamp(folded).(map[string]any)
+	if o.Repo != "" {
+		out["repo"] = o.Repo
+	}
+	if err := jsonval.Encode(stdout, invisible.Value(out), false); err != nil {
+		say(stderr, "crew: %v\n", err)
+		return true, 1
+	}
+	// On the wire before the cursor moves: a reader that sees the new
+	// cursor has to have been able to see the batch it came from.
+	if o.Flush != nil {
+		if err := o.Flush(); err != nil {
+			return true, 1
+		}
+	}
+	// Re-checked here as well as at the loop top: the owner can die while
+	// the fold runs, and an orphan must not advance the cursor.
+	if orphaned() {
+		return true, 1
+	}
+	writeCursor(paths.Dir, filepath.Join(paths.CrewDir(c.crew), "cursor"), cursorText(out))
+	return true, 0
+}
+
+// Outcome is what one Once pass found.
+type Outcome int
+
+const (
+	// Empty: nothing qualified; nothing printed, cursor untouched.
+	Empty Outcome = iota
+	// Delivered: a batch was printed and the cursor advanced.
+	Delivered
+	// Locked: another owner holds the crew's watch lock; nothing was read.
+	Locked
+)
+
+// Validate returns the refusal message for req, or "" when it is acceptable.
+func Validate(req Request, o Options) string {
+	_, msg := check(req, o)
+	return msg
+}
+
+// Once is a single non-blocking pass of Run: it takes the crew's watch lock,
+// delivers at most one batch and releases. A refusal prints its message and
+// returns rc 1. It never touches signal handling; the caller owns that.
+func Once(req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) (Outcome, int) {
+	c, msg := check(req, o)
+	if msg != "" {
+		say(stderr, "%s\n", msg)
+		return Empty, 1
+	}
+	cdir := paths.CrewDir(c.crew)
+	if err := os.MkdirAll(cdir, 0o755); err != nil {
+		say(stderr, "crew: %v\n", err)
+		return Empty, 1
+	}
+	wlock := filepath.Join(cdir, "watch.lock.d")
+	if !lock.Acquire(wlock, strconv.Itoa(os.Getpid())) {
+		return Locked, 0
+	}
+	defer lock.Release(wlock)
+	if !c.sinceSet {
+		c.sinceText = seedCursor(filepath.Join(cdir, "cursor"))
+		c.since = parseIntSaturate(c.sinceText)
+	}
+	found, rc := deliver(paths, c, o, stdout, stderr, func() bool { return false })
+	if found && rc == 0 {
+		return Delivered, 0
+	}
+	return Empty, rc
 }
 
 // Request is the typed watch call. Since nil seeds the cursor from the crew's
@@ -380,10 +443,10 @@ func parseIntSaturate(text string) int64 {
 	return n
 }
 
-// childStatus is what `set -e` would have exited the arm with: the child's own
+// ChildStatus is what `set -e` would have exited the arm with: the child's own
 // status, or 128+n when it died of a signal. Anything Go could not read a
 // status from (the exec itself failed) is the shell's generic 1.
-func childStatus(err error) int {
+func ChildStatus(err error) int {
 	var ee *exec.ExitError
 	if errors.As(err, &ee) {
 		if ws, ok := ee.Sys().(syscall.WaitStatus); ok {
@@ -399,18 +462,18 @@ func childStatus(err error) int {
 	return 1
 }
 
-// signalStatus is the conventional 128+n a shell reports for a command that
+// SignalStatus is the conventional 128+n a shell reports for a command that
 // died of that signal — the status `stream`'s `wait` saw from the bash arm.
-func signalStatus(s os.Signal) int {
+func SignalStatus(s os.Signal) int {
 	if sig, isSig := s.(syscall.Signal); isSig {
 		return 128 + int(sig)
 	}
 	return 1
 }
 
-// pending is a non-blocking look at the signal channel: the park acts on a
+// Pending is a non-blocking look at the signal channel: the park acts on a
 // caught signal at the loop boundary, never mid-fold.
-func pending(sigs <-chan os.Signal) (os.Signal, bool) {
+func Pending(sigs <-chan os.Signal) (os.Signal, bool) {
 	select {
 	case s := <-sigs:
 		return s, true

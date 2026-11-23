@@ -355,13 +355,14 @@ func discoverBuses[B any](discover func(io.Writer) []repos.Repo, n *notes, joine
 // notes is what a lane says once on stderr however often it rediscovers: each
 // line discovery wrote, and each repo's skip reason until the reason changes.
 type notes struct {
-	w     io.Writer
-	said  map[string]bool
-	noted map[string]string
+	w      io.Writer
+	prefix string
+	said   map[string]bool
+	noted  map[string]string
 }
 
 func newNotes(w io.Writer) *notes {
-	return &notes{w: w, said: map[string]bool{}, noted: map[string]string{}}
+	return &notes{w: w, prefix: "crew: fleet stream", said: map[string]bool{}, noted: map[string]string{}}
 }
 
 func (n *notes) lines(text string) {
@@ -380,7 +381,7 @@ func (n *notes) skip(common, why string) {
 		return
 	}
 	n.noted[common] = why
-	say(n.w, "crew: fleet stream: %s: skipped (%s)\n", common, why)
+	say(n.w, "%s: %s: skipped (%s)\n", n.prefix, common, why)
 }
 
 func oneLine(err error) string { return strings.Join(strings.Fields(err.Error()), " ") }
