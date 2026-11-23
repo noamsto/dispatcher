@@ -736,3 +736,10 @@ func TestDraftSkipsMigratedWorkers(t *testing.T) {
 		t.Errorf("draft = %q, want the failed worker's line and no migrated one", out)
 	}
 }
+
+func TestDraftRefusesInvalidCrewID(t *testing.T) {
+	out, errb, code := run(t, oneRun, Request{Draft: true, Crew: "../x"})
+	if code != 1 || out != "" || errb != "crew: retro: invalid crew id ../x\n" {
+		t.Errorf("got exit %d, stdout %q, stderr %q", code, out, errb)
+	}
+}

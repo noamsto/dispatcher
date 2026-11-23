@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 
 	"github.com/noamsto/dispatcher/crew/internal/ascii"
 	"github.com/noamsto/dispatcher/crew/internal/wtgit"
@@ -117,10 +118,14 @@ func (s *stackCmd) recordRow(ctx context.Context, child, parent, tip string) err
 	if err != nil {
 		return s.refuse("crew: stack: %v\n", err)
 	}
-	if err := os.MkdirAll(s.paths.Dir, 0o755); err != nil {
+	c, err := s.paths.Crew(s.crew)
+	if err != nil {
 		return s.refuse("crew: stack: %v\n", err)
 	}
-	if err := s.p.Append(s.paths.Log, line); err != nil {
+	if err := os.MkdirAll(filepath.Dir(c.Log), 0o755); err != nil {
+		return s.refuse("crew: stack: %v\n", err)
+	}
+	if err := s.p.Append(c.Log, line); err != nil {
 		return s.refuse("crew: stack: %v\n", err)
 	}
 	return nil

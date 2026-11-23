@@ -273,7 +273,7 @@ func TestPortEClosedIssueReclaimsKeepingBranch(t *testing.T) {
 	if len(rows) != 1 {
 		t.Fatalf("rows %q", rows)
 	}
-	wantJSON(t, rows[0], fmt.Sprintf(`{"ts":%d,"kind":"reap","branch":"feat/r","pr":"","pr_state":"ISSUE_CLOSED","worktree":%q,"issues":["77"]}`, nowUnix*1000, f.wt))
+	wantJSON(t, rows[0], fmt.Sprintf(`{"ts":%d,"kind":"reap","branch":"feat/r","repo":%q,"pr":"","pr_state":"ISSUE_CLOSED","worktree":%q,"issues":["77"]}`, nowUnix*1000, f.paths.Common, f.wt))
 }
 
 // portEPushedFx is a done worker with a clean tree, no PR anywhere and a
@@ -305,7 +305,7 @@ func (f *fx) wantPushedReap() {
 	if len(rows) != 1 {
 		f.t.Fatalf("rows %q", rows)
 	}
-	wantJSON(f.t, rows[0], fmt.Sprintf(`{"ts":%d,"kind":"reap","branch":"feat/r","pr":"","pr_state":"NO_PR","worktree":%q}`, nowUnix*1000, f.wt))
+	wantJSON(f.t, rows[0], fmt.Sprintf(`{"ts":%d,"kind":"reap","branch":"feat/r","repo":%q,"pr":"","pr_state":"NO_PR","worktree":%q}`, nowUnix*1000, f.paths.Common, f.wt))
 }
 
 func TestPortEPushedModeReaps(t *testing.T) {

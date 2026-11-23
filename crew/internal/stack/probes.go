@@ -1,6 +1,7 @@
 package stack
 
 import (
+	"context"
 	"time"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
@@ -35,6 +36,8 @@ func DefaultProbes() Probes {
 // Options is what `crew stack` needs beyond its arguments and streams.
 type Options struct {
 	Probes Probes
+	// CrewID reads the crew id for the trusted cwd; nil is bus.CrewID.
+	CrewID func(ctx context.Context, cwd string) string
 }
 
 // withDefaults fills any probe a caller left unset, so a test that scripts gh

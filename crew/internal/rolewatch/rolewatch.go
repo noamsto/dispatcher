@@ -7,10 +7,12 @@
 // order, because the dispatch bats stub matches argv and counts calls.
 //
 // Refusal lines keep the `dispatch: --role-watch` prefix on purpose: the
-// dispatch bats match those lines.
+// dispatch bats match those lines. The one exception is the startup refusal of
+// an invalid own crew id, which keeps crew's uniform
+// `crew: role-watch: invalid crew id <id>` line.
 //
 // Bus location: the bus is still discovered from the watcher's cwd, resolved
-// once at startup by the caller (Options.Log). dispatch launches the watcher in
+// once at startup by the caller (Options.Paths). dispatch launches the watcher in
 // the worker's own worktree and the only reader of its rows is that worker's
 // own role pane, so anchoring would add a flag every launcher and resume path
 // must pass and buy nothing against a writer that already shares the worktree.
@@ -31,6 +33,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/clock"
 	"github.com/noamsto/dispatcher/crew/internal/tmux"
 )
@@ -46,7 +49,7 @@ type Options struct {
 	Clock         clock.Clock
 	Stderr        io.Writer
 	CurrentBranch func() (string, error) // the --branch default
-	Log           string                 // the bus file; empty never reads
+	Paths         bus.Paths              // the repo's bus; the zero value never reads
 	LogErr        error                  // why the bus could not be located; refuses at startup
 	// Post writes one msg row; a failed post is ignored, as `crew msg … || true` was.
 	Post   func(ctx context.Context, crew, from, to, body string)
@@ -141,6 +144,9 @@ func start(ctx context.Context, req Request, o Options) (*watcher, *refusal) {
 	w.crew = w.wCrew
 	if w.crew == "" {
 		w.crew = o.CrewID()
+	}
+	if w.wCrew == "" && w.crew != "" && !bus.ValidCrewID(w.crew) {
+		return nil, refuse("crew: role-watch: invalid crew id " + w.crew)
 	}
 	if o.LogErr != nil {
 		return nil, &refusal{"dispatch: --role-watch: no crew bus: not in a git repository", 128}

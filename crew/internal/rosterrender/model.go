@@ -83,7 +83,11 @@ func queueDocs(entries []queue.Entry) []any {
 // definition — and so the live count, the legend and the boxes speak of the same
 // rows.
 func model(ctx context.Context, paths bus.Paths, crew string, nowSec float64, roleRows []string, rp roster.Probes, live roster.Liveness) (map[string]any, error) {
-	events, err := bus.ReadEvents(paths.Log)
+	bc, err := paths.Crew(crew)
+	if err != nil {
+		return nil, err
+	}
+	events, err := bus.ReadEvents(bc.Log)
 	if errors.Is(err, bus.ErrNoLog) {
 		return emptyModel(), nil
 	}

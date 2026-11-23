@@ -84,6 +84,7 @@ type run struct {
 	action         string
 	req            Request
 	paths          bus.Paths
+	crew           bus.Crew
 	cwd, trusted   string
 	stdout, stderr io.Writer
 	o              Options
@@ -99,12 +100,14 @@ func (r *run) refuse(why string) int {
 // trusted cwd and a plain branch name. A non-zero code has printed its reason.
 func prelude(ctx context.Context, action string, req Request, paths bus.Paths, cwd string, stdout, stderr io.Writer, o Options) (*run, int) {
 	r := &run{action: action, req: req, paths: paths, cwd: cwd, stdout: stdout, stderr: stderr, o: o}
-	switch {
-	case req.Crew == "":
+	if req.Crew == "" {
 		return nil, r.refuse("no crew id — pass --crew or set CREW_ID")
-	case !bus.ValidCrewID(req.Crew):
+	}
+	c, err := paths.Crew(req.Crew)
+	if err != nil {
 		return nil, r.refuse("invalid crew id '" + req.Crew + "'")
 	}
+	r.crew = c
 	if why := sender.Check(ctx, "dispatcher:"+req.Crew, req.Crew, o.Sender); why != "" {
 		return nil, r.refuse(why)
 	}
@@ -377,7 +380,7 @@ func Mark(ctx context.Context, req MarkRequest, paths bus.Paths, cwd string, std
 	case req.Patch != "" && !migratePatch(req.Dir, req.Patch):
 		return r.refuse("--patch " + req.Patch + " is not a migrate patch of " + req.Branch)
 	}
-	evs, err := bus.ReadEvents(paths.Log)
+	evs, err := bus.ReadEvents(r.crew.Log)
 	if err != nil && !errors.Is(err, bus.ErrNoLog) {
 		return r.refuse("could not read the bus")
 	}
@@ -393,8 +396,8 @@ func Mark(ctx context.Context, req MarkRequest, paths bus.Paths, cwd string, std
 			Tip: req.Tip, Tree: req.Tree, Dir: req.Dir, Patch: req.Patch, Detail: "moved to " + req.ToHost,
 		},
 	}, false)
-	if err := o.Append(paths.Log, strings.TrimSuffix(b.String(), "\n")); err != nil {
-		_, _ = fmt.Fprintf(stderr, "crew migrate: could not append to %s: %v\n", paths.Log, err)
+	if err := o.Append(r.crew.Log, strings.TrimSuffix(b.String(), "\n")); err != nil {
+		_, _ = fmt.Fprintf(stderr, "crew migrate: could not append to %s: %v\n", r.crew.Log, err)
 		return 1
 	}
 	_, _ = fmt.Fprintf(stdout, "crew migrate: %s released to host %s\n", req.Branch, req.ToHost)

@@ -50,6 +50,9 @@ func Relay(req RelayRequest, paths bus.Paths, stdout, stderr io.Writer, o Option
 	c, msg := check(Request{
 		Since: req.Since, States: req.States, Timeout: "1", Interval: req.Interval, Crew: req.Crew,
 	}, o)
+	if msg == "" {
+		msg = c.bind(paths)
+	}
 	if msg != "" {
 		say(stderr, "%s\n", msg)
 		return 1
@@ -65,7 +68,7 @@ func Relay(req RelayRequest, paths bus.Paths, stdout, stderr io.Writer, o Option
 	lastLine := o.Clock.Now()
 	for {
 		var line bytes.Buffer
-		if folded, ok := fold(paths.Log, c); ok {
+		if folded, ok := fold(c.bc.Log, c); ok {
 			spill.ExpandEventsWithin(folded, paths, c.crew, relayExpandBudget)
 			playbook.Annotate(folded)
 			out := jsonval.Clamp(folded).(map[string]any)

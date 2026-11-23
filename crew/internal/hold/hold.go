@@ -154,7 +154,7 @@ func Run(ctx context.Context, req Request, paths bus.Paths, stdout, stderr io.Wr
 // folds runs one of the arm's jq programs over a bus, mapping a failure to the
 // arm's one stderr line and status.
 type folds struct {
-	paths  bus.Paths
+	log    string
 	stderr io.Writer
 }
 
@@ -167,7 +167,7 @@ func (f *folds) call(prog string, in []any, vars map[string]any) (any, int) {
 	}
 	out, err := jqrun.RunAny(prog, in, 0, vars)
 	if err != nil {
-		say(f.stderr, "crew: hold: %s: %v\n", f.paths.Log, err)
+		say(f.stderr, "crew: hold: %s: %v\n", f.log, err)
 		return nil, exitType
 	}
 	return out, 0
@@ -178,13 +178,13 @@ func (f *folds) call(prog string, in []any, vars map[string]any) (any, int) {
 // log is not a regular file — `due` and `list` depend on that unambiguous
 // empty-array read — and otherwise the fold over the decoded events.
 func (f *folds) outstanding(crew string) (any, int) {
-	events, err := bus.ReadEvents(f.paths.Log)
+	events, err := bus.ReadEvents(f.log)
 	if errors.Is(err, bus.ErrNoLog) {
 		return []any{}, 0
 	}
 	if err != nil {
 		msg, code := bus.JQFailure(err)
-		say(f.stderr, "crew: hold: %s: %s\n", f.paths.Log, msg)
+		say(f.stderr, "crew: hold: %s: %s\n", f.log, msg)
 		return nil, code
 	}
 	docs := make([]any, len(events))
@@ -212,12 +212,12 @@ func holdVars(crew string) map[string]any {
 
 func list(req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int {
 	jsonOut := req.JSON
-	crew, ok := resolveCrew(req.Crew, stderr, o)
+	c, ok := resolveCrew(req.Crew, paths, stderr, o)
 	if !ok {
 		return exitFailure
 	}
-	f := &folds{paths: paths, stderr: stderr}
-	holds, code := f.outstanding(crew)
+	f := &folds{log: c.Log, stderr: stderr}
+	holds, code := f.outstanding(c.ID)
 	if code != 0 {
 		return code
 	}
@@ -230,12 +230,13 @@ func list(req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int
 
 func due(ctx context.Context, req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int {
 	jsonOut := req.JSON
-	crew, ok := resolveCrew(req.Crew, stderr, o)
+	c, ok := resolveCrew(req.Crew, paths, stderr, o)
 	if !ok {
 		return exitFailure
 	}
-	f := &folds{paths: paths, stderr: stderr}
-	holds, code := f.outstanding(crew)
+	crew := c.ID
+	f := &folds{log: c.Log, stderr: stderr}
+	holds, code := f.outstanding(c.ID)
 	if code != 0 {
 		return code
 	}
@@ -326,12 +327,12 @@ func park(req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int
 	if err != nil || def <= 0 {
 		return badDefault()
 	}
-	crew, ok := resolveCrew(req.Crew, stderr, o)
+	c, ok := resolveCrew(req.Crew, paths, stderr, o)
 	if !ok {
 		return exitFailure
 	}
-	f := &folds{paths: paths, stderr: stderr}
-	holds, code := f.outstanding(crew)
+	f := &folds{log: c.Log, stderr: stderr}
+	holds, code := f.outstanding(c.ID)
 	if code != 0 {
 		return code
 	}
@@ -412,10 +413,11 @@ func add(ctx context.Context, req Request, paths bus.Paths, stdout, stderr io.Wr
 		}
 		_ = fh.Close()
 	}
-	crew, ok := resolveCrew(req.Crew, stderr, o)
-	if !ok || !mayPost(ctx, "add", crew, stderr, o) {
+	c, ok := resolveCrew(req.Crew, paths, stderr, o)
+	if !ok || !mayPost(ctx, "add", c.ID, stderr, o) {
 		return exitFailure
 	}
+	crew := c.ID
 	if fl.Fleet && o.FleetBudget != nil {
 		budget, err := o.FleetBudget(ctx)
 		if err != nil {
@@ -435,7 +437,7 @@ func add(ctx context.Context, req Request, paths bus.Paths, stdout, stderr io.Wr
 	}
 	// A `hold add` with no --spec would otherwise fail its append on a repo with
 	// no bus dir yet — mirrors `status`/`msg`'s own mkdir -p.
-	if err := os.MkdirAll(paths.Dir, 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(c.Log), 0o755); err != nil {
 		say(stderr, "crew: hold add: %v\n", err)
 		return exitFailure
 	}
@@ -470,7 +472,7 @@ func add(ctx context.Context, req Request, paths bus.Paths, stdout, stderr io.Wr
 	line := bus.FitLine(func(title string) string {
 		return encode(addRow(crew, id, ts, &fl, specpath, title))
 	}, title)
-	if err := bus.Append(paths.Log, line); err != nil {
+	if err := bus.Append(c.Log, line); err != nil {
 		say(stderr, "crew: hold add: %v\n", err)
 		return exitFailure
 	}
@@ -629,11 +631,12 @@ func addRow(crew, id, ts string, fl *AddRequest, specpath, title string) holdRow
 
 func release(ctx context.Context, req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int {
 	hid := req.ID
-	crew, ok := resolveCrew(req.Crew, stderr, o)
-	if !ok || !mayPost(ctx, "release", crew, stderr, o) {
+	c, ok := resolveCrew(req.Crew, paths, stderr, o)
+	if !ok || !mayPost(ctx, "release", c.ID, stderr, o) {
 		return exitFailure
 	}
-	if err := os.MkdirAll(paths.Dir, 0o755); err != nil {
+	crew := c.ID
+	if err := os.MkdirAll(filepath.Dir(c.Log), 0o755); err != nil {
 		say(stderr, "crew: hold release: %v\n", err)
 		return exitFailure
 	}
@@ -651,7 +654,7 @@ func release(ctx context.Context, req Request, paths bus.Paths, stdout, stderr i
 			Body:   b,
 		})
 	}, body)
-	if err := bus.Append(paths.Log, line); err != nil {
+	if err := bus.Append(c.Log, line); err != nil {
 		say(stderr, "crew: hold release: %v\n", err)
 		return exitFailure
 	}
@@ -660,20 +663,21 @@ func release(ctx context.Context, req Request, paths bus.Paths, stdout, stderr i
 
 // resolveCrew is `_hold_crew`: the --crew flag, else this repo's crew, under the
 // same id guard `watch`/`stream` apply to a caller-supplied crew.
-func resolveCrew(raw string, stderr io.Writer, o Options) (string, bool) {
+func resolveCrew(raw string, paths bus.Paths, stderr io.Writer, o Options) (bus.Crew, bool) {
 	crew := raw
 	if crew == "" && o.CrewID != nil {
 		crew = o.CrewID()
 	}
 	if crew == "" {
 		say(stderr, "crew: CREW_ID unset and no WORKER_TASK.md crew_id\n")
-		return "", false
+		return bus.Crew{}, false
 	}
-	if !bus.ValidCrewID(crew) {
+	c, err := paths.Crew(crew)
+	if err != nil {
 		say(stderr, "crew: invalid crew id — expected only letters, digits, '.', '_' and '-'\n")
-		return "", false
+		return bus.Crew{}, false
 	}
-	return crew, true
+	return c, true
 }
 
 // mayPost runs the sender check for the dispatcher-authored rows `add` and

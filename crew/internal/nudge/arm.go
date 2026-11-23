@@ -125,6 +125,11 @@ func Run(ctx context.Context, r Request, paths bus.Paths, stdout, stderr io.Writ
 	if a.crew == "" {
 		return fail(stderr, "CREW_ID not set and no WORKER_TASK.md crew_id — pass --crew <id>")
 	}
+	bc, err := paths.Crew(a.crew)
+	if err != nil {
+		return fail(stderr, "invalid crew id "+a.crew)
+	}
+	a.bc = bc
 	if reason := sender.Check(ctx, "dispatcher:"+a.crew, a.crew, o.Sender); reason != "" {
 		return refuse(stderr, "refusing sender 'dispatcher:"+a.crew+"' — "+reason)
 	}
@@ -228,6 +233,7 @@ type arm struct {
 	stdout io.Writer
 	stderr io.Writer
 	crew   string
+	bc     bus.Crew
 	branch string
 	sid    string
 	pane   string
@@ -267,7 +273,7 @@ func (a *arm) route(target, want, wait, localBranch string, stderr io.Writer) (c
 	if a.o.Remote == nil {
 		return 0, false
 	}
-	host, branch, err := remote.ResolveTarget(resolve.Rows(a.paths.Log), target, a.crew, localBranch)
+	host, branch, err := remote.ResolveTarget(resolve.Rows(a.bc.Log), target, a.crew, localBranch)
 	if err != nil {
 		return fail(stderr, err.Error()), true
 	}
@@ -285,7 +291,7 @@ func (a *arm) route(target, want, wait, localBranch string, stderr io.Writer) (c
 // bus but no live window carries it.
 func (a *arm) resolveFallback(target string, stderr io.Writer) int {
 	var branches []string
-	for _, r := range resolve.Resolve(resolve.Rows(a.paths.Log), target, a.crew) {
+	for _, r := range resolve.Resolve(resolve.Rows(a.bc.Log), target, a.crew) {
 		branches = append(branches, r.Branch)
 	}
 	joined := strings.Join(branches, ",")
@@ -303,7 +309,7 @@ func (a *arm) resolveFallback(target string, stderr io.Writer) int {
 func (a *arm) checkSession(want string, stderr io.Writer) int {
 	last, err := foldNewest(a.o.Deps, a.branch, a.crew)
 	if err != nil {
-		say(stderr, "crew: nudge: %s: %v\n", a.paths.Log, err)
+		say(stderr, "crew: nudge: %s: %v\n", a.bc.Log, err)
 		return exitType
 	}
 	if last == nil {

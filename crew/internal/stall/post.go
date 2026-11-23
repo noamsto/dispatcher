@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
@@ -63,7 +64,11 @@ func (w *watch) postRow(state, detail string) error {
 	case "done", "failed", "exited", "reaped", "migrated":
 		return exitCode(0)
 	}
-	if err := os.MkdirAll(w.paths.Dir, 0o755); err != nil {
+	c, err := w.paths.Crew(w.cfg.crew)
+	if err != nil {
+		return writeError{err}
+	}
+	if err := os.MkdirAll(filepath.Dir(c.Log), 0o755); err != nil {
 		return writeError{err}
 	}
 	row := statusRow{
@@ -80,7 +85,7 @@ func (w *watch) postRow(state, detail string) error {
 	if err := enc.Encode(row); err != nil {
 		return writeError{err}
 	}
-	if err := bus.Append(w.paths.Log, strings.TrimSuffix(buf.String(), "\n")); err != nil {
+	if err := bus.Append(c.Log, strings.TrimSuffix(buf.String(), "\n")); err != nil {
 		return writeError{err}
 	}
 	// --role-watch owns @crew_state for a role pane. Only `blocked` carries

@@ -313,6 +313,7 @@ func TestRunUsage(t *testing.T) {
 		{"no target", Request{}, "usage: crew nudge"},
 		{"pane id target", Request{Target: "%9"}, "a pane id is not an anchored address"},
 		{"no crew", Request{Target: featX}, "CREW_ID not set"},
+		{"invalid crew", Request{Target: featX, Crew: "../x"}, "invalid crew id ../x"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newArm(t)

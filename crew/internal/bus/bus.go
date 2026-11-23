@@ -233,21 +233,13 @@ type Paths struct {
 	Log    string // Dir + "/events.jsonl"
 }
 
-func newPaths(common string) Paths {
-	dir := common + "/crew"
-	return Paths{Common: common, Dir: dir, Log: dir + "/events.jsonl"}
-}
-
-// CrewDir is the per-crew directory for id. Validate untrusted ids with ValidCrewID first.
-func (p Paths) CrewDir(id string) string { return p.Dir + "/crews/" + id }
-
 // Locate resolves the bus of the repo containing cwd, as crew.sh's preamble does.
 func Locate(ctx context.Context, cwd string) (Paths, error) {
 	common := gitOutput(ctx, cwd, "rev-parse", "--path-format=absolute", "--git-common-dir")
 	if common == "" {
 		return Paths{}, ErrNotRepo
 	}
-	return newPaths(common), nil
+	return PathsFor(common), nil
 }
 
 // gitOutput is `$(git -C cwd args... 2>/dev/null || true)`: stderr dropped,

@@ -1,0 +1,29 @@
+direction: right
+
+callers: "Go writers + readers\nstatus, reply, watch, stream,\nhold, inbox, await, fleet…"
+locate: "bus.Locate\n<common>/crew/events.jsonl"
+handbuilt: "~20 hand-built joins\nPaths{…} literals, \"/crews/\"" { class: warn }
+crewid: "bus.CrewID\nheader → env\n(no --crew, no @crew_id)"
+rows: "dispatch / claim-issue /\nreap / release rows\nno repo, reap has no crew_id" { class: warn }
+
+dispatch: "dispatch.sh" {
+  direction: down
+  wt: "wt switch\n(worktree + branch)"
+  claim: "claim row"
+  pr: "--pr re-fetch +\nhard reset"
+  lock: "identity.lock\nbest-effort 10 s,\nthen unlocked" { class: warn }
+  row: "dispatch row"
+  wt -> claim
+  claim -> pr
+  pr -> lock
+  lock -> row
+}
+nocheck: "no same-branch check\nworker:<branch> unique\nonly per repo log" { class: warn }
+record: "worktree record\n4 lines, no crew id"
+
+callers -> locate: "paths.Log"
+callers -> handbuilt: "fan-in, creators"
+callers -> crewid
+dispatch.row -> rows
+dispatch.lock -> nocheck
+dispatch.row -> record

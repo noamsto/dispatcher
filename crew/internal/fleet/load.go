@@ -178,7 +178,7 @@ func cleanText(s string) string {
 // order, is terminal. A body that is not an object has no state, which still
 // replaces an earlier row. An unreadable bus finishes nothing.
 func finishedBranches(common string) map[string]bool {
-	events, _ := bus.ReadEventsTolerant(common + "/crew/events.jsonl")
+	events, _ := bus.ReadEventsTolerant(bus.PathsFor(common).Log)
 	newest := map[string]string{}
 	for _, e := range events {
 		from, ok := strings.CutPrefix(e.From, "worker:")

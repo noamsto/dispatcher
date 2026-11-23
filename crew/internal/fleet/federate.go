@@ -10,7 +10,6 @@ import (
 	"io"
 	"math"
 	"os"
-	"path/filepath"
 	"slices"
 	"sort"
 	"strconv"
@@ -152,7 +151,7 @@ func ServeFar(ctx context.Context, origin string, since int64, stderr io.Writer,
 		if r.Status != repos.StatusOK {
 			continue
 		}
-		fold, ok, err := watch.FoldOverseer(filepath.Join(r.Common, "crew", "events.jsonl"), "overseer:"+origin, since)
+		fold, ok, err := watch.FoldOverseer(bus.PathsFor(r.Common).Log, "overseer:"+origin, since)
 		if errors.Is(err, bus.ErrNoLog) {
 			continue
 		}

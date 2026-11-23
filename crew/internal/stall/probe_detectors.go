@@ -476,7 +476,11 @@ const nudgedTailLines = 2000
 // nudged runs nudged.jq over the log's last nudgedTailLines lines, each decoded
 // on its own; any failure reads as not nudged.
 func (w *watch) nudged(msgTS int64) bool {
-	rows, ok := w.p.BusRows(w.paths.Log, 0, nudgedTailLines)
+	c, err := w.paths.Crew(w.cfg.crew)
+	if err != nil {
+		return false
+	}
+	rows, ok := w.p.BusRows(c.Log, 0, nudgedTailLines)
 	if !ok {
 		return false
 	}

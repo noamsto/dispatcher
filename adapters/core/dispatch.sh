@@ -1960,6 +1960,115 @@ split_role_pane() {
   printf '%s' "$pane"
 }
 
+# _crew_repo — the repo (git common dir) whose bus $crew_dir is, tagged on the rows
+# that name a branch so a shared bus can tell repos apart.
+_crew_repo() { realpath -e -- "${crew_dir%/crew}"; }
+
+# _branch_live_repos <log> <repo> [<only>] — print each repo <log> shows with a
+# live dispatch of $branch in crew $crew_id, one per line (only <only>, when
+# given). An untagged row belongs to <repo>, the repo whose log it is. A dispatch
+# stays live until a reap or release of the branch in its own repo that is later
+# by (ts, file position). A ts that is not a number orders as 0: jq ranks strings
+# above every number, so a junk one would outlast any real end.
+_branch_live_repos() {
+  jq -nrR --arg b "$branch" --arg c "$crew_id" --arg r "$2" --arg only "${3:-}" '
+    reduce (inputs | fromjson? | objects) as $row ({n: 0, live: {}, ended: {}};
+      .n += 1
+      | if $row.branch != $b then . else
+          (($row.repo // $r) | tostring) as $repo | [(($row.ts | numbers) // 0), .n] as $at
+          | if $row.kind == "dispatch" and $row.crew_id == $c then
+              .live[$repo] = ([.live[$repo], $at] | max)
+            elif $row.kind == "reap" or $row.kind == "release" then
+              .ended[$repo] = ([.ended[$repo], $at] | max)
+            else . end
+        end)
+    | .ended as $ended | .live | to_entries[] | select(.value > $ended[.key]) | .key
+    | select($only == "" or . == $only)' "$1"
+}
+
+# _branch_live_elsewhere — print the repo of a live dispatch of $branch in crew
+# $crew_id from another repo, or nothing: worker ids, reply and the stamp rule
+# key on the branch alone, so a crew holds one worker per branch name. A row's
+# repo is its writer's word and nothing here can end a planted or stale one, so
+# this log only names candidates: one counts when its own log confirms the live
+# dispatch by the same rule. That log must not be this one, or an alias of this
+# repo would confirm the row with itself. A missing log here is no conflict; one
+# jq cannot read returns 1. A candidate log that is missing, unreadable or not a
+# regular file (a FIFO would hang jq) cannot confirm, so that candidate is ignored.
+_branch_live_elsewhere() {
+  local events="$crew_dir/events.jsonl" here live repo
+  [ -e "$events" ] || [ -L "$events" ] || return 0
+  here="$(_crew_repo)"
+  live="$(_branch_live_repos "$events" "$here")" || {
+    echo "dispatch: cannot read $events to check $branch for a live dispatch from another repo — refusing" >&2
+    return 1
+  }
+  while IFS= read -r repo; do
+    [ -n "$repo" ] && [ "$repo" != "$here" ] || continue
+    # A candidate repo's own bus holds its dispatch rows only while each repo
+    # keeps its own log; once a crew's repos share one log, confirming needs a
+    # fact the candidate repo holds in every layout (e.g. its worktrees' HEADs).
+    [ -f "$repo/crew/events.jsonl" ] && [ ! "$repo/crew/events.jsonl" -ef "$events" ] || continue
+    [ -n "$(_branch_live_repos "$repo/crew/events.jsonl" "$repo" "$repo" 2>/dev/null)" ] || continue
+    printf '%s\n' "$repo"
+    return 0
+  done <<<"$live"
+}
+
+# _lost_branch_race <repo> — the re-check under the codename lock found <repo>'s
+# dispatch of $branch, which won the race since the pre-check: undo what this
+# dispatch made, keyed on facts recorded before the switch, and refuse. A
+# worktree that was already there ($prev_wt, or an admin dir predating the
+# listing whose HEAD moved onto the branch since) is not this dispatch's to
+# touch, nor is its branch. A branch the switch made goes, with the tracking
+# config fetch-name writes and a name switch off origin's ref sets up; a
+# pre-existing or pr-ref one stays. Origin is never touched. A failed step does
+# not stop the rest; the refusal names what is left.
+_lost_branch_race() {
+  local common="${crew_dir%/crew}" key rc
+  local -a removed=() kept=() failed=()
+  if [ -n "$prev_wt" ]; then
+    kept+=("worktree $prev_wt and branch $branch (both existed before this dispatch)")
+  elif grep -qxF -- "${wt_admin##*/}" <<<"$admin_before"; then
+    kept+=("worktree $wt_path and branch $branch (the worktree predates this dispatch, which attached to it)")
+  else
+    if _wt_git_common "$common" worktree remove --force -- "$wt_path" && [ ! -e "$wt_path" ]; then
+      removed+=("worktree $wt_path")
+    else
+      failed+=("worktree $wt_path")
+    fi
+    if [ "$switch_mode" = pr-ref ]; then
+      kept+=("branch $branch (a pr-ref switch)")
+    elif [ -n "$branch_existed" ]; then
+      kept+=("branch $branch (it existed before this dispatch)")
+    else
+      if _wt_git_common "$common" branch -D -- "$branch" >/dev/null; then
+        removed+=("branch $branch")
+      else
+        failed+=("branch $branch")
+      fi
+      for key in remote merge; do
+        rc=0
+        # 5 is an absent key: never set, or dropped with the branch's config section by branch -D.
+        _wt_git_common "$common" config --unset-all "branch.$branch.$key" || rc=$?
+        case "$rc" in
+        0) removed+=("branch.$branch.$key") ;;
+        5) ;;
+        *) failed+=("branch.$branch.$key") ;;
+        esac
+      done
+    fi
+  fi
+  {
+    echo "dispatch: a concurrent dispatch of $branch into $1 in crew $crew_id won the race — one worker per branch name in a crew; refusing."
+    [ "${#removed[@]}" -eq 0 ] || printf '  removed: %s\n' "${removed[@]}"
+    [ "${#kept[@]}" -eq 0 ] || printf '  kept: %s\n' "${kept[@]}"
+    [ -z "$pushed_oid" ] || echo "  kept: origin's $branch, pushed by this dispatch — with the issue's 'dispatched' label it makes the claim gate refuse a re-dispatch of the issue until one of the two is removed"
+    [ "${#failed[@]}" -eq 0 ] || printf '  could not remove: %s — remove it by hand\n' "${failed[@]}"
+  } >&2
+  exit 1
+}
+
 # _record_worktree_anchor <worktree> <admin-dir> — write the record `dispatch
 # resume` checks its git discovery against (#518).
 _record_worktree_anchor() {
@@ -1979,7 +2088,7 @@ _record_worktree_anchor() {
     umask 077
     mkdir -p "$dir"
     tmp="$(mktemp "$dir/.anchor.XXXXXX")"
-    printf '%s\n' "$(realpath -e -- "$wt")" "$(realpath -m -- "$crew_dir")" "$branch" "$admin_real" >"$tmp"
+    printf '%s\n' "$(realpath -e -- "$wt")" "$(realpath -m -- "$crew_dir")" "$branch" "$admin_real" "$crew_id" >"$tmp"
     mv -f -- "$tmp" "$anchor"
   )
 }
@@ -2658,7 +2767,7 @@ _remote_recover_row() {
 # bus as this host's route to it, its claims-index mirror, then the window.
 _remote_finish() {
   mkdir -p "$crew_dir"
-  _crew_append "$(jq -c --arg h "$remote_host" '. + {ts:(now*1000|floor), host:$h, remote:true}' <<<"$1")"
+  _crew_append "$(jq -c --arg h "$remote_host" --arg repo "$(_crew_repo)" '. + {ts:(now*1000|floor), host:$h, remote:true, repo:$repo}' <<<"$1")"
   branch="$(jq -r .branch <<<"$1")"
   mapfile -t also_closes < <(jq -r '.also_closes // [] | .[] | tostring' <<<"$1")
   num=""
@@ -4408,8 +4517,8 @@ if [ -n "$gh_issue" ]; then
   claim_added=()
   for claim_i in "${!claim_issues[@]}"; do
     claim_n="${claim_issues[$claim_i]}"
-    line=$(jq -nc --arg crew "$crew_id" --arg issue "$claim_n" --arg branch "$branch" --arg pid "$$" \
-      '{ts:(now*1000|floor), crew_id:$crew, kind:"claim-issue", issue:$issue, branch:$branch, pid:($pid|tonumber)}')
+    line=$(jq -nc --arg crew "$crew_id" --arg issue "$claim_n" --arg branch "$branch" --arg pid "$$" --arg repo "$(_crew_repo)" \
+      '{ts:(now*1000|floor), crew_id:$crew, kind:"claim-issue", issue:$issue, branch:$branch, pid:($pid|tonumber), repo:$repo}')
     _crew_append "$line"
     _claim_index_append "$claim_n" "$branch"
     if ! gh issue edit "$claim_n" --add-label dispatched; then
@@ -4520,8 +4629,8 @@ else
     _ensure_dispatched_label
     # Row before label, as on the existing-issue path above (and inert the same
     # way if the label write fails; see #322).
-    line=$(jq -nc --arg crew "$crew_id" --arg issue "$num" --arg branch "$branch" --arg pid "$$" \
-      '{ts:(now*1000|floor), crew_id:$crew, kind:"claim-issue", issue:$issue, branch:$branch, pid:($pid|tonumber)}')
+    line=$(jq -nc --arg crew "$crew_id" --arg issue "$num" --arg branch "$branch" --arg pid "$$" --arg repo "$(_crew_repo)" \
+      '{ts:(now*1000|floor), crew_id:$crew, kind:"claim-issue", issue:$issue, branch:$branch, pid:($pid|tonumber), repo:$repo}')
     _crew_append "$line"
     _claim_index_append "$num" "$branch"
     gh issue edit "$num" --add-label dispatched || {
@@ -4595,10 +4704,122 @@ if ! ln -s "$$" "$dispatch_lock" 2>/dev/null; then
   fi
   exit 1
 fi
-ident_locked=""
-claude_json_lock=""
+
+# The codename lock (identity.lock) is mandatory: a dispatch that cannot take it
+# within 300 tries 0.1 s apart (30 s) refuses. It covers local work only, so
+# only a hung or killed holder outlasts that. Unlike dispatch_lock, a dead
+# holder's lock IS broken, because the break runs under a second ln -s mutex and
+# removes the lock only while it still names the dead pid it was seen with:
+# another breaker cannot race that re-read (mutex), and no live acquirer can
+# have replaced it (the dead one still exists). A pre-upgrade dispatch's lock is
+# a pid-less directory its holder keeps for seconds and stops waiting on after
+# 10 s, so one seen for 100 consecutive tries is a SIGKILLed leftover; it is
+# rmdir'd, which only succeeds while it is empty.
 ident_lock="$crew_dir/identity.lock"
-trap 'rm -f "$dispatch_lock" "${claude_json_lock:-}"; [ -z "$ident_locked" ] || rmdir "$ident_lock" 2>/dev/null' EXIT INT TERM HUP
+ident_break="$ident_lock.break"
+ident_locked="" ident_break_held=""
+claude_json_lock=""
+
+# _pid_link_take <path> — create <path> as a symlink to this pid; 0 only when
+# this process then holds it.
+_pid_link_take() {
+  ln -s "$$" "$1" 2>/dev/null || return 1
+  [ -L "$1" ] && [ "$(readlink "$1" 2>/dev/null)" = "$$" ] && return 0
+  # <path> is a directory (a pre-upgrade identity.lock): ln linked inside it.
+  rm -f "$1/$$"
+  return 1
+}
+
+# _pid_live <pid> — 1 only when <pid> surely names no process: not a pid at all
+# (every writer links $$, so nothing live wrote it), or kill -0 failing with
+# anything but EPERM (EPERM proves the process exists, under another uid).
+_pid_live() {
+  local kmsg
+  [[ $1 =~ ^[1-9][0-9]*$ ]] || return 1
+  kmsg="$(LC_ALL=C kill -0 "$1" 2>&1)" && return 0
+  case "$kmsg" in *"not permitted"* | *"not allowed"*) return 0 ;; esac
+  return 1
+}
+
+# _ident_lock_break <seen> — under the break mutex, remove the codename lock if
+# it is still what the caller saw: <seen> is its dead holder's pid, or empty for
+# a stale directory-form lock. 1 when the mutex is busy.
+_ident_lock_break() {
+  _pid_link_take "$ident_break" || return 1
+  ident_break_held=1
+  if [ -z "$1" ]; then
+    rmdir "$ident_lock" 2>/dev/null || true
+  elif [ "$(readlink "$ident_lock" 2>/dev/null)" = "$1" ]; then
+    rm -f "$ident_lock"
+  fi
+  ident_break_held=""
+  rm -f "$ident_break"
+}
+
+# _ident_lock_acquire — take the codename lock, or refuse (return 1). A break
+# blocked by a mutex whose holder is gone is never forced: the refusal names it.
+_ident_lock_acquire() {
+  local holder="" who="" stuck="" dir_seen=0
+  for _ in $(seq 1 300); do
+    if _pid_link_take "$ident_lock"; then
+      ident_locked=1
+      return 0
+    fi
+    stuck=""
+    if [ -L "$ident_lock" ]; then
+      dir_seen=0
+      holder="$(readlink "$ident_lock" 2>/dev/null || true)"
+      who="pid $holder"
+      if [ -n "$holder" ] && ! _pid_live "$holder"; then
+        _ident_lock_break "$holder" && continue
+        stuck="$(readlink "$ident_break" 2>/dev/null || true)"
+      fi
+    elif [ -d "$ident_lock" ]; then
+      who="a pre-upgrade dispatch (no pid recorded)"
+      dir_seen=$((dir_seen + 1))
+      if [ "$dir_seen" -ge 100 ]; then
+        if _ident_lock_break ""; then
+          dir_seen=0
+          continue
+        fi
+        stuck="$(readlink "$ident_break" 2>/dev/null || true)"
+      fi
+    else
+      dir_seen=0 who=""
+    fi
+    if _pid_live "$stuck"; then stuck=""; fi
+    sleep 0.1
+  done
+  {
+    echo "dispatch: identity lock busy after 30s — held by ${who:-an unknown holder} at $ident_lock; refusing to launch without it, since two dispatches could take one codename. Re-dispatch once it frees; the worktree stays for that."
+    [ -z "$stuck" ] || echo "  its stale-lock break is blocked by $ident_break, held by pid $stuck — if that pid is gone, rm -f $ident_break and re-dispatch"
+  } >&2
+  return 1
+}
+
+# _ident_lock_release — drop the codename lock and break mutex this process
+# holds. Each flag clears before its link goes: the signal trap runs this too,
+# and resumes the script afterwards, so a set flag must never outlive the link.
+_ident_lock_release() {
+  if [ -n "$ident_break_held" ]; then
+    ident_break_held=""
+    rm -f "$ident_break"
+  fi
+  if [ -n "$ident_locked" ]; then
+    ident_locked=""
+    rm -f "$ident_lock"
+  fi
+}
+trap 'rm -f "$dispatch_lock" "${claude_json_lock:-}"; _ident_lock_release' EXIT INT TERM HUP
+
+# Same-branch pre-check, lock-free: runs before the reclaim and the switch below,
+# so the common refusal leaves no window killed and no branch or worktree made.
+# The re-check under the codename lock is the one that decides.
+live_repo="$(_branch_live_elsewhere)" || exit 1
+if [ -n "$live_repo" ]; then
+  echo "dispatch: $branch is already dispatched live into $live_repo in crew $crew_id — one worker per branch name in a crew; reap or release it there first, or dispatch under another title" >&2
+  exit 1
+fi
 
 # Reuse-or-refuse (#17). git allows exactly one worktree per branch, so a dispatch
 # onto a branch that already has one lands in the same directory. Occupancy is a
@@ -4618,6 +4839,12 @@ admin_before=
 admin_root="${crew_dir%/crew}/worktrees"
 [ ! -d "$admin_root" ] || admin_before="$(ls -A -- "$admin_root")"
 prev_wt="$(printf '%s\n' "$wt_list" | _branch_wts "$branch")"
+# For a lost race's cleanup: a name switch makes the branch when only origin's
+# ref exists. Only git's not-found (1) reads as absent, so a failing git never
+# licenses deleting a branch.
+branch_existed=1 ref_rc=0
+git show-ref --verify --quiet "refs/heads/$branch" || ref_rc=$?
+[ "$ref_rc" -ne 1 ] || branch_existed=
 # `wt switch -c` attaches to a worktree already on the branch instead of creating
 # one, so a create that finds one holds an unborn-branch squatter (#640).
 if [ "$switch_mode" = create ] && [ -n "$prev_wt" ]; then
@@ -4838,19 +5065,6 @@ sanitized="${branch//\//-}"
 session="${DISPATCH_SESSION_ID:-s$(date +%s)-$$}"
 worker_id="worker:$branch#$session"
 
-# Claim the branch on the bus before the tmux window exists (#32): reap's
-# idle-release loop reads a branch's newest bus event, and a session that
-# hasn't posted `working` yet would otherwise still read as whatever the
-# prior session last posted — often a stale `done` — releasing the window
-# this dispatch is about to create. A claim has no `body`, so it can never
-# itself satisfy reap's terminal-state check; it only masks a stale `done`
-# until the worker's own `working` post supersedes it. If this dispatch
-# aborts before that happens, the claim becomes the branch's permanent
-# latest bus event and idle-release can never touch it again.
-line=$(jq -nc --arg crew "$crew_id" --arg from "$worker_id" \
-  '{ts:(now*1000|floor), crew_id:$crew, from:$from, kind:"claim"}')
-_crew_append "$line"
-
 # Ask git where worktrunk actually placed the worktree — its path template is
 # user-configurable, so reconstructing it here drifts the moment that changes.
 # awk must read to EOF: an early `exit` closes the pipe while git still has
@@ -4870,34 +5084,6 @@ wt_admin="$(_wt_admin_dir "${crew_dir%/crew}" "$wt_path")" || {
   echo "dispatch: no git admin dir for $wt_path" >&2
   exit 1
 }
-
-# Pre-trust the worktree for claude (#40). Claude Code keys workspace trust by
-# absolute path in ~/.claude.json under .projects["<path>"].hasTrustDialogAccepted
-# — confirmed by inspecting an already-trusted checkout's own entry there, not
-# guessed. A fresh worktree path is unknown to that store, and
-# --permission-mode auto does NOT bypass the resulting trust dialog, so an
-# unattended worker wedges on it before ever reading WORKER_TASK.md. Stamp
-# trust here so the worker's first turn never sees the prompt. Locked with the
-# same ln -s idiom as dispatch_lock above: ~/.claude.json is shared by every
-# concurrent dispatch on this machine, and an unlocked read-modify-write would
-# lose one racer's stamp to another's. The lock only serializes dispatch
-# invocations against each other — a live claude session's own background
-# writes to ~/.claude.json race it too, same as they'd race any other writer;
-# that residual loss window is accepted, not solved, here. Aborts the dispatch
-# on failure — a worker that can't be pre-trusted just reproduces the wedge
-# this fixes.
-if [ "$agent" = claude ]; then
-  if ! _claude_pretrust "$wt_path"; then
-    claude_json_lock_path="$HOME/.claude.json.dispatch.lock"
-    held=$(readlink "$claude_json_lock_path" 2>/dev/null || true)
-    if [ -n "$held" ] && kill -0 "$held" 2>/dev/null; then
-      echo "dispatch: could not pre-trust worktree $wt_path — $claude_json_lock_path is held by pid $held (another dispatch mid-scaffold) — the worker would wedge on the workspace-trust dialog" >&2
-    else
-      echo "dispatch: could not pre-trust worktree $wt_path — a stale lock from a hard-killed dispatch remains at $claude_json_lock_path; remove it and retry" >&2
-    fi
-    exit 1
-  fi
-fi
 
 # --pr: verify the attached worktree actually sits at the PR head. `wt switch`
 # attaches to an existing worktree without fetching or resetting it, so a
@@ -4925,6 +5111,60 @@ if [ -n "$pr_number" ]; then
       echo "dispatch: worktree HEAD $worktree_head != PR $pr_number head $head_oid, and the worktree has uncommitted changes — refusing to reset. Resolve manually at $wt_path, then re-dispatch." >&2
       exit 1
     fi
+  fi
+fi
+
+# Codename lock, held from here through the dispatch row: `crew identity` picks
+# a slot no live worker holds and the dispatch row records it, so two racing
+# dispatches cannot read the same free slot. Taken only now, after the base
+# fetch, the switch and its hooks, and the --pr re-fetch: it is crew-wide, and
+# holding it across network I/O would queue every dispatch behind the slowest.
+_ident_lock_acquire || exit 1
+
+# Same-branch re-check, authoritative: the pre-check ran unlocked. This
+# dispatch's own row follows under the same lock, so of two racers the later one
+# sees the other's here.
+live_repo="$(_branch_live_elsewhere)" || exit 1
+[ -z "$live_repo" ] || _lost_branch_race "$live_repo"
+
+# Claim the branch on the bus before the tmux window exists (#32): reap's
+# idle-release loop reads a branch's newest bus event, and a session that
+# hasn't posted `working` yet would otherwise still read as whatever the
+# prior session last posted — often a stale `done` — releasing the window
+# this dispatch is about to create. A claim has no `body`, so it can never
+# itself satisfy reap's terminal-state check; it only masks a stale `done`
+# until the worker's own `working` post supersedes it. If this dispatch
+# aborts before that happens, the claim becomes the branch's permanent
+# latest bus event and idle-release can never touch it again.
+line=$(jq -nc --arg crew "$crew_id" --arg from "$worker_id" \
+  '{ts:(now*1000|floor), crew_id:$crew, from:$from, kind:"claim"}')
+_crew_append "$line"
+
+# Pre-trust the worktree for claude (#40). Claude Code keys workspace trust by
+# absolute path in ~/.claude.json under .projects["<path>"].hasTrustDialogAccepted
+# — confirmed by inspecting an already-trusted checkout's own entry there, not
+# guessed. A fresh worktree path is unknown to that store, and
+# --permission-mode auto does NOT bypass the resulting trust dialog, so an
+# unattended worker wedges on it before ever reading WORKER_TASK.md. Stamp
+# trust here so the worker's first turn never sees the prompt. Locked with the
+# same ln -s idiom as dispatch_lock above: ~/.claude.json is shared by every
+# concurrent dispatch on this machine, and an unlocked read-modify-write would
+# lose one racer's stamp to another's. The lock only serializes dispatch
+# invocations against each other — a live claude session's own background
+# writes to ~/.claude.json race it too, same as they'd race any other writer;
+# that residual loss window is accepted, not solved, here. Aborts the dispatch
+# on failure — a worker that can't be pre-trusted just reproduces the wedge
+# this fixes.
+if [ "$agent" = claude ]; then
+  if ! _claude_pretrust "$wt_path"; then
+    claude_json_lock_path="$HOME/.claude.json.dispatch.lock"
+    held=$(readlink "$claude_json_lock_path" 2>/dev/null || true)
+    if [ -n "$held" ] && kill -0 "$held" 2>/dev/null; then
+      echo "dispatch: could not pre-trust worktree $wt_path — $claude_json_lock_path is held by pid $held (another dispatch mid-scaffold) — the worker would wedge on the workspace-trust dialog" >&2
+    else
+      echo "dispatch: could not pre-trust worktree $wt_path — a stale lock from a hard-killed dispatch remains at $claude_json_lock_path; remove it and retry" >&2
+    fi
+    exit 1
   fi
 fi
 
@@ -4956,17 +5196,8 @@ elif ! direnv allow "$wt_path"; then
 fi
 
 # FleetView-style codename+color: the branch's recorded one, else a slot no live
-# worker holds. Picked and recorded under one lock so two racing dispatches
-# cannot read the same free slot; the recorded name is what roster, tmux and
-# `--name` all read back.
-for _ in $(seq 1 100); do
-  if mkdir "$ident_lock" 2>/dev/null; then
-    ident_locked=1
-    break
-  fi
-  sleep 0.1
-done
-[ -n "$ident_locked" ] || echo "dispatch: identity lock busy after 10s — picking a codename unlocked" >&2
+# worker holds; the recorded name is what roster, tmux and `--name` all read
+# back.
 ident=$(crew identity "$branch" "$crew_id")
 agent_name=$(printf '%s' "$ident" | jq -r .name)
 agent_color=$(printf '%s' "$ident" | jq -r .tmux)
@@ -5020,7 +5251,7 @@ line=$(jq -nc --arg crew "$crew_id" --arg branch "$branch" --arg session "$sessi
   --arg worker "$worker_id" --arg engine_session "$lead_sid" \
   --arg engine "$agent" --arg model "$model" --arg tier "$tier" --arg effort "$effort" \
   --arg shape "$dispatch_shape" --arg title "$title" --arg task_kind "$kind" \
-  --arg host "${HOSTNAME:-$(uname -n)}" \
+  --arg host "${HOSTNAME:-$(uname -n)}" --arg repo "$(_crew_repo)" \
   --arg plan "$plan_val" --argjson resume "$([ "$switch_mode" = resume ] && echo true || echo false)" \
   --argjson ident "$ident" \
   --arg escalated_from "$escalated_from_event" \
@@ -5034,7 +5265,7 @@ line=$(jq -nc --arg crew "$crew_id" --arg branch "$branch" --arg session "$sessi
   --arg pushed_oid "$pushed_oid" \
   --arg task_profile "$task_profile" \
   --arg migrated_from "$mig_from" --arg engine_context "$engine_context" --arg engine_context_why "$engine_context_why" \
-  '{ts:(now*1000|floor), crew_id:$crew, kind:"dispatch", branch:$branch, session:$session, worker_id:$worker, engine:$engine, model:$model, tier:$tier, effort:$effort, shape:$shape, task_kind:$task_kind, host:$host, title:$title, plan:$plan, resume:$resume, owner_auth:$owner_auth, engine_session:(if $engine_session == "" then null else $engine_session end)} + $ident
+  '{ts:(now*1000|floor), crew_id:$crew, kind:"dispatch", repo:$repo, branch:$branch, session:$session, worker_id:$worker, engine:$engine, model:$model, tier:$tier, effort:$effort, shape:$shape, task_kind:$task_kind, host:$host, title:$title, plan:$plan, resume:$resume, owner_auth:$owner_auth, engine_session:(if $engine_session == "" then null else $engine_session end)} + $ident
    + if $escalated_from != "" then {escalated_from:$escalated_from} else {} end
    + if $base != "" then {base:$base, base_oid:(if $base_oid == "" then null else $base_oid end)} else {} end
    + if (($also_closes | length) > 0 or $also_closes_explicit) then {also_closes:$also_closes} else {} end
@@ -5049,10 +5280,7 @@ _crew_append "$line"
 # A dispatcher on another host records the same row from this line.
 [ "${DISPATCH_EMIT_ROW:-}" != 1 ] || printf 'dispatch_row: %s\n' "$line"
 _claim_index_dispatch
-if [ -n "$ident_locked" ]; then
-  rmdir "$ident_lock" 2>/dev/null || true
-  ident_locked=""
-fi
+_ident_lock_release
 
 # GitHub-issue dispatch only: post a context comment for at-a-glance history.
 # Linear dispatches and `--pr` review dispatches set neither $gh_issue nor

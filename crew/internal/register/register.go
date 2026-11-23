@@ -49,12 +49,13 @@ func Run(sub, pid string, paths bus.Paths, stderr io.Writer, o Options) int {
 		return exitFailure
 	}
 	// deregister RemoveAlls the crew dir, so an unvalidated `..` removes the bus.
-	if !bus.ValidCrewID(crew) {
+	bc, err := paths.Crew(crew)
+	if err != nil {
 		say(stderr, "crew: invalid crew id — expected only letters, digits, '.', '_' and '-'\n")
 		return exitFailure
 	}
 
-	cdir := paths.CrewDir(crew)
+	cdir := bc.Dir
 	pidfile := cdir + "/pid"
 	epid, _ := crews.PidFileText(pidfile)
 	live := func() bool {
