@@ -3169,9 +3169,11 @@ _remux_launch() { # engine [launcher args...]
   if grep -q 'close-children' "$STUB_LOG"; then return 1; fi
 }
 
-@test "1744: outside tmux nothing is closed" {
-  _remux_engine claude
-  CREW_ID=c1 run run_launcher
+@test "1744: the close helper does nothing without tmux or a pane" {
+  : >"$STUB_LOG"
+  TMUX='' run bash -c 'source "$1"; _close_crew_dash_children %1' _ "$BATS_TEST_DIRNAME/../adapters/core/launcher-common.sh"
+  [ "$status" -eq 0 ]
+  TMUX=/tmp/fake,1,0 run bash -c 'source "$1"; _close_crew_dash_children ""' _ "$BATS_TEST_DIRNAME/../adapters/core/launcher-common.sh"
   [ "$status" -eq 0 ]
   if grep -q 'close-children' "$STUB_LOG"; then return 1; fi
 }
