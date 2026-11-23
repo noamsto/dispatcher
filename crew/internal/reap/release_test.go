@@ -101,6 +101,8 @@ func newRel(t *testing.T) *rel {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Setenv("HOME", root)
+	t.Setenv("XDG_DATA_HOME", filepath.Join(root, "data"))
 	main := filepath.Join(root, "main")
 	if err := os.Mkdir(main, 0o755); err != nil {
 		t.Fatal(err)
