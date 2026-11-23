@@ -3,10 +3,10 @@
 # shellcheck shell=bash
 
 # dispatcher_crew_id — print $CREW_ID and return 0 only inside a dispatcher launched
-# by `dispatcher`. A worker carries CREW_WORKER_ID and a role pane CREW_ROLE_ID, and
-# both inherit CREW_ID, so neither may count.
+# by `dispatcher`. A worker carries CREW_WORKER_ID, a role pane CREW_ROLE_ID and a
+# subagent CREW_SUBAGENT, and all inherit CREW_ID, so none may count.
 dispatcher_crew_id() {
-  [[ -z ${CREW_WORKER_ID:-} && -z ${CREW_ROLE_ID:-} ]] || return 1
+  [[ -z ${CREW_WORKER_ID:-} && -z ${CREW_ROLE_ID:-} && -z ${CREW_SUBAGENT:-} ]] || return 1
   [[ -n ${DISPATCHER_LAUNCHER_PID:-} ]] || return 1
   [[ ${CREW_ID:-} =~ ^[A-Za-z0-9._-]+$ && $CREW_ID != . && $CREW_ID != .. ]] || return 1
   printf '%s\n' "$CREW_ID"

@@ -30,24 +30,37 @@ ancestors() {
 }
 
 # promoted_crew — wait for `crew register` to record this engine, then print its crew.
+# `crew crews --mine` lists the crews whose recorded live pid is an ancestor; with
+# several, the one registered by the nearest ancestor wins.
 promoted_crew() {
-  local deadline=$((SECONDS + ${CREW_BUS_MONITOR_PROMOTE_WAIT:-300})) anc cid pid
+  local deadline=$((SECONDS + ${CREW_BUS_MONITOR_PROMOTE_WAIT:-300})) mine rows anc cid pid first
   while :; do
-    anc=$(ancestors)
-    while IFS=$'\t' read -r cid _ _ _ pid _; do
-      [[ $cid == crew_id || -z $pid ]] && continue
-      if grep -qxF -- "$pid" <<<"$anc"; then
-        printf '%s\n' "$cid"
-        return 0
-      fi
-    done < <(crew crews 2>/dev/null)
+    mine=$(crew crews --mine 2>/dev/null)
+    first=${mine%%$'\n'*}
+    if [[ -n $first && $mine == "$first" ]]; then
+      printf '%s\n' "$first"
+      return 0
+    fi
+    if [[ -n $first ]]; then
+      rows=$(crew crews 2>/dev/null)
+      while read -r anc; do
+        while IFS=$'\t' read -r cid _ _ _ pid _; do
+          if [[ $pid == "$anc" ]] && grep -qxF -- "$cid" <<<"$mine"; then
+            printf '%s\n' "$cid"
+            return 0
+          fi
+        done < <(tail -n +2 <<<"$rows")
+      done < <(ancestors)
+      printf '%s\n' "$first"
+      return 0
+    fi
     ((SECONDS < deadline)) || return 1
     sleep "${CREW_BUS_MONITOR_PROMOTE_STEP:-5}"
   done
 }
 
 if [[ ${1:-} == --promoted ]]; then
-  [[ -z ${CREW_WORKER_ID:-} && -z ${CREW_ROLE_ID:-} ]] || exit 0
+  [[ -z ${CREW_WORKER_ID:-} && -z ${CREW_ROLE_ID:-} && -z ${CREW_SUBAGENT:-} ]] || exit 0
   ! dispatcher_crew_id >/dev/null || exit 0
   id=$(promoted_crew) || exit 0
   [[ $id =~ ^[A-Za-z0-9._-]+$ && $id != . && $id != .. ]] || exit 0
@@ -56,27 +69,43 @@ else
 fi
 crew_dir=$(dispatcher_crew_dir "$id") || exit 0
 
+parent=$PPID
+poll=${CREW_BUS_MONITOR_POLL:-5}
 child=
 nap=
-trap 'kill "$child" "$nap" 2>/dev/null; exit 0' TERM INT
+trap 'kill "$child" "$nap" 2>/dev/null; exit 0' TERM INT HUP
 
 delay=$min_delay
 backoff() { ((delay = delay * 2 > max_delay ? max_delay : delay * 2)); }
 
-while [[ -d $crew_dir ]]; do
+# alive — the monitor's reason to run: Claude still up and the crew dir still there.
+# The real stream never exits on dir removal and re-creates the dir, so this is the
+# only way an orphaned monitor stops.
+alive() { kill -0 "$parent" 2>/dev/null && [[ -d $crew_dir ]]; }
+
+while alive; do
+  # --status and the stream both MkdirAll the crew dir, so test it right before.
   state=$(crew stream --status --crew "$id" 2>/dev/null | jq -r '.state // empty' 2>/dev/null)
-  # --status and the stream both MkdirAll the crew dir, so re-check before arming.
-  if [[ $state == dead && -d $crew_dir ]]; then
+  if [[ $state == dead ]]; then
     started=$SECONDS
     crew stream --crew "$id" &
     child=$!
-    wait "$child"
+    while kill -0 "$child" 2>/dev/null; do
+      sleep "$poll" &
+      nap=$!
+      wait "$nap"
+      nap=
+      alive || {
+        kill "$child" 2>/dev/null
+        exit 0
+      }
+    done
     child=
     if ((SECONDS - started < 30)); then backoff; else delay=$min_delay; fi
   else
     backoff
   fi
-  [[ -d $crew_dir ]] || break
+  alive || break
   sleep "$delay" &
   nap=$!
   wait "$nap"

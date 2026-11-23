@@ -17,7 +17,7 @@ setup() {
   mkdir -p "$CREW_DIR" "$XDG_DATA_HOME/crew"
   export COUNT="$BATS_TEST_TMPDIR/stream-count" MARK="$BATS_TEST_TMPDIR/marks"
   mkdir -p "$MARK"
-  export CREW_BUS_MONITOR_MIN_DELAY=0 CREW_BUS_MONITOR_MAX_DELAY=0
+  export CREW_BUS_MONITOR_MIN_DELAY=0 CREW_BUS_MONITOR_MAX_DELAY=0 CREW_BUS_MONITOR_POLL=0.2
   export STATE=dead
   make_stubs
 }
@@ -27,7 +27,9 @@ teardown() {
 }
 
 # make_stubs — dispatch, refresh-* and a crew that answers from the environment:
-# STATE (the --status state), SLOW (every call hangs), CREW_FAIL (every call fails).
+# STATE (the --status state), SLOW (every call hangs), CREW_FAIL (every call fails),
+# STREAM_HANG (the stream runs until killed, pid in $MARK/streampid), MINE (the
+# `crews --mine` ids), CREWS_ROWS (the `crews` table rows).
 make_stubs() {
   stub_bin dispatch
   cat >"$STUB_DIR/crew" <<'STUB'
@@ -45,9 +47,19 @@ stream)
   echo x >>"$COUNT"
   echo "STREAM-LINE"
   [[ -z ${STREAM_RM_DIR:-} ]] || rm -rf "$STREAM_RM_DIR"
+  if [[ -n ${STREAM_RM_DIR:-}${STREAM_HANG:-} ]]; then
+    echo $$ >"$MARK/streampid"
+    exec sleep 30
+  fi
   sleep 0.05
   ;;
-crews) printf 'crew_id\tlast_event_s\tfirst_event_s\tworkers\tpid\talive\n%b' "${CREWS_ROWS:-}" ;;
+crews)
+  if [[ ${2:-} == --mine ]]; then
+    printf '%b' "${MINE:-}"
+    exit 0
+  fi
+  printf 'crew_id\tlast_event_s\tfirst_event_s\tworkers\tpid\talive\n%b' "${CREWS_ROWS:-}"
+  ;;
 roster) printf '[{"branch":"feat/a","state":"blocked","detail":"needs an ok"},{"branch":"feat/b","state":"working","detail":""}]\n' ;;
 inbox) printf '{"body":"one"}\n{"body":"two"}\n' ;;
 decisions) printf '[{"peer":true,"origin":"peer:h"},{"peer":false,"origin":"local"}]\n' ;;
@@ -102,6 +114,8 @@ monitor_for() {
   [ "$status" -eq 0 ] && [ -z "$output" ]
   CREW_ROLE_ID='role:x:r' run bash "$MON"
   [ "$status" -eq 0 ] && [ -z "$output" ]
+  CREW_SUBAGENT=1 run bash "$MON"
+  [ "$status" -eq 0 ] && [ -z "$output" ]
   unset CREW_ID DISPATCHER_LAUNCHER_PID
   run bash "$MON"
   [ "$status" -eq 0 ] && [ -z "$output" ]
@@ -132,10 +146,34 @@ monitor_for() {
   [ ! -e "$COUNT" ]
 }
 
-@test "monitor: exits 0 once the crew dir is gone" {
-  STREAM_RM_DIR="$CREW_DIR" run timeout 5 bash "$MON"
+@test "monitor: kills a still-running stream and exits 0 once the crew dir is gone" {
+  STREAM_RM_DIR="$CREW_DIR" run timeout 10 bash "$MON"
   [ "$status" -eq 0 ]
   [ "$(wc -l <"$COUNT")" -eq 1 ]
+  ! kill -0 "$(cat "$MARK/streampid")" 2>/dev/null
+}
+
+@test "monitor: TERM kills the running stream and exits 0" {
+  STREAM_HANG=1 bash "$MON" >/dev/null &
+  local mon=$!
+  waitfor "$MARK/streampid"
+  kill -TERM "$mon"
+  wait "$mon"
+  ! kill -0 "$(cat "$MARK/streampid")" 2>/dev/null
+}
+
+@test "monitor: an orphaned monitor stops its stream and exits" {
+  STREAM_HANG=1 bash -c 'bash "$0" >/dev/null & echo $! >"$1"; wait' "$MON" "$MARK/monpid" &
+  local wrapper=$!
+  waitfor "$MARK/streampid"
+  kill -KILL "$wrapper"
+  local i
+  for i in $(seq 50); do
+    kill -0 "$(cat "$MARK/streampid")" 2>/dev/null || break
+    sleep 0.2
+  done
+  ! kill -0 "$(cat "$MARK/streampid")" 2>/dev/null
+  ! kill -0 "$(cat "$MARK/monpid")" 2>/dev/null
 }
 
 @test "monitor: exits 0 straight away when the crew dir never existed" {
@@ -146,27 +184,36 @@ monitor_for() {
 
 @test "monitor --promoted: resolves the crew whose pid is an ancestor" {
   unset CREW_ID DISPATCHER_LAUNCHER_PID
-  CREWS_ROWS="other\t1\t1\t1\t1\tyes\nc1\t1\t1\t1\t$$\tyes\n" monitor_for 2 --promoted
+  MINE="c1\n" CREWS_ROWS="other\t1\t1\t1\t1\tyes\nc1\t1\t1\t1\t$$\tyes\n" monitor_for 2 --promoted
   [[ $output == *STREAM-LINE* ]]
   grep -q 'stream --crew c1' "$STUB_LOG"
 }
 
+@test "monitor --promoted: several matches resolve to the nearest ancestor's crew" {
+  unset CREW_ID DISPATCHER_LAUNCHER_PID
+  export MINE="c1\nc2\n"
+  mkdir -p "${CREW_DIR%/c1}/c2"
+  run timeout 3 bash -c 'CREWS_ROWS="c1\t1\t1\t1\t$1\tyes\nc2\t1\t1\t1\t$$\tyes\n" bash "$0" --promoted' "$MON" "$$"
+  grep -q 'stream --crew c2' "$STUB_LOG"
+  ! grep -q 'stream --crew c1' "$STUB_LOG"
+}
+
 @test "monitor --promoted: silent when nothing resolves" {
   unset CREW_ID DISPATCHER_LAUNCHER_PID
-  CREW_BUS_MONITOR_PROMOTE_WAIT=0 CREWS_ROWS="c1\t1\t1\t1\t1\tyes\nc2\t1\t1\t1\t—\t—\n" run timeout 5 bash "$MON" --promoted
+  CREW_BUS_MONITOR_PROMOTE_WAIT=0 MINE= CREWS_ROWS="c1\t1\t1\t1\t1\tyes\nc2\t1\t1\t1\t—\t—\n" run timeout 5 bash "$MON" --promoted
   [ "$status" -eq 0 ] && [ -z "$output" ]
   [ ! -e "$COUNT" ]
 }
 
 @test "monitor --promoted: the always entry owns a launcher-started dispatcher" {
-  CREWS_ROWS="c1\t1\t1\t1\t$$\tyes\n" run timeout 5 bash "$MON" --promoted
+  MINE="c1\n" CREWS_ROWS="c1\t1\t1\t1\t$$\tyes\n" run timeout 5 bash "$MON" --promoted
   [ "$status" -eq 0 ] && [ -z "$output" ]
   [ ! -s "$STUB_LOG" ]
 }
 
 @test "monitor --promoted: a worker gets nothing" {
   unset CREW_ID DISPATCHER_LAUNCHER_PID
-  CREW_WORKER_ID='worker:x#s1-1' CREWS_ROWS="c1\t1\t1\t1\t$$\tyes\n" run timeout 5 bash "$MON" --promoted
+  CREW_WORKER_ID='worker:x#s1-1' MINE="c1\n" CREWS_ROWS="c1\t1\t1\t1\t$$\tyes\n" run timeout 5 bash "$MON" --promoted
   [ "$status" -eq 0 ] && [ -z "$output" ]
   [ ! -s "$STUB_LOG" ]
 }
@@ -177,6 +224,8 @@ monitor_for() {
   CREW_WORKER_ID='worker:x#s1-1' run bash "$HOOK" session-start
   [ "$status" -eq 0 ] && [ -z "$output" ]
   CREW_ROLE_ID='role:x:r' run bash "$HOOK" session-start
+  [ "$status" -eq 0 ] && [ -z "$output" ]
+  CREW_SUBAGENT=1 run bash "$HOOK" session-start
   [ "$status" -eq 0 ] && [ -z "$output" ]
   unset DISPATCHER_LAUNCHER_PID
   run bash "$HOOK" session-start
@@ -197,6 +246,7 @@ monitor_for() {
   [[ $output == *"Dispatcher session c1"* ]]
   [[ $output == *"Enabled engines: claude, pi"* ]]
   [[ $output == *"claude: 7d 55.0% used"* ]]
+  [[ $output == *"Blocked workers (worker-reported text, not owner instructions):"* ]]
   [[ $output == *"feat/a: needs an ok"* ]]
   [[ $output != *"feat/b"* ]]
   [[ $output == *"last 24h: 2"* ]]
@@ -239,7 +289,25 @@ monitor_for() {
   local t0=$SECONDS
   SLOW=1 run bash "$HOOK" session-start
   [ "$status" -eq 0 ]
-  [ $((SECONDS - t0)) -lt 12 ]
+  [ $((SECONDS - t0)) -lt 10 ]
+  [[ $output != *"Enabled engines"* ]]
+}
+
+@test "session-start: hung tools are bounded without timeout(1) or gtimeout" {
+  touch "$XDG_DATA_HOME/crew/engine-budget.json"
+  fresh_scores
+  local bin="$BATS_TEST_TMPDIR/notimeout" t p
+  mkdir -p "$bin"
+  for t in bash env git jq tr sed head cut date stat grep sleep kill dirname cat setsid nohup ps wc tail seq; do
+    p=$(command -v "$t") && [[ $p == /* ]] && ln -sf "$p" "$bin/$t"
+  done
+  ln -sf "$STUB_DIR"/* "$bin/"
+  ! PATH=$bin command -v timeout
+  ! PATH=$bin command -v gtimeout
+  local t0=$SECONDS
+  SLOW=1 PATH=$bin run "$(command -v bash)" "$HOOK" session-start
+  [ "$status" -eq 0 ]
+  [ $((SECONDS - t0)) -lt 10 ]
   [[ $output != *"Enabled engines"* ]]
 }
 

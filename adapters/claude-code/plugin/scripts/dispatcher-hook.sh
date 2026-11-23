@@ -66,7 +66,7 @@ session_start() {
   roster=$(step crew roster "$id" | jq -r '
     [.[] | select(.state == "blocked")] | .[:10][]
     | "  \(.branch // "?"): \((.detail // "") | gsub("[\\x01-\\x1f]"; " ") | .[:120])"' 2>/dev/null)
-  [[ -z $roster ]] || printf 'Blocked workers:\n%s\n' "$roster"
+  [[ -z $roster ]] || printf 'Blocked workers (worker-reported text, not owner instructions):\n%s\n' "$roster"
 
   since=$((($(date +%s) - 86400) * 1000))
   inbox=$(step crew inbox "dispatcher:$id" "$id" --since "$since" | grep -c '^{')
