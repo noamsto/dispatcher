@@ -64,6 +64,7 @@ Maintenance:
   merge           Merge a PR only when head, base and ledger are green
   followups       Plan or apply a PR's follow-up batch
   reap            Reclaim the window and worktree of a landed PR
+  cleanup         Review and clean up the stale worktrees reap keeps
   class           Revert or promote a model class default
   git-baseline    List or accept the exec-capable git-config baseline
   stack           Read or record stacked cut points; plan a stack rebase

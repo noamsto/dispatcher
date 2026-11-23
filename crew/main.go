@@ -24,6 +24,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/await"
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/classes"
+	"github.com/noamsto/dispatcher/crew/internal/cleanup"
 	"github.com/noamsto/dispatcher/crew/internal/clock"
 	"github.com/noamsto/dispatcher/crew/internal/crews"
 	"github.com/noamsto/dispatcher/crew/internal/entry"
@@ -175,7 +176,7 @@ var subcommands = []string{
 	"roster", "report", "retro", "rate", "fleet", "stack", "roster-render", "pi-agent-dir",
 	"adopt", "await", "dash", "git-baseline", "merge",
 	"git-guard", "help", "hold", "msg", "nudge", "queue", "policy",
-	"pr-watch", "reap", "reap-autosweep",
+	"pr-watch", "reap", "reap-autosweep", "cleanup",
 	"relay", "reply", "role-watch", "stall-watch", "status", "stream", "watch",
 	"remote-run", "remote-exec", "dispatch-row", "peer-sync", "peer-claims", "decide", "decisions", "spec-lint", "followups", "class", "overseer", "migrate", "completion",
 }
@@ -190,7 +191,7 @@ var typedSubcommands = map[string]bool{
 	"stack": true, "roster-render": true, "pi-agent-dir": true,
 	"status": true, "msg": true, "reply": true, "hold": true, "queue": true, "policy": true,
 	"nudge": true, "await": true, "watch": true, "relay": true, "stream": true,
-	"git-guard": true, "git-baseline": true, "reap": true, "reap-autosweep": true,
+	"git-guard": true, "git-baseline": true, "reap": true, "reap-autosweep": true, "cleanup": true,
 	"adopt": true, "merge": true, "pr-watch": true, "role-watch": true, "stall-watch": true, "help": true,
 	"remote-run": true, "remote-exec": true, "dispatch-row": true, "peer-sync": true, "peer-claims": true, "decide": true, "decisions": true, "spec-lint": true,
 	"followups": true, "class": true, "overseer": true, "migrate": true, "completion": true,
@@ -282,8 +283,9 @@ type root struct {
 	StallWatch stallWatchCmd `cmd:"" name:"stall-watch" help:"The per-worker liveness watchdog."`
 	RoleWatch  roleWatchCmd  `cmd:"" name:"role-watch" help:"Type lead assignments into a role pane."`
 
-	Reap          reapCmd `cmd:"" name:"reap" help:"Reclaim the windows and worktrees of landed workers."`
-	ReapAutosweep argvCmd `cmd:"" name:"reap-autosweep" help:"The detached ratings sweep reap starts."`
+	Reap          reapCmd    `cmd:"" name:"reap" help:"Reclaim the windows and worktrees of landed workers."`
+	ReapAutosweep argvCmd    `cmd:"" name:"reap-autosweep" help:"The detached ratings sweep reap starts."`
+	Cleanup       cleanupCmd `cmd:"" name:"cleanup" help:"Review and clean up the stale worktrees reap keeps."`
 
 	Help argvCmd `cmd:"" name:"help" help:"The grouped help."`
 
@@ -654,6 +656,17 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 		return reap.RunFleet(ctx, reap.Request{
 			Quiet: c.Quiet, DryRun: c.DryRun, NoWait: c.NoWait, JSON: c.JSON, Idle: str(c.Idle), Discard: str(c.Discard), StaleAfter: str(c.StaleAfter),
 		}, stdout, stderr, reapOptions(ctx), reap.FleetOptions{})
+	case "cleanup":
+		// --fleet and --repo pick their own repos, and --list/--json are open to
+		// workers anywhere, so it runs before Locate.
+		if parsed.refusal != nil {
+			return refuse(stderr, parsed.refusal)
+		}
+		c := parsed.typed.Cleanup
+		cwd, _ := e.getwd()
+		return cleanup.Run(ctx, cleanup.Request{
+			Fleet: c.Fleet, List: c.List, JSON: c.JSON, PruneArchive: c.PruneArchive, Repo: str(c.Repo), OlderThan: str(c.OlderThan),
+		}, cwd, stdout, stderr, cleanupOptions(ctx, e))
 	case "overseer":
 		// It picks its own bus, so it runs before Locate and outside any repo.
 		if parsed.refusal != nil {
@@ -1586,6 +1599,17 @@ func reapOptions(ctx context.Context) reap.Options {
 				ClassCheck: func(rows []any, w io.Writer) { classes.Check(rows, classEnv(ctx, env{proc: proc.OS{}}, c, p), w) },
 			})
 		},
+	}
+}
+
+// cleanupOptions is `crew cleanup`'s production wiring: reap's probes, the
+// process environment, and a terminal check on the real stdin and stdout.
+func cleanupOptions(ctx context.Context, e env) cleanup.Options {
+	return cleanup.Options{
+		Reap:        reapOptions(ctx),
+		Getenv:      os.Getenv,
+		Stdin:       e.stdin,
+		Interactive: func() bool { return bus.IsTerminal(0) && bus.IsTerminal(1) },
 	}
 }
 

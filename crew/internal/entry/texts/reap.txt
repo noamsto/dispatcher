@@ -30,6 +30,9 @@ keeping the local branch. It refuses an open PR, a live engine pane, a
 non-terminal latest status, a busy reap lock and a tree holding an embedded git
 repository. Never implicit: plain reap and the stream's reaps never discard.
 
+A kept worktree reap marks "stale: needs human cleanup" is reviewed, archived and
+removed with `crew cleanup`; its keep (snooze) silences the stale report for 14 days.
+
 Kept: an open PR, uncommitted changes, a live engine, a tip past the head of a
 PR that is not the latest session's own, or no PR with a failed worker whose
 claimed issue is not CLOSED, has no claim-issue row, or has commits on no remote

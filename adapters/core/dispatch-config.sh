@@ -52,7 +52,8 @@
 # (prefix + I still shows it); float opens the dash as a float and leaves the
 # roster diagram as before. A rosterDiagram.autoOpen set in any layer or by
 # DISPATCH_ROSTER_AUTO_OPEN (origin not "base") is explicit and still opens the
-# roster under side. dashAutoOpen false turns all of it off.
+# roster under side. dashAutoOpen false turns all of it off. The dash closes
+# when the dispatcher launcher exits (not on a --fresh handoff).
 # dispatcherMcp maps an owner/repo or org key to the MCP opt-ins (claudeai:
 # every claude.ai connector; analytics: the generated --mcp profile; or any
 # mcpServers name) that the dispatcher launch restores for that repo; the

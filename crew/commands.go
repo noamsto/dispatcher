@@ -12,6 +12,7 @@ import (
 
 	"github.com/noamsto/dispatcher/crew/internal/ascii"
 	"github.com/noamsto/dispatcher/crew/internal/bus"
+	"github.com/noamsto/dispatcher/crew/internal/cleanup"
 	"github.com/noamsto/dispatcher/crew/internal/fleet"
 	"github.com/noamsto/dispatcher/crew/internal/followups"
 	"github.com/noamsto/dispatcher/crew/internal/gitguard"
@@ -516,6 +517,15 @@ type reapCmd struct {
 	StaleAfter *string `name:"stale-after"`
 }
 
+type cleanupCmd struct {
+	Fleet        bool    `name:"fleet"`
+	List         bool    `name:"list"`
+	JSON         bool    `name:"json"`
+	PruneArchive bool    `name:"prune-archive"`
+	Repo         *string `name:"repo"`
+	OlderThan    *string `name:"older-than"`
+}
+
 type prWatchCmd struct {
 	Repo     *string `name:"repo"`
 	Timeout  *string `name:"timeout"`
@@ -869,6 +879,13 @@ var wordings = map[string]wording{
 		unknownFlag: func(f string) string { return fmt.Sprintf("crew: merge: unknown flag '%s' (%s)", f, merge.Usage) },
 		extra: func(w string) string {
 			return fmt.Sprintf("crew: merge: unexpected argument '%s' (%s)", w, merge.Usage)
+		},
+		code: exitFailure,
+	},
+	"cleanup": {
+		unknownFlag: func(f string) string { return fmt.Sprintf("crew: cleanup: unknown flag '%s' (%s)", f, cleanup.Usage) },
+		extra: func(w string) string {
+			return fmt.Sprintf("crew: cleanup: unexpected argument '%s' (%s)", w, cleanup.Usage)
 		},
 		code: exitFailure,
 	},
@@ -1321,6 +1338,17 @@ func validate(sub string, r *root) *refusal {
 	case "migrate mark":
 		if c := r.Migrate.Mark; given(c.Crew) || c.ToHost == "" || c.Mode == "" || c.Tip == "" || c.Tree == "" || c.Dir == "" {
 			return fail(migrateUsage)
+		}
+	case "cleanup":
+		c := r.Cleanup
+		if given(c.Repo) || given(c.OlderThan) || (c.Fleet && c.Repo != nil) || (!c.PruneArchive && c.OlderThan != nil) ||
+			(c.PruneArchive && (c.Fleet || c.Repo != nil || c.List || c.JSON)) {
+			return fail(cleanup.Usage)
+		}
+		if c.OlderThan != nil {
+			if _, err := cleanup.ParseAge(*c.OlderThan); err != nil {
+				return fail("crew: cleanup: " + err.Error())
+			}
 		}
 	case "followups":
 		c := r.Followups
