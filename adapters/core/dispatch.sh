@@ -1964,6 +1964,84 @@ split_role_pane() {
 # that name a branch so a shared bus can tell repos apart.
 _crew_repo() { realpath -e -- "${crew_dir%/crew}"; }
 
+# _branch_live_elsewhere — print the repo of a live dispatch of $branch in crew
+# $crew_id from another repo, or nothing: worker ids, reply and the stamp rule
+# key on the branch alone, so a crew holds one worker per branch name. An
+# untagged row belongs to the bus it sits in. A dispatch stays live until a
+# reap or release of the branch in its own repo that is later by (ts, file
+# position): a reap here must not end another repo's dispatch once a crew's
+# repos share one log. A missing log is no conflict; one jq cannot read returns
+# 1, and the caller refuses.
+_branch_live_elsewhere() {
+  local events="$crew_dir/events.jsonl"
+  [ -e "$events" ] || [ -L "$events" ] || return 0
+  jq -nrR --arg b "$branch" --arg c "$crew_id" --arg r "$(_crew_repo)" '
+    reduce (inputs | fromjson? | objects) as $row ({n: 0, live: {}, ended: {}};
+      .n += 1
+      | if $row.branch != $b then . else
+          (($row.repo // $r) | tostring) as $repo | [$row.ts, .n] as $at
+          | if $row.kind == "dispatch" and $row.crew_id == $c and $repo != $r then
+              .live[$repo] = ([.live[$repo], $at] | max)
+            elif $row.kind == "reap" or $row.kind == "release" then
+              .ended[$repo] = ([.ended[$repo], $at] | max)
+            else . end
+        end)
+    | .ended as $ended | first(.live | to_entries[] | select(.value > $ended[.key]) | .key)' "$events" || {
+    echo "dispatch: cannot read $events to check $branch for a live dispatch from another repo — refusing" >&2
+    return 1
+  }
+}
+
+# _lost_branch_race <repo> — the re-check under the codename lock found <repo>'s
+# dispatch of $branch, which won the race since the pre-check: undo what this
+# dispatch made, keyed on facts recorded before the switch, and refuse. A
+# worktree that was already there ($prev_wt) is not this dispatch's to touch.
+# Only create and fetch-name made the branch (fetch-name also its tracking
+# config); resume, name and pr-ref keep it. Origin is never touched. A failed
+# step does not stop the rest; the refusal names what is left.
+_lost_branch_race() {
+  local common="${crew_dir%/crew}" key rc
+  local -a removed=() kept=() failed=()
+  if [ -n "$prev_wt" ]; then
+    kept+=("worktree $prev_wt and branch $branch (both existed before this dispatch)")
+  else
+    if _wt_git_common "$common" worktree remove --force -- "$wt_path" && [ ! -e "$wt_path" ]; then
+      removed+=("worktree $wt_path")
+    else
+      failed+=("worktree $wt_path")
+    fi
+    case "$switch_mode" in
+    create | fetch-name)
+      if _wt_git_common "$common" branch -D -- "$branch" >/dev/null; then
+        removed+=("branch $branch")
+      else
+        failed+=("branch $branch")
+      fi
+      ;;
+    *) kept+=("branch $branch (a $switch_mode switch)") ;;
+    esac
+    if [ "$switch_mode" = fetch-name ]; then
+      for key in remote merge; do
+        rc=0
+        # 5 is an absent key: a successful branch -D drops the branch's config section.
+        _wt_git_common "$common" config --unset-all "branch.$branch.$key" || rc=$?
+        case "$rc" in
+        0 | 5) removed+=("branch.$branch.$key") ;;
+        *) failed+=("branch.$branch.$key") ;;
+        esac
+      done
+    fi
+  fi
+  {
+    echo "dispatch: a concurrent dispatch of $branch into $1 in crew $crew_id won the race — one worker per branch name in a crew; refusing."
+    [ "${#removed[@]}" -eq 0 ] || printf '  removed: %s\n' "${removed[@]}"
+    [ "${#kept[@]}" -eq 0 ] || printf '  kept: %s\n' "${kept[@]}"
+    [ -z "$pushed_oid" ] || echo "  kept: origin's $branch, pushed by this dispatch"
+    [ "${#failed[@]}" -eq 0 ] || printf '  could not remove: %s — remove it by hand\n' "${failed[@]}"
+  } >&2
+  exit 1
+}
+
 # _record_worktree_anchor <worktree> <admin-dir> — write the record `dispatch
 # resume` checks its git discovery against (#518).
 _record_worktree_anchor() {
@@ -4707,6 +4785,15 @@ _ident_lock_release() {
 }
 trap 'rm -f "$dispatch_lock" "${claude_json_lock:-}"; _ident_lock_release' EXIT INT TERM HUP
 
+# Same-branch pre-check, lock-free: runs before the reclaim and the switch below,
+# so the common refusal leaves no window killed and no branch or worktree made.
+# The re-check under the codename lock is the one that decides.
+live_repo="$(_branch_live_elsewhere)" || exit 1
+if [ -n "$live_repo" ]; then
+  echo "dispatch: $branch is already dispatched live into $live_repo in crew $crew_id — one worker per branch name in a crew; reap or release it there first, or dispatch under another title" >&2
+  exit 1
+fi
+
 # Reuse-or-refuse (#17). git allows exactly one worktree per branch, so a dispatch
 # onto a branch that already has one lands in the same directory. Occupancy is a
 # WORKER WINDOW (crew occupants, keyed on @crew_name), not a running engine: a
@@ -5000,6 +5087,12 @@ fi
 # fetch, the switch and its hooks, and the --pr re-fetch: it is crew-wide, and
 # holding it across network I/O would queue every dispatch behind the slowest.
 _ident_lock_acquire
+
+# Same-branch re-check, authoritative: the pre-check ran unlocked, so another
+# repo's dispatch of $branch may have written its row since. This dispatch's own
+# row follows under the same lock, so of two racers the later one sees it here.
+live_repo="$(_branch_live_elsewhere)" || exit 1
+[ -z "$live_repo" ] || _lost_branch_race "$live_repo"
 
 # Claim the branch on the bus before the tmux window exists (#32): reap's
 # idle-release loop reads a branch's newest bus event, and a session that
