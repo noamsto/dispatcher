@@ -104,6 +104,9 @@ IL1	adapters/core/dispatch.sh	_ident_lock_acquire	3	:	tests/dispatch.bats	^ident
 IL2	adapters/core/dispatch.sh	for _ in $(seq 1 300); do	1	for _ in 1; do	tests/dispatch.bats	^identity lock: a live holder past the bound refuses	"$n" -ge 299
 IL3	adapters/core/dispatch.sh	if [ -n "$holder" ] && ! _pid_live "$holder"; then	1	if false; then	tests/dispatch.bats	^identity lock: a lock left by a dead pid is broken at once	"$status" -eq 0
 IL4	adapters/core/dispatch.sh	if [ "$dir_seen" -ge 100 ]; then	1	if false; then	tests/dispatch.bats	^identity lock: an empty pre-upgrade directory lock is broken	"$status" -eq 0
-SB1	adapters/core/dispatch.sh	live_repo="$(_branch_live_elsewhere)" || exit 1	1	live_repo=""	tests/dispatch.bats	^same-branch: another repo's live dispatch of the branch refuses before any switch	is already dispatched live into /srv/other/.git in crew c1
+IL5	adapters/core/dispatch.sh	_ident_lock_acquire || exit 1	1	_ident_lock_acquire || true	tests/dispatch.bats	^identity lock: a live holder past the bound refuses	"$status" -eq 1
+IL6	adapters/core/dispatch.sh	if [ -n "$holder" ] && ! _pid_live "$holder"; then	1	if [ -n "$holder" ]; then	tests/dispatch.bats	^identity lock: a live holder past the bound refuses	"$status" -eq 1
+SB1	adapters/core/dispatch.sh	live_repo="$(_branch_live_elsewhere)" || exit 1	1	live_repo=""	tests/dispatch.bats	^same-branch: another repo's live dispatch of the branch refuses before any switch	is already dispatched live into $other in crew c1
 SB2	adapters/core/dispatch.sh	live_repo="$(_branch_live_elsewhere)" || exit 1	2	live_repo=""	tests/dispatch.bats	^same-branch: a create that loses the race removes its worktree	"$status" -eq 1
 SB3	adapters/core/dispatch.sh	if [ -n "$prev_wt" ]; then	1	if false; then	tests/dispatch.bats	^same-branch: a dispatch onto an existing worktree that loses the race touches nothing	kept: worktree
+SB4	adapters/core/dispatch.sh	elif [ -n "$branch_existed" ]; then	1	elif false; then	tests/dispatch.bats	^same-branch: a name --pr onto an existing local branch that loses the race	kept: branch feat/pr-head (it existed before this dispatch)
