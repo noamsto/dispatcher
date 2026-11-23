@@ -209,7 +209,7 @@ type RosterSection struct {
 	// ForeignError says why the foreign-crew lookup failed; the here crews are
 	// still listed, so it is not a whole-roster Error.
 	ForeignError *string `json:"-"`
-	// Scope is json:"-" like Lane: the snapshot contract is unchanged.
+	// Scope is json:"-" like Lane, so the --json snapshot never carries it.
 	Scope Scope `json:"-"`
 }
 

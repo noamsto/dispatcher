@@ -272,8 +272,6 @@ func rowLabel(branch, host string) string {
 	return branch + "@" + host
 }
 
-// ageColW is the width of the right-aligned age column in event and
-// attention rows.
 const ageColW = 4
 
 func ovAge(sec int64) string {
