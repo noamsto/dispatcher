@@ -5,8 +5,10 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -260,16 +262,15 @@ func TestCachedStatusSymlinkDirScansPlainly(t *testing.T) {
 
 func TestCachedStatusKeysDifferByScanEnv(t *testing.T) {
 	home := t.TempDir()
-	envOf := func(over map[string]string) func(string) string {
-		return func(k string) string {
-			if v, ok := over[k]; ok {
-				return v
-			}
-			if k == "HOME" {
-				return home
-			}
-			return ""
+	uid := strconv.Itoa(os.Getuid())
+	envOf := func(over map[string]string) []string {
+		m := map[string]string{"HOME": home}
+		maps.Copy(m, over)
+		var env []string
+		for k, v := range m {
+			env = append(env, k+"="+v)
 		}
+		return env
 	}
 	for _, c := range []struct {
 		name string
@@ -288,7 +289,17 @@ func TestCachedStatusKeysDifferByScanEnv(t *testing.T) {
 		{"tmux socket", map[string]string{"TMUX": "/srv/sock,123,0"}, false},
 		{"overseer", map[string]string{"CREW_OVERSEER": "1"}, false},
 		{"status dir", map[string]string{"CLAUDE_STATUS_DIR": "/srv/status"}, false},
+		{"default tmux socket spelled out", map[string]string{"TMUX": "/tmp/tmux-" + uid + "/default,1,0"}, true},
+		{"default status dir spelled out", map[string]string{"CLAUDE_STATUS_DIR": "/tmp/claude-status-" + uid}, true},
+		{"default config dir spelled out", map[string]string{"XDG_CONFIG_HOME": home + "/.config"}, true},
 		{"loadavg", map[string]string{"DISPATCH_LOADAVG_FILE": "/srv/loadavg"}, false},
+		{"dispatch budget", map[string]string{"DISPATCH_FLEET_BUDGET": "8"}, false},
+		{"dispatch config bin", map[string]string{"DISPATCH_CONFIG_BIN": "/srv/cfg"}, false},
+		{"locked settings", map[string]string{"DISPATCH_LOCKED_SETTINGS": "/srv/locked.json"}, false},
+		{"config dir", map[string]string{"XDG_CONFIG_HOME": "/srv/config"}, false},
+		{"overseer host", map[string]string{"CREW_OVERSEER": "other"}, false},
+		{"worker session", map[string]string{"CREW_WORKER_ID": "w"}, false},
+		{"clock", map[string]string{"CREW_CLOCK": "/srv/clock"}, false},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			o := cacheOpts(t)

@@ -200,8 +200,9 @@ as `crew fleet` finds them.
            Serve the last output when it is younger than S seconds, else scan
            and refresh it. The cache is shared by every caller with the same
            flags, user and scan environment (CREW_SWEEP_ROOTS, the repo
-           registry, XDG_STATE_HOME, CREW_OVERSEER, CLAUDE_STATUS_DIR,
-           DISPATCH_LOADAVG_FILE, CREW_CLOCK and the tmux server) under ${XDG_CACHE_HOME:-~/.cache}/crew (mode 0600): one scans
+           registry, XDG_STATE_HOME, XDG_CONFIG_HOME, CREW_OVERSEER,
+           CLAUDE_STATUS_DIR, CREW_CLOCK, every DISPATCH_* variable and the
+           tmux server) under ${XDG_CACHE_HOME:-~/.cache}/crew (mode 0600): one scans
            while the others wait for its result, and only a successful scan is
            kept. Warnings the scan prints to stderr appear only on the run
            that scanned, not when the output is served. Absent or 0 always

@@ -1474,7 +1474,7 @@ func statusCacheOptions() fleet.CacheOptions {
 		}
 		base = filepath.Join(home, ".cache")
 	}
-	return fleet.CacheOptions{Dir: filepath.Join(base, "crew"), User: strconv.Itoa(os.Getuid()), Variant: fleet.ScanVariant(os.Getenv)}
+	return fleet.CacheOptions{Dir: filepath.Join(base, "crew"), User: strconv.Itoa(os.Getuid()), Variant: fleet.ScanVariant(os.Environ())}
 }
 
 func runFleetStatus(ctx context.Context, req fleet.StatusRequest, o fleet.Options, e env, stdout, stderr io.Writer) int {

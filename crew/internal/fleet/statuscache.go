@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -175,8 +176,21 @@ func writeCacheFile(path string, b []byte) error {
 // ScanVariant names the effective value of every environment input that
 // changes what the status scan finds, so callers whose scans would differ never
 // share a cache file while an unset variable and its default still do. Paths
-// are resolved the way the scan resolves them.
-func ScanVariant(lookup func(string) string) string {
+// are resolved the way the scan resolves them. Every DISPATCH_* variable counts:
+// dispatch-config layers them over the settings the scan reads. PATH and the gh
+// auth environment are left out.
+func ScanVariant(environ []string) string {
+	vars := map[string]string{}
+	var dispatch []string
+	for _, kv := range environ {
+		k, v, _ := strings.Cut(kv, "=")
+		vars[k] = v
+		if strings.HasPrefix(k, "DISPATCH_") {
+			dispatch = append(dispatch, kv)
+		}
+	}
+	slices.Sort(dispatch)
+	lookup := func(k string) string { return vars[k] }
 	roots := lookup("CREW_SWEEP_ROOTS")
 	if roots == "" {
 		roots = lookup("HOME")
@@ -185,15 +199,14 @@ func ScanVariant(lookup func(string) string) string {
 	if statusDir == "" {
 		statusDir = "/tmp/claude-status-" + strconv.Itoa(os.Getuid())
 	}
-	loadavg := lookup("DISPATCH_LOADAVG_FILE")
-	if loadavg == "" {
-		loadavg = "/proc/loadavg"
-	}
 	// $TMUX names the caller's own server socket, ahead of the default one.
 	socket, _, _ := strings.Cut(lookup("TMUX"), ",")
 	if socket == "" {
-		socket = filepath.Join(cmp.Or(lookup("TMUX_TMPDIR"), "/tmp"), "tmux-"+strconv.Itoa(os.Getuid()))
+		socket = filepath.Join(cmp.Or(lookup("TMUX_TMPDIR"), "/tmp"), "tmux-"+strconv.Itoa(os.Getuid()), "default")
 	}
-	return fmt.Sprintf("overseer=%t roots=%q registry=%q state=%q status=%q loadavg=%q tmux=%q clock=%q",
-		lookup("CREW_OVERSEER") != "", roots, repos.RegistryPath(lookup), stateHome(lookup), statusDir, loadavg, socket, lookup("CREW_CLOCK"))
+	configDir := cmp.Or(lookup("XDG_CONFIG_HOME"), lookup("HOME")+"/.config")
+	// The overseer gate refuses a worker or role session, so who asks matters.
+	member := lookup("CREW_WORKER_ID") != "" || lookup("CREW_ROLE_ID") != ""
+	return fmt.Sprintf("overseer=%q member=%t roots=%q registry=%q state=%q config=%q status=%q tmux=%q clock=%q dispatch=%q",
+		lookup("CREW_OVERSEER"), member, roots, repos.RegistryPath(lookup), stateHome(lookup), configDir, statusDir, socket, lookup("CREW_CLOCK"), dispatch)
 }
