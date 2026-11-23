@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/noamsto/dispatcher/crew/internal/filekind"
+	"github.com/noamsto/dispatcher/crew/internal/snooze"
 )
 
 // keepClass is why a kept branch could need a human, for the stale classifier;
@@ -74,11 +75,11 @@ func (r *run) keepHuman(ctx context.Context, c *candidate, why string, class kee
 	}
 }
 
-// classifyStale decides whether a keep of class c.class is stale: a terminal
+// classifyStale decides whether a keep of class c.class is stale (never while `crew cleanup` has it snoozed): a terminal
 // worker with no engine pane whose claimed issues are all CLOSED or whose last
 // status is older than --stale-after.
 func (r *run) classifyStale(ctx context.Context, c *candidate, why string) (staleInfo, bool) {
-	if c.class == classNone || !slices.Contains(terminalStates, any(c.state)) || len(r.enginePanes(c.wtpath)) > 0 {
+	if c.class == classNone || r.snoozed(ctx, c) || !slices.Contains(terminalStates, any(c.state)) || len(r.enginePanes(c.wtpath)) > 0 {
 		return staleInfo{}, false
 	}
 	var cause string
@@ -97,6 +98,12 @@ func (r *run) classifyStale(ctx context.Context, c *candidate, why string) (stal
 		inspect:  "git -C " + shq(c.wtpath) + " status --short; git -C " + shq(c.wtpath) + " log --oneline " + shq(c.branch) + " --not --remotes",
 		remove:   "git -C " + common + " worktree remove --force " + shq(c.wtpath) + " && git -C " + common + " branch -D " + shq(c.branch),
 	}, true
+}
+
+// snoozed is true while `crew cleanup` holds this branch's snooze, which a new
+// tip or worktree ends.
+func (r *run) snoozed(ctx context.Context, c *candidate) bool {
+	return snooze.Active(r.paths.Dir, c.branch, snooze.Key{Tip: r.revParse(ctx, "refs/heads/"+c.branch), Worktree: c.wtpath}, r.p.Clock.Now())
 }
 
 // statusTS is the latest status row's ts in ms, 0 when unreadable.
