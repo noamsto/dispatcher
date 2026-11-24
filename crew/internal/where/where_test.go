@@ -523,6 +523,7 @@ func TestVisitingCrewWindowIsBoundToItsDispatchRow(t *testing.T) {
 		{"recorded window id", []string{row, winRow}, real, true, ""},
 		{"copied stamps after the real window closed", []string{row, winRow}, copied, false, ""},
 		{"copied stamps beside the real window, recorded id", []string{row, winRow}, real + "\n" + copied, true, ""},
+		{"a dispatch row whose window is not open yet binds no window", []string{strings.Replace(row, `"kind":"dispatch"`, `"kind":"dispatch","window_id":null`, 1)}, copied, false, ""},
 		{"a resume row's id replaces the window row's", []string{row, winRow, resumeRow}, real, false, ""},
 		{"a legacy resume row keeps the dir binding", []string{row, winRow, strings.Replace(resumeRow, `,"window_id":"@625"`, "", 1)}, real, true, ""},
 		// The rows after a torn line could move the branch to another clone.

@@ -963,6 +963,14 @@ func TestWindowBound(t *testing.T) {
 		e.Doc = doc
 		return e
 	}
+	nullID := func(e bus.Event) bus.Event {
+		doc := map[string]any{"window_id": nil}
+		for k, v := range e.Doc.(map[string]any) {
+			doc[k] = v
+		}
+		e.Doc = doc
+		return e
+	}
 	winRow := func(crew, branch, repo, id string) bus.Event {
 		e := withID(row(crew, branch, repo), id)
 		e.Kind = bus.KindWindow
@@ -996,6 +1004,11 @@ func TestWindowBound(t *testing.T) {
 		{"a window row of another branch", []bus.Event{winRow("c1", "x", real, "@3")}, real + "/crew", false, "@3"},
 		{"a resume row's id", []bus.Event{winRow("c1", "b", real, "@3"), withID(resume, "@5")}, real + "/crew", true, "@5"},
 		{"a resume row's id replaces the window row's", []bus.Event{winRow("c1", "b", real, "@3"), withID(resume, "@5")}, real + "/crew", false, "@3"},
+		{"a dispatch row whose window is not open yet binds nothing", []bus.Event{nullID(row("c1", "b", real))}, real + "/crew", false, "@3"},
+		{"a dispatch row pending its window, even for its dir", []bus.Event{nullID(row("c1", "b", real))}, real + "/crew", false, ""},
+		{"a newer pending dispatch row replaces an older window row", []bus.Event{winRow("c1", "b", real, "@3"), nullID(row("c1", "b", real))}, real + "/crew", false, "@3"},
+		{"a window row with no id binds nothing", []bus.Event{winRow("c1", "b", real, "")}, real + "/crew", false, ""},
+		{"a resume row with an empty id binds nothing", []bus.Event{withID(resume, "")}, real + "/crew", false, ""},
 		{"a legacy resume row after a window row keeps the dir binding", []bus.Event{winRow("c1", "b", real, "@3"), resume}, real + "/crew", true, "@9"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

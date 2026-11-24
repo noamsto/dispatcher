@@ -5363,7 +5363,7 @@ line=$(jq -nc --arg crew "$crew_id" --arg branch "$branch" --arg session "$sessi
   --arg pushed_oid "$pushed_oid" \
   --arg task_profile "$task_profile" \
   --arg migrated_from "$mig_from" --arg engine_context "$engine_context" --arg engine_context_why "$engine_context_why" \
-  '{ts:(now*1000|floor), crew_id:$crew, kind:"dispatch", repo:$repo, branch:$branch, session:$session, worker_id:$worker, engine:$engine, model:$model, tier:$tier, effort:$effort, shape:$shape, task_kind:$task_kind, host:$host, title:$title, plan:$plan, resume:$resume, owner_auth:$owner_auth, engine_session:(if $engine_session == "" then null else $engine_session end)} + $ident
+  '{ts:(now*1000|floor), crew_id:$crew, kind:"dispatch", repo:$repo, branch:$branch, session:$session, worker_id:$worker, engine:$engine, model:$model, tier:$tier, effort:$effort, shape:$shape, task_kind:$task_kind, host:$host, title:$title, plan:$plan, resume:$resume, owner_auth:$owner_auth, engine_session:(if $engine_session == "" then null else $engine_session end), window_id:null} + $ident
    + if $escalated_from != "" then {escalated_from:$escalated_from} else {} end
    + if $base != "" then {base:$base, base_oid:(if $base_oid == "" then null else $base_oid end)} else {} end
    + if (($also_closes | length) > 0 or $also_closes_explicit) then {also_closes:$also_closes} else {} end
@@ -5832,7 +5832,8 @@ fi
 # The dispatch row above predates the window, so its id rides in a row of its
 # own: a state-only `crew nudge`/`crew where` binds a window to this id, since
 # the window options it would otherwise trust are settable by any process on the
-# tmux server.
+# tmux server. The dispatch row's own `window_id:null` marks it as one of ours, so
+# until this row lands (or if dispatch dies first) it binds no window.
 _crew_append "$(jq -nc --arg crew "$crew_id" --arg branch "$branch" --arg session "$session" \
   --arg worker "$worker_id" --arg repo "$(_crew_repo)" --arg window_id "$win" \
   '{ts:(now*1000|floor), crew_id:$crew, kind:"window", repo:$repo, branch:$branch, session:$session, worker_id:$worker, window_id:$window_id}')"

@@ -1307,10 +1307,12 @@ _lead_pane() { sed -n 's/^set-option -p -t \([^ ]*\) @crew_model .*/\1/p' "$STUB
 @test "resume row carries the new window's id when it opens one" {
   setup_worker_wt
   stub_tmux_no_pane
+  # Distinct window and pane ids: the row must carry the window's, not the pane's.
+  sed -i "s/'%99' '%99'/'@98' '%99'/" "$STUB_DIR/tmux"
   cd "$WT"
   run run_resume
   [ "$status" -eq 0 ]
-  [ "$(jq -r 'select(.kind == "resume") | .window_id' "$(bus_log)" | tail -1)" = "%99" ]
+  [ "$(jq -r 'select(.kind == "resume") | .window_id' "$(bus_log)" | tail -1)" = "@98" ]
 }
 
 @test "claude resume row carries the repo, the realpath of the common dir" {

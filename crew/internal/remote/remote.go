@@ -572,14 +572,17 @@ func BranchLayout(rows []bus.Event, branch, crew string) int {
 // per the newest dispatch, resume or window row for it in crew. Window options
 // are set by whoever holds the tmux server, a worker included, so a state-only
 // caller (no checkout to compare against) trusts a window only when the
-// dispatcher's own row backs it: by the window id that row recorded, else, for a
-// row an older binary wrote without one, by its repo plus /crew matching
-// windowDir.
+// dispatcher's own row backs it: by the window id that row recorded.
 //
-// A dir is readable by the worker, so the legacy binding is caught only while
-// the real window lives (callers refuse two windows for one branch); a recorded
-// id closes that, since a window the tmux server never issued the id to cannot
-// carry it.
+// A row with a window_id key at all (even null or empty: a dispatch row whose
+// window is not yet open, a window the tmux server reported no id for) binds
+// nothing but that id. Only a row with no such key, written by an older binary,
+// falls back to its repo plus /crew matching windowDir; a dir is readable by the
+// worker, so that binding is caught only while the real window lives (callers
+// refuse two windows for one branch).
+//
+// An id is unique within one tmux server's lifetime, not across restarts: after
+// one, a window can be handed the id a row recorded before it.
 func WindowBound(rows []bus.Event, branch, crew, windowID, windowDir string) bool {
 	for i := len(rows) - 1; i >= 0; i-- {
 		e := rows[i]
@@ -590,8 +593,9 @@ func WindowBound(rows []bus.Event, branch, crew, windowID, windowDir string) boo
 			continue
 		}
 		doc, _ := e.Doc.(map[string]any)
-		if id, _ := doc["window_id"].(string); id != "" {
-			return windowID == id
+		if v, ok := doc["window_id"]; ok {
+			id, _ := v.(string)
+			return id != "" && windowID == id
 		}
 		repo, _ := doc["repo"].(string)
 		return repo != "" && sameDir(repo+"/crew", windowDir)

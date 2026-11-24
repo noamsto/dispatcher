@@ -1224,9 +1224,8 @@ line=$(jq -nc --arg crew "$crew_id" --arg branch "$branch" \
   --argjson code_mode "$([ -n "$code_mode" ] && echo true || echo false)" \
   '{ts:(now*1000|floor), crew_id:$crew, kind:"resume", branch:$branch, repo:$repo,
      worker_id:$worker, prev_worker_id:$prev, engine:$engine, model:$model,
-     session:$session, continued:$continued,
+     session:$session, continued:$continued, window_id:$window_id,
      engine_session:(if $engine_session == "" then null else $engine_session end)}
-   + if $window_id != "" then {window_id:$window_id} else {} end
    + if $escalated_from != "" then {escalated_from:$escalated_from} else {} end
    + if $chrome then {chrome:true} else {} end
    + if $code_mode then {code_mode:true} else {} end')

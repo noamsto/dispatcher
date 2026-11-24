@@ -6959,6 +6959,8 @@ EOF
 
 @test "window: a dispatch leaves a window row, after its dispatch row, carrying the new window's id" {
   stub_launch_bins
+  # Distinct window and pane ids: the row must carry the window's, not the pane's.
+  sed -i "s/'%1' '%1'/'@5' '%6'/" "$STUB_DIR/tmux"
   DISPATCH_SESSION_ID=s7-7 DISPATCH_PROFILE=personal run_dispatch \
     standard sonnet --effort medium 42 --crew-id c1 "Do a thing"
   log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
@@ -6967,7 +6969,11 @@ EOF
   run jq -rs '(map(select(.kind == "dispatch"))[0]) as $d
     | map(select(.kind == "window"))[0]
     | [.crew_id == "c1", .branch == $d.branch, .session == "s7-7", .repo == $d.repo, .window_id] | join(",")' "$log"
-  [ "$output" = "true,true,true,true,%1" ]
+  [ "$output" = "true,true,true,true,@5" ]
+  # The dispatch row marks itself as window-bound with a null id: until the window
+  # row lands it binds no window, instead of falling back to the copyable dir.
+  run jq -rs 'map(select(.kind == "dispatch"))[0] | has("window_id") and .window_id == null' "$log"
+  [ "$output" = "true" ]
 }
 
 @test "dispatch: registers the repo in the crew registry once" {
