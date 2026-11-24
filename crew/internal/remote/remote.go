@@ -569,20 +569,36 @@ func BranchLayout(rows []bus.Event, branch, crew string) int {
 }
 
 // WindowBound reports whether a tmux window stamped with windowDir is where
-// branch's newest dispatch row in crew says its work runs: that row's repo, plus
-// /crew. Window stamps are set by whoever holds the tmux server, a worker
-// included, so a state-only caller (no checkout to compare against) trusts a
-// window only when the dispatcher's own row backs its dir.
+// branch's newest dispatch or resume row in crew says its work runs: that row's
+// repo, plus /crew. Window stamps are set by whoever holds the tmux server, a
+// worker included, so a state-only caller (no checkout to compare against)
+// trusts a window only when the dispatcher's own row backs its dir.
+//
+// The dir is readable by that same worker, so a stamp copying it is caught only
+// while the real window lives (callers refuse two windows for one branch);
+// closing that needs the dispatcher to record the window id in its rows.
 func WindowBound(rows []bus.Event, branch, crew, windowDir string) bool {
 	for i := len(rows) - 1; i >= 0; i-- {
-		doc, ok := dispatchRow(rows[i], crew)
-		if !ok || rows[i].Branch != branch {
+		e := rows[i]
+		if e.CrewID != crew || e.Branch != branch || e.Kind != bus.KindDispatch && e.Kind != bus.KindResume {
 			continue
 		}
+		doc, _ := e.Doc.(map[string]any)
 		repo, _ := doc["repo"].(string)
 		return repo != "" && sameDir(repo+"/crew", windowDir)
 	}
 	return false
+}
+
+// BoundRows is the crew log a state-only caller binds windows against. A missing
+// log binds nothing; a log it cannot read whole is an error, since the rows
+// before a torn line could name a window the rows after it have moved.
+func BoundRows(log string) ([]bus.Event, error) {
+	events, err := bus.ReadEventsTolerant(log)
+	if err != nil && !errors.Is(err, bus.ErrNoLog) {
+		return nil, err
+	}
+	return events, nil
 }
 
 // sameDir compares two paths as the same directory: equal once cleaned, else

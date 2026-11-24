@@ -172,7 +172,9 @@ func Run(ctx context.Context, r Request, paths bus.Paths, stdout, stderr io.Writ
 	// dispatch row for its branch names its dir (remote.WindowBound).
 	var events []bus.Event
 	if paths.Dir == "" {
-		events, _ = bus.ReadEventsTolerant(a.bc.Log)
+		if events, err = remote.BoundRows(a.bc.Log); err != nil {
+			return fail(stderr, "cannot read the crew log: "+err.Error())
+		}
 	}
 	var cwins [][]string
 	for _, r := range tsvRows(wins) {

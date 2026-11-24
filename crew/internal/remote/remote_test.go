@@ -952,6 +952,8 @@ func TestWindowBound(t *testing.T) {
 	row := func(crew, branch, repo string) bus.Event {
 		return bus.Event{Kind: bus.KindDispatch, CrewID: crew, Branch: branch, Doc: map[string]any{"repo": repo}}
 	}
+	resume := row("c1", "b", real)
+	resume.Kind = bus.KindResume
 	for _, tc := range []struct {
 		name string
 		rows []bus.Event
@@ -966,6 +968,8 @@ func TestWindowBound(t *testing.T) {
 		{"row of another crew", []bus.Event{row("c2", "b", real)}, real + "/crew", false},
 		{"row of another branch", []bus.Event{row("c1", "x", real)}, real + "/crew", false},
 		{"row with no repo", []bus.Event{row("c1", "b", "")}, "/crew", false},
+		{"a newer resume row in this dir", []bus.Event{row("c1", "b", "/moved"), resume}, real + "/crew", true},
+		{"a newer resume row in another dir", []bus.Event{row("c1", "b", real), func() bus.Event { r := row("c1", "b", "/moved"); r.Kind = bus.KindResume; return r }()}, real + "/crew", false},
 		{"the newest row wins", []bus.Event{row("c1", "b", real), row("c1", "b", "/moved")}, real + "/crew", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -973,5 +977,26 @@ func TestWindowBound(t *testing.T) {
 				t.Errorf("WindowBound = %v, want %v", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestBoundRows(t *testing.T) {
+	d := t.TempDir()
+	write := func(name, content string) string {
+		p := filepath.Join(d, name)
+		if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	const row = `{"ts":1,"crew_id":"c1","kind":"dispatch","branch":"b"}` + "\n"
+	if rows, err := BoundRows(filepath.Join(d, "absent")); err != nil || len(rows) != 0 {
+		t.Errorf("missing log: %v, %v; want no rows and no error", rows, err)
+	}
+	if rows, err := BoundRows(write("ok", row)); err != nil || len(rows) != 1 {
+		t.Errorf("whole log: %v, %v; want one row", rows, err)
+	}
+	if _, err := BoundRows(write("torn", row+"{\"ts\":\n"+row)); err == nil {
+		t.Error("a log torn before its last row was read as whole")
 	}
 }

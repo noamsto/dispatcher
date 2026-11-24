@@ -232,7 +232,10 @@ func Run(ctx context.Context, req Request, paths bus.Paths, stdout, stderr io.Wr
 		return die(stderr, "cannot read tmux panes (is a tmux server running?)")
 	}
 	panes := readPanes(panesRaw)
-	wins := readWindows(winsRaw, paths, crew)
+	wins, err := readWindows(winsRaw, paths, crew)
+	if err != nil {
+		return die(stderr, "cannot read the crew log: %v", err)
+	}
 
 	if o.Remote != nil {
 		host, branch, err := remote.ResolveTarget(resolve.Rows(paths.Log), target, crew, localMatch(wins, target))
@@ -359,12 +362,16 @@ func mirrorWindow(raw, branch, crew string) (window, bool) {
 // filters nothing at all. A state-only call (dir "") has no checkout, so a
 // window is this crew's only when its id says so and the crew's own dispatch row
 // for its branch names its dir: any process on the tmux server can stamp a window
-// with a crew's id, so the id alone binds nothing (remote.WindowBound).
-func readWindows(raw string, paths bus.Paths, crew string) []window {
+// with a crew's id, so the id alone binds nothing (remote.WindowBound, whose doc
+// says what a copied dir still gets past).
+func readWindows(raw string, paths bus.Paths, crew string) ([]window, error) {
 	dir := paths.Dir
 	var events []bus.Event
 	if dir == "" && crew != "" {
-		events, _ = bus.ReadEventsTolerant(paths.Log)
+		var err error
+		if events, err = remote.BoundRows(paths.Log); err != nil {
+			return nil, err
+		}
 	}
 	var wins []window
 	for _, line := range strings.Split(raw, "\n") {
@@ -386,7 +393,7 @@ func readWindows(raw string, paths bus.Paths, crew string) []window {
 			id: f[0], branch: f[1], name: f[4], session: f[5], index: f[6], winName: f[7],
 		})
 	}
-	return wins
+	return wins, nil
 }
 
 // readPanes is the raw `list-panes` list: the arm searched every pane, not just

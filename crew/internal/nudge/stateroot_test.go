@@ -83,6 +83,8 @@ func TestVisitingCrewWindowIsBoundToItsDispatchRow(t *testing.T) {
 		{"forged id, no dispatch row", nil, real, false, "no worker matches"},
 		{"forged id, row of another crew", []string{strings.Replace(row, `"c1"`, `"c2"`, 1)}, real, false, "no worker matches"},
 		{"forged id, row of another branch", []string{strings.Replace(row, "feat/x", "feat/y", 1)}, real, false, "no worker matches"},
+		// The rows after a torn line could move the branch to another clone.
+		{"torn log line before a newer row", []string{row, "{\"ts\":", strings.Replace(row, clone, "/moved", 1)}, real, false, "cannot read the crew log"},
 		{"copied stamps beside the real window", []string{row}, copied + "\n" + real, false, "ambiguous branch"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
