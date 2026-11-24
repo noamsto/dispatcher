@@ -54,7 +54,7 @@ type Options struct {
 	// Remote runs argv on host as crew and returns its status. It is how a
 	// reply to a worker dispatched there reaches that host's bus; nil routes
 	// nothing.
-	Remote func(host, crew string, argv []string) int
+	Remote func(host, crew string, argv []string, crewScope bool) int
 	// Nudge starts the detached `crew nudge --wait` for the lead the reply
 	// reached and returns as soon as it is started (it never waits). nil is
 	// `crew merge`'s internal call: post only, print nothing about nudges.
@@ -111,7 +111,7 @@ func Run(ctx context.Context, req Request, paths bus.Paths, stderr io.Writer, o 
 
 	// The remote writes the row to its own bus, where the worker reads it. The
 	// `--` keeps a body that starts with a dash from reading there as a flag.
-	host, as, err := routeHost(log, crew, to, o)
+	host, as, crewScope, err := routeHost(log, crew, to, o)
 	if err != nil {
 		say(stderr, "crew: reply: CREW_ID not set and %v\n", err)
 		return exitFailure
@@ -132,7 +132,7 @@ func Run(ctx context.Context, req Request, paths bus.Paths, stderr io.Writer, o 
 		if req.NoNudge {
 			argv = append(argv, "--no-nudge")
 		}
-		return o.Remote(host, as, append(argv, "--", to, body))
+		return o.Remote(host, as, append(argv, "--", to, body), crewScope)
 	}
 
 	if strings.HasPrefix(to, "worker:") && !bus.IsSessionID(to) {
@@ -240,13 +240,15 @@ func branchOf(to string) string {
 
 // routeHost is the host a reply to a worker goes to, the one its branch was
 // dispatched on, and the crew it posts there as; host is "" for a local worker.
+// crewScope is true when the worker runs on layout 2, which the host serves
+// outside any clone.
 // With no crew named, the crew is the one the remote dispatch row names. The
 // bus is read tolerantly, so a bus the local path would refuse routes nothing
 // and the local path refuses it.
-func routeHost(log, crew, to string, o Options) (host, as string, err error) {
+func routeHost(log, crew, to string, o Options) (host, as string, crewScope bool, err error) {
 	branch, ok := strings.CutPrefix(to, "worker:")
 	if o.Remote == nil || !ok {
-		return "", "", nil
+		return "", "", false, nil
 	}
 	// The local path's own reading of a session id: a branch named like one,
 	// with no '#', is still a branch.
@@ -255,9 +257,11 @@ func routeHost(log, crew, to string, o Options) (host, as string, err error) {
 	}
 	events, _ := bus.ReadEventsTolerant(log)
 	if crew == "" {
-		return remote.RouteAny(events, branch)
+		host, as, err = remote.RouteAny(events, branch)
+		return host, as, host != "" && remote.BranchLayout(events, branch, as) == 2, err
 	}
-	return remote.Route(events, branch, crew), crew, nil
+	host = remote.Route(events, branch, crew)
+	return host, crew, host != "" && remote.BranchLayout(events, branch, crew) == 2, nil
 }
 
 // msgRow is the msg the arm appends; body stays last, where FitLine's shrink marker lands.

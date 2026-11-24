@@ -80,7 +80,7 @@ var HostArgv = [][]string{{"crew", "overseer", "status"}, {"crew", "overseer", "
 
 // CrewArgv are the argv prefixes a crew-scope request may run. They read one
 // crew's own log and stores, so the argv must name that crew (checkCrewArgv).
-var CrewArgv = [][]string{{"crew", "relay"}, {"crew", "dispatch-row"}}
+var CrewArgv = [][]string{{"crew", "relay"}, {"crew", "dispatch-row"}, {"crew", "reply"}, {"crew", "nudge"}, {"crew", "where"}}
 
 // scopeHost marks a request that names no clone and runs a HostArgv command;
 // scopeCrew one that names no clone and runs a CrewArgv command for the
@@ -127,6 +127,9 @@ func checkCrewArgv(argv []string, crew string) error {
 	if !hasArgvPrefix(CrewArgv, argv) {
 		return fmt.Errorf("argv not allowed in crew scope: %q", argv[:min(len(argv), 2)])
 	}
+	if slices.Contains([]string{"reply", "nudge", "where"}, argv[1]) {
+		return checkCrewVerb(argv, crew)
+	}
 	var values []string
 	for i := 2; i < len(argv); i++ {
 		switch {
@@ -143,6 +146,57 @@ func checkCrewArgv(argv []string, crew string) error {
 	}
 	if len(values) != 1 || values[0] != crew {
 		return fmt.Errorf("crew scope argv must carry exactly one --crew %s", crew)
+	}
+	return nil
+}
+
+var digitsRe = regexp.MustCompile(`\A[0-9]+\z`)
+
+// checkCrewVerb holds reply, nudge and where to one grammar: argv[2:] is
+// `--crew <crew>` plus the verb's own flags, then `--` and the positionals. The
+// positionals are free text (a reply body) and never read as flags, so a flag
+// scan over the whole argv would admit a body that spells `--crew=x`.
+func checkCrewVerb(argv []string, crew string) error {
+	verb := argv[1]
+	args := argv[2:]
+	sep := slices.Index(args, "--")
+	if sep < 0 {
+		return fmt.Errorf("crew scope: crew %s needs -- before its positionals", verb)
+	}
+	var crews, waits []string
+	noNudge := 0
+	for i := 0; i < sep; i++ {
+		switch tok := args[i]; {
+		case tok == "--crew" && i+1 < sep:
+			i++
+			crews = append(crews, args[i])
+		case strings.HasPrefix(tok, "--crew="):
+			crews = append(crews, strings.TrimPrefix(tok, "--crew="))
+		case tok == "--no-nudge" && verb == "reply":
+			noNudge++
+		case tok == "--wait" && verb == "nudge" && i+1 < sep:
+			i++
+			waits = append(waits, args[i])
+		default:
+			return fmt.Errorf("crew scope: crew %s does not take %q", verb, tok)
+		}
+	}
+	if len(crews) != 1 || crews[0] != crew {
+		return fmt.Errorf("crew scope argv must carry exactly one --crew %s", crew)
+	}
+	if noNudge > 1 || len(waits) > 1 {
+		return fmt.Errorf("crew scope: crew %s repeats a flag", verb)
+	}
+	if len(waits) == 1 && !digitsRe.MatchString(waits[0]) {
+		return errors.New("crew scope: --wait needs a number")
+	}
+	want := map[string]int{"reply": 2, "nudge": 1, "where": 1}[verb]
+	pos := args[sep+1:]
+	if len(pos) != want {
+		return fmt.Errorf("crew scope: crew %s takes %d positional arguments after --", verb, want)
+	}
+	if verb == "reply" && !strings.HasPrefix(pos[0], "worker:") {
+		return errors.New("crew scope: crew reply targets a worker: id")
 	}
 	return nil
 }
@@ -485,6 +539,22 @@ func Route(rows []bus.Event, branch, crew string) string {
 		return ""
 	}
 	return ""
+}
+
+// BranchLayout is the layout of a branch's worker: 2 when the newest dispatch
+// row of branch in crew carries crew_layout as the JSON number 2, else 1.
+func BranchLayout(rows []bus.Event, branch, crew string) int {
+	for i := len(rows) - 1; i >= 0; i-- {
+		doc, ok := dispatchRow(rows[i], crew)
+		if !ok || rows[i].Branch != branch {
+			continue
+		}
+		if doc["crew_layout"] == json.Number("2") {
+			return 2
+		}
+		return 1
+	}
+	return 1
 }
 
 // RouteAny is Route for a caller with no crew: the host and crew of the one

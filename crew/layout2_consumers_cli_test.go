@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/lock"
@@ -108,10 +109,50 @@ func TestLayout2ConsumersNudgeResolvesWindowOutsideRepo(t *testing.T) {
 		t.Fatalf("stderr %q, want the window resolved (no pane in it)", errOut)
 	}
 
+	// A visiting crew has no home repo: its window carries the remote clone's
+	// crew dir, so only @crew_id picks it.
 	n := homeCrewCLI(t, false)
+	t.Setenv("TMUX_WINDOWS", "@1\tfeat/x\t/some/clone/crew\tc1\tsage")
 	_, errOut = n.expectIn(n.outside, 1, "nudge", "--crew", "c1", "feat/x")
-	if !strings.Contains(errOut, "no home repo") {
-		t.Fatalf("null home_repo: stderr %q, want the refusal", errOut)
+	if !strings.Contains(errOut, "no pane in the window") {
+		t.Fatalf("null home_repo: stderr %q, want the window resolved (no pane in it)", errOut)
+	}
+}
+
+// visitingTmux stubs tmux ahead of the PATH one with a window and pane list,
+// like a remote host whose tmux holds the visiting crew's window.
+func visitingTmux(t *testing.T, windows, panes string) {
+	t.Helper()
+	stubs := t.TempDir()
+	writeStub(t, stubs, "tmux", `#!/bin/sh
+case "$1 $2" in
+"list-windows -a") printf '%s\n' "$TMUX_WINDOWS" ;;
+"list-panes -a") printf '%s\n' "$TMUX_PANES" ;;
+esac
+exit 0
+`)
+	t.Setenv("PATH", stubs+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("TMUX_WINDOWS", windows)
+	t.Setenv("TMUX_PANES", panes)
+}
+
+func TestLayout2ConsumersVisitingCrewWhereAndNudgeOutsideRepo(t *testing.T) {
+	const foreign = "/some/clone/crew"
+	c := homeCrewCLI(t, false)
+	visitingTmux(t,
+		"@1\tfeat/x\t"+foreign+"\tc1\tsage\tsess\t3\twin\n@2\tfeat/x\t"+foreign+"\tother\tmuse\tsess\t4\twin2",
+		"@1\t%9\tlead\t1\n@2\t%8\tlead\t1")
+
+	out, errOut := c.expectIn(c.outside, 0, "where", "--crew", "c1", "--", "feat/x")
+	if want := `sage — sess:3.1 "win" (lead pane)   jump: ! tmux switch-client -t %9` + "\n"; out != want {
+		t.Fatalf("where stdout %q (stderr %q), want %q", out, errOut, want)
+	}
+
+	// The dispatch row has no session row: reaching `no session` proves the
+	// dir-less window match resolved the lead pane.
+	_, errOut = c.expectIn(c.outside, 2, "nudge", "--crew", "c1", "--", "feat/x")
+	if !strings.Contains(errOut, "no session on feat/x") {
+		t.Fatalf("nudge stderr %q, want the session refusal", errOut)
 	}
 }
 
@@ -177,32 +218,33 @@ func TestLayout2ConsumersLayout1WatchCursorPathUnchanged(t *testing.T) {
 	}
 }
 
-func TestLayout2ConsumersReplyNudgeWithoutHomeRepoSaysSo(t *testing.T) {
+// A reply from outside a repo to a crew with no home repo still starts the one
+// wait: the detached `crew nudge` resolves the lead's window by crew id. CREW_SELF
+// is a stub, so no real crew process starts.
+func TestLayout2ConsumersReplyStartsNudgeWaitWithoutHomeRepo(t *testing.T) {
 	c := homeCrewCLI(t, false)
+	argvFile := filepath.Join(t.TempDir(), "argv")
+	stub := filepath.Join(t.TempDir(), "crew-stub")
+	if err := os.WriteFile(stub, []byte("#!/bin/sh\necho \"$*\" >\""+argvFile+"\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CREW_SELF", stub)
 	appendTo(t, c.store("c1")+"/events.jsonl",
 		`{"ts":2,"crew_id":"c1","kind":"dispatch","worker_id":"worker:feat/x#s1-1","engine":"claude","branch":"feat/x"}`+"\n"+
 			`{"ts":3,"crew_id":"c1","kind":"status","from":"worker:feat/x#s1-1","body":{"state":"working"}}`+"\n")
 	_, errOut := c.expectIn(c.outside, 0, "reply", "--crew", "c1", "worker:feat/x", "go ahead")
-	if !strings.Contains(errOut, "reply: no nudge (start failed: layout-2 crew with no home repo") {
-		t.Fatalf("stderr %q, want a no-nudge line instead of a started wait", errOut)
+	if !strings.Contains(errOut, "reply: nudge wait started for feat/x") {
+		t.Fatalf("stderr %q, want the wait started", errOut)
 	}
-}
-
-func TestReplyNudgeStarterByRepoAndHome(t *testing.T) {
-	for _, tc := range []struct {
-		name    string
-		located bool
-		home    bus.Paths
-		starts  bool
-	}{
-		{"in a repo", true, bus.Paths{}, true},
-		{"outside a repo with a home repo", false, bus.Paths{Common: "/x"}, true},
-		{"outside a repo, no home repo", false, bus.Paths{}, false},
-	} {
-		started := false
-		err := replyNudge(tc.located, tc.home, func([]string, string) error { started = true; return nil })(nil, "")
-		if started != tc.starts || (err == nil) != tc.starts {
-			t.Errorf("%s: started %v err %v, want started %v", tc.name, started, err, tc.starts)
+	var got []byte
+	for range 100 {
+		var err error
+		if got, err = os.ReadFile(argvFile); err == nil && len(got) > 0 {
+			break
 		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if want := "nudge --crew c1 --wait -- worker:feat/x#s1-1"; strings.TrimSpace(string(got)) != want {
+		t.Fatalf("stub argv %q, want %q", got, want)
 	}
 }

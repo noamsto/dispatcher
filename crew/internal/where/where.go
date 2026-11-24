@@ -60,7 +60,7 @@ type Options struct {
 	// Remote runs argv on host as crew with its stdout going to stdout, and
 	// returns its status: how a worker dispatched there is asked where it is.
 	// Nil routes nothing.
-	Remote func(host, crew string, argv []string, stdout io.Writer) int
+	Remote func(host, crew string, argv []string, stdout io.Writer, crewScope bool) int
 }
 
 // window is one crew-anchored window, in the six fields the arm kept from the
@@ -307,7 +307,9 @@ func whereRemote(host, branch, crew, winsRaw string, panes []pane, paths bus.Pat
 	mirror, ok := mirrorWindow(winsRaw, branch, crew)
 	if !ok {
 		var out bytes.Buffer
-		if rc := o.Remote(host, crew, []string{"crew", "where", "--crew", crew, "--", branch}, &out); rc != 0 {
+		events, _ := bus.ReadEventsTolerant(paths.Log)
+		crewScope := remote.BranchLayout(events, branch, crew) == 2
+		if rc := o.Remote(host, crew, []string{"crew", "where", "--crew", crew, "--", branch}, &out, crewScope); rc != 0 {
 			return rc
 		}
 		say(stdout, "%s [host %s]\n", strings.TrimSuffix(out.String(), "\n"), host)
@@ -353,12 +355,20 @@ func mirrorWindow(raw, branch, crew string) (window, bool) {
 // readWindows is the arm's crew filter over `list-windows`: the eight format
 // fields, a non-empty branch, this repo's crew dir, and this crew's id when the
 // window carries one. An empty caller crew (no CREW_ID, no WORKER_TASK.md)
-// filters nothing at all.
+// filters nothing at all. A state-only call (dir "") has no checkout, so a
+// window is this crew's only when its id says so, whatever clone its dir names.
 func readWindows(raw, dir, crew string) []window {
 	var wins []window
 	for _, line := range strings.Split(raw, "\n") {
 		f := strings.Split(line, "\t")
-		if len(f) < 8 || f[1] == "" || f[2] != dir {
+		if len(f) < 8 || f[1] == "" {
+			continue
+		}
+		if dir == "" {
+			if crew == "" || f[3] != crew {
+				continue
+			}
+		} else if f[2] != dir {
 			continue
 		}
 		if crew != "" && f[3] != "" && f[3] != crew {

@@ -70,7 +70,7 @@ type Options struct {
 	PID int
 	// Remote runs argv on host and returns its status: how a nudge reaches a
 	// worker dispatched there, whose pane is on that host's tmux. Nil routes nothing.
-	Remote func(host string, argv []string) int
+	Remote func(host string, argv []string, crewScope bool) int
 	Sender sender.Probes // the sender check's reads; zero checks nothing
 }
 
@@ -161,10 +161,11 @@ func Run(ctx context.Context, r Request, paths bus.Paths, stdout, stderr io.Writ
 	}
 
 	// Only this checkout's crew, and only windows that carry a branch: an unanchored
-	// window is somebody's shell, never a worker's.
+	// window is somebody's shell, never a worker's. A state-only call (no Dir) has no
+	// checkout: a visiting crew's windows carry the remote clone's dir, so its id picks them.
 	var cwins [][]string
 	for _, r := range tsvRows(wins) {
-		if len(r) >= 5 && r[1] != "" && r[2] == paths.Dir && r[3] == a.crew {
+		if len(r) >= 5 && r[1] != "" && (paths.Dir == "" || r[2] == paths.Dir) && r[3] == a.crew {
 			cwins = append(cwins, r)
 		}
 	}
@@ -288,7 +289,8 @@ func (a *arm) route(target, want, wait, localBranch string, stderr io.Writer) (c
 	if wait != "" {
 		argv = append(argv, "--wait", wait)
 	}
-	return a.o.Remote(host, append(argv, "--", cmp.Or(want, branch))), true
+	events, _ := bus.ReadEventsTolerant(a.bc.Log)
+	return a.o.Remote(host, append(argv, "--", cmp.Or(want, branch)), remote.BranchLayout(events, branch, a.crew) == 2), true
 }
 
 // resolveFallback is the arm's `_resolve_target` step: the target names a branch on the
@@ -404,7 +406,7 @@ func (a *arm) wait(ctx context.Context, wait string) int {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fail(a.stderr, err.Error())
 	}
-	lockDir := WaitLockDir(a.paths.Dir, a.sid)
+	lockDir := WaitLockDir(cmp.Or(a.paths.Dir, a.bc.State), a.sid)
 	owner := strconv.Itoa(a.o.PID)
 	joining := false
 	for !lock.Acquire(lockDir, owner) {

@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -689,6 +690,82 @@ func TestBuildRequestLayout(t *testing.T) {
 
 var crewEnv = []string{"CREW_ID=c1", "DISPATCH_ORIGIN_HOST=halo"}
 
+// crewVerb is a crew-scope verb with its own flags and positionals, as the
+// origin sends them.
+type crewVerb struct {
+	name       string
+	flags, pos []string
+}
+
+var crewVerbs = []crewVerb{
+	{"reply", []string{"--no-nudge"}, []string{"worker:b#s1-1", "body"}},
+	{"nudge", []string{"--wait", "30"}, []string{"b"}},
+	{"where", nil, []string{"b"}},
+}
+
+type namedArgv struct {
+	name string
+	argv []string
+}
+
+func (v crewVerb) argv(parts ...[]string) []string {
+	return slices.Concat(append([][]string{{"crew", v.name}}, parts...)...)
+}
+
+// accepted are argvs the verb grammar must admit for crew c1.
+func (v crewVerb) accepted() []namedArgv {
+	crew, sep := []string{"--crew", "c1"}, []string{"--"}
+	rows := []namedArgv{
+		{"good", v.argv(crew, v.flags, sep, v.pos)},
+		{"no flags", v.argv(crew, sep, v.pos)},
+		{"--crew=", v.argv([]string{"--crew=c1"}, v.flags, sep, v.pos)},
+		{"flags first", v.argv(v.flags, crew, sep, v.pos)},
+	}
+	if v.name == "reply" {
+		rows = append(rows, namedArgv{"body that reads --crew=", v.argv(crew, sep, []string{v.pos[0], "--crew=zzz"})})
+	}
+	return rows
+}
+
+// refusals are argvs the verb grammar must refuse for crew c1.
+func (v crewVerb) refusals() []namedArgv {
+	crew, sep := []string{"--crew", "c1"}, []string{"--"}
+	rows := []namedArgv{
+		{"no --crew", v.argv(v.flags, sep, v.pos)},
+		{"--crew mismatch", v.argv([]string{"--crew", "far"}, v.flags, sep, v.pos)},
+		{"--crew= mismatch", v.argv([]string{"--crew=far"}, v.flags, sep, v.pos)},
+		{"duplicate --crew", v.argv(crew, crew, v.flags, sep, v.pos)},
+		{"duplicate --crew=", v.argv(crew, []string{"--crew=c1"}, v.flags, sep, v.pos)},
+		{"--crew then --", v.argv([]string{"--crew"}, sep, v.pos)},
+		{"no --", v.argv(crew, v.flags, v.pos)},
+		{"too few positionals", v.argv(crew, v.flags, sep, v.pos[:len(v.pos)-1])},
+		{"too many positionals", v.argv(crew, v.flags, sep, v.pos, []string{"extra"})},
+	}
+	for _, extra := range [][]string{
+		{"--log"}, {"--dir"}, {"--json"}, {"--home"}, {"--crew-scope"}, {"--spec-file", "x"}, {"--pane", "%1"},
+		{"--wait", "30"}, {"--no-nudge"},
+	} {
+		if len(v.flags) > 0 && v.flags[0] == extra[0] {
+			continue
+		}
+		rows = append(rows, namedArgv{"extra " + extra[0], v.argv(crew, extra, v.flags, sep, v.pos)})
+	}
+	switch v.name {
+	case "reply":
+		rows = append(rows,
+			namedArgv{"target not worker:", v.argv(crew, v.flags, sep, []string{"b#s1-1", "body"})},
+			namedArgv{"duplicate --no-nudge", v.argv(crew, v.flags, v.flags, sep, v.pos)})
+	case "nudge":
+		rows = append(rows,
+			namedArgv{"--wait abc", v.argv(crew, []string{"--wait", "abc"}, sep, v.pos)},
+			namedArgv{"--wait empty", v.argv(crew, []string{"--wait", ""}, sep, v.pos)},
+			namedArgv{"--wait=30", v.argv(crew, []string{"--wait=30"}, sep, v.pos)},
+			namedArgv{"--wait no value", v.argv(crew, []string{"--wait"}, sep, v.pos)},
+			namedArgv{"duplicate --wait", v.argv(crew, v.flags, v.flags, sep, v.pos)})
+	}
+	return rows
+}
+
 func TestBuildCrewRequest(t *testing.T) {
 	data, err := BuildCrewRequest([]string{"crew", "dispatch-row", "--crew", "c1", "--session", "s1-1"}, crewEnv)
 	if err != nil {
@@ -699,6 +776,18 @@ func TestBuildCrewRequest(t *testing.T) {
 	}
 	if _, err := BuildCrewRequest([]string{"crew", "relay", "--since", "0", "--crew=c1"}, crewEnv); err != nil {
 		t.Fatalf("relay --crew=c1 refused: %v", err)
+	}
+	for _, v := range crewVerbs {
+		for _, tc := range v.accepted() {
+			if _, err := BuildCrewRequest(tc.argv, crewEnv); err != nil {
+				t.Errorf("%s %s refused: %v", v.name, tc.name, err)
+			}
+		}
+		for _, tc := range v.refusals() {
+			if data, err := BuildCrewRequest(tc.argv, crewEnv); err == nil {
+				t.Errorf("%s %s accepted: %s", v.name, tc.name, data)
+			}
+		}
 	}
 	relay := []string{"crew", "relay", "--crew", "c1"}
 	for _, tc := range []struct {
@@ -761,7 +850,8 @@ func TestRunCrewScopeRefusesBeforeSSH(t *testing.T) {
 		{Call{Host: "mini", Cwd: cwd, CrewScope: true, Env: crewEnv, SpecFile: "spec.md", Argv: relay}, "crew: remote-run: --spec-file is not allowed with --crew-scope\n"},
 		{Call{Host: "mini", Cwd: cwd, CrewScope: true, Env: crewEnv, MigrateDir: "bundle", Argv: relay}, "crew: remote-run: --migrate-dir is not allowed with --crew-scope\n"},
 		{Call{Host: "maxi", Cwd: cwd, CrewScope: true, Env: crewEnv, Argv: relay}, "crew: remote-run: unknown host 'maxi' (no hosts.maxi in settings)\n"},
-		{Call{Host: "mini", Cwd: cwd, CrewScope: true, Env: crewEnv, Argv: []string{"crew", "reply", "--crew", "c1"}}, "crew: remote-run: argv not allowed in crew scope: [\"crew\" \"reply\"]\n"},
+		{Call{Host: "mini", Cwd: cwd, CrewScope: true, Env: crewEnv, Argv: []string{"crew", "reply", "--crew", "c1"}}, "crew: remote-run: crew scope: crew reply needs -- before its positionals\n"},
+		{Call{Host: "mini", Cwd: cwd, CrewScope: true, Env: crewEnv, Argv: []string{"crew", "reap", "--crew", "c1"}}, "crew: remote-run: argv not allowed in crew scope: [\"crew\" \"reap\"]\n"},
 		{Call{Host: "mini", Cwd: cwd, CrewScope: true, Env: crewEnv[:1], Argv: relay}, "crew: remote-run: crew scope needs env CREW_ID and DISPATCH_ORIGIN_HOST\n"},
 	} {
 		var stderr bytes.Buffer
@@ -811,5 +901,32 @@ func TestTailBufferCaps(t *testing.T) {
 	_, _ = b.Write([]byte("end"))
 	if got := b.String(); len(got) != maxStderrTail || !strings.HasSuffix(got, "aend") {
 		t.Fatalf("tail len %d, suffix %q", len(got), got[max(0, len(got)-4):])
+	}
+}
+
+func TestBranchLayout(t *testing.T) {
+	row := func(crew, branch, extra string) string {
+		return `{"kind":"dispatch","crew_id":"` + crew + `","branch":"` + branch + `","host":"mini","remote":true` + extra + `}`
+	}
+	for _, tc := range []struct {
+		name  string
+		lines []string
+		want  int
+	}{
+		{"layout 2", []string{row("c", "b", `,"crew_layout":2`)}, 2},
+		{"newest wins: 2 then 1", []string{row("c", "b", `,"crew_layout":2`), row("c", "b", "")}, 1},
+		{"newest wins: 1 then 2", []string{row("c", "b", ""), row("c", "b", `,"crew_layout":2`)}, 2},
+		{"absent", []string{row("c", "b", "")}, 1},
+		{"layout 1", []string{row("c", "b", `,"crew_layout":1`)}, 1},
+		{"string 2", []string{row("c", "b", `,"crew_layout":"2"`)}, 1},
+		{"other branch ignored", []string{row("c", "b", ""), row("c", "x", `,"crew_layout":2`)}, 1},
+		{"other crew ignored", []string{row("c", "b", ""), row("d", "b", `,"crew_layout":2`)}, 1},
+		{"no row", nil, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := BranchLayout(busRows(t, tc.lines...), "b", "c"); got != tc.want {
+				t.Fatalf("BranchLayout = %d, want %d", got, tc.want)
+			}
+		})
 	}
 }

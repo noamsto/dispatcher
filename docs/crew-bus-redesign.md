@@ -1404,8 +1404,10 @@ pane it opens (worker window, role panes including a lazy `--spawn-role` through
 clone. A+ adds a crew scope beside the existing host scope (`crew/internal/remote/remote.go:67-73`,
 `crew/internal/remote/exec.go:210-218`). Crew-scope requests are version 2; a version 1 request carrying scope `crew` or
 `CREW_LAYOUT` is refused. A crew-scope request names no repo, carries `CREW_ID` and `DISPATCH_ORIGIN_HOST` only, and runs
-`crew relay` or `crew dispatch-row` (phase 2b). `reply`, `nudge`, `where` and `roster` stay repo-scoped until phase 3 makes them
-repo-optional, and, run from the clone, they resolve the visiting crew through its `meta.json` under H's state root. The argv must carry exactly one `--crew`, equal
+`crew relay` or `crew dispatch-row` (phase 2b). `reply`, `nudge` and `where` run in crew scope for layout-2 crews (strict argv
+grammar: `--crew`, the verb's own flag, `--`, then the positionals; `reply` targets a `worker:` id), resolving the visiting crew
+through its `meta.json` under H's state root. `roster` stays repo-scoped and, run from the clone, resolves the crew the same way.
+The argv must carry exactly one `--crew`, equal
 to the request's `CREW_ID`; without it the callee would fall back to a `WORKER_TASK.md` in the cwd. `admitCrew` refuses a crew id with no
 `meta.json`, one with `visiting: false`, and one whose `home_host` differs from the request's origin. That origin is
 `DISPATCH_ORIGIN_HOST`, which the caller sets and `EnvAllow` only regex-checks (`crew/internal/remote/remote.go:58`), so the
@@ -1849,7 +1851,7 @@ the same hazard as phase 2, with the same remedy: end those crews first.
 - `reply`, `merge`, `watch`, `stream`, `nudge` and `hold due` run from any cwd when `--crew` names a layout-2 crew. `merge`, `nudge` and `hold due` take the crew's home repo from `meta.json` `home_repo` (`merge` also changes into it so `gh` has a repo; a null `home_repo` refuses `merge` and `nudge`, and `hold due` falls back to the state-only paths).
 - `crew fleet stream --crew <id>` skips a layout-2 crew with one stderr line and exit 0 (one lane per crew: `crew stream`). `--status` exits 2 (dead), never 0 (alive).
 - roster-render joins no other repo for a layout-2 crew: its one source is the crew log. Running it outside a repo is not covered here.
-- A layout-2 `crew stream` outside a repo skips the reap cadence (with one stderr note; this includes the relays' remote reap) and the peer link: reap belongs to phase 3b. `reply` from outside a repo to a crew with no home repo starts no nudge wait and says so.
+- A layout-2 `crew stream` outside a repo skips the reap cadence (with one stderr note; this includes the relays' remote reap) and the peer link: reap belongs to phase 3b. `reply` from outside a repo starts the nudge wait for a layout-2 crew, finding the lead by crew id when the crew has no home repo.
 - Known limits: `merge` and `nudge` with `--crew <layout-2>` run inside an unrelated repo use that repo's `gh` context and window stamp (pre-existing); a remote `reply` from outside a repo is routed from the crew's dispatch row but the remote hop still needs a clone cwd (the home repo is passed when known), and the crew-scope allowlist rejects `reply`.
 
 ### 4.6 Phase 3p: dropped (peer sync is removed)

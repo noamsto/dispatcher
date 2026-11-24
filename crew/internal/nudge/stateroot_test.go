@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -51,6 +52,48 @@ func TestWaitLockUnderCrewStateRoot(t *testing.T) {
 			t.Errorf("lock dir %s not under paths.Dir", f.lockDir())
 		}
 	})
+}
+
+// A visiting crew's call is state-only (Dir ""): its window carries the remote
+// clone's crew dir, so only @crew_id picks it, and the wait lock stays under the
+// store dir rather than a path relative to the cwd.
+func TestVisitingCrewDirLessWindowMatchAndWaitLock(t *testing.T) {
+	const foreign = "/some/clone/crew"
+	for _, tc := range []struct {
+		name    string
+		windows string
+		found   bool
+	}{
+		{"crew id matches", "@7\tfeat/x\t" + foreign + "\tc1\tlead", true},
+		{"other crew", "@7\tfeat/x\t" + foreign + "\tother\tlead", false},
+		{"no crew id", "@7\tfeat/x\t" + foreign + "\t\tlead", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newArm(t)
+			var store string
+			f.paths, store = pinCrew(t, f.paths, "c1")
+			f.paths.Dir = ""
+			f.pane.windows = tc.windows
+			if rc := f.run(Request{Target: featX}); (rc == 0) != tc.found {
+				t.Fatalf("rc = %d, stderr %q, want window found %t", rc, f.errOut(), tc.found)
+			}
+			if !tc.found {
+				return
+			}
+			cwd := t.TempDir()
+			t.Chdir(cwd)
+			f.holdLock = strconv.Itoa(os.Getpid())
+			if rc := f.run(Request{Wait: "0", Target: idleReq}); rc != 2 {
+				t.Fatalf("wait rc = %d, stderr %q", rc, f.errOut())
+			}
+			if !strings.HasPrefix(f.lockDir(), store+"/nudge-wait/") {
+				t.Errorf("lock dir %s not under the store dir %s", f.lockDir(), store)
+			}
+			if _, err := os.Stat(filepath.Join(cwd, "nudge-wait")); err == nil {
+				t.Error("nudge-wait created relative to the cwd")
+			}
+		})
+	}
 }
 
 func TestDefaultUnreadMarkUnderCrewStateRoot(t *testing.T) {

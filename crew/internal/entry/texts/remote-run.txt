@@ -15,8 +15,9 @@ cannot see this env or pane); otherwise with ssh's own status (255: the ssh
 itself failed).
 
   --host         Host name, as in the settings
-  --crew-scope   Send a crew-scope request: only `crew relay` or `crew dispatch-row`
-                 with `--crew <CREW_ID>`, for a visiting crew on H; env must be
+  --crew-scope   Send a crew-scope request: only `crew relay`, `crew dispatch-row`,
+                 `crew reply`, `crew nudge` or `crew where` with `--crew <CREW_ID>`,
+                 for a visiting crew on H; env must be
                  exactly CREW_ID and DISPATCH_ORIGIN_HOST, with no --spec-file
                  or --migrate-dir; needs no git checkout here
   --env          KEY=VALUE for the remote command; only CREW_ID, DISPATCH_TMUX_SESSION,

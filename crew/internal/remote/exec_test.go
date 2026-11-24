@@ -1039,7 +1039,16 @@ func TestServeCrewScopeRefusals(t *testing.T) {
 	if err := os.WriteFile(badMeta, []byte("{"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	for _, tc := range []struct {
+	var rows []struct{ name, stdin, want string }
+	for _, v := range crewVerbs {
+		for _, tc := range v.refusals() {
+			rows = append(rows, struct{ name, stdin, want string }{v.name + " " + tc.name, crewRequest(t, tc.argv, nil), "crew scope"})
+		}
+		rows = append(rows,
+			struct{ name, stdin, want string }{v.name + " own crew", crewRequest(t, v.argv([]string{"--crew", "own"}, v.flags, []string{"--"}, v.pos), asCrew("own")), "crew own is this host's own crew"},
+			struct{ name, stdin, want string }{v.name + " other origin", crewRequest(t, v.argv([]string{"--crew", "far"}, v.flags, []string{"--"}, v.pos), asCrew("far")), "crew far is visiting from elsewhere"})
+	}
+	for _, tc := range append(rows, []struct {
 		name, stdin, want string
 	}{
 		{"repo", crewRequest(t, relay, func(m map[string]any) { m["repo"] = e.repo }), "a crew scope request takes no repo, slug, spec, stdin or migrate"},
@@ -1053,7 +1062,7 @@ func TestServeCrewScopeRefusals(t *testing.T) {
 		{"extra env", crewRequest(t, relay, withEnv(map[string]string{"CREW_ID": "c1", "DISPATCH_ORIGIN_HOST": "halo", "DISPATCH_EMIT_ROW": "1"})), "crew scope needs env CREW_ID and DISPATCH_ORIGIN_HOST"},
 		{"bad origin", crewRequest(t, relay, withEnv(map[string]string{"CREW_ID": "c1", "DISPATCH_ORIGIN_HOST": "-x"})), "DISPATCH_ORIGIN_HOST"},
 		{"bad id", crewRequest(t, []string{"crew", "relay", "--crew", "../c1"}, asCrew("../c1")), "CREW_ID"},
-		{"crew reply", crewRequest(t, []string{"crew", "reply", "--crew", "c1"}, nil), "argv not allowed in crew scope"},
+		{"crew reply", crewRequest(t, []string{"crew", "reply", "--crew", "c1"}, nil), "needs -- before its positionals"},
 		{"crew reap", crewRequest(t, []string{"crew", "reap", "--crew", "c1"}, nil), "argv not allowed in crew scope"},
 		{"peer-sync", crewRequest(t, []string{"crew", "peer-sync", "--crew", "c1"}, nil), "argv not allowed in crew scope"},
 		{"dispatch", crewRequest(t, []string{"dispatch", "--crew", "c1"}, nil), "argv not allowed in crew scope"},
@@ -1068,7 +1077,7 @@ func TestServeCrewScopeRefusals(t *testing.T) {
 		{"garbled meta", crewRequest(t, []string{"crew", "relay", "--crew", "bad"}, asCrew("bad")), "crew: remote-exec: crew bad: "},
 		{"own crew", crewRequest(t, []string{"crew", "relay", "--crew", "own"}, asCrew("own")), "crew: remote-exec: crew own is this host's own crew, not a visiting one\n"},
 		{"other origin", crewRequest(t, []string{"crew", "relay", "--crew", "far"}, asCrew("far")), "crew: remote-exec: crew far is visiting from elsewhere, not halo\n"},
-	} {
+	}...) {
 		t.Run(tc.name, func(t *testing.T) {
 			rc, stdout, stderr := e.serve(t, tc.stdin)
 			if rc != 2 || stdout != "" || !strings.Contains(stderr, tc.want) {
@@ -1088,6 +1097,12 @@ func TestServeCrewScopeRefusals(t *testing.T) {
 		}
 		if e.childRan() {
 			t.Fatal("the child ran despite the refusal")
+		}
+	})
+	t.Run("v1 repo scope nudge still admits", func(t *testing.T) {
+		argv := []string{"crew", "nudge", "--crew", "c1", "--wait", "5", "--", "b"}
+		if rc, _, stderr := e.serve(t, e.request(t, argv, map[string]string{"CREW_ID": "c1"}, nil)); rc != 0 {
+			t.Fatalf("rc %d, stderr %q", rc, stderr)
 		}
 	})
 }
@@ -1119,6 +1134,10 @@ exit 3
 	for _, argv := range [][]string{
 		{"crew", "relay", "--since", "0", "--crew", "c1"},
 		{"crew", "dispatch-row", "--crew=c1", "--session", "s1-1"},
+		{"crew", "reply", "--crew", "c1", "--no-nudge", "--", "worker:b#s1-1", "--crew=zzz"},
+		{"crew", "reply", "--crew=c1", "--", "worker:b#s1-1", "body"},
+		{"crew", "nudge", "--crew", "c1", "--wait", "30", "--", "b"},
+		{"crew", "where", "--crew", "c1", "--", "b"},
 	} {
 		var stdout, stderr bytes.Buffer
 		rc := Serve(strings.NewReader(crewRequest(t, argv, nil)), &stdout, &stderr, o)
