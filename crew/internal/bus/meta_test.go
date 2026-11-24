@@ -170,3 +170,25 @@ func TestLiveMetas(t *testing.T) {
 		t.Fatalf("LiveMetas ids = %v, want %v", ids, want)
 	}
 }
+
+func TestReadMetaAt(t *testing.T) {
+	state := filepath.Join(t.TempDir(), "crew")
+	if err := CreateMeta(state, Meta{ID: "c1", HomeHost: "halo"}); err != nil {
+		t.Fatal(err)
+	}
+	m, err := ReadMetaAt(StoreDir(state, "c1"), "c1")
+	if err != nil || m.HomeHost != "halo" {
+		t.Fatalf("ReadMetaAt = %+v, %v", m, err)
+	}
+	writeStateFile(t, filepath.Join(state, "d", "meta.json"), `{"layout":2,"id":"other"}`)
+	writeStateFile(t, filepath.Join(state, "e", "meta.json"), `{"layout":1,"id":"e"}`)
+	for dir, id := range map[string]string{"d": "d", "e": "e"} {
+		if _, err := ReadMetaAt(filepath.Join(state, dir), id); err == nil {
+			t.Errorf("ReadMetaAt(%q) accepted a bad meta", dir)
+		}
+	}
+	var inv *InvalidCrewIDError
+	if _, err := ReadMetaAt(StoreDir(state, "c1"), "../c1"); !errors.As(err, &inv) {
+		t.Errorf("ReadMetaAt invalid id = %v, want InvalidCrewIDError", err)
+	}
+}

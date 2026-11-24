@@ -129,3 +129,22 @@ func TestRemoteWorkersReap(t *testing.T) {
 		})
 	}
 }
+
+func TestHostLayouts(t *testing.T) {
+	rows := busRows(t,
+		`{"kind":"dispatch","crew_id":"c","branch":"feat/a","host":"mini","remote":true,"crew_layout":2}`,
+		`{"kind":"dispatch","crew_id":"c","branch":"feat/b","host":"big","remote":true}`,
+		`{"kind":"dispatch","crew_id":"c","branch":"feat/c","host":"str","remote":true,"crew_layout":"2"}`,
+		`{"kind":"dispatch","crew_id":"c","branch":"feat/d","host":"flip","remote":true,"crew_layout":2}`,
+		`{"kind":"dispatch","crew_id":"c","branch":"feat/e","host":"flip","remote":true}`,
+		`{"kind":"dispatch","crew_id":"c","branch":"feat/f","host":"up","remote":true}`,
+		`{"kind":"dispatch","crew_id":"c","branch":"feat/g","host":"up","remote":true,"crew_layout":2}`,
+		`{"kind":"dispatch","crew_id":"c","branch":"feat/h","host":"local"}`,
+		`{"kind":"dispatch","crew_id":"c","branch":"feat/i","host":"","remote":true,"crew_layout":2}`,
+		`{"kind":"dispatch","crew_id":"d","branch":"feat/j","host":"other","remote":true,"crew_layout":2}`,
+	)
+	want := map[string]int{"mini": 2, "big": 1, "str": 1, "flip": 1, "up": 2}
+	if got := HostLayouts(rows, "c"); !reflect.DeepEqual(got, want) {
+		t.Fatalf("HostLayouts = %v, want %v", got, want)
+	}
+}

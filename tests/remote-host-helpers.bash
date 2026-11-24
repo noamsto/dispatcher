@@ -75,6 +75,7 @@ remote_host_setup() {
   export SSH_COUNT="$BATS_TEST_TMPDIR/ssh.count"
   export SSH_DOWN="$BATS_TEST_TMPDIR/ssh.down"
   export SSH_PIDS="$BATS_TEST_TMPDIR/ssh.pids"
+  export SSH_REQS="$BATS_TEST_TMPDIR/ssh.requests"
   export OG_LOG="$BATS_TEST_TMPDIR/og-remote-open.log"
   unset SSH_FAIL_AFTER SSH_DROP_AFTER_DISPATCH SSH_DOWN_AFTER_DROP SSH_FAIL_MIGRATE
   # Remote-only: first on the remote PATH, so a test can stub a remote command.
@@ -191,8 +192,9 @@ exit 0
 EOF
   printf '#!/usr/bin/env bash\nexit 0\n' >"$STUB_DIR/direnv"
   # The worker pane runs this: alive until the tmux server is killed.
-  cat >"$STUB_DIR/claude" <<'EOF'
+  cat >"$STUB_DIR/claude" <<EOF
 #!/usr/bin/env bash
+printf '%s\\n' "\${XDG_STATE_HOME-unset}" >>"$BATS_TEST_TMPDIR/claude-xdg"
 exec sleep 600
 EOF
   cat >"$STUB_DIR/og-remote-open" <<'EOF'
@@ -204,7 +206,7 @@ EOF
   # Real tmux for the remote's private TMUX_TMPDIR. Panes get /bin/sh: the
   # developer's shell rc must not decide whether the stub claude is found.
   TMUX_CONF="$BATS_TEST_TMPDIR/tmux.conf"
-  printf 'set -g default-shell /bin/sh\n' >"$TMUX_CONF"
+  printf 'set -g default-shell /bin/sh\nset -g default-command /bin/sh\n' >"$TMUX_CONF"
   cat >"$STUB_DIR/tmux" <<EOF
 #!/usr/bin/env bash
 exec 3>&-
@@ -250,20 +252,20 @@ fail-*)
 esac
 [ ! -e "$SSH_DOWN" ] || exit 255
 
-# Drop mode: the link dies after the dispatch call has run, so its output is lost.
+# Every request is saved (one JSON per line) and re-fed. Drop mode: the link
+# dies after the dispatch call has run, so its output is lost.
 drop=""
-if [ -n "${SSH_DROP_AFTER_DISPATCH:-}${SSH_FAIL_MIGRATE:-}" ]; then
-  req="$(mktemp "$BATS_TEST_TMPDIR/ssh-req.XXXXXX")"
-  cat >"$req"
-  if [ -n "${SSH_FAIL_MIGRATE:-}" ] && jq -e 'has("migrate")' "$req" >/dev/null 2>&1; then
-    exit 255
-  fi
-  if [ -n "${SSH_DROP_AFTER_DISPATCH:-}" ] &&
-    jq -e '.argv[0] == "dispatch" and .argv[1] != "--engines"' "$req" >/dev/null 2>&1; then
-    drop=1
-  fi
-  exec <"$req"
+req="$(mktemp "$BATS_TEST_TMPDIR/ssh-req.XXXXXX")"
+cat >"$req"
+{ jq -c . "$req" 2>/dev/null || true; } >>"$SSH_REQS"
+if [ -n "${SSH_FAIL_MIGRATE:-}" ] && jq -e 'has("migrate")' "$req" >/dev/null 2>&1; then
+  exit 255
 fi
+if [ -n "${SSH_DROP_AFTER_DISPATCH:-}" ] &&
+  jq -e '.argv[0] == "dispatch" and .argv[1] != "--engines"' "$req" >/dev/null 2>&1; then
+  drop=1
+fi
+exec <"$req"
 
 cd "$RHOME" || exit 254
 mapfile -d '' -t renv <"$REMOTE_ENV"
@@ -287,6 +289,16 @@ on_remote() {
   local -a renv
   mapfile -d '' -t renv <"$REMOTE_ENV"
   (cd "$dir" && env -i "${renv[@]}" "$@")
+}
+
+# l2_origin — register crew c1 at layout 2 in $TEST_REPO; sets L2_LOG to its log.
+l2_origin() {
+  assert_isolated_xdg_state_home
+  (cd "$TEST_REPO" && CREW_ID=c1 CREW_LAYOUT=2 "$CREW_GO_BIN" register "$$")
+  # shellcheck disable=SC2034 # read by the .bats files that load this helper
+  L2_LOG="$XDG_STATE_HOME/crew/crews/c1/events.jsonl"
+  L2_META="$XDG_STATE_HOME/crew/crews/c1/meta.json"
+  [ -f "$L2_META" ]
 }
 
 poll_for() { # <tries> <cmd...> — retry every 0.1s

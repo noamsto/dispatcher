@@ -1957,16 +1957,19 @@ _pane_is_ancestor() {
   return 1
 }
 
-# split_role_pane <window> <worktree> <role> <worker_id> <crew_id> — create a
+# split_role_pane <window> <worktree> <role> <worker_id> <crew_id> <state_home> — create a
 # role pane, decorate it, and echo its pane id. `tmux new-window -e` scopes to
 # that window's first pane only, so every pane split off it must repeat the lead's
 # identity — the engine wrappers key their config on CREW_WORKER_ID, and a role
 # pane without it runs as a personal session. CREW_ROLE_ID marks the pane as a
 # role so dispatch-notify does not speak for the lead from it. Reads $branch from
-# the caller scope.
+# the caller scope. A non-empty <state_home> pins the pane's XDG_STATE_HOME so it
+# resolves the same layout-2 crew as the dispatch.
 split_role_pane() {
-  local win="$1" wt="$2" role="$3" worker_id="$4" crew_id="$5" pane
-  pane="$(_pane_client split-window -t "$win" -c "$wt" -e "CREW_WORKER_ID=$worker_id" -e "CREW_ID=$crew_id" -e "CREW_ROLE_ID=role:$branch:$role" -e "GIT_EDITOR=true" -e "GIT_SEQUENCE_EDITOR=:" -P -F '#{pane_id}')"
+  local win="$1" wt="$2" role="$3" worker_id="$4" crew_id="$5" state_home="${6:-}" pane
+  local -a pin=()
+  [ -z "$state_home" ] || pin=(-e "XDG_STATE_HOME=$state_home")
+  pane="$(_pane_client split-window -t "$win" -c "$wt" -e "CREW_WORKER_ID=$worker_id" -e "CREW_ID=$crew_id" -e "CREW_ROLE_ID=role:$branch:$role" -e "GIT_EDITOR=true" -e "GIT_SEQUENCE_EDITOR=:" ${pin[@]+"${pin[@]}"} -P -F '#{pane_id}')"
   decorate_pane "$pane" "$role"
   printf '%s' "$pane"
 }
@@ -2386,7 +2389,8 @@ if [ "${1:-}" = "--spawn-role" ]; then
   fi
   [ "$spawn_agent" = pi ] && seed_pi_agent_dir
   sig_before="$(grid_refit_sig "$win")"
-  role_pane="$(split_role_pane "$win" "$wt_root" "$role" "$spawn_worker_id" "$spawn_crew_id")"
+  spawn_state_home="$(tmux show-options -wqv -t "$win" @crew_state_home 2>/dev/null || true)"
+  role_pane="$(split_role_pane "$win" "$wt_root" "$role" "$spawn_worker_id" "$spawn_crew_id" "$spawn_state_home")"
   # The lead stamp precedes the refit (tmux-grid-refit exits without one), and
   # the layout settles before the engine boots so its TUI is not resized.
   if [ -z "${CREW_ROLE_ID:-}" ]; then
@@ -2770,6 +2774,39 @@ _remote_row_valid() {
     git check-ref-format --branch "$(jq -r .branch <<<"$1")" >/dev/null 2>&1
 }
 
+# _remote_layout_init — sets origin_host (the DISPATCH_ORIGIN_HOST this crew
+# sends) and layout_env (the --env pair that opts the request into layout 2).
+# A layout-1 crew keeps this host's short name and silently omits an unsafe
+# one; a layout-2 crew's origin is its meta.json home_host, refused when unusable.
+_remote_layout_init() {
+  layout_env=()
+  if [ "$crew_layout" != 2 ]; then
+    origin_host="$(_short_host)"
+    [[ $origin_host =~ ^[A-Za-z0-9][A-Za-z0-9_-]*$ ]] || origin_host=""
+    return 0
+  fi
+  origin_host="$(jq -r '.home_host // empty' "$crew_state/meta.json" 2>/dev/null)" || origin_host=""
+  if [[ ! $origin_host =~ ^[A-Za-z0-9][A-Za-z0-9_-]*$ ]]; then
+    echo "dispatch: --host $remote_host: crew $crew_id has no usable home_host in $crew_state/meta.json (got '$origin_host') — the remote needs a plain short hostname ^[A-Za-z0-9][A-Za-z0-9_-]*\$" >&2
+    exit 1
+  fi
+  layout_env=(--env CREW_LAYOUT=2)
+}
+
+# _remote_pre2b_guard — a layout-2 crew refuses a host where this crew already
+# has a remote worker recorded without crew_layout 2: that worker, possibly in
+# another clone, would switch to the visiting log mid-flight once meta.json
+# appears there.
+_remote_pre2b_guard() {
+  local old_branch
+  [ "$crew_layout" = 2 ] && [ -f "$crew_log" ] || return 0
+  old_branch="$(jq -rnR --arg h "$remote_host" --arg c "$crew_id" '
+    [inputs | fromjson? | objects | select(.kind == "dispatch" and .remote == true and .host == $h and .crew_id == $c and (.crew_layout != 2))] | first | .branch // empty' "$crew_log")"
+  [ -z "$old_branch" ] && return 0
+  echo "dispatch: --host $remote_host: crew $crew_id already ran a pre-layout-2 worker ($old_branch) on $remote_host; this layout-2 crew cannot dispatch there (its log would switch under that worker) — dispatch it to another host, or from a new crew" >&2
+  exit 1
+}
+
 # _remote_recover_row — after a broken link, ask the remote bus for the row its
 # detached dispatch wrote under $session. Prints it and returns 0; 255 at the
 # first query the link fails (waiting out the rest cannot help); 1 when every
@@ -2778,7 +2815,11 @@ _remote_recover_row() {
   local tries="${DISPATCH_HOST_RECOVER_TRIES:-6}" pause="${DISPATCH_HOST_RECOVER_SLEEP:-10}" i=0 out rc
   while :; do
     rc=0
-    out="$(crew remote-run --host "$remote_host" --env "CREW_ID=$crew_id" -- crew dispatch-row --crew "$crew_id" --session "$session")" || rc=$?
+    if [ "$crew_layout" = 2 ]; then
+      out="$(crew remote-run --host "$remote_host" --crew-scope --env "CREW_ID=$crew_id" --env "DISPATCH_ORIGIN_HOST=$origin_host" -- crew dispatch-row --crew "$crew_id" --session "$session")" || rc=$?
+    else
+      out="$(crew remote-run --host "$remote_host" --env "CREW_ID=$crew_id" -- crew dispatch-row --crew "$crew_id" --session "$session")" || rc=$?
+    fi
     if [ "$rc" -eq 0 ] && [ -n "$out" ]; then
       printf '%s\n' "$out"
       return 0
@@ -2794,7 +2835,7 @@ _remote_recover_row() {
 # bus as this host's route to it, its claims-index mirror, then the window.
 _remote_finish() {
   mkdir -p "$crew_dir"
-  _crew_append "$(jq -c --arg h "$remote_host" --arg repo "$(_crew_repo)" '. + {ts:(now*1000|floor), host:$h, remote:true, repo:$repo}' <<<"$1")"
+  _crew_append "$(jq -c --arg h "$remote_host" --arg repo "$(_crew_repo)" --argjson layout "$crew_layout" '. + {ts:(now*1000|floor), host:$h, remote:true, repo:$repo} + (if $layout == 2 then {crew_layout:2} else {} end)' <<<"$1")"
   [ "$crew_layout" != 2 ] || crew index add --crew "$crew_id" || true
   branch="$(jq -r .branch <<<"$1")"
   mapfile -t also_closes < <(jq -r '.also_closes // [] | .[] | tostring' <<<"$1")
@@ -2970,6 +3011,8 @@ _dispatch_remote() {
   fi
   _wt_trusted_cwd "${crew_dir%/crew}" || exit 1
   _crew_log_init || exit 1
+  _remote_layout_init
+  _remote_pre2b_guard
   # The worker runs on the remote host, so its tools are not checked here.
   _spec_lint --no-host-checks
 
@@ -3006,7 +3049,7 @@ _dispatch_remote() {
 
   # The engine roster is the remote's; this call is also the preflight that
   # surfaces an unknown host, a missing clone mapping or a dead link.
-  engines="$(crew remote-run --host "$remote_host" --env "CREW_ID=$crew_id" -- dispatch --engines)" || exit $?
+  engines="$(crew remote-run --host "$remote_host" --env "CREW_ID=$crew_id" ${layout_env[@]+"${layout_env[@]}"} -- dispatch --engines)" || exit $?
   grep -qxF -- "$agent" <<<"$engines" || {
     echo "dispatch: --host $remote_host: --agent $agent is not enabled and installed there (engines: $(paste -sd' ' - <<<"$engines"))" >&2
     exit 1
@@ -3082,8 +3125,7 @@ _dispatch_remote() {
   done <<<"$occupied"
   run_env=(--env "CREW_ID=$crew_id" --env "DISPATCH_TMUX_SESSION=$remote_session" --env DISPATCH_EMIT_ROW=1 --env "DISPATCH_SESSION_ID=$session")
   # A cosmetic stamp must not fail the dispatch: a local name the remote would refuse is omitted.
-  origin_host="$(_short_host)"
-  if [[ $origin_host =~ ^[A-Za-z0-9][A-Za-z0-9_-]*$ ]]; then
+  if [ -n "$origin_host" ]; then
     run_env=("${run_env[@]:0:4}" --env "DISPATCH_ORIGIN_HOST=$origin_host" "${run_env[@]:4}")
   fi
   [ "${#avoid[@]}" -eq 0 ] || run_env+=(--env "CREW_IDENTITY_AVOID=$(
@@ -3093,7 +3135,7 @@ _dispatch_remote() {
   [ -z "${DISPATCH_SPEC:-}" ] || run_env+=(--spec-file "$DISPATCH_SPEC")
   [ -z "$migrate_bundle" ] || run_env+=(--migrate-dir "$migrate_bundle")
 
-  out="$(crew remote-run --host "$remote_host" "${run_env[@]}" -- \
+  out="$(crew remote-run --host "$remote_host" "${run_env[@]}" ${layout_env[@]+"${layout_env[@]}"} -- \
     dispatch "$tier" "$model" ${host_fwd_args[@]+"${host_fwd_args[@]}"} --crew-id "$crew_id" -- "$@")" || rc=$?
   if [ "$rc" -eq 255 ]; then
     # The remote dispatch runs detached, so it may have finished regardless.
@@ -3113,6 +3155,10 @@ _dispatch_remote() {
     wid="$(sed -n 's/^worker_id: //p' <<<"$out")"
     if [ "$(grep -c . <<<"$row")" -ne 1 ] || [ "$wid" != "$(jq -r '.worker_id? // empty' <<<"$row" 2>/dev/null)" ]; then
       _remote_unfollowable
+    fi
+    if [ "$crew_layout" = 2 ] && ! grep -qx 'crew_layout: 2' <<<"$out"; then
+      echo "dispatch: --host $remote_host: the remote dispatch did not confirm layout 2 (no crew_layout: 2 line) — the worker for session $session may exist on $remote_host at layout 1; upgrade dispatch on $remote_host" >&2
+      exit 1
     fi
   fi
   _remote_row_valid "$row" || _remote_unfollowable
@@ -3148,6 +3194,7 @@ if [ "${1:-}" = --host ] && [ "${3:-}" = --recover ]; then
   crew_dir="$(git rev-parse --path-format=absolute --git-common-dir)/crew"
   _wt_trusted_cwd "${crew_dir%/crew}" || exit 1
   _crew_log_init || exit 1
+  _remote_layout_init
   _settings_load
   _remote_recover
   exit 0
@@ -3656,6 +3703,16 @@ fi
 if [ -n "${DISPATCH_ORIGIN_HOST:-}" ] && [[ ! $DISPATCH_ORIGIN_HOST =~ ^[A-Za-z0-9][A-Za-z0-9_-]*$ ]]; then
   echo "dispatch: DISPATCH_ORIGIN_HOST must be a plain short hostname ^[A-Za-z0-9][A-Za-z0-9_-]*\$ (got '$DISPATCH_ORIGIN_HOST')" >&2
   exit 1
+fi
+
+# A layout-2 origin crew gets its visiting crew here, before _crew_log_init, so
+# this dispatch's own row and state resolve to it.
+if [ "$wire_side" = remote ] && [ "${DISPATCH_EMIT_ROW:-}" = 1 ] && [ "${CREW_LAYOUT:-}" = 2 ]; then
+  if [ -z "${DISPATCH_ORIGIN_HOST:-}" ]; then
+    echo "dispatch: CREW_LAYOUT=2 needs DISPATCH_ORIGIN_HOST (the origin crew's home host)" >&2
+    exit 1
+  fi
+  CREW_ID="$crew_id" crew register --visiting "$DISPATCH_ORIGIN_HOST" || exit 1
 fi
 
 # dispatch migrate's bundle rides only a --host dispatch; the dir crew
@@ -5324,6 +5381,7 @@ _crew_append "$line"
 [ "$crew_layout" != 2 ] || crew index add --crew "$crew_id" || true
 # A dispatcher on another host records the same row from this line.
 [ "${DISPATCH_EMIT_ROW:-}" != 1 ] || printf 'dispatch_row: %s\n' "$line"
+[ "${DISPATCH_EMIT_ROW:-}" != 1 ] || [ "$crew_layout" != 2 ] || printf 'crew_layout: 2\n'
 _claim_index_dispatch
 _ident_lock_release
 
@@ -5716,11 +5774,16 @@ if [ -z "$target_session" ] && [ -z "${TMUX:-}" ] && [ -z "${TMUX_PANE:-}" ]; th
   target_session="crew-$crew_id"
   echo "dispatch: outside tmux — worker window goes in session $target_session (attach: tmux attach -t $target_session)" >&2
 fi
+# A layout-2 crew's panes resolve it through XDG_STATE_HOME, which a pane takes
+# from the tmux server's env, not this process's.
+state_home="$(_crew_state_home "$crew_log" "$crew_dir" "$crew_id")"
+state_pin=()
+[ -z "$state_home" ] || state_pin=(-e "XDG_STATE_HOME=$state_home")
 if [ -n "$target_session" ]; then
   # Remote mode: the window goes in the named session, which is created
   # with it when absent, so no placeholder shell window gets mirrored. There is
   # no client to size from; the mirror resizes.
-  win_args=(-c "$wt_path" -n "$sanitized" -e "CREW_WORKER_ID=$worker_id" -e "CREW_ID=$crew_id" -P -F '#{window_id} #{pane_id}')
+  win_args=(-c "$wt_path" -n "$sanitized" -e "CREW_WORKER_ID=$worker_id" -e "CREW_ID=$crew_id" ${state_pin[@]+"${state_pin[@]}"} -P -F '#{window_id} #{pane_id}')
   if tmux has-session -t "=$target_session" 2>/dev/null; then
     win_ids="$(_pane_client new-window -d -t "=$target_session:" "${win_args[@]}")"
   elif win_ids="$(_pane_client new-session -d -s "$target_session" "${win_args[@]}" 2>/dev/null)"; then
@@ -5728,6 +5791,7 @@ if [ -n "$target_session" ]; then
     # The session may be shared with windows that are not this crew's.
     tmux set-environment -t "=$target_session" -u CREW_WORKER_ID
     tmux set-environment -t "=$target_session" -u CREW_ID
+    [ -z "$state_home" ] || tmux set-environment -t "=$target_session" -u XDG_STATE_HOME
   else
     # A racing dispatch created the session first.
     win_ids="$(_pane_client new-window -d -t "=$target_session:" "${win_args[@]}")"
@@ -5756,7 +5820,7 @@ else
       client_height=""
     fi
   fi
-  read -r win pane < <(_pane_client new-window -d -c "$wt_path" -n "$sanitized" -e "CREW_WORKER_ID=$worker_id" -e "CREW_ID=$crew_id" -P -F '#{window_id} #{pane_id}')
+  read -r win pane < <(_pane_client new-window -d -c "$wt_path" -n "$sanitized" -e "CREW_WORKER_ID=$worker_id" -e "CREW_ID=$crew_id" ${state_pin[@]+"${state_pin[@]}"} -P -F '#{window_id} #{pane_id}')
 fi
 if [ -n "$client_width" ]; then
   tmux resize-window -t "$win" -x "$client_width" -y "$client_height"
@@ -5788,6 +5852,7 @@ tmux set-window-option -t "$win" @crew_name "$agent_name"
 # the worker's env and worktree .git steer (#496); the role watcher anchors its
 # dispatcher on @crew_id.
 tmux set-window-option -t "$win" @crew_dir "$crew_dir"
+[ -z "$state_home" ] || tmux set-window-option -t "$win" @crew_state_home "$state_home"
 tmux set-window-option -t "$win" @crew_branch "$branch"
 tmux set-window-option -t "$win" @crew_id "$crew_id"
 tmux set-window-option -t "$win" @crew_repo "$(_repo_name "${crew_dir%/crew}")"
@@ -6056,12 +6121,12 @@ sig_before="$(grid_refit_sig "$win")"
 if [ "${#role_names[@]}" -gt 0 ] && [ -z "$grid_lazy" ]; then
   publish_grid_window "$win"
   for i in "${!role_names[@]}"; do
-    role_panes[i]="$(split_role_pane "$win" "$wt_path" "${role_names[$i]}" "$worker_id" "$crew_id")"
+    role_panes[i]="$(split_role_pane "$win" "$wt_path" "${role_names[$i]}" "$worker_id" "$crew_id" "$state_home")"
   done
 fi
 if [ -n "$grid_status" ] && [ "${#role_names[@]}" -gt 0 ]; then
   publish_grid_window "$win"
-  status_pane="$(split_role_pane "$win" "$wt_path" status "$worker_id" "$crew_id")"
+  status_pane="$(split_role_pane "$win" "$wt_path" status "$worker_id" "$crew_id" "$state_home")"
 fi
 if [ "${#role_panes[@]}" -gt 0 ] || [ -n "$status_pane" ]; then
   refit_grid "$win"

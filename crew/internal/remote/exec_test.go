@@ -16,6 +16,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/noamsto/dispatcher/crew/internal/bus"
 )
 
 const helperEnv = "CREW_REMOTE_TEST_HELPER"
@@ -119,7 +121,7 @@ func TestServeRefusals(t *testing.T) {
 	for _, tc := range []struct {
 		name, stdin, want string
 	}{
-		{"version", valid(func(m map[string]any) { m["v"] = 2 }), "version"},
+		{"version", valid(func(m map[string]any) { m["v"] = 3 }), "unsupported request version 3 (this remote-exec speaks v1-v2)"},
 		{"unknown key", valid(func(m map[string]any) { m["extra"] = 1 }), "extra"},
 		{"case-folded key", valid(func(m map[string]any) { delete(m, "repo"); m["Repo"] = e.repo }), "Repo"},
 		{"rm", valid(func(m map[string]any) { m["argv"] = []string{"rm", "-rf", "/"} }), "not allowed"},
@@ -912,5 +914,225 @@ func TestAdmitMigrate(t *testing.T) {
 	rc, _, stderr := e.serve(t, hostRequest(t, []string{"crew", "overseer", "status"}, func(m map[string]any) { m["migrate"] = ok }))
 	if rc != 2 || !strings.Contains(stderr, "host scope") {
 		t.Fatalf("host scope with migrate: rc %d, stderr %q", rc, stderr)
+	}
+}
+
+func TestAdmitRequestVersion(t *testing.T) {
+	e := newServeEnv(t)
+	repoReq := func(v int, env map[string]string) string {
+		data, err := json.Marshal(map[string]any{"v": v, "repo": e.repo, "slug": "acme/widget", "argv": []string{"crew", "where", "x"}, "env": env})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(data)
+	}
+	layout := map[string]string{"CREW_ID": "c1", "CREW_LAYOUT": "2"}
+	for _, tc := range []struct {
+		name, stdin, want string
+	}{
+		{"v1 layout", repoReq(1, layout), "crew: remote-exec: env CREW_LAYOUT needs request v2\n"},
+		{"v1 crew scope", crewRequest(t, []string{"crew", "relay", "--crew", "c1"}, func(m map[string]any) { m["v"] = 1 }), "crew: remote-exec: scope crew needs request v2\n"},
+		{"v0", repoReq(0, nil), "crew: remote-exec: unsupported request version 0 (this remote-exec speaks v1-v2)\n"},
+		{"v3", repoReq(3, layout), "crew: remote-exec: unsupported request version 3 (this remote-exec speaks v1-v2)\n"},
+		{"v2 bad layout", repoReq(2, map[string]string{"CREW_LAYOUT": "1"}), "CREW_LAYOUT"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rc, stdout, stderr := e.serve(t, tc.stdin)
+			if rc != 2 || stdout != "" || !strings.Contains(stderr, tc.want) {
+				t.Fatalf("rc %d, stdout %q, stderr %q, want rc 2 naming %q", rc, stdout, stderr, tc.want)
+			}
+			if e.childRan() {
+				t.Fatal("the child ran despite the refusal")
+			}
+		})
+	}
+	rc, stdout, stderr := e.serve(t, repoReq(2, layout))
+	if rc != 0 || stdout != "child-out\n" || stderr != "child-err\n" {
+		t.Fatalf("v2 layout: rc %d, stdout %q, stderr %q", rc, stdout, stderr)
+	}
+	if got := e.dumped(t, "argv"); got != "crew\x00where\x00x\x00" {
+		t.Fatalf("argv = %q", got)
+	}
+}
+
+func TestServeLayoutEnvComesOnlyFromTheRequest(t *testing.T) {
+	e := newServeEnv(t)
+	t.Setenv("CREW_LAYOUT", "2")
+	self := filepath.Join(t.TempDir(), "crew")
+	writeScript(t, self, `echo "${CREW_LAYOUT-unset}"`)
+	o := ServeOptions{
+		LookPath: func(name string) (string, error) { return "", fmt.Errorf("%s looked up", name) },
+		Self:     func() (string, error) { return self, nil },
+	}
+	req := func(v int, env map[string]string) string {
+		data, err := json.Marshal(map[string]any{"v": v, "repo": e.repo, "slug": "acme/widget", "argv": []string{"crew", "where", "x"}, "env": env})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(data)
+	}
+	for _, tc := range []struct {
+		name, stdin, want string
+	}{
+		{"v1", req(1, map[string]string{"CREW_ID": "c1"}), "unset\n"},
+		{"v2", req(2, map[string]string{"CREW_ID": "c1", "CREW_LAYOUT": "2"}), "2\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rc, stdout, stderr := e.serveWith(t, tc.stdin, o)
+			if rc != 0 || stdout != tc.want {
+				t.Fatalf("rc %d, stdout %q, stderr %q, want stdout %q", rc, stdout, stderr, tc.want)
+			}
+		})
+	}
+}
+
+// crewRequest is a crew-scope request for argv from crew c1 of origin halo;
+// mut edits it before encoding.
+func crewRequest(t *testing.T, argv []string, mut func(m map[string]any)) string {
+	t.Helper()
+	m := map[string]any{"v": 2, "scope": "crew", "repo": "", "slug": "", "argv": argv, "env": map[string]string{"CREW_ID": "c1", "DISPATCH_ORIGIN_HOST": "halo"}}
+	if mut != nil {
+		mut(m)
+	}
+	data, err := json.Marshal(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
+}
+
+// visitingState points the state root at a fresh dir holding crew c1 visiting
+// from halo, crew own (not visiting) and crew far visiting from elsewhere.
+func visitingState(t *testing.T) string {
+	t.Helper()
+	xdg := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", xdg)
+	state := filepath.Join(xdg, "crew")
+	for _, m := range []bus.Meta{
+		{ID: "c1", HomeHost: "halo", Visiting: true, CreatedBy: "remote-dispatch"},
+		{ID: "own", HomeHost: "halo", CreatedBy: "register"},
+		{ID: "far", HomeHost: "elsewhere", Visiting: true, CreatedBy: "remote-dispatch"},
+	} {
+		if err := bus.CreateMeta(state, m); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return xdg
+}
+
+func TestServeCrewScopeRefusals(t *testing.T) {
+	e := newServeEnv(t)
+	t.Setenv("HOME", t.TempDir())
+	visitingState(t)
+	relay := []string{"crew", "relay", "--crew", "c1"}
+	withEnv := func(env map[string]string) func(m map[string]any) {
+		return func(m map[string]any) { m["env"] = env }
+	}
+	asCrew := func(id string) func(m map[string]any) {
+		return withEnv(map[string]string{"CREW_ID": id, "DISPATCH_ORIGIN_HOST": "halo"})
+	}
+	migrate := map[string]any{"meta": testMeta()}
+	badMeta := filepath.Join(os.Getenv("XDG_STATE_HOME"), "crew", "crews", "bad", "meta.json")
+	if err := os.MkdirAll(filepath.Dir(badMeta), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(badMeta, []byte("{"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name, stdin, want string
+	}{
+		{"repo", crewRequest(t, relay, func(m map[string]any) { m["repo"] = e.repo }), "a crew scope request takes no repo, slug, spec, stdin or migrate"},
+		{"slug", crewRequest(t, relay, func(m map[string]any) { m["slug"] = "acme/widget" }), "crew scope"},
+		{"spec", crewRequest(t, relay, func(m map[string]any) { m["spec"] = "s" }), "crew scope"},
+		{"empty spec", crewRequest(t, relay, func(m map[string]any) { m["spec"] = "" }), "crew scope"},
+		{"stdin", crewRequest(t, relay, func(m map[string]any) { m["stdin"] = "s" }), "crew scope"},
+		{"migrate", crewRequest(t, relay, func(m map[string]any) { m["migrate"] = migrate }), "crew scope"},
+		{"no CREW_ID", crewRequest(t, relay, withEnv(map[string]string{"DISPATCH_ORIGIN_HOST": "halo"})), "crew scope needs env CREW_ID and DISPATCH_ORIGIN_HOST"},
+		{"no origin", crewRequest(t, relay, withEnv(map[string]string{"CREW_ID": "c1"})), "crew scope needs env CREW_ID and DISPATCH_ORIGIN_HOST"},
+		{"extra env", crewRequest(t, relay, withEnv(map[string]string{"CREW_ID": "c1", "DISPATCH_ORIGIN_HOST": "halo", "DISPATCH_EMIT_ROW": "1"})), "crew scope needs env CREW_ID and DISPATCH_ORIGIN_HOST"},
+		{"bad origin", crewRequest(t, relay, withEnv(map[string]string{"CREW_ID": "c1", "DISPATCH_ORIGIN_HOST": "-x"})), "DISPATCH_ORIGIN_HOST"},
+		{"bad id", crewRequest(t, []string{"crew", "relay", "--crew", "../c1"}, asCrew("../c1")), "CREW_ID"},
+		{"crew reply", crewRequest(t, []string{"crew", "reply", "--crew", "c1"}, nil), "argv not allowed in crew scope"},
+		{"crew reap", crewRequest(t, []string{"crew", "reap", "--crew", "c1"}, nil), "argv not allowed in crew scope"},
+		{"peer-sync", crewRequest(t, []string{"crew", "peer-sync", "--crew", "c1"}, nil), "argv not allowed in crew scope"},
+		{"dispatch", crewRequest(t, []string{"dispatch", "--crew", "c1"}, nil), "argv not allowed in crew scope"},
+		{"permission-check", crewRequest(t, []string{"permission-check", "--crew", "c1"}, nil), "argv not allowed in crew scope"},
+		{"overseer", crewRequest(t, []string{"crew", "overseer", "status", "--crew", "c1"}, nil), "argv not allowed in crew scope"},
+		{"empty argv", crewRequest(t, []string{}, nil), "argv not allowed in crew scope"},
+		{"no --crew", crewRequest(t, []string{"crew", "relay", "--since", "0"}, nil), "--crew"},
+		{"two --crew", crewRequest(t, []string{"crew", "relay", "--crew", "c1", "--crew", "c1"}, nil), "--crew"},
+		{"--crew mismatch", crewRequest(t, []string{"crew", "relay", "--crew", "far"}, nil), "--crew"},
+		{"--crew= mismatch", crewRequest(t, []string{"crew", "dispatch-row", "--crew=far"}, nil), "--crew"},
+		{"no meta", crewRequest(t, []string{"crew", "relay", "--crew", "ghost"}, asCrew("ghost")), "crew: remote-exec: crew ghost is not a crew on this host\n"},
+		{"garbled meta", crewRequest(t, []string{"crew", "relay", "--crew", "bad"}, asCrew("bad")), "crew: remote-exec: crew bad: "},
+		{"own crew", crewRequest(t, []string{"crew", "relay", "--crew", "own"}, asCrew("own")), "crew: remote-exec: crew own is this host's own crew, not a visiting one\n"},
+		{"other origin", crewRequest(t, []string{"crew", "relay", "--crew", "far"}, asCrew("far")), "crew: remote-exec: crew far is visiting from elsewhere, not halo\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rc, stdout, stderr := e.serve(t, tc.stdin)
+			if rc != 2 || stdout != "" || !strings.Contains(stderr, tc.want) {
+				t.Fatalf("rc %d, stdout %q, stderr %q, want rc 2 naming %q", rc, stdout, stderr, tc.want)
+			}
+			if e.childRan() {
+				t.Fatal("the child ran despite the refusal")
+			}
+		})
+	}
+	t.Run("no state root", func(t *testing.T) {
+		t.Setenv("XDG_STATE_HOME", "")
+		t.Setenv("HOME", "")
+		rc, _, stderr := e.serve(t, crewRequest(t, relay, nil))
+		if rc != 2 || stderr != "crew: remote-exec: crew c1: no crew state root on this host (XDG_STATE_HOME and HOME unset)\n" {
+			t.Fatalf("rc %d, stderr %q", rc, stderr)
+		}
+		if e.childRan() {
+			t.Fatal("the child ran despite the refusal")
+		}
+	})
+}
+
+func TestServeCrewScope(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	xdg := visitingState(t)
+	cwd := t.TempDir()
+	t.Chdir(cwd)
+	t.Setenv("CREW_ID", "stale")
+	t.Setenv("DISPATCH_ORIGIN_HOST", "stale")
+	bin := t.TempDir()
+	self := filepath.Join(bin, "crew")
+	writeScript(t, self, `pwd -P
+printf '%s %s %s\n' "$CREW_ID" "$DISPATCH_ORIGIN_HOST" "$XDG_STATE_HOME"
+printf '%s\n' "$*"
+echo crew-err >&2
+exit 3
+`)
+	o := ServeOptions{
+		LookPath: func(name string) (string, error) { return "", fmt.Errorf("%s looked up", name) },
+		Self:     func() (string, error) { return self, nil },
+	}
+	wantHome, err := filepath.EvalSymlinks(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, argv := range [][]string{
+		{"crew", "relay", "--since", "0", "--crew", "c1"},
+		{"crew", "dispatch-row", "--crew=c1", "--session", "s1-1"},
+	} {
+		var stdout, stderr bytes.Buffer
+		rc := Serve(strings.NewReader(crewRequest(t, argv, nil)), &stdout, &stderr, o)
+		want := wantHome + "\nc1 halo " + xdg + "\n" + strings.Join(argv[1:], " ") + "\n"
+		if rc != 3 || stdout.String() != want || stderr.String() != "crew-err\n" {
+			t.Fatalf("%q: rc %d, stdout %q, stderr %q, want rc 3, stdout %q", argv, rc, stdout.String(), stderr.String(), want)
+		}
+	}
+	for _, dir := range []string{home, cwd} {
+		if _, err := os.Stat(filepath.Join(dir, "crew")); !os.IsNotExist(err) {
+			t.Fatalf("a scratch root was made under %s (%v)", dir, err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(xdg, "crew", "remote-exec")); !os.IsNotExist(err) {
+		t.Fatalf("a scratch root was made under the state root (%v)", err)
 	}
 }

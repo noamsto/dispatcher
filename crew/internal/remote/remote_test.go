@@ -294,31 +294,21 @@ func TestRouteAny(t *testing.T) {
 	}
 }
 
-func TestRemoteHosts(t *testing.T) {
-	rows := busRows(t,
-		`{"kind":"dispatch","crew_id":"c","branch":"feat/a","host":"mini","remote":true}`,
-		`{"kind":"dispatch","crew_id":"c","branch":"feat/b","host":"big","remote":true}`,
-		`{"kind":"dispatch","crew_id":"c","branch":"feat/c","host":"mini","remote":true}`,
-		`{"kind":"dispatch","crew_id":"c","branch":"feat/d","host":"laptop"}`,
-		`{"kind":"dispatch","crew_id":"d","branch":"feat/e","host":"other","remote":true}`,
-	)
-	if got := RemoteHosts(rows, "c"); !reflect.DeepEqual(got, []string{"big", "mini"}) {
-		t.Fatalf("RemoteHosts = %q", got)
-	}
-	if got := RemoteHosts(rows, "z"); len(got) != 0 {
-		t.Fatalf("RemoteHosts(z) = %q", got)
-	}
-}
-
 // sshShim puts a fake ssh first on PATH: it records its argv and stdin under
 // dir, prints to both streams, and exits with code.
 func sshShim(t *testing.T, code string) string {
+	t.Helper()
+	return sshShimStderr(t, code, "remote-err")
+}
+
+// sshShimStderr is sshShim writing errLine (no single quotes) to stderr.
+func sshShimStderr(t *testing.T, code, errLine string) string {
 	t.Helper()
 	dir := t.TempDir()
 	writeScript(t, filepath.Join(dir, "ssh"), `printf '%s\0' "$@" > '`+dir+`/argv'
 cat > '`+dir+`/stdin'
 echo remote-out
-echo remote-err >&2
+printf '%s\n' '`+errLine+`' >&2
 exit `+code+"\n")
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	return dir
@@ -676,5 +666,150 @@ func TestRunChromeTripwire(t *testing.T) {
 				t.Fatalf("rc = %d, stderr %q, ssh err %v", rc, stderr.String(), sshErr)
 			}
 		})
+	}
+}
+
+func TestBuildRequestLayout(t *testing.T) {
+	data, err := BuildRequest("/r/widget", "acme/widget", []string{"dispatch"}, []string{"CREW_ID=c1", "CREW_LAYOUT=2"}, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := `{"v":2,"repo":"/r/widget","slug":"acme/widget","argv":["dispatch"],"env":{"CREW_ID":"c1","CREW_LAYOUT":"2"}}`; string(data) != want {
+		t.Fatalf("request = %s, want %s", data, want)
+	}
+	for _, v := range []string{"1", "x", "", "2\n", "22"} {
+		if err := CheckEnv("CREW_LAYOUT", v); err == nil {
+			t.Errorf("CREW_LAYOUT=%q accepted", v)
+		}
+	}
+	if err := CheckEnv("CREW_LAYOUT", "2"); err != nil {
+		t.Fatalf("CREW_LAYOUT=2 refused: %v", err)
+	}
+}
+
+var crewEnv = []string{"CREW_ID=c1", "DISPATCH_ORIGIN_HOST=halo"}
+
+func TestBuildCrewRequest(t *testing.T) {
+	data, err := BuildCrewRequest([]string{"crew", "dispatch-row", "--crew", "c1", "--session", "s1-1"}, crewEnv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := `{"v":2,"scope":"crew","repo":"","slug":"","argv":["crew","dispatch-row","--crew","c1","--session","s1-1"],"env":{"CREW_ID":"c1","DISPATCH_ORIGIN_HOST":"halo"}}`; string(data) != want {
+		t.Fatalf("request = %s, want %s", data, want)
+	}
+	if _, err := BuildCrewRequest([]string{"crew", "relay", "--since", "0", "--crew=c1"}, crewEnv); err != nil {
+		t.Fatalf("relay --crew=c1 refused: %v", err)
+	}
+	relay := []string{"crew", "relay", "--crew", "c1"}
+	for _, tc := range []struct {
+		name string
+		argv []string
+		env  []string
+	}{
+		{"no CREW_ID", relay, []string{"DISPATCH_ORIGIN_HOST=halo"}},
+		{"no DISPATCH_ORIGIN_HOST", relay, []string{"CREW_ID=c1"}},
+		{"extra env", relay, append([]string{"DISPATCH_EMIT_ROW=1"}, crewEnv...)},
+		{"layout env", relay, append([]string{"CREW_LAYOUT=2"}, crewEnv...)},
+		{"bad origin", relay, []string{"CREW_ID=c1", "DISPATCH_ORIGIN_HOST=-x"}},
+		{"crew reply", []string{"crew", "reply", "--crew", "c1"}, crewEnv},
+		{"dispatch", []string{"dispatch", "--crew", "c1"}, crewEnv},
+		{"bare crew", []string{"crew"}, crewEnv},
+		{"empty argv", nil, crewEnv},
+		{"no --crew", []string{"crew", "relay", "--since", "0"}, crewEnv},
+		{"two --crew", []string{"crew", "relay", "--crew", "c1", "--crew=c1"}, crewEnv},
+		{"--crew other", []string{"crew", "relay", "--crew", "other"}, crewEnv},
+		{"--crew=other", []string{"crew", "relay", "--crew=other"}, crewEnv},
+		{"--crew last", []string{"crew", "relay", "--crew"}, crewEnv},
+	} {
+		if data, err := BuildCrewRequest(tc.argv, tc.env); err == nil {
+			t.Errorf("%s: accepted: %s", tc.name, data)
+		}
+	}
+}
+
+func TestRunCrewScope(t *testing.T) {
+	t.Setenv("DISPATCH_CONFIG_BIN", configBin(t, mini))
+	shim := sshShim(t, "0")
+	argv := []string{"crew", "dispatch-row", "--crew", "c1", "--session", "s1-1"}
+	var stdout, stderr bytes.Buffer
+	rc := Run(context.Background(), Call{Host: "mini", Cwd: t.TempDir(), CrewScope: true, Env: crewEnv, Argv: argv}, &stdout, &stderr)
+	if rc != 0 || stdout.String() != "remote-out\n" || stderr.String() != "remote-err\n" {
+		t.Fatalf("rc = %d, stdout %q, stderr %q", rc, stdout.String(), stderr.String())
+	}
+	gotArgv, _ := os.ReadFile(filepath.Join(shim, "argv"))
+	if want := strings.Join(SSHArgv("me@mini"), "\x00") + "\x00"; string(gotArgv) != want {
+		t.Fatalf("ssh argv = %q", gotArgv)
+	}
+	want, err := BuildCrewRequest(argv, crewEnv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stdin, _ := os.ReadFile(filepath.Join(shim, "stdin")); string(stdin) != string(want) {
+		t.Fatalf("request = %s, want %s", stdin, want)
+	}
+}
+
+func TestRunCrewScopeRefusesBeforeSSH(t *testing.T) {
+	t.Setenv("DISPATCH_CONFIG_BIN", configBin(t, mini))
+	shim := sshShim(t, "0")
+	cwd := t.TempDir()
+	relay := []string{"crew", "relay", "--crew", "c1"}
+	for _, tc := range []struct {
+		call Call
+		want string
+	}{
+		{Call{Host: "mini", Cwd: cwd, CrewScope: true, Env: crewEnv, SpecFile: "spec.md", Argv: relay}, "crew: remote-run: --spec-file is not allowed with --crew-scope\n"},
+		{Call{Host: "mini", Cwd: cwd, CrewScope: true, Env: crewEnv, MigrateDir: "bundle", Argv: relay}, "crew: remote-run: --migrate-dir is not allowed with --crew-scope\n"},
+		{Call{Host: "maxi", Cwd: cwd, CrewScope: true, Env: crewEnv, Argv: relay}, "crew: remote-run: unknown host 'maxi' (no hosts.maxi in settings)\n"},
+		{Call{Host: "mini", Cwd: cwd, CrewScope: true, Env: crewEnv, Argv: []string{"crew", "reply", "--crew", "c1"}}, "crew: remote-run: argv not allowed in crew scope: [\"crew\" \"reply\"]\n"},
+		{Call{Host: "mini", Cwd: cwd, CrewScope: true, Env: crewEnv[:1], Argv: relay}, "crew: remote-run: crew scope needs env CREW_ID and DISPATCH_ORIGIN_HOST\n"},
+	} {
+		var stderr bytes.Buffer
+		if rc := Run(context.Background(), tc.call, io.Discard, &stderr); rc != 2 || stderr.String() != tc.want {
+			t.Errorf("Run(%+v) = %d, stderr %q, want %q", tc.call, rc, stderr.String(), tc.want)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(shim, "argv")); err == nil {
+		t.Fatal("ssh ran despite a refusal")
+	}
+}
+
+const oldRemoteLine = "crew: remote-run: host 'mini' runs a crew remote-exec that speaks request v1 only, which predates layout 2 — upgrade crew on mini, or dispatch from a layout-1 crew\n"
+
+func TestRunOldRemote(t *testing.T) {
+	repo := cloneOf(t, "git@github.com:acme/widget.git")
+	t.Setenv("DISPATCH_CONFIG_BIN", configBin(t, mini))
+	const refusal = "crew: remote-exec: unsupported request version 2"
+	v2 := Call{Host: "mini", Cwd: repo, Env: []string{"CREW_LAYOUT=2"}, Argv: []string{"dispatch", "--engines"}}
+	crew := Call{Host: "mini", Cwd: t.TempDir(), CrewScope: true, Env: crewEnv, Argv: []string{"crew", "relay", "--crew", "c1"}}
+	v1 := Call{Host: "mini", Cwd: repo, Argv: []string{"dispatch", "--engines"}}
+	for _, tc := range []struct {
+		name, code, errLine string
+		call                Call
+		want                string
+	}{
+		{"v2 old remote", "2", refusal, v2, refusal + "\n" + oldRemoteLine},
+		{"crew scope old remote", "2", refusal, crew, refusal + "\n" + oldRemoteLine},
+		{"v1 same shim", "2", refusal, v1, refusal + "\n"},
+		{"v2 other refusal", "2", "crew: remote-exec: argv not allowed", v2, "crew: remote-exec: argv not allowed\n"},
+		{"v2 other rc", "1", refusal, v2, refusal + "\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sshShimStderr(t, tc.code, tc.errLine)
+			var stderr bytes.Buffer
+			rc := Run(context.Background(), tc.call, io.Discard, &stderr)
+			if fmt.Sprint(rc) != tc.code || stderr.String() != tc.want {
+				t.Fatalf("rc = %d, stderr %q, want %s / %q", rc, stderr.String(), tc.code, tc.want)
+			}
+		})
+	}
+}
+
+func TestTailBufferCaps(t *testing.T) {
+	var b tailBuffer
+	_, _ = b.Write(bytes.Repeat([]byte("a"), 5000))
+	_, _ = b.Write([]byte("end"))
+	if got := b.String(); len(got) != maxStderrTail || !strings.HasSuffix(got, "aend") {
+		t.Fatalf("tail len %d, suffix %q", len(got), got[max(0, len(got)-4):])
 	}
 }

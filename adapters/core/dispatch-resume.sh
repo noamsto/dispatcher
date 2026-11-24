@@ -493,6 +493,11 @@ crew_id="$(_hdr crew_id)"
 # layout-1 crew, so they cannot select a layout-2 log.
 [ -z "${_anchor_lines[4]:-}" ] || [ "${_anchor_lines[4]}" = "$crew_id" ] || _anchor_mismatch "crew id" "$crew_id" "${_anchor_lines[4]}"
 crew_log="$(_crew_log "$crew_dir" "$crew_id")" || exit 1
+# A layout-2 crew's panes resolve it through XDG_STATE_HOME, which a pane takes
+# from the tmux server's env, not this process's.
+state_home="$(_crew_state_home "$crew_log" "$crew_dir" "$crew_id")"
+state_pin=()
+[ -z "$state_home" ] || state_pin=(-e "XDG_STATE_HOME=$state_home")
 [ -n "${_anchor_lines[4]:-}" ] || [ "$crew_log" = "$crew_dir/events.jsonl" ] || _anchor_mismatch "crew id" "$crew_id" "a layout-1 crew"
 # Stamped at dispatch only when the owning dispatcher is on another host.
 dispatcher_host="$(_hdr dispatcher_host)"
@@ -840,6 +845,7 @@ if [ -n "$rearm_roles" ]; then
   # Same stamps as the full path: tmux-remux does not restore @crew_branch, and
   # crew role-watch refuses a window whose stamp mismatches.
   tmux set-window-option -t "$win" @crew_dir "$crew_dir"
+  [ -z "$state_home" ] || tmux set-window-option -t "$win" @crew_state_home "$state_home"
   tmux set-window-option -t "$win" @crew_branch "$branch"
   tmux set-window-option -t "$win" @crew_id "$crew_id"
   tmux set-window-option -t "$win" @crew_repo "$(_repo_name "${crew_dir%/crew}")"
@@ -1025,15 +1031,19 @@ if [ -z "$pane" ]; then
   if [ "$wire_side" = remote ]; then
     # Remote mode, as in dispatch: the named session, created with the
     # window when absent; no client to size from.
-    win_args=(-c "$wt_path" -n "$sanitized" -P -F '#{window_id} #{pane_id}')
+    win_args=(-c "$wt_path" -n "$sanitized" ${state_pin[@]+"${state_pin[@]}"} -P -F '#{window_id} #{pane_id}')
     # The `|| true` keeps a failed client reaching the "could not resolve a
     # tmux pane" message below instead of dying under errexit.
     if tmux has-session -t "=$DISPATCH_TMUX_SESSION" 2>/dev/null; then
       win_ids="$(_pane_client new-window -d -t "=$DISPATCH_TMUX_SESSION:" "${win_args[@]}" || true)"
     else
       # A racing dispatch may create the session first.
-      win_ids="$(_pane_client new-session -d -s "$DISPATCH_TMUX_SESSION" "${win_args[@]}" 2>/dev/null)" ||
+      if win_ids="$(_pane_client new-session -d -s "$DISPATCH_TMUX_SESSION" "${win_args[@]}" 2>/dev/null)"; then
+        # new-session -e sets the session environment, which later windows inherit.
+        [ -z "$state_home" ] || tmux set-environment -t "=$DISPATCH_TMUX_SESSION" -u XDG_STATE_HOME
+      else
         win_ids="$(_pane_client new-window -d -t "=$DISPATCH_TMUX_SESSION:" "${win_args[@]}" || true)"
+      fi
     fi
     read -r win pane <<<"$win_ids"
   else
@@ -1056,7 +1066,7 @@ if [ -z "$pane" ]; then
         client_height=""
       fi
     fi
-    read -r win pane < <(_pane_client new-window -d -c "$wt_path" -n "$sanitized" -P -F '#{window_id} #{pane_id}')
+    read -r win pane < <(_pane_client new-window -d -c "$wt_path" -n "$sanitized" ${state_pin[@]+"${state_pin[@]}"} -P -F '#{window_id} #{pane_id}')
   fi
   if [ -n "$client_width" ]; then
     tmux resize-window -t "$win" -x "$client_width" -y "$client_height"
@@ -1076,6 +1086,7 @@ tmux set-window-option -t "$win" @crew_name "$agent_name"
 # the worker's env and worktree .git steer (#496); the role watcher anchors its
 # dispatcher on @crew_id.
 tmux set-window-option -t "$win" @crew_dir "$crew_dir"
+[ -z "$state_home" ] || tmux set-window-option -t "$win" @crew_state_home "$state_home"
 tmux set-window-option -t "$win" @crew_branch "$branch"
 tmux set-window-option -t "$win" @crew_id "$crew_id"
 tmux set-window-option -t "$win" @crew_repo "$(_repo_name "${crew_dir%/crew}")"

@@ -1978,7 +1978,7 @@ const (
 	whereUsage           = "usage: crew where <target> [--crew ID] | crew where --log|--dir [--crew ID] | crew where --json [--crew ID]"
 	reapUsage            = "crew: reap takes --quiet, --dry-run, --no-wait, --fleet, --json, --idle S, --stale-after S and --discard BRANCH "
 	baselineUsage        = "usage: crew git-baseline [--accept]"
-	wantRemoteRunUsage   = "usage: crew remote-run --host H [--env K=V]... [--spec-file F] [--migrate-dir D] -- <argv>..."
+	wantRemoteRunUsage   = "usage: crew remote-run --host H [--crew-scope] [--env K=V]... [--spec-file F] [--migrate-dir D] -- <argv>..."
 	wantDispatchRowUsage = "usage: crew dispatch-row --session S [--crew ID]"
 	wantPeerClaimsUsage  = "usage: crew peer-claims <issue>"
 	wantDecideUsage      = `usage: crew decide "<text>"`
