@@ -79,6 +79,14 @@ func ReadMeta(state, id string) (Meta, error) {
 	return readMeta(metaPath(StoreDir(state, id)), id)
 }
 
+// ReadMetaAt is ReadMeta for a crew store dir already in hand.
+func ReadMetaAt(dir, id string) (Meta, error) {
+	if !ValidCrewID(id) {
+		return Meta{}, &InvalidCrewIDError{ID: id}
+	}
+	return readMeta(metaPath(dir), id)
+}
+
 func readMeta(path, id string) (Meta, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {

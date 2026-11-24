@@ -47,6 +47,17 @@ _crew_log() {
   printf '%s\n' "$1/events.jsonl"
 }
 
+# _crew_state_home <crew_log> <crew_dir> <crew_id> — print the XDG_STATE_HOME a
+# layout-2 log lives under (the log minus /crew/crews/<id>/events.jsonl); nothing
+# for a layout-1 log or one that is not under that suffix.
+_crew_state_home() {
+  [ "$1" != "$2/events.jsonl" ] || return 0
+  local suffix="/crew/crews/$3/events.jsonl"
+  case "$1" in
+  ?*"$suffix") printf '%s\n' "${1%"$suffix"}" ;;
+  esac
+}
+
 # _pid_alive <pid> — 0 when a process with this pid exists, under any uid.
 # `kill -0 0` signals the caller's own process group and `kill -0 -1`
 # broadcasts, so only a positive integer is a liveness probe. A failed signal

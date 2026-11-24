@@ -75,8 +75,8 @@ func Serve(stdin io.Reader, stdout, stderr io.Writer, o ServeOptions) int {
 		_, _ = fmt.Fprintf(stderr, "crew: remote-exec: %v\n", err)
 		return exitUsage
 	}
-	if req.Scope == scopeHost {
-		return serveHost(req, o, stdout, stderr)
+	if req.Scope == scopeHost || req.Scope == scopeCrew {
+		return serveHome(req, o, stdout, stderr)
 	}
 	scratch, err := newScratch(common + "/crew/remote-exec")
 	if err != nil {
@@ -96,15 +96,7 @@ func Serve(stdin io.Reader, stdout, stderr io.Writer, o ServeOptions) int {
 		return 127
 	}
 	cmd.Dir = req.Repo
-	cmd.Env = os.Environ()
-	keys := make([]string, 0, len(req.Env))
-	for k := range req.Env {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	for _, k := range keys {
-		cmd.Env = append(cmd.Env, k+"="+req.Env[k])
-	}
+	cmd.Env = childEnv(req)
 	if req.Spec != nil {
 		spec := scratch + "/spec"
 		if err := writePrivate(spec, []byte(*req.Spec)); err != nil {
@@ -140,9 +132,24 @@ func Serve(stdin io.Reader, stdout, stderr io.Writer, o ServeOptions) int {
 	return reportStatus(cmd.Run(), stderr, "crew: remote-exec: "+req.Argv[0])
 }
 
-// serveHost runs an admitted host-scope request: no clone and no scratch, so
-// the child starts in the remote user's home with sshd's env.
-func serveHost(req Request, o ServeOptions, stdout, stderr io.Writer) int {
+// childEnv is sshd's env with the request's env added in key order.
+func childEnv(req Request) []string {
+	env := os.Environ()
+	keys := make([]string, 0, len(req.Env))
+	for k := range req.Env {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		env = append(env, k+"="+req.Env[k])
+	}
+	return env
+}
+
+// serveHome runs an admitted host- or crew-scope request: no clone and no
+// scratch, so the child starts in the remote user's home with sshd's env plus
+// the request's (none for host scope).
+func serveHome(req Request, o ServeOptions, stdout, stderr io.Writer) int {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "crew: remote-exec: %v\n", err)
@@ -154,7 +161,7 @@ func serveHost(req Request, o ServeOptions, stdout, stderr io.Writer) int {
 		return 127
 	}
 	cmd.Dir = home
-	cmd.Env = os.Environ()
+	cmd.Env = childEnv(req)
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 	return reportStatus(cmd.Run(), stderr, "crew: remote-exec: "+req.Argv[0])
@@ -167,10 +174,23 @@ func admit(ctx context.Context, stdin io.Reader) (Request, string, error) {
 	if err != nil {
 		return Request{}, "", err
 	}
+	if req.V == 1 {
+		if _, ok := req.Env[layoutEnv]; ok {
+			return Request{}, "", errors.New("env CREW_LAYOUT needs request v2")
+		}
+		if req.Scope == scopeCrew {
+			return Request{}, "", errors.New("scope crew needs request v2")
+		}
+	}
 	switch req.Scope {
 	case "":
 	case scopeHost:
 		if err := admitHost(req); err != nil {
+			return Request{}, "", err
+		}
+		return req, "", nil
+	case scopeCrew:
+		if err := admitCrew(req); err != nil {
 			return Request{}, "", err
 		}
 		return req, "", nil
@@ -217,6 +237,36 @@ func admitHost(req Request) error {
 	return nil
 }
 
+// admitCrew checks a crew-scope request and binds it to a recorded crew: one
+// visiting this host from the origin the request names. That is not
+// authentication (ssh is); it keeps the argv to a crew this host took in.
+func admitCrew(req Request) error {
+	if req.Repo != "" || req.Slug != "" || req.Spec != nil || req.Stdin != nil || req.Migrate != nil {
+		return errors.New("a crew scope request takes no repo, slug, spec, stdin or migrate")
+	}
+	if err := checkCrewEnv(req.Env); err != nil {
+		return err
+	}
+	id, origin := req.Env["CREW_ID"], req.Env["DISPATCH_ORIGIN_HOST"]
+	if err := checkCrewArgv(req.Argv, id); err != nil {
+		return err
+	}
+	state := bus.StateRoot(os.Getenv)
+	if state == "" {
+		return fmt.Errorf("crew %s: no crew state root on this host (XDG_STATE_HOME and HOME unset)", id)
+	}
+	meta, err := bus.ReadMeta(state, id)
+	switch {
+	case err != nil:
+		return fmt.Errorf("crew %s is not a crew on this host", id)
+	case !meta.Visiting:
+		return fmt.Errorf("crew %s is this host's own crew, not a visiting one", id)
+	case meta.HomeHost != origin:
+		return fmt.Errorf("crew %s is visiting from %s, not %s", id, meta.HomeHost, origin)
+	}
+	return nil
+}
+
 func decode(stdin io.Reader) (Request, error) {
 	data, err := io.ReadAll(io.LimitReader(stdin, MaxMigrateRequest+1))
 	if err != nil {
@@ -256,8 +306,8 @@ func decode(stdin io.Reader) (Request, error) {
 	if err := strict.Decode(&req); err != nil {
 		return Request{}, fmt.Errorf("invalid request: %v", err)
 	}
-	if req.V != 1 {
-		return Request{}, fmt.Errorf("unsupported request version %d", req.V)
+	if req.V != 1 && req.V != 2 {
+		return Request{}, fmt.Errorf("unsupported request version %d (this remote-exec speaks v1-v2)", req.V)
 	}
 	if hasNUL(req) {
 		return Request{}, errors.New("request string contains NUL")

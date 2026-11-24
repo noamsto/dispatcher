@@ -61,7 +61,8 @@ type crewsCmd struct {
 }
 
 type registerCmd struct {
-	PID string `arg:"" optional:"" name:"pid"`
+	Visiting *string `name:"visiting"`
+	PID      string  `arg:"" optional:"" name:"pid"`
 }
 
 type deregisterCmd struct{}
@@ -407,6 +408,7 @@ type relayCmd struct {
 // or not, as the remote command.
 type remoteRunCmd struct {
 	Host       *string  `name:"host"`
+	CrewScope  bool     `name:"crew-scope"`
 	Env        []string `name:"env" sep:"none"`
 	SpecFile   *string  `name:"spec-file"`
 	MigrateDir *string  `name:"migrate-dir"`
@@ -668,7 +670,7 @@ const (
 	identitySignature = "usage: crew identity <branch> [crew]"
 	rateRootUsage     = "crew: rate --root needs a directory"
 	gitBaselineUsage  = "usage: crew git-baseline [--accept]"
-	remoteRunUsage    = "usage: crew remote-run --host H [--env K=V]... [--spec-file F] [--migrate-dir D] -- <argv>..."
+	remoteRunUsage    = "usage: crew remote-run --host H [--crew-scope] [--env K=V]... [--spec-file F] [--migrate-dir D] -- <argv>..."
 	dispatchRowUsage  = "usage: crew dispatch-row --session S [--crew ID]"
 	peerClaimsUsage   = "usage: crew peer-claims <issue>"
 	decideUsage       = `usage: crew decide "<text>"`
@@ -1352,6 +1354,14 @@ func validate(sub string, r *root) *refusal {
 	case "overseer trust":
 		if r.Overseer.Trust.Pane == "" {
 			return fail(overseer.TrustUsage)
+		}
+	case "register":
+		c := r.Register
+		if given(c.Visiting) {
+			return fail("crew: register: --visiting needs an origin host (usage: crew register --visiting <origin-host>)")
+		}
+		if c.Visiting != nil && c.PID != "" {
+			return fail("crew: register: --visiting takes no pid (usage: crew register --visiting <origin-host>)")
 		}
 	case "index add":
 		if c := r.Index.Add; c.Crew == nil || *c.Crew == "" {

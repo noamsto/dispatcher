@@ -264,3 +264,23 @@ func readText(t *testing.T, path string) string {
 	}
 	return string(data)
 }
+
+func TestRegisterVisitingCLI(t *testing.T) {
+	c := newLifecycleCLI(t)
+	c.as("c3")
+	c.mustRun("register", "--visiting", "halo")
+	m := c.meta("c3")
+	if m["home_host"] != "halo" || m["visiting"] != true || m["created_by"] != "remote-dispatch" || m["home_repo"] != nil {
+		t.Errorf("meta = %v", m)
+	}
+	missing(t, c.store("c3")+"/pid")
+
+	_, errOut := c.expect(1, "register", "--visiting")
+	if !strings.HasPrefix(errOut, "crew: register: --visiting needs an origin host") {
+		t.Errorf("bare --visiting stderr = %q", errOut)
+	}
+	_, errOut = c.expect(1, "register", "--visiting", "halo", "4242")
+	if !strings.HasPrefix(errOut, "crew: register: --visiting takes no pid") {
+		t.Errorf("pid stderr = %q", errOut)
+	}
+}

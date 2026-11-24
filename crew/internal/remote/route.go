@@ -2,6 +2,7 @@ package remote
 
 import (
 	"cmp"
+	"encoding/json"
 	"fmt"
 	"slices"
 	"strings"
@@ -45,6 +46,28 @@ func RemoteWorkers(rows []bus.Event, crew string) []Worker {
 		return cmp.Or(strings.Compare(a.Host, b.Host), strings.Compare(a.Branch, b.Branch))
 	})
 	return workers
+}
+
+// HostLayouts is the layout each remote host of crew was dispatched under: the
+// newest remote:true dispatch row of the crew per host decides, 2 only for a
+// crew_layout that is the JSON number 2.
+func HostLayouts(rows []bus.Event, crew string) map[string]int {
+	layouts := map[string]int{}
+	for _, e := range rows {
+		doc, ok := dispatchRow(e, crew)
+		if !ok {
+			continue
+		}
+		host, remote := isRemote(doc)
+		if !remote || host == "" {
+			continue
+		}
+		layouts[host] = 1
+		if doc["crew_layout"] == json.Number("2") {
+			layouts[host] = 2
+		}
+	}
+	return layouts
 }
 
 // ResolveTarget is the remote half of the two-sided target resolution nudge and

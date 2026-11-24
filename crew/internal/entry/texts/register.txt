@@ -1,4 +1,5 @@
 usage: crew register [pid]
+       crew register --visiting <origin-host>
 
 Register this crew on the repo bus. N crews may share a repo, each keyed by its
 crew id, so there is no cross-crew lock.
@@ -7,6 +8,12 @@ CREW_LAYOUT=2 creates the crew's own store under
 ${XDG_STATE_HOME:-~/.local/state}/crew/crews/<id>/ with a meta.json, and works
 outside a repo. An id with an existing crew on this repo's bus stays layout 1,
 and an existing meta.json is reused whatever CREW_LAYOUT says.
+
+--visiting <origin-host> creates, on a remote host, the visiting crew a
+layout-2 dispatch from <origin-host> runs under: only its meta.json under the
+state root, with no pid, pane or launch files. It reuses the same origin's
+visiting crew, and refuses any other crew already at this id or a crew already
+running at layout 1 in this clone. It takes no pid.
 
   [pid]  Long-lived dispatcher pid to record; defaults to the nearest non-shell
          ancestor, which is what an agent's shell tool needs

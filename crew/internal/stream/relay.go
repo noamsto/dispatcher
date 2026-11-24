@@ -16,6 +16,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -146,7 +147,13 @@ func (rs *relays) sync() {
 	}
 	rs.size, rs.mtime, rs.missed = st.Size(), st.ModTime(), false
 	events, _ := bus.ReadEventsTolerant(rs.log)
-	for _, h := range remote.RemoteHosts(events, rs.crew) {
+	layouts := remote.HostLayouts(events, rs.crew)
+	hosts := make([]string, 0, len(layouts))
+	for h := range layouts {
+		hosts = append(hosts, h)
+	}
+	slices.Sort(hosts)
+	for _, h := range hosts {
 		if rs.hosts[h] != nil || !remote.HostNameRe.MatchString(h) {
 			continue
 		}
@@ -161,12 +168,13 @@ func (rs *relays) sync() {
 			continue
 		}
 		r := &relay{
-			rs:      rs,
-			host:    h,
-			lockd:   lockd,
-			cursor:  filepath.Join(dir, h+".cursor"),
-			sup:     &suppress{key: map[string]string{}, ts: map[string]int64{}},
-			reapSup: &suppress{key: map[string]string{}, ts: map[string]int64{}},
+			rs:        rs,
+			host:      h,
+			crewScope: layouts[h] == 2,
+			lockd:     lockd,
+			cursor:    filepath.Join(dir, h+".cursor"),
+			sup:       &suppress{key: map[string]string{}, ts: map[string]int64{}},
+			reapSup:   &suppress{key: map[string]string{}, ts: map[string]int64{}},
 		}
 		rs.hosts[h] = r
 		rs.wg.Add(1)
@@ -201,13 +209,31 @@ func (rs *relays) remoteArgs(host string, argv ...string) []string {
 // relay is one host's source. sup is its own goroutine's; reapSup belongs to
 // the one reap allowed in flight.
 type relay struct {
-	rs      *relays
-	host    string
-	lockd   string
-	cursor  string
-	sup     *suppress
-	reapSup *suppress
-	reaping atomic.Bool
+	rs   *relays
+	host string
+	// crewScope is a layout-2 host: its relay runs under the crew-scope request.
+	crewScope bool
+	lockd     string
+	cursor    string
+	sup       *suppress
+	reapSup   *suppress
+	reaping   atomic.Bool
+}
+
+// relayArgs is the remote-run argv for the relay child. A crew-scope relay
+// carries the origin host, read from the crew's meta at each start.
+func (r *relay) relayArgs() ([]string, error) {
+	rs := r.rs
+	tail := []string{"relay", "--crew", rs.crew, "--since", r.readCursor(), "--states", rs.states}
+	if !r.crewScope {
+		return rs.remoteArgs(r.host, tail...), nil
+	}
+	m, err := bus.ReadMetaAt(rs.cdir, rs.crew)
+	if err != nil || m.HomeHost == "" {
+		return nil, fmt.Errorf("crew %s has no readable home_host in its meta.json", rs.crew)
+	}
+	return append([]string{"remote-run", "--host", r.host, "--crew-scope",
+		"--env", "CREW_ID=" + rs.crew, "--env", "DISPATCH_ORIGIN_HOST=" + m.HomeHost, "--", "crew"}, tail...), nil
 }
 
 func (r *relay) run() {
@@ -239,8 +265,11 @@ func (r *relay) run() {
 // silent for watchdogBeats heartbeats, or the loop stops. It returns the
 // child's status, why the link went, and whether the loop stopped it.
 func (r *relay) connect(reapTick <-chan time.Time) (rc int, reason string, stopped bool) {
-	cmd := r.rs.command(r.rs.remoteArgs(r.host, "relay", "--crew", r.rs.crew,
-		"--since", r.readCursor(), "--states", r.rs.states))
+	args, err := r.relayArgs()
+	if err != nil {
+		return exitCantExec, err.Error(), false
+	}
+	cmd := r.rs.command(args)
 	outR, outW, err := os.Pipe()
 	if err != nil {
 		return exitCantExec, err.Error(), false

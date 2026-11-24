@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -522,5 +523,58 @@ func TestRelayEscapesInvisibleRunesFromOlderRemotes(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("stdout lacks %s: %q", want, out)
 		}
+	}
+}
+
+func layout2Bus(t *testing.T, meta string) bus.Paths {
+	t.Helper()
+	p := fixture(t)
+	if err := os.MkdirAll(p.Dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	row := strings.Replace(remoteDispatchRow("c1", "mini"), `"remote":true`, `"remote":true,"crew_layout":2`, 1)
+	if err := bus.Append(p.Log, row); err != nil {
+		t.Fatal(err)
+	}
+	if meta != "" {
+		if err := os.MkdirAll(p.CrewDir("c1"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		writeFile(t, filepath.Join(p.CrewDir("c1"), "meta.json"), meta)
+	}
+	return p
+}
+
+func TestRelayCrewScopeArgvAndRepoScopedReap(t *testing.T) {
+	p := layout2Bus(t, `{"layout":2,"id":"c1","home_host":"halo"}`)
+	self, dir := relayStub(t)
+	writeFile(t, filepath.Join(dir, "relay.1"), printThenSleep(doneBatch))
+	writeFile(t, filepath.Join(dir, "reap"), "echo 'crew reap: removed feat/r'\n")
+	s := startStream(t, p, self, Request{ReapEvery: "3600"}, fastRelay())
+
+	waitFor(t, "the remote reap line", func() bool { return line(s.lines(), isStream("reap")) != nil })
+	wantRelay := "remote-run --host mini --crew-scope --env CREW_ID=c1 --env DISPATCH_ORIGIN_HOST=halo -- crew relay --crew c1 --since 0 --states " + defaultStates
+	wantReap := "remote-run --host mini --env CREW_ID=c1 -- crew reap --quiet"
+	got := argvLog(dir)
+	if len(got) == 0 || got[0] != wantRelay {
+		t.Errorf("argv = %q, want first %q", got, wantRelay)
+	}
+	if !slices.Contains(got, wantReap) {
+		t.Errorf("argv = %q, want a %q", got, wantReap)
+	}
+}
+
+func TestRelayCrewScopeWithoutHomeHostStartsNoChild(t *testing.T) {
+	p := layout2Bus(t, "")
+	self, dir := relayStub(t)
+	s := startStream(t, p, self, Request{}, fastRelay())
+
+	waitFor(t, "the lost report", func() bool { return line(s.lines(), isStream("error")) != nil })
+	l := line(s.lines(), isStream("error"))
+	if d, _ := l["detail"].(string); !strings.Contains(d, "home_host") {
+		t.Errorf("detail = %q, want it to name home_host", d)
+	}
+	if a := argvLog(dir); len(a) != 0 {
+		t.Errorf("a child started: %q", a)
 	}
 }

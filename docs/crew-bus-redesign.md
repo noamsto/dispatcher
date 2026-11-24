@@ -1389,20 +1389,29 @@ panes (T6 row).
 **Remote workers and visiting crews.** `dispatch --host H` runs the remote `dispatch` through `crew remote-run` and
 `crew remote-exec`, which checks the argv allowlist and that the clone's origin slug matches
 (`crew/internal/remote/exec.go:170-205`). The request may already carry `CREW_ID` and `DISPATCH_ORIGIN_HOST`
-(`crew/internal/remote/remote.go:55-62`). On H, that remote `dispatch` creates `crews/<id>/meta.json` with `visiting: true`,
-`home_host = DISPATCH_ORIGIN_HOST` and `created_by: remote-dispatch` before the worker launches. It is the only crew-creating
-path on a visiting host. If H already has `crews/<id>` with a different `home_host` or `visiting: false`, the dispatch is
-refused (see collisions below). The origin host keeps recording the worker on its own crew log through `_remote_finish`
+(`crew/internal/remote/remote.go:55-62`). When `CREW_LAYOUT=2` arrives (phase 2b), the remote `dispatch` runs `crew register --visiting <origin-host>`, which creates
+`crews/<id>/meta.json` with `visiting: true`, `home_host = DISPATCH_ORIGIN_HOST`, `home_repo: null` and
+`created_by: remote-dispatch` before the worker launches. It is the only crew-creating path on a visiting host. If H already has
+`crews/<id>` with a different `home_host` or `visiting: false`, the dispatch is refused (see collisions below). A layout-1 trace
+of the id in the clone (crew dir, home record, or a row on the repo log) also refuses creation, so a crew already running at
+layout 1 on H never switches logs mid-flight. The dispatch and the panes it opens can see different state roots: the dispatch
+runs with sshd's env and the panes with the tmux server's. So for a layout-2 crew the dispatch pins `XDG_STATE_HOME` into every
+pane it opens (worker window, role panes including a lazy `--spawn-role` through the `@crew_state_home` window stamp, and
+`dispatch resume`). The origin host is the origin crew's `meta.json` `home_host`. The origin host keeps recording the worker on its own crew log through `_remote_finish`
 (`adapters/core/dispatch.sh:2659-2661`), plus the repo-index append.
 
 **Relay without a clone cwd.** `relay` is a repo-scope subcommand today (`crew/internal/remote/remote.go:65`), so it needs a
 clone. A+ adds a crew scope beside the existing host scope (`crew/internal/remote/remote.go:67-73`,
-`crew/internal/remote/exec.go:210-218`). A crew-scope request names no repo, carries `CREW_ID` and `DISPATCH_ORIGIN_HOST` only,
-and runs `crew relay`, `reply`, `nudge`, `where`, `roster` or `dispatch-row`. `admitCrew` refuses a crew id with no
+`crew/internal/remote/exec.go:210-218`). Crew-scope requests are version 2; a version 1 request carrying scope `crew` or
+`CREW_LAYOUT` is refused. A crew-scope request names no repo, carries `CREW_ID` and `DISPATCH_ORIGIN_HOST` only, and runs
+`crew relay` or `crew dispatch-row` (phase 2b). `reply`, `nudge`, `where` and `roster` stay repo-scoped until phase 3 makes them
+repo-optional, and they reach the visiting crew through `meta.json` in the clone. The argv must carry exactly one `--crew`, equal
+to the request's `CREW_ID`; without it the callee would fall back to a `WORKER_TASK.md` in the cwd. `admitCrew` refuses a crew id with no
 `meta.json`, one with `visiting: false`, and one whose `home_host` differs from the request's origin. That origin is
 `DISPATCH_ORIGIN_HOST`, which the caller sets and `EnvAllow` only regex-checks (`crew/internal/remote/remote.go:58`), so the
 match binds a request to a recorded crew and is not authentication; ssh access remains the authentication. `dispatch`, `reap`,
-`peer-sync` (removed in phase 6, 3.4) and `permission-check` stay repo-scoped because they act on a checkout.
+`peer-sync` (removed in phase 6, 3.4) and `permission-check` stay repo-scoped because they act on a checkout. The stream relay
+picks the scope per host from the origin row's `crew_layout`.
 
 **Reply routing from any cwd.** `routeHost` reads the newest dispatch row for the branch (`crew/internal/reply/reply.go:136-152`).
 Under A+ it reads the crew log, so `crew reply worker:<b>` routes local or remote from any cwd. The appended row lands in the log
@@ -1755,9 +1764,12 @@ dir in each new repo (3.2). Also in this phase:
 - The same-branch confirmation must be re-sourced. Under one shared crew log a candidate repo's legacy bus no longer holds its
   dispatch rows, so the phase-1 confirmation would stop confirming anything. The suggested source is the candidate repo's
   worktree HEADs, read as files. The phase adds an acceptance test with both repos' dispatch rows in one crew log.
-- Visiting-crew creation: on host H, the remote `dispatch` creates `meta.json` with `visiting: true`. It reports `crew_layout: 2` on
-  stdout beside `dispatch_row:` (`adapters/core/dispatch.sh:5050`). The origin records it on its dispatch row, and relay picks the
-  crew scope or today's repo scope from that field.
+- Visiting-crew creation (phase 2b): the origin forwards `CREW_LAYOUT=2` on the preflight and the dispatch, and the remote
+  `dispatch` runs `crew register --visiting <origin-host>`, which writes `meta.json` with `visiting: true`. The remote prints
+  `crew_layout: 2` on stdout beside `dispatch_row:` (`adapters/core/dispatch.sh:5050`). The origin records `crew_layout: 2` on its
+  dispatch row, and relay picks the crew scope or today's repo scope from that field. Lost-link and `--recover` recovery use a
+  crew-scope `dispatch-row`, which counts as the confirmation. A layout-2 dispatch to a host that already holds a pre-2b remote
+  row of the crew is refused.
 
 **Why per-crew pinning and not dual-write.** Dual-write would append every row of a crew to both its repo bus and its crew log for the
 whole transition. That has three costs that pinning avoids:
@@ -1778,9 +1790,10 @@ change. Rollback is a setting, because a crew created under either layout finish
 `adopt`) for an index-listed id whose `crews/<id>/` was removed, and for a fixture `archive/<id>/meta.json`, with no legacy dir
 created in either case; an index hit with no `meta.json` anywhere is reported and not written to; resolver lookup order, the legacy carve-out (a legacy crew's first roster-render or `stream` run from a second
 repo still creates `<B>/.git/crew/crews/<id>/`), repo-index append and dedupe, machine-log segment naming, the `remote-exec` crew scope (`admitCrew` refusals: no `meta.json`,
-`visiting: false`, `home_host` mismatch). bats: `tests/dispatch.bats`, `tests/dispatcher.bats` (register outside a repo, legacy dir
+`visiting: false`, `home_host` mismatch, a missing, duplicate or mismatched `--crew`, a v1 request carrying scope `crew` or
+`CREW_LAYOUT`). bats: `tests/dispatch.bats`, `tests/dispatcher.bats` (register outside a repo, legacy dir
 keeps layout 1), `tests/dispatch-notify.bats`, `tests/directive-delivery.bats`, `tests/phase-status.bats` (unchanged, repo-local),
-`tests/remote-host.bats` (visiting creation, `crew_layout` line). Drift guards:
+`tests/remote-host.bats` (visiting creation, `crew_layout` line, crew-scope relay, state-root pin, old-remote refusal). Drift guards:
 
 - The existing raw-append guard (`tests/adapters.bats:17-37`) already matches `>>.*events\.jsonl` under `adapters/`, so shell
   writers must keep using `_bus_append` with `$crew_log`. The three byte-identical copies of the hooks (`tests/adapters.bats:296`,
@@ -1799,9 +1812,9 @@ current binary. Reverting the code while layout-2 crews are live is unsupported:
 index and machine log are derived or auxiliary and can be deleted.
 
 **Mixed period.** The opt-in is for dogfooding. Until phase 3 a layout-2 crew is invisible to dash (H1), `fleet status` (F7) and
-roster-render's other-repo lanes (F8). Until 3h it is invisible to houston (X1). A
-remote host on an older binary prints no `crew_layout` line, so the origin treats that crew as layout 1 on H and relays through the
-repo scope, as today. Turn the opt-in on only for crews that need none of these views.
+roster-render's other-repo lanes (F8). Until 3h it is invisible to houston (X1). An
+older remote refuses the version-2 request before running anything, and `crew remote-run` adds a line naming the remote's request
+version (v1). A layout-2 crew therefore cannot dispatch to an un-upgraded host. A layout-1 crew is unaffected. Turn the opt-in on only for crews that need none of these views.
 
 ### 4.5 Phase 3: consumers on layout 2
 

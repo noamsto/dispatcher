@@ -536,6 +536,28 @@ func repoOptional(p crewArgs) bool {
 	return false
 }
 
+// stateOnly reports whether a call may run outside a repo because it needs no
+// repo path: remote-run in crew scope, and relay or dispatch-row naming a
+// layout-2 crew under the state root.
+func stateOnly(p crewArgs, state string) bool {
+	var crew *string
+	switch p.sub {
+	case "remote-run":
+		return p.typed.RemoteRun.CrewScope
+	case "relay":
+		crew = p.typed.Relay.Crew
+	case "dispatch-row":
+		crew = p.typed.DispatchRow.Crew
+	default:
+		return false
+	}
+	if crew == nil || state == "" {
+		return false
+	}
+	bc, err := bus.StatePaths(state).Crew(*crew)
+	return err == nil && bc.Layout == 2
+}
+
 // runIndexAdd is `crew index add --crew <id>`: it lists a layout-2 crew in this
 // repo's index. A layout-1 crew is never indexed, so it is a silent no-op.
 func runIndexAdd(ctx context.Context, id string, paths bus.Paths, stderr io.Writer) int {
@@ -853,7 +875,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 		// register reaches its arm even with no state root, so CREW_LAYOUT=2
 		// refuses in its own words.
 		state := bus.StateRoot(os.Getenv)
-		if !repoOptional(parsed) || state == "" && sub != "register" {
+		if !repoOptional(parsed) && !stateOnly(parsed, state) || state == "" && sub != "register" {
 			say(stderr, "crew: not in a git repo\n")
 			return exitFailure
 		}
@@ -967,7 +989,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 	if sub == "remote-run" {
 		c := parsed.typed.RemoteRun
 		return remoteRun(ctx, e, remote.Call{
-			Host: str(c.Host), Cwd: cwd, Env: c.Env, SpecFile: str(c.SpecFile), MigrateDir: str(c.MigrateDir),
+			Host: str(c.Host), Cwd: cwd, CrewScope: c.CrewScope, Env: c.Env, SpecFile: str(c.SpecFile), MigrateDir: str(c.MigrateDir),
 			Argv: remoteArgv(c.Argv),
 		}, stdout, stderr)
 	}
@@ -1294,7 +1316,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 
 	// register and deregister record the caller's own identity like adopt does.
 	if sub == "register" || sub == "deregister" {
-		return register.Run(sub, parsed.typed.Register.PID, paths, stderr, register.Options{
+		o := register.Options{
 			CrewID:   func() string { return e.crewID(ctx, cwd, "", false) },
 			Proc:     e.proc,
 			Clock:    clock.FromEnv(),
@@ -1304,7 +1326,11 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 			Getenv:   os.Getenv,
 			Hostname: os.Hostname,
 			Slug:     func(common string) string { return remote.CloneSlug(ctx, common) },
-		})
+		}
+		if v := parsed.typed.Register.Visiting; sub == "register" && v != nil {
+			return register.RunVisiting(*v, paths, stderr, o)
+		}
+		return register.Run(sub, parsed.typed.Register.PID, paths, stderr, o)
 	}
 
 	if sub == "index" {

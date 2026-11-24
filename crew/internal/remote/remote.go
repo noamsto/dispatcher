@@ -7,6 +7,10 @@
 // ssh's stdin, and the server execs an allowlisted argv, never through a shell.
 // The ssh target and the remote path come only from settings, never from a
 // bus row.
+//
+// A request has one of three scopes: repo (a mapped clone, the default), host
+// (no clone, HostArgv only) and crew (request v2, no clone, CrewArgv only, for
+// a layout-2 crew visiting this host from DISPATCH_ORIGIN_HOST).
 package remote
 
 import (
@@ -59,7 +63,12 @@ var EnvAllow = map[string]*regexp.Regexp{
 	"DISPATCH_EMIT_ROW":     regexp.MustCompile(`\A1\z`),
 	"DISPATCH_SESSION_ID":   SessionRe,
 	"CREW_IDENTITY_AVOID":   regexp.MustCompile(`\A[A-Za-z0-9-]+(,[A-Za-z0-9-]+)*\z`),
+	// Layout 1 is never forwarded: its absence means layout 1.
+	"CREW_LAYOUT": regexp.MustCompile(`\A2\z`),
 }
+
+// layoutEnv is the env key that makes a request v2.
+const layoutEnv = "CREW_LAYOUT"
 
 // CrewSubcommands are the `crew` subcommands a request may run.
 var CrewSubcommands = []string{"reply", "nudge", "where", "roster", "relay", "reap", "dispatch-row", "peer-sync"}
@@ -69,13 +78,73 @@ var CrewSubcommands = []string{"reply", "nudge", "where", "roster", "relay", "re
 // request never reaches them.
 var HostArgv = [][]string{{"crew", "overseer", "status"}, {"crew", "overseer", "deliver"}}
 
-// scopeHost marks a request that names no clone and runs a HostArgv command.
-const scopeHost = "host"
+// CrewArgv are the argv prefixes a crew-scope request may run. They read one
+// crew's own log and stores, so the argv must name that crew (checkCrewArgv).
+var CrewArgv = [][]string{{"crew", "relay"}, {"crew", "dispatch-row"}}
 
-func allowedHostArgv(argv []string) bool {
-	return slices.ContainsFunc(HostArgv, func(p []string) bool {
+// scopeHost marks a request that names no clone and runs a HostArgv command;
+// scopeCrew one that names no clone and runs a CrewArgv command for the
+// visiting crew its env names.
+const (
+	scopeHost = "host"
+	scopeCrew = "crew"
+)
+
+// crewEnvKeys are exactly the env keys a crew-scope request carries.
+var crewEnvKeys = []string{"CREW_ID", "DISPATCH_ORIGIN_HOST"}
+
+func hasArgvPrefix(prefixes [][]string, argv []string) bool {
+	return slices.ContainsFunc(prefixes, func(p []string) bool {
 		return len(argv) >= len(p) && slices.Equal(argv[:len(p)], p)
 	})
+}
+
+func allowedHostArgv(argv []string) bool { return hasArgvPrefix(HostArgv, argv) }
+
+// checkCrewEnv refuses crew-scope env that is not exactly crewEnvKeys, each
+// matching its EnvAllow pattern.
+func checkCrewEnv(env map[string]string) error {
+	errKeys := errors.New("crew scope needs env CREW_ID and DISPATCH_ORIGIN_HOST")
+	if len(env) != len(crewEnvKeys) {
+		return errKeys
+	}
+	for _, k := range crewEnvKeys {
+		v, ok := env[k]
+		if !ok {
+			return errKeys
+		}
+		if err := CheckEnv(k, v); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// checkCrewArgv refuses an argv outside CrewArgv, or one whose crew flags are
+// not exactly one `--crew <crew>` or `--crew=<crew>`: without it the callee
+// falls back to a WORKER_TASK.md in its cwd, a crew nobody admitted.
+func checkCrewArgv(argv []string, crew string) error {
+	if !hasArgvPrefix(CrewArgv, argv) {
+		return fmt.Errorf("argv not allowed in crew scope: %q", argv[:min(len(argv), 2)])
+	}
+	var values []string
+	for i := 2; i < len(argv); i++ {
+		switch {
+		case argv[i] == "--crew":
+			value := ""
+			if i+1 < len(argv) {
+				i++
+				value = argv[i]
+			}
+			values = append(values, value)
+		case strings.HasPrefix(argv[i], "--crew="):
+			values = append(values, strings.TrimPrefix(argv[i], "--crew="))
+		}
+	}
+	if len(values) != 1 || values[0] != crew {
+		return fmt.Errorf("crew scope argv must carry exactly one --crew %s", crew)
+	}
+	return nil
 }
 
 const exitUsage = 2
@@ -312,24 +381,71 @@ func CheckEnv(key, value string) error {
 	return nil
 }
 
-// BuildRequest encodes a request. env holds KEY=VALUE pairs; spec and migrate
-// are nil when there is none.
-func BuildRequest(repo, slug string, argv, env []string, spec *string, migrate *Migrate) ([]byte, error) {
-	if len(argv) == 0 {
-		return nil, errors.New("crew: remote-run: no command given after --")
-	}
+// parseEnv checks KEY=VALUE pairs against EnvAllow.
+func parseEnv(env []string) (map[string]string, error) {
 	vars := map[string]string{}
 	for _, kv := range env {
 		key, value, ok := strings.Cut(kv, "=")
 		if !ok {
-			return nil, fmt.Errorf("crew: remote-run: --env %q is not KEY=VALUE", kv)
+			return nil, fmt.Errorf("--env %q is not KEY=VALUE", kv)
 		}
 		if err := CheckEnv(key, value); err != nil {
-			return nil, fmt.Errorf("crew: remote-run: --%v", err)
+			return nil, fmt.Errorf("--%v", err)
 		}
 		vars[key] = value
 	}
-	return json.Marshal(Request{V: 1, Repo: repo, Slug: slug, Argv: argv, Env: vars, Spec: spec, Migrate: migrate})
+	return vars, nil
+}
+
+// BuildRequest encodes a request. env holds KEY=VALUE pairs; spec and migrate
+// are nil when there is none.
+func BuildRequest(repo, slug string, argv, env []string, spec *string, migrate *Migrate) ([]byte, error) {
+	req, err := repoRequest(repo, slug, argv, env, spec, migrate)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(req)
+}
+
+// repoRequest is a repo-scope request: v2 only when it carries CREW_LAYOUT, so
+// every other request stays readable by a v1-only remote.
+func repoRequest(repo, slug string, argv, env []string, spec *string, migrate *Migrate) (Request, error) {
+	if len(argv) == 0 {
+		return Request{}, errors.New("crew: remote-run: no command given after --")
+	}
+	vars, err := parseEnv(env)
+	if err != nil {
+		return Request{}, fmt.Errorf("crew: remote-run: %v", err)
+	}
+	v := 1
+	if _, ok := vars[layoutEnv]; ok {
+		v = 2
+	}
+	return Request{V: v, Repo: repo, Slug: slug, Argv: argv, Env: vars, Spec: spec, Migrate: migrate}, nil
+}
+
+// BuildCrewRequest encodes a crew-scope request: env must be exactly CREW_ID
+// and DISPATCH_ORIGIN_HOST, and argv must pass checkCrewArgv.
+func BuildCrewRequest(argv, env []string) ([]byte, error) {
+	req, err := crewScopeRequest(argv, env)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(req)
+}
+
+func crewScopeRequest(argv, env []string) (Request, error) {
+	vars, err := parseEnv(env)
+	if err != nil {
+		return Request{}, err
+	}
+	if err := checkCrewEnv(vars); err != nil {
+		return Request{}, err
+	}
+	if err := checkCrewArgv(argv, vars["CREW_ID"]); err != nil {
+		return Request{}, err
+	}
+	return Request{V: 2, Scope: scopeCrew, Argv: argv, Env: vars}, nil
 }
 
 // BuildHostRequest encodes a host-scope request for argv, which must match
@@ -417,27 +533,66 @@ func RemoteHosts(rows []bus.Event, crew string) []string {
 }
 
 // Call is one remote-run invocation. SpecFile and MigrateDir are "" for none;
-// a relative path is read from Cwd.
+// a relative path is read from Cwd. CrewScope sends a crew-scope request,
+// which needs no checkout at Cwd.
 type Call struct {
 	Host       string
 	Cwd        string
 	Env        []string
 	SpecFile   string
 	MigrateDir string
+	CrewScope  bool
 	Argv       []string
 }
+
+// maxStderrTail is how much of ssh's stderr Run keeps to spot an old remote.
+const maxStderrTail = 4 << 10
+
+// oldRemoteRefusal is how a remote-exec that speaks v1 only refuses a v2 request.
+const oldRemoteRefusal = "crew: remote-exec: unsupported request version 2"
+
+// tailBuffer keeps the last maxStderrTail bytes written to it.
+type tailBuffer struct{ buf []byte }
+
+func (b *tailBuffer) Write(p []byte) (int, error) {
+	b.buf = append(b.buf, p...)
+	if over := len(b.buf) - maxStderrTail; over > 0 {
+		b.buf = append(b.buf[:0], b.buf[over:]...)
+	}
+	return len(p), nil
+}
+
+func (b *tailBuffer) String() string { return string(b.buf) }
 
 // Run is `crew remote-run`: it sends c to its host over ssh and returns ssh's
 // status, or 2 for a refusal before any ssh.
 func Run(ctx context.Context, c Call, stdout, stderr io.Writer) int {
 	target, req, err := prepare(ctx, c, stderr)
-	if err != nil {
-		if !errors.Is(err, gitguard.ErrRefused) {
-			_, _ = fmt.Fprintln(stderr, err)
+	if err == nil {
+		var data []byte
+		if data, err = json.Marshal(req); err == nil {
+			return runRequest(ctx, c.Host, target.SSH, req.V, data, stdout, stderr)
 		}
-		return exitUsage
 	}
-	return viaSSH(ctx, c.Host, target.SSH, req, stdout, stderr, "crew: remote-run: ")
+	if !errors.Is(err, gitguard.ErrRefused) {
+		_, _ = fmt.Fprintln(stderr, err)
+	}
+	return exitUsage
+}
+
+// runRequest sends data over ssh. For a v2 request it also watches ssh's
+// stderr, passed through unchanged, for a remote too old to read it.
+func runRequest(ctx context.Context, host, dest string, v int, data []byte, stdout, stderr io.Writer) int {
+	const prefix = "crew: remote-run: "
+	if v == 1 {
+		return viaSSH(ctx, host, dest, data, stdout, stderr, prefix)
+	}
+	var tail tailBuffer
+	rc := viaSSH(ctx, host, dest, data, stdout, io.MultiWriter(stderr, &tail), prefix)
+	if rc == exitUsage && strings.Contains(tail.String(), oldRemoteRefusal) {
+		_, _ = fmt.Fprintf(stderr, "%shost '%s' runs a crew remote-exec that speaks request v1 only, which predates layout 2 — upgrade crew on %s, or dispatch from a layout-1 crew\n", prefix, host, host)
+	}
+	return rc
 }
 
 // RunHost sends a host-scope request for argv to host over ssh and returns
@@ -504,42 +659,47 @@ func chromeFromWorker(ctx context.Context, argv []string) bool {
 	return pane != "" && paneBranch(ctx, pane) != ""
 }
 
-func prepare(ctx context.Context, c Call, stderr io.Writer) (Target, []byte, error) {
+func prepare(ctx context.Context, c Call, stderr io.Writer) (Target, Request, error) {
 	if chromeFromWorker(ctx, c.Argv) {
-		return Target{}, nil, errors.New("crew: remote-run: --chrome is dispatcher-only — a worker or role pane cannot grant a session the owner's browser")
+		return Target{}, Request{}, errors.New("crew: remote-run: --chrome is dispatcher-only — a worker or role pane cannot grant a session the owner's browser")
 	}
 	hosts, err := Load(ctx, ConfigBin(), stderr)
 	if err != nil {
-		return Target{}, nil, fmt.Errorf("crew: remote-run: %w", err)
+		return Target{}, Request{}, fmt.Errorf("crew: remote-run: %w", err)
 	}
-	if _, err := lookupHost(hosts, c.Host); err != nil {
-		return Target{}, nil, fmt.Errorf("crew: remote-run: %w", err)
+	h, err := lookupHost(hosts, c.Host)
+	if err != nil {
+		return Target{}, Request{}, fmt.Errorf("crew: remote-run: %w", err)
+	}
+	if c.CrewScope {
+		req, err := prepareCrew(c)
+		return Target{SSH: h.SSH}, req, err
 	}
 	paths, err := bus.Locate(ctx, c.Cwd)
 	if err != nil {
-		return Target{}, nil, fmt.Errorf("crew: remote-run: %s is not inside a git checkout", c.Cwd)
+		return Target{}, Request{}, fmt.Errorf("crew: remote-run: %s is not inside a git checkout", c.Cwd)
 	}
 	// A worker worktree's planted .git would pick the slug, and so the clone the
 	// call lands in (#633).
 	if _, err := wtgit.TrustedCwd(paths.Common, c.Cwd, stderr); err != nil {
 		if errors.Is(err, gitguard.ErrRefused) {
-			return Target{}, nil, err
+			return Target{}, Request{}, err
 		}
-		return Target{}, nil, fmt.Errorf("crew: remote-run: %v", err)
+		return Target{}, Request{}, fmt.Errorf("crew: remote-run: %v", err)
 	}
 	slug, err := originSlug(ctx, paths.Common)
 	if err != nil {
-		return Target{}, nil, err
+		return Target{}, Request{}, err
 	}
 	target, err := Resolve(hosts, c.Host, slug)
 	if err != nil {
-		return Target{}, nil, err
+		return Target{}, Request{}, err
 	}
 	var spec *string
 	if c.SpecFile != "" {
 		data, err := os.ReadFile(fromCwd(c.Cwd, c.SpecFile))
 		if err != nil {
-			return Target{}, nil, fmt.Errorf("crew: remote-run: --spec-file: %v", err)
+			return Target{}, Request{}, fmt.Errorf("crew: remote-run: --spec-file: %v", err)
 		}
 		text := string(data)
 		spec = &text
@@ -547,11 +707,27 @@ func prepare(ctx context.Context, c Call, stderr io.Writer) (Target, []byte, err
 	var migrate *Migrate
 	if c.MigrateDir != "" {
 		if migrate, err = readMigrateDir(fromCwd(c.Cwd, c.MigrateDir)); err != nil {
-			return Target{}, nil, fmt.Errorf("crew: remote-run: --migrate-dir: %v", err)
+			return Target{}, Request{}, fmt.Errorf("crew: remote-run: --migrate-dir: %v", err)
 		}
 	}
-	req, err := BuildRequest(target.Repo, slug, c.Argv, c.Env, spec, migrate)
+	req, err := repoRequest(target.Repo, slug, c.Argv, c.Env, spec, migrate)
 	return target, req, err
+}
+
+// prepareCrew builds c's crew-scope request; a crew scope carries no spec or
+// migrate bundle.
+func prepareCrew(c Call) (Request, error) {
+	switch {
+	case c.SpecFile != "":
+		return Request{}, errors.New("crew: remote-run: --spec-file is not allowed with --crew-scope")
+	case c.MigrateDir != "":
+		return Request{}, errors.New("crew: remote-run: --migrate-dir is not allowed with --crew-scope")
+	}
+	req, err := crewScopeRequest(c.Argv, c.Env)
+	if err != nil {
+		return Request{}, fmt.Errorf("crew: remote-run: %v", err)
+	}
+	return req, nil
 }
 
 func fromCwd(cwd, path string) string {
