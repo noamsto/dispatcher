@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"reflect"
 	"slices"
 	"strings"
@@ -699,5 +700,37 @@ func TestCollectRosterForeignLookupParentCancelIsNotTimeout(t *testing.T) {
 	sec := CollectRoster(ctx, r, baseConfig())
 	if sec.ForeignError == nil || strings.Contains(*sec.ForeignError, "timed out") {
 		t.Errorf("ForeignError = %v, want a non-timeout message", sec.ForeignError)
+	}
+}
+
+func TestCollectRosterStampSinceResolvesLayout2DirFromRoot(t *testing.T) {
+	common := filepath.Join(t.TempDir(), ".git")
+	if err := os.MkdirAll(filepath.Join(common, "crew", "crews", "c1"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(t.TempDir(), "crews", "c1")
+	mtime := time.Unix(1794799900, 0)
+	touchPid(t, dir, mtime)
+
+	r := foreignRunner(t)
+	r.Responses["git rev-parse --path-format=absolute --git-common-dir"] = FakeResponse{Stdout: []byte(common + "\n")}
+	r.Responses["crew where --dir --crew c1"] = FakeResponse{Stdout: []byte(dir + "\n")}
+	sec := CollectRoster(context.Background(), r, baseConfig())
+
+	if d := sec.Crews[0].Dispatcher; d == nil || d.Since == nil || *d.Since != mtime.Unix() {
+		t.Fatalf("c1 dispatcher = %+v, want Since %d", d, mtime.Unix())
+	}
+	var found bool
+	for _, c := range r.CallsSnapshot() {
+		if fakeKey(c.Name, c.Args) != "crew where --dir --crew c1" {
+			continue
+		}
+		found = true
+		if c.Dir != "/" {
+			t.Errorf("where dir = %q, want /", c.Dir)
+		}
+	}
+	if !found {
+		t.Error("crew where --dir --crew c1 was not called")
 	}
 }

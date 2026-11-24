@@ -1100,6 +1100,20 @@ func TestResolveBus(t *testing.T) {
 	}
 }
 
+func TestResolveBusWhereUnavailableFallsBackToGitPath(t *testing.T) {
+	ctx := context.Background()
+	cfg := data.Config{Crew: []string{"crew"}, Git: "git", CrewID: "c2"}
+	for _, code := range []int{1, 127} {
+		r := &data.FakeRunner{Responses: map[string]data.FakeResponse{
+			"crew where --json --crew c2":                           {Err: data.FakeExitError{Code: code}},
+			"git rev-parse --path-format=absolute --git-common-dir": {Stdout: []byte("/h/proj/.git\n")},
+		}}
+		if b := resolveBus(ctx, r, cfg); b.err != nil || b.eventsPath != "/h/proj/.git/crew/events.jsonl" {
+			t.Errorf("exit %d = %+v, want git-path fallback", code, b)
+		}
+	}
+}
+
 func TestResolveBusRefusalAndIncompleteAnswer(t *testing.T) {
 	ctx := context.Background()
 	cfg := data.Config{Crew: []string{"crew"}, Git: "git", CrewID: "c2"}
