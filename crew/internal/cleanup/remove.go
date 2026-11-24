@@ -223,7 +223,10 @@ func (o Options) archive(ctx context.Context, it *Item, admin, rel string, stder
 		}
 	}()
 	opts := wtgit.Opts{Stderr: stderr}
-	revs := []string{"refs/heads/" + it.Branch, "--not", "--remotes"}
+	revs := []string{"refs/heads/" + it.Branch}
+	if def := defaultRef(ctx, it.paths.Common, opts); def != "" {
+		revs = append(revs, "--not", def)
+	}
 	cmd, err := wtgit.CommonCommand(ctx, it.paths.Common, opts, append([]string{"rev-list"}, revs...)...)
 	if err != nil {
 		return "", errDrift
@@ -265,6 +268,27 @@ func (o Options) archive(ctx context.Context, it *Item, admin, rel string, stder
 		return "", err
 	}
 	return dir, nil
+}
+
+// defaultRef is the default branch's remote ref, or "" when none resolves. It
+// is verified because a dangling origin/HEAD would make rev-list fail, and the
+// bundle must not depend on commits only a deletable remote branch holds.
+func defaultRef(ctx context.Context, common string, opts wtgit.Opts) string {
+	candidates := []string{"refs/remotes/origin/main"}
+	if cmd, err := wtgit.CommonCommand(ctx, common, opts, "symbolic-ref", "-q", "refs/remotes/origin/HEAD"); err == nil {
+		if out, err := cmd.Output(); err == nil {
+			if ref := strings.TrimSpace(string(out)); ref != "" {
+				candidates = append([]string{ref}, candidates...)
+			}
+		}
+	}
+	for _, ref := range candidates {
+		cmd, err := wtgit.CommonCommand(ctx, common, opts, "rev-parse", "--verify", "--quiet", ref+"^{commit}")
+		if err == nil && cmd.Run() == nil {
+			return ref
+		}
+	}
+	return ""
 }
 
 // patchText is the item's full uncommitted diff, saved the way the archive
