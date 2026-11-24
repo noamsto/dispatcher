@@ -187,3 +187,22 @@ func TestLayout2ConsumersReplyNudgeWithoutHomeRepoSaysSo(t *testing.T) {
 		t.Fatalf("stderr %q, want a no-nudge line instead of a started wait", errOut)
 	}
 }
+
+func TestReplyNudgeStarterByRepoAndHome(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		located bool
+		home    bus.Paths
+		starts  bool
+	}{
+		{"in a repo", true, bus.Paths{}, true},
+		{"outside a repo with a home repo", false, bus.Paths{Common: "/x"}, true},
+		{"outside a repo, no home repo", false, bus.Paths{}, false},
+	} {
+		started := false
+		err := replyNudge(tc.located, tc.home, func([]string, string) error { started = true; return nil })(nil, "")
+		if started != tc.starts || (err == nil) != tc.starts {
+			t.Errorf("%s: started %v err %v, want started %v", tc.name, started, err, tc.starts)
+		}
+	}
+}
