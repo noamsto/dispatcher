@@ -183,7 +183,7 @@ func NewModel(deps Deps, now func() time.Time, live liveDeps) Model {
 			Roster: data.RosterSection{Crews: []data.RosterCrew{}},
 		},
 		crew:       deps.Crew,
-		repo:       repoOfEvents(deps.EventsPath),
+		repo:       deps.Repo,
 		fleetWatch: live.fleetWatcher,
 		keys:       DefaultKeyMap(),
 		help:       help.New(),
@@ -448,6 +448,9 @@ func (m Model) update(msg tea.Msg) (Model, tea.Cmd) {
 		msg.apply(&m.snap)
 		if msg.bus != nil {
 			m.digest = *msg.bus
+			if m.repo == "" {
+				m.repo = m.digest.Repo
+			}
 		}
 		if msg.fleet != nil {
 			m.fleetIn = *msg.fleet

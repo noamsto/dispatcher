@@ -6,19 +6,17 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+
+	"github.com/noamsto/dispatcher/dash/internal/data"
 )
 
-// repoOfEvents names the repo whose bus log sits at <common>/crew/events.jsonl:
+// RepoOfEvents names the repo whose bus log sits at <common>/crew/events.jsonl:
 // the checkout dir for a ".git" common dir, else the common dir itself.
-func repoOfEvents(eventsPath string) string {
+func RepoOfEvents(eventsPath string) string {
 	if eventsPath == "" {
 		return ""
 	}
-	common := filepath.Dir(filepath.Dir(eventsPath))
-	if filepath.Base(common) == ".git" {
-		common = filepath.Dir(common)
-	}
-	return filepath.Base(common)
+	return data.RepoName(filepath.Dir(filepath.Dir(eventsPath)))
 }
 
 // crewHeader is the one-line "crew › repo id state" naming the crew a

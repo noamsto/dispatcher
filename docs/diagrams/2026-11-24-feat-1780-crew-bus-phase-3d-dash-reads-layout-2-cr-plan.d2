@@ -1,0 +1,16 @@
+direction: right
+dash: crew dash {
+  bus: main.go resolveBus\nnew
+  fleet: view/fleet.go\nempty Common guarded
+  since: data/fleet.go stampSince\nstat pid, else where --dir
+  hdr: Deps.Repo\nRepoFromLog or path (layout 1)
+}
+where: "crew where --json / --dir" {style.stroke: "#2c7a3f"}
+l1: "layout 1: <common>/crew/..." {style.stroke-dash: 3}
+l2: "layout 2: <dir>/events log\n<dir>/relay/*.cursor"
+dash.bus -> where: resolve
+where -> l2: log, dir
+dash.bus -> l1: fallback on error\n(refusal exit 3 surfaces)
+dash.since -> where
+dash.hdr -> l2: first dispatch row repo
+dash.fleet -> "(no repo) group": rendered from fleet status only

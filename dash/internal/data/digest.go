@@ -88,7 +88,9 @@ type BusDigest struct {
 	// RecentByCrew holds each attributed crew's last recentCap rows, so a busy
 	// crew cannot push a quiet one out of its ring.
 	RecentByCrew map[string][]RecentEvent
-	Err          *string
+	// Repo is the repo name on the first dispatch row seen, "" until one lands.
+	Repo string
+	Err  *string
 }
 
 // BusScanner folds events.jsonl incrementally: it keeps a byte offset and only
@@ -179,6 +181,9 @@ func (s *BusScanner) apply(ev Event) {
 	kind, _ := ev["kind"].(string)
 	body := BodyObject(ev["body"])
 
+	if repo, _ := ev["repo"].(string); kind == "dispatch" && repo != "" && s.d.Repo == "" {
+		s.d.Repo = RepoName(repo)
+	}
 	branch, _ := ev["branch"].(string)
 	if b, ok := strings.CutPrefix(from, "worker:"); ok {
 		branch, _, _ = strings.Cut(b, "#")
@@ -415,6 +420,7 @@ func (d BusDigest) clone() BusDigest {
 		PRs:       make(map[int]*PRWatch, len(d.PRs)),
 		Subagents: make(map[WorkerKey][]SubagentRun, len(d.Subagents)),
 		Recent:    append([]RecentEvent{}, d.Recent...),
+		Repo:      d.Repo,
 	}
 	if len(d.RecentByCrew) > 0 {
 		out.RecentByCrew = make(map[string][]RecentEvent, len(d.RecentByCrew))

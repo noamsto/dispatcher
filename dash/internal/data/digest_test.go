@@ -592,3 +592,21 @@ func TestRecentByCrewCloneIsolation(t *testing.T) {
 		t.Fatal("fixture produced no rings")
 	}
 }
+
+func TestScannerRepoAppearsWithLaterDispatchRow(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "events.jsonl")
+	if err := os.WriteFile(path, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s := NewBusScanner(path)
+	if d, err := s.Scan(1); err != nil || d.Repo != "" {
+		t.Fatalf("empty log: repo %q err %v", d.Repo, err)
+	}
+	row := `{"ts":1,"kind":"dispatch","crew_id":"c2","repo":"/x/myrepo/.git"}` + "\n"
+	if err := os.WriteFile(path, []byte(row), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if d, err := s.Scan(1); err != nil || d.Repo != "myrepo" {
+		t.Errorf("after dispatch: repo %q err %v, want myrepo", d.Repo, err)
+	}
+}

@@ -858,3 +858,63 @@ func TestFleetLaneGraceFollowsDispatcherSince(t *testing.T) {
 		})
 	}
 }
+
+func TestFleetNoRepoGroup(t *testing.T) {
+	in := fleetIn(data.FleetRepo{Repo: "(no repo)", Common: "", Crews: []data.FleetCrew{
+		crewIn("c9", "live", wk("feat/x", "working")),
+		crewIn("c8", "dead", wk("feat/y", "working")),
+	}})
+	v := view.BuildFleet(in)
+	if len(v.Crews) == 0 {
+		t.Fatal("(no repo) group not rendered")
+	}
+	if got := view.ActiveCommons(in.Fleet); slices.Contains(got, "") {
+		t.Errorf("ActiveCommons = %q, want no empty common", got)
+	}
+	for _, c := range v.Crews {
+		if c.Dir != nil {
+			t.Errorf("crew %s dir = %q, want nil", c.Crew, *c.Dir)
+		}
+		if len(c.Actions) != 0 {
+			t.Errorf("crew %s offers actions %v, want none", c.Crew, c.Actions)
+		}
+		ci, ok := view.CrewInputs(in, c.Key)
+		if !ok {
+			t.Fatalf("no inputs for %s", c.Key)
+		}
+		if ci.Bus.Err != nil || ci.Dir != nil {
+			t.Errorf("crew %s bus err %v dir %v, want none", c.Crew, ci.Bus.Err, ci.Dir)
+		}
+		view.BuildOverview(ci)
+	}
+	for _, it := range v.Attention {
+		if it.Action != nil && it.Action.Verb == "relaunch" {
+			t.Errorf("relaunch offered for a no-repo crew: %+v", it)
+		}
+	}
+}
+
+func TestCrewDigestPrefersOwnLogForLayout2(t *testing.T) {
+	in := viewtest.FleetInputs()
+	own := data.RecentEvent{TS: 1, Kind: "msg", Detail: "from own log", Crew: "c1"}
+	in.CrewDigests = map[string]data.BusDigest{
+		data.CrewRef{Crew: "c1", Common: "/r/a/.git"}.Key(): {RecentByCrew: map[string][]data.RecentEvent{"c1": {own}}},
+	}
+	a, ok := view.CrewInputs(in, keyA1)
+	if !ok || len(a.Bus.Recent) != 1 || a.Bus.Recent[0].Detail != "from own log" {
+		t.Fatalf("layout 2 crew recent = %+v", a.Bus.Recent)
+	}
+	base, _ := view.CrewInputs(viewtest.FleetInputs(), keyB1)
+	b, _ := view.CrewInputs(in, keyB1)
+	if len(b.Bus.Recent) == 0 || !reflect.DeepEqual(b.Bus.Recent, base.Bus.Recent) {
+		t.Errorf("layout 1 crew digest changed: %+v", b.Bus.Recent)
+	}
+
+	msg := "boom"
+	in.CrewDigestErrs = map[string]string{data.CrewRef{Crew: "c1", Common: "/r/a/.git"}.Key(): msg}
+	in.CrewDigests = nil
+	a, _ = view.CrewInputs(in, keyA1)
+	if a.Bus.Err == nil || *a.Bus.Err != msg {
+		t.Errorf("own log error not surfaced: %+v", a.Bus.Err)
+	}
+}

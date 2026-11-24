@@ -84,7 +84,7 @@ func (s *sandbox) setDispatchConfig(layersCmd string) {
 func (s *sandbox) setCrew(retroCmd string) {
 	s.t.Helper()
 	writeScript(s.t, filepath.Join(s.dir, "crew"),
-		"case \"$1\" in\nretro) "+retroCmd+" ;;\nrate) cat "+fixture(s.t, "rate_report.json")+" ;;\ncrews) printf 'crew_id\\tlast_event_s\\tfirst_event_s\\tworkers\\tpid\\talive\\n' ;;\nesac\n")
+		"case \"$1\" in\nretro) "+retroCmd+" ;;\nrate) cat "+fixture(s.t, "rate_report.json")+" ;;\ncrews) printf 'crew_id\\tlast_event_s\\tfirst_event_s\\tworkers\\tpid\\talive\\n' ;;\nwhere) if [ -f "+filepath.Join(s.dir, "where.json")+" ]; then cat "+filepath.Join(s.dir, "where.json")+"; fi ;;\nesac\n")
 }
 
 func (s *sandbox) run(extraEnv []string, args ...string) (stdout, stderr string, code int) {
@@ -971,6 +971,176 @@ func TestSweepMapPNGs(t *testing.T) {
 	for _, n := range kept {
 		if _, err := os.Lstat(filepath.Join(dir, n)); err != nil {
 			t.Errorf("%s should be kept: %v", n, err)
+		}
+	}
+}
+
+func TestFleetCollectorNoRepoCommons(t *testing.T) {
+	status := `{"repos":[{"repo":"(no repo)","common":"","crews":[{"crew_id":"c9","dispatcher":{"state":"live"},"workers":[]}]}]}`
+	r := &data.FakeRunner{Responses: map[string]data.FakeResponse{
+		"crew fleet status --json --max-age 15": {Stdout: []byte(status)},
+	}}
+	cfg := data.Config{Crew: []string{"crew"}, Now: 1794800010}
+	fc := newFleetCollector(r, cfg)
+	fc.collect(context.Background(), cfg.Now)
+	if known := fc.knownCommons(); len(known) != 0 {
+		t.Errorf("knownCommons = %q, want none", known)
+	}
+	if got := watchPaths(fc.knownCommons()); len(got) != 0 {
+		t.Errorf("watchPaths = %q, want none", got)
+	}
+}
+
+func (s *sandbox) setWhere(doc string) {
+	s.t.Helper()
+	if err := os.WriteFile(filepath.Join(s.dir, "where.json"), []byte(doc), 0o644); err != nil {
+		s.t.Fatal(err)
+	}
+}
+
+func overviewEvents(t *testing.T, s *sandbox, args ...string) []json.RawMessage {
+	t.Helper()
+	out, stderr, code := s.run(nil, append([]string{"--json", "--view", "overview"}, args...)...)
+	if code != 0 {
+		t.Fatalf("exit %d, stderr %q", code, stderr)
+	}
+	var v struct {
+		Events []json.RawMessage `json:"events"`
+		Errors []string          `json:"errors"`
+	}
+	if err := json.Unmarshal([]byte(out), &v); err != nil {
+		t.Fatalf("not JSON: %v\n%s", err, out)
+	}
+	for _, e := range v.Errors {
+		if strings.HasPrefix(e, "bus: ") {
+			t.Fatalf("bus error: %q", e)
+		}
+	}
+	return v.Events
+}
+
+const layout2Rows = `{"kind":"dispatch","crew_id":"c2","repo":"/x/myrepo/.git","ts":1}
+{"kind":"msg","crew_id":"c2","from":"worker:a","to":"lead","ts":2}
+`
+
+func TestJSONViewReadsLayout2Log(t *testing.T) {
+	s := newSandbox(t)
+	s.setGit(t.TempDir()) // no events here: only the where log has rows
+	dir := t.TempDir()
+	log := filepath.Join(dir, "events.jsonl")
+	if err := os.WriteFile(log, []byte(layout2Rows), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s.setWhere(`{"crew_id":"c2","layout":2,"dir":"` + dir + `","log":"` + log + `","repo_dir":null}`)
+	if got := overviewEvents(t, s, "--crew", "c2"); len(got) != 2 {
+		t.Errorf("events = %d, want 2 from the layout-2 log", len(got))
+	}
+}
+
+func TestJSONViewLayout1WhereReadsGitPath(t *testing.T) {
+	s := newSandbox(t)
+	gitDir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(gitDir, "crew"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(gitDir, "crew", "events.jsonl"), []byte(layout2Rows), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s.setGit(gitDir)
+	s.setWhere(`{"crew_id":"c2","layout":1,"dir":"/x","log":"/nonexistent/events.jsonl","repo_dir":"/x"}`)
+	if got := overviewEvents(t, s, "--crew", "c2"); len(got) != 2 {
+		t.Errorf("events = %d, want 2 from the git-path log", len(got))
+	}
+}
+
+func TestJSONViewEmptyWhereFallsBackToGitPath(t *testing.T) {
+	s := newSandbox(t)
+	gitDir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(gitDir, "crew"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(gitDir, "crew", "events.jsonl"), []byte(layout2Rows), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s.setGit(gitDir)
+	if got := overviewEvents(t, s, "--crew", "c2"); len(got) != 2 {
+		t.Errorf("events = %d, want 2 from the git-path log", len(got))
+	}
+}
+
+func TestResolveBus(t *testing.T) {
+	ctx := context.Background()
+	cfg := data.Config{Crew: []string{"crew"}, Git: "git", CrewID: "c2"}
+	dir := t.TempDir()
+	log := filepath.Join(dir, "events.jsonl")
+	if err := os.WriteFile(log, []byte(layout2Rows), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r := &data.FakeRunner{Responses: map[string]data.FakeResponse{
+		"crew where --json --crew c2": {Stdout: []byte(`{"crew_id":"c2","layout":2,"dir":"` + dir + `","log":"` + log + `","repo_dir":null}`)},
+	}}
+	b := resolveBus(ctx, r, cfg)
+	if b.err != nil || b.eventsPath != log || b.repo != "myrepo" {
+		t.Fatalf("layout 2 = %+v", b)
+	}
+	if got, want := b.watch(), []string{log, filepath.Join(dir, "relay", "*.cursor")}; !slices.Equal(got, want) {
+		t.Errorf("watch = %v, want %v", got, want)
+	}
+
+	r = &data.FakeRunner{Responses: map[string]data.FakeResponse{
+		"git rev-parse --path-format=absolute --git-common-dir": {Stdout: []byte("/h/proj/.git\n")},
+	}}
+	cfg.CrewID = ""
+	b = resolveBus(ctx, r, cfg)
+	if b.err != nil || b.eventsPath != "/h/proj/.git/crew/events.jsonl" || b.repo != "proj" {
+		t.Fatalf("layout 1 = %+v", b)
+	}
+	if got, want := b.watch(), watchPaths([]string{"/h/proj/.git"}); !slices.Equal(got, want) {
+		t.Errorf("watch = %v, want %v", got, want)
+	}
+}
+
+func TestResolveBusWhereUnavailableFallsBackToGitPath(t *testing.T) {
+	ctx := context.Background()
+	cfg := data.Config{Crew: []string{"crew"}, Git: "git", CrewID: "c2"}
+	for _, code := range []int{1, 127} {
+		r := &data.FakeRunner{Responses: map[string]data.FakeResponse{
+			"crew where --json --crew c2":                           {Err: data.FakeExitError{Code: code}},
+			"git rev-parse --path-format=absolute --git-common-dir": {Stdout: []byte("/h/proj/.git\n")},
+		}}
+		if b := resolveBus(ctx, r, cfg); b.err != nil || b.eventsPath != "/h/proj/.git/crew/events.jsonl" {
+			t.Errorf("exit %d = %+v, want git-path fallback", code, b)
+		}
+	}
+}
+
+func TestResolveBusRefusalAndIncompleteAnswer(t *testing.T) {
+	ctx := context.Background()
+	cfg := data.Config{Crew: []string{"crew"}, Git: "git", CrewID: "c2"}
+	gitKey := "git rev-parse --path-format=absolute --git-common-dir"
+	r := &data.FakeRunner{Responses: map[string]data.FakeResponse{
+		"crew where --json --crew c2": {Err: data.FakeExitError{Code: 3}},
+		gitKey:                        {Stdout: []byte("/h/proj/.git\n")},
+	}}
+	b := resolveBus(ctx, r, cfg)
+	if b.err == nil || b.eventsPath != "" || b.watch() != nil {
+		t.Fatalf("refusal = %+v, want bus error and no watch", b)
+	}
+	for _, c := range r.CallsSnapshot() {
+		if c.Name == "git" {
+			t.Errorf("refusal fell back to git: %+v", c)
+		}
+	}
+
+	for _, doc := range []string{
+		`{"crew_id":"c2","layout":2,"dir":"","log":"/l"}`,
+		`{"crew_id":"c2","layout":2,"dir":"/d","log":""}`,
+	} {
+		r = &data.FakeRunner{Responses: map[string]data.FakeResponse{
+			"crew where --json --crew c2": {Stdout: []byte(doc)},
+		}}
+		if b := resolveBus(ctx, r, cfg); b.err == nil || b.watch() != nil {
+			t.Errorf("%s = %+v, want bus error", doc, b)
 		}
 	}
 }

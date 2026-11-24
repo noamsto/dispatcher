@@ -351,3 +351,180 @@ func TestCollectFleetStatusStampsSince(t *testing.T) {
 		t.Errorf("other-host Since = %v, want nil", *far.Dispatcher.Since)
 	}
 }
+
+func stampSinceDoc(t *testing.T, common, id string) []byte {
+	t.Helper()
+	doc, err := json.Marshal(map[string]any{"host": "lap", "repos": []map[string]any{
+		{"host": "lap", "repo": "a", "common": common, "crews": []map[string]any{
+			{"crew_id": id, "dispatcher": map[string]any{"state": "live"}},
+		}},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return doc
+}
+
+func touchPid(t *testing.T, dir string, mtime time.Time) {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	pid := filepath.Join(dir, "pid")
+	if err := os.WriteFile(pid, []byte("1"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(pid, mtime, mtime); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func whereCalls(r *FakeRunner) int {
+	n := 0
+	for _, c := range r.CallsSnapshot() {
+		if len(c.Args) > 0 && c.Args[0] == "where" {
+			n++
+		}
+	}
+	return n
+}
+
+func TestFleetStampSinceLayout1SkipsWhere(t *testing.T) {
+	common := filepath.Join(t.TempDir(), ".git")
+	mtime := time.Unix(1794799900, 0)
+	touchPid(t, filepath.Join(common, "crew", "crews", "c1"), mtime)
+	r := &FakeRunner{Responses: map[string]FakeResponse{fleetStatusKey: {Stdout: stampSinceDoc(t, common, "c1")}}}
+	st, errMsg := CollectFleetStatus(context.Background(), r, baseConfig(), FleetViewMaxAge)
+	if errMsg != nil {
+		t.Fatal(*errMsg)
+	}
+	if s := st.Repos[0].Crews[0].Dispatcher.Since; s == nil || *s != mtime.Unix() {
+		t.Errorf("Since = %v, want %d", s, mtime.Unix())
+	}
+	if n := whereCalls(r); n != 0 {
+		t.Errorf("crew where called %d times, want 0", n)
+	}
+}
+
+func TestFleetStampSinceLayout2ResolvesDir(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "crews", "c2")
+	mtime := time.Unix(1794799900, 0)
+	touchPid(t, dir, mtime)
+	for _, common := range []string{"", filepath.Join(t.TempDir(), "repo", ".git")} {
+		r := &FakeRunner{Responses: map[string]FakeResponse{
+			fleetStatusKey:               {Stdout: stampSinceDoc(t, common, "c2")},
+			"crew where --dir --crew c2": {Stdout: []byte(dir + "\n")},
+		}}
+		st, errMsg := CollectFleetStatus(context.Background(), r, baseConfig(), FleetViewMaxAge)
+		if errMsg != nil {
+			t.Fatal(*errMsg)
+		}
+		if s := st.Repos[0].Crews[0].Dispatcher.Since; s == nil || *s != mtime.Unix() {
+			t.Errorf("common %q: Since = %v, want %d", common, s, mtime.Unix())
+		}
+		wantDir := "/"
+		if common != "" {
+			wantDir = filepath.Dir(common)
+		}
+		for _, c := range r.CallsSnapshot() {
+			if len(c.Args) > 0 && c.Args[0] == "where" && c.Dir != wantDir {
+				t.Errorf("common %q: where dir = %q, want %q", common, c.Dir, wantDir)
+			}
+		}
+	}
+}
+
+func TestFleetStampSinceResolverFailureLeavesNil(t *testing.T) {
+	r := &FakeRunner{Responses: map[string]FakeResponse{
+		fleetStatusKey:               {Stdout: stampSinceDoc(t, "", "c2")},
+		"crew where --dir --crew c2": {Err: FakeExitError{Code: 1}},
+	}}
+	st, errMsg := CollectFleetStatus(context.Background(), r, baseConfig(), FleetViewMaxAge)
+	if errMsg != nil {
+		t.Fatal(*errMsg)
+	}
+	if s := st.Repos[0].Crews[0].Dispatcher.Since; s != nil {
+		t.Errorf("Since = %d, want nil", *s)
+	}
+}
+
+func TestFleetStampSinceCachesDirButNotFailures(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "crews", "c2")
+	touchPid(t, dir, time.Unix(1794799900, 0))
+	cfg := baseConfig()
+	cfg.Dirs = NewCrewDirs()
+	r := &FakeRunner{Responses: map[string]FakeResponse{
+		fleetStatusKey:               {Stdout: stampSinceDoc(t, "", "c2")},
+		"crew where --dir --crew c2": {Err: FakeExitError{Code: 3}},
+	}}
+	for range 2 {
+		CollectFleetStatus(context.Background(), r, cfg, FleetViewMaxAge)
+	}
+	if n := whereCalls(r); n != 2 {
+		t.Fatalf("refusal: where called %d times, want 2 (not cached)", n)
+	}
+
+	r.Responses["crew where --dir --crew c2"] = FakeResponse{Stdout: []byte(dir + "\n")}
+	for range 2 {
+		st, _ := CollectFleetStatus(context.Background(), r, cfg, FleetViewMaxAge)
+		if st.Repos[0].Crews[0].Dispatcher.Since == nil {
+			t.Fatal("Since not stamped")
+		}
+	}
+	if n := whereCalls(r); n != 3 {
+		t.Errorf("where called %d times in total, want 3 (one success, then cached)", n)
+	}
+}
+
+func TestScanCrewsReadsLayout2OwnLog(t *testing.T) {
+	root := t.TempDir()
+	common := filepath.Join(root, "repo", ".git")
+	if err := os.MkdirAll(filepath.Join(common, "crew", "crews", "c1"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(root, "state", "c2")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	row := `{"ts":1794800000000,"crew_id":"c2","from":"worker:feat/x#s1","to":"dispatcher:c2","kind":"msg","body":"own"}` + "\n"
+	if err := os.WriteFile(filepath.Join(dir, "events.jsonl"), []byte(row), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	r := &FakeRunner{Responses: map[string]FakeResponse{"crew where --dir --crew c2": {Stdout: []byte(dir + "\n")}}}
+	cfg := baseConfig()
+	cfg.Dirs = NewCrewDirs()
+
+	crews := []CrewRef{{Crew: "c1", Common: common}, {Crew: "c2", Common: common}}
+	d, errs := NewFleetScanners().ScanCrews(context.Background(), r, cfg, crews, 1794800010000)
+	if len(errs) != 0 || len(d) != 1 {
+		t.Fatalf("digests=%v errs=%v, want only the layout-2 crew", d, errs)
+	}
+	if got := d[crews[1].Key()].RecentByCrew["c2"]; len(got) != 1 || got[0].Detail != "own" {
+		t.Errorf("c2 ring = %+v", got)
+	}
+	if n := whereCalls(r); n != 1 {
+		t.Errorf("where called %d times, want 1 (layout 1 crew skips it)", n)
+	}
+
+	if err := os.Remove(filepath.Join(dir, "events.jsonl")); err != nil {
+		t.Fatal(err)
+	}
+	_, errs = NewFleetScanners().ScanCrews(context.Background(), r, cfg, crews, 1794800010000)
+	if errs[crews[1].Key()] == "" {
+		t.Errorf("unreadable own log: errs = %v", errs)
+	}
+}
+
+func TestCrewDirsKeyIncludesRunDir(t *testing.T) {
+	r := &FakeRunner{Responses: map[string]FakeResponse{"crew where --dir --crew x": {Stdout: []byte("/s/x\n")}}}
+	cfg := baseConfig()
+	cfg.Dirs = NewCrewDirs()
+	for _, dir := range []string{"/a", "/b", "/a", "/b"} {
+		if _, err := cfg.Dirs.Resolve(context.Background(), r, cfg, dir, "x"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n := whereCalls(r); n != 2 {
+		t.Errorf("where called %d times, want 2 (once per run dir)", n)
+	}
+}

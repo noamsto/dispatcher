@@ -33,7 +33,8 @@ type Deps struct {
 	InTmux         bool
 	EventsPath     string
 	EventsPathErr  error
-	Now            int64 // collection clock (data.Config.Now) stamped into the snapshot
+	Repo           string // repo label for the crew header, picked by the caller
+	Now            int64  // collection clock (data.Config.Now) stamped into the snapshot
 	Map            MapDeps
 	DispatchConfig string // dispatch-config binary the Settings tab writes through
 	Narrow         bool   // force the stacked narrow Overview layout at any width

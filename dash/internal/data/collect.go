@@ -31,6 +31,8 @@ type Config struct {
 	CrewIDSource string
 	// Pane is the dash's own tmux pane ($TMUX_PANE), used to infer the scope.
 	Pane string
+	// Dirs caches crew where --dir lookups; nil disables caching.
+	Dirs *CrewDirs
 }
 
 // Collect runs every read-only source through r concurrently and folds the
@@ -238,17 +240,31 @@ func stampSince(ctx context.Context, r Runner, cfg Config, ids []string, locs ma
 	if !slices.ContainsFunc(ids, func(id string) bool { return locs[id].Where == "here" }) {
 		return
 	}
-	events, err := EventsPath(ctx, r, cfg.Git)
-	if err != nil {
-		return
+	crewsDir := ""
+	if events, err := EventsPath(ctx, r, cfg.Git); err == nil {
+		crewsDir = filepath.Join(filepath.Dir(events), "crews")
 	}
-	crewsDir := filepath.Join(filepath.Dir(events), "crews")
 	for _, id := range ids {
 		if locs[id].Where != "here" {
 			continue
 		}
-		locs[id].Since = pidSince(crewsDir, id)
+		locs[id].Since = crewPidSince(ctx, r, cfg, crewsDir, "/", id)
 	}
+}
+
+// crewPidSince stats the layout-1 pid file under crewsDir (skipped when
+// empty), then on a miss asks crew where, run from repoDir, for the crew dir.
+func crewPidSince(ctx context.Context, r Runner, cfg Config, crewsDir, repoDir, id string) *int64 {
+	if crewsDir != "" {
+		if since := pidSince(crewsDir, id); since != nil {
+			return since
+		}
+	}
+	dir, err := cfg.Dirs.Resolve(ctx, r, cfg, repoDir, id)
+	if err != nil {
+		return nil
+	}
+	return pidSince(filepath.Dir(dir), filepath.Base(dir))
 }
 
 // pidSince is the mtime of a crew's pid file in unix seconds, nil when unreadable.

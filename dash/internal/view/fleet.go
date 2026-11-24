@@ -17,17 +17,21 @@ const peerSyncStaleSec = 300
 const fleetEventsCap = 30
 
 // FleetInputs is everything the machine-wide view reads. Digests and
-// DigestErrs are keyed by repo common dir; Snap supplies budget and settings.
+// DigestErrs are keyed by repo common dir; CrewDigests and CrewDigestErrs by
+// CrewRef key, for a layout-2 crew whose events live in its own log and win over
+// its repo's. Snap supplies budget and settings.
 type FleetInputs struct {
-	Fleet      data.FleetSection
-	Digests    map[string]data.BusDigest
-	DigestErrs map[string]string
-	Snap       data.Snapshot
-	Loaded     Loaded
-	NowMS      int64
-	Crew       []string
-	Pending    FleetPending
-	ReapKeeps  map[data.WorkerKey]string
+	Fleet          data.FleetSection
+	Digests        map[string]data.BusDigest
+	DigestErrs     map[string]string
+	CrewDigests    map[string]data.BusDigest
+	CrewDigestErrs map[string]string
+	Snap           data.Snapshot
+	Loaded         Loaded
+	NowMS          int64
+	Crew           []string
+	Pending        FleetPending
+	ReapKeeps      map[data.WorkerKey]string
 }
 
 // FleetPending marks the sources a streamed partial has not delivered yet.
@@ -339,22 +343,32 @@ func fleetCrews(f FleetInputs) ([]fleetCrew, int) {
 	return crews, dropped
 }
 
-// ActiveCommons lists the local repo commons holding a crew BuildFleet will
-// not hide for lack of work: a live dispatcher or a working worker (see
-// working).
-func ActiveCommons(sec data.FleetSection) []string {
+// ActiveCrews lists the local crews with a home repo that BuildFleet will not
+// hide for lack of work: a live dispatcher or a working worker (see working).
+func ActiveCrews(sec data.FleetSection) []data.CrewRef {
 	crews, _ := fleetCrews(FleetInputs{Fleet: sec})
-	var commons []string
+	var active []data.CrewRef
 	for _, c := range crews {
-		if c.origin != OriginLocal || slices.Contains(commons, c.repo.Common) {
+		if c.origin != OriginLocal || c.repo.Common == "" {
 			continue
 		}
-		active := c.live()
+		busy := c.live()
 		for _, w := range c.local.Workers {
-			active = active || WorkerRowOf(nil, c.crew, w).working()
+			busy = busy || WorkerRowOf(nil, c.crew, w).working()
 		}
-		if active {
-			commons = append(commons, c.repo.Common)
+		if busy {
+			active = append(active, data.CrewRef{Crew: c.crew, Common: c.repo.Common})
+		}
+	}
+	return active
+}
+
+// ActiveCommons lists the repo commons of ActiveCrews.
+func ActiveCommons(sec data.FleetSection) []string {
+	var commons []string
+	for _, c := range ActiveCrews(sec) {
+		if !slices.Contains(commons, c.Common) {
+			commons = append(commons, c.Common)
 		}
 	}
 	return commons
@@ -365,7 +379,7 @@ func (c fleetCrew) live() bool {
 }
 
 func (c fleetCrew) dir() *string {
-	if c.origin == OriginPeer {
+	if c.origin == OriginPeer || c.repo.Common == "" {
 		return nil
 	}
 	root := repoRoot(c.repo.Common)
@@ -416,9 +430,21 @@ func (c fleetCrew) dispatcherLoc() *data.DispatcherLoc {
 	return &data.DispatcherLoc{Where: "elsewhere", Repo: &c.homeRepo.Repo, Common: &c.homeRepo.Common}
 }
 
-// digest is the repo's digest with Recent set to this crew's own ring.
+// digest is the crew's own log's digest when it has one, else the repo's, with
+// Recent set to this crew's own ring.
 func (c fleetCrew) digest(f FleetInputs) data.BusDigest {
-	d, ok := f.Digests[c.repo.Common]
+	if c.repo.Common == "" {
+		return data.BusDigest{}
+	}
+	key := data.CrewRef{Crew: c.crew, Common: c.repo.Common}.Key()
+	d, ok := f.CrewDigests[key]
+	if !ok {
+		if e, failed := f.CrewDigestErrs[key]; failed {
+			d.Err = &e
+			return d
+		}
+		d, ok = f.Digests[c.repo.Common]
+	}
 	if !ok {
 		if e, failed := f.DigestErrs[c.repo.Common]; failed {
 			d.Err = &e
@@ -458,7 +484,10 @@ func unfinished(rows []WorkerRow) int {
 
 // relaunchable is a dead dispatcher only: the protocol never relaunches a
 // closed one, and a deregister deletes its launch record.
-func (c fleetCrew) relaunchable() bool { return c.home.Dispatcher.State == "dead" }
+// A crew with no home repo has no root to relaunch in.
+func (c fleetCrew) relaunchable() bool {
+	return c.home.Dispatcher.State == "dead" && c.homeRepo.Common != ""
+}
 
 func (c fleetCrew) orphaned(rows []WorkerRow) bool {
 	if c.origin == OriginPeer {
@@ -593,7 +622,7 @@ func BuildFleet(f FleetInputs) FleetView {
 			continue
 		}
 		if c.origin == OriginLocal {
-			ring := f.Digests[c.repo.Common].RecentByCrew[c.crew]
+			ring := in.Bus.Recent
 			v.Events = append(v.Events, eventRows(recentSince(ring, now), c.repo.Repo)...)
 		}
 		key := c.key
@@ -962,6 +991,14 @@ func fleetErrors(f FleetInputs) []string {
 			add("repo "+repo.Repo+": bus", &e)
 		} else if d, ok := f.Digests[repo.Common]; ok {
 			add("repo "+repo.Repo+": bus", d.Err)
+		}
+		for _, c := range repo.Crews {
+			key := data.CrewRef{Crew: c.CrewID, Common: repo.Common}.Key()
+			if e, ok := f.CrewDigestErrs[key]; ok {
+				add("crew "+c.CrewID+": bus", &e)
+			} else if d, ok := f.CrewDigests[key]; ok {
+				add("crew "+c.CrewID+": bus", d.Err)
+			}
 		}
 	}
 	return errs
