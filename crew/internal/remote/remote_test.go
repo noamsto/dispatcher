@@ -936,8 +936,9 @@ func TestBranchLayout(t *testing.T) {
 	}
 }
 
-// WindowBound trusts a window's dir only as far as the crew's newest dispatch row
-// for the branch: its repo plus /crew, compared by realpath when the spellings differ.
+// WindowBound trusts a window only as far as the crew's newest dispatch, resume or
+// window row for the branch: its recorded window id, else (a row an older binary
+// wrote) its repo plus /crew, compared by realpath when the spellings differ.
 func TestWindowBound(t *testing.T) {
 	real := t.TempDir()
 	link := filepath.Join(t.TempDir(), "link")
@@ -954,26 +955,64 @@ func TestWindowBound(t *testing.T) {
 	}
 	resume := row("c1", "b", real)
 	resume.Kind = bus.KindResume
+	withID := func(e bus.Event, id string) bus.Event {
+		doc := map[string]any{"window_id": id}
+		for k, v := range e.Doc.(map[string]any) {
+			doc[k] = v
+		}
+		e.Doc = doc
+		return e
+	}
+	nullID := func(e bus.Event) bus.Event {
+		doc := map[string]any{"window_id": nil}
+		for k, v := range e.Doc.(map[string]any) {
+			doc[k] = v
+		}
+		e.Doc = doc
+		return e
+	}
+	winRow := func(crew, branch, repo, id string) bus.Event {
+		e := withID(row(crew, branch, repo), id)
+		e.Kind = bus.KindWindow
+		return e
+	}
 	for _, tc := range []struct {
 		name string
 		rows []bus.Event
 		win  string
 		want bool
+		id   string
 	}{
-		{"row repo's crew dir", []bus.Event{row("c1", "b", real)}, real + "/crew", true},
-		{"same dir through a symlink", []bus.Event{row("c1", "b", real)}, link + "/crew", true},
-		{"another dir", []bus.Event{row("c1", "b", real)}, "/elsewhere/crew", false},
-		{"repo itself, not its crew dir", []bus.Event{row("c1", "b", real)}, real, false},
-		{"no row", nil, real + "/crew", false},
-		{"row of another crew", []bus.Event{row("c2", "b", real)}, real + "/crew", false},
-		{"row of another branch", []bus.Event{row("c1", "x", real)}, real + "/crew", false},
-		{"row with no repo", []bus.Event{row("c1", "b", "")}, "/crew", false},
-		{"a newer resume row in this dir", []bus.Event{row("c1", "b", "/moved"), resume}, real + "/crew", true},
-		{"a newer resume row in another dir", []bus.Event{row("c1", "b", real), func() bus.Event { r := row("c1", "b", "/moved"); r.Kind = bus.KindResume; return r }()}, real + "/crew", false},
-		{"the newest row wins", []bus.Event{row("c1", "b", real), row("c1", "b", "/moved")}, real + "/crew", false},
+		{"row repo's crew dir", []bus.Event{row("c1", "b", real)}, real + "/crew", true, ""},
+		{"same dir through a symlink", []bus.Event{row("c1", "b", real)}, link + "/crew", true, ""},
+		{"another dir", []bus.Event{row("c1", "b", real)}, "/elsewhere/crew", false, ""},
+		{"repo itself, not its crew dir", []bus.Event{row("c1", "b", real)}, real, false, ""},
+		{"no row", nil, real + "/crew", false, ""},
+		{"row of another crew", []bus.Event{row("c2", "b", real)}, real + "/crew", false, ""},
+		{"row of another branch", []bus.Event{row("c1", "x", real)}, real + "/crew", false, ""},
+		{"row with no repo", []bus.Event{row("c1", "b", "")}, "/crew", false, ""},
+		{"a newer resume row in this dir", []bus.Event{row("c1", "b", "/moved"), resume}, real + "/crew", true, ""},
+		{"a newer resume row in another dir", []bus.Event{row("c1", "b", real), func() bus.Event { r := row("c1", "b", "/moved"); r.Kind = bus.KindResume; return r }()}, real + "/crew", false, ""},
+		{"the newest row wins", []bus.Event{row("c1", "b", real), row("c1", "b", "/moved")}, real + "/crew", false, ""},
+		{"the recorded id", []bus.Event{withID(row("c1", "b", real), "@3")}, real + "/crew", true, "@3"},
+		{"a forged window copying the dir, not the id", []bus.Event{withID(row("c1", "b", real), "@3")}, real + "/crew", false, "@9"},
+		{"a recorded id binds without the dir", []bus.Event{withID(row("c1", "b", real), "@3")}, "/elsewhere/crew", true, "@3"},
+		{"a window row after the dispatch row", []bus.Event{row("c1", "b", real), winRow("c1", "b", real, "@3")}, real + "/crew", true, "@3"},
+		{"a window row refuses a forged dir copy", []bus.Event{row("c1", "b", real), winRow("c1", "b", real, "@3")}, real + "/crew", false, "@9"},
+		{"a newer window row replaces an older id", []bus.Event{winRow("c1", "b", real, "@3"), winRow("c1", "b", real, "@4")}, real + "/crew", false, "@3"},
+		{"a window row of another crew", []bus.Event{winRow("c2", "b", real, "@3")}, real + "/crew", false, "@3"},
+		{"a window row of another branch", []bus.Event{winRow("c1", "x", real, "@3")}, real + "/crew", false, "@3"},
+		{"a resume row's id", []bus.Event{winRow("c1", "b", real, "@3"), withID(resume, "@5")}, real + "/crew", true, "@5"},
+		{"a resume row's id replaces the window row's", []bus.Event{winRow("c1", "b", real, "@3"), withID(resume, "@5")}, real + "/crew", false, "@3"},
+		{"a dispatch row whose window is not open yet binds nothing", []bus.Event{nullID(row("c1", "b", real))}, real + "/crew", false, "@3"},
+		{"a dispatch row pending its window, even for its dir", []bus.Event{nullID(row("c1", "b", real))}, real + "/crew", false, ""},
+		{"a newer pending dispatch row replaces an older window row", []bus.Event{winRow("c1", "b", real, "@3"), nullID(row("c1", "b", real))}, real + "/crew", false, "@3"},
+		{"a window row with no id binds nothing", []bus.Event{winRow("c1", "b", real, "")}, real + "/crew", false, ""},
+		{"a resume row with an empty id binds nothing", []bus.Event{withID(resume, "")}, real + "/crew", false, ""},
+		{"a legacy resume row after a window row keeps the dir binding", []bus.Event{winRow("c1", "b", real, "@3"), resume}, real + "/crew", true, "@9"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := WindowBound(tc.rows, "b", "c1", tc.win); got != tc.want {
+			if got := WindowBound(tc.rows, "b", "c1", tc.id, tc.win); got != tc.want {
 				t.Errorf("WindowBound = %v, want %v", got, tc.want)
 			}
 		})

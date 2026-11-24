@@ -169,7 +169,7 @@ func Run(ctx context.Context, r Request, paths bus.Paths, stdout, stderr io.Writ
 	// window is somebody's shell, never a worker's. A state-only call (no Dir) has no
 	// checkout to compare a window's dir with, and any process on the tmux server can
 	// stamp a window with a crew's id: so a window counts only when this crew's own
-	// dispatch row for its branch names its dir (remote.WindowBound).
+	// dispatch, resume or window row for its branch names its window id (remote.WindowBound).
 	var events []bus.Event
 	if paths.Dir == "" {
 		if events, err = remote.BoundRows(a.bc.Log); err != nil {
@@ -181,7 +181,7 @@ func Run(ctx context.Context, r Request, paths bus.Paths, stdout, stderr io.Writ
 		if len(r) < 5 || r[1] == "" || r[3] != a.crew {
 			continue
 		}
-		if paths.Dir == "" && !remote.WindowBound(events, r[1], a.crew, r[2]) || paths.Dir != "" && r[2] != paths.Dir {
+		if paths.Dir == "" && !remote.WindowBound(events, r[1], a.crew, r[0], r[2]) || paths.Dir != "" && r[2] != paths.Dir {
 			continue
 		}
 		cwins = append(cwins, r)

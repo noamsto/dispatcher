@@ -120,6 +120,7 @@ func TestScanRecent(t *testing.T) {
 	for i := range 60 {
 		fmt.Fprintf(&sb, `{"ts":%d,"crew_id":"c1","from":"worker:feat/a#s1","kind":"status","body":{"state":"working","detail":"d%d"}}`+"\n", digestBase+int64(i), i)
 	}
+	fmt.Fprintf(&sb, `{"ts":%d,"crew_id":"c1","kind":"window","branch":"feat/a","window_id":"@3"}`+"\n", digestBase+60)
 	if err := os.WriteFile(path, []byte(sb.String()), 0o600); err != nil {
 		t.Fatal(err)
 	}

@@ -352,7 +352,7 @@ func TestStateTerminal(t *testing.T) {
 
 func TestConstValues(t *testing.T) {
 	for k, want := range map[Kind]string{
-		KindStatus: "status", KindMsg: "msg", KindDispatch: "dispatch", KindResume: "resume",
+		KindStatus: "status", KindMsg: "msg", KindDispatch: "dispatch", KindResume: "resume", KindWindow: "window",
 		KindNudge: "nudge", KindNudgeWait: "nudge_wait", KindReap: "reap", KindRelease: "release",
 		KindClaim: "claim", KindReclaim: "reclaim",
 	} {

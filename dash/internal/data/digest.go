@@ -204,7 +204,8 @@ func (s *BusScanner) apply(ev Event) {
 	detail, _ := body["detail"].(string)
 	to, _ := ev["to"].(string)
 	sink := kind == "msg" && crew != "" && to == "subagent:"+crew && strings.HasPrefix(from, "worker:")
-	if !sink {
+	// A window row only binds a window id for `crew nudge`/`where`; it is no event.
+	if !sink && kind != "window" {
 		summary := detail
 		if str, ok := ev["body"].(string); ok && kind != "status" {
 			summary = str

@@ -5363,7 +5363,7 @@ line=$(jq -nc --arg crew "$crew_id" --arg branch "$branch" --arg session "$sessi
   --arg pushed_oid "$pushed_oid" \
   --arg task_profile "$task_profile" \
   --arg migrated_from "$mig_from" --arg engine_context "$engine_context" --arg engine_context_why "$engine_context_why" \
-  '{ts:(now*1000|floor), crew_id:$crew, kind:"dispatch", repo:$repo, branch:$branch, session:$session, worker_id:$worker, engine:$engine, model:$model, tier:$tier, effort:$effort, shape:$shape, task_kind:$task_kind, host:$host, title:$title, plan:$plan, resume:$resume, owner_auth:$owner_auth, engine_session:(if $engine_session == "" then null else $engine_session end)} + $ident
+  '{ts:(now*1000|floor), crew_id:$crew, kind:"dispatch", repo:$repo, branch:$branch, session:$session, worker_id:$worker, engine:$engine, model:$model, tier:$tier, effort:$effort, shape:$shape, task_kind:$task_kind, host:$host, title:$title, plan:$plan, resume:$resume, owner_auth:$owner_auth, engine_session:(if $engine_session == "" then null else $engine_session end), window_id:null} + $ident
    + if $escalated_from != "" then {escalated_from:$escalated_from} else {} end
    + if $base != "" then {base:$base, base_oid:(if $base_oid == "" then null else $base_oid end)} else {} end
    + if (($also_closes | length) > 0 or $also_closes_explicit) then {also_closes:$also_closes} else {} end
@@ -5828,6 +5828,12 @@ if [ -n "$client_width" ]; then
     tmux set-option -t "$win" window-size "$window_size_mode"
   fi
 fi
+
+# The dispatch row predates the window, so the id rides in a row of its own; the
+# dispatch row's `window_id:null` keeps it from binding a window until this lands.
+_crew_append "$(jq -nc --arg crew "$crew_id" --arg branch "$branch" --arg session "$session" \
+  --arg worker "$worker_id" --arg repo "$(_crew_repo)" --arg window_id "$win" \
+  '{ts:(now*1000|floor), crew_id:$crew, kind:"window", repo:$repo, branch:$branch, session:$session, worker_id:$worker, window_id:$window_id}')"
 
 # Printed so the dispatcher can address this session in the gap before the worker
 # boots — its startup drain is unbounded, so a scoping note posted now still lands.

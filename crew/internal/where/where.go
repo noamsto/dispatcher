@@ -360,10 +360,10 @@ func mirrorWindow(raw, branch, crew string) (window, bool) {
 // fields, a non-empty branch, this repo's crew dir, and this crew's id when the
 // window carries one. An empty caller crew (no CREW_ID, no WORKER_TASK.md)
 // filters nothing at all. A state-only call (dir "") has no checkout, so a
-// window is this crew's only when its id says so and the crew's own dispatch row
-// for its branch names its dir: any process on the tmux server can stamp a window
-// with a crew's id, so the id alone binds nothing (remote.WindowBound, whose doc
-// says what a copied dir still gets past).
+// window is this crew's only when its id says so and the crew's own dispatch,
+// resume or window row for its branch names its tmux window id: any process on
+// the tmux server can stamp a window with a crew's id, so the stamp alone binds
+// nothing (remote.WindowBound).
 func readWindows(raw string, paths bus.Paths, crew string) ([]window, error) {
 	dir := paths.Dir
 	var events []bus.Event
@@ -380,7 +380,7 @@ func readWindows(raw string, paths bus.Paths, crew string) ([]window, error) {
 			continue
 		}
 		if dir == "" {
-			if crew == "" || f[3] != crew || !remote.WindowBound(events, f[1], crew, f[2]) {
+			if crew == "" || f[3] != crew || !remote.WindowBound(events, f[1], crew, f[0], f[2]) {
 				continue
 			}
 		} else if f[2] != dir {

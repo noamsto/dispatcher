@@ -568,22 +568,35 @@ func BranchLayout(rows []bus.Event, branch, crew string) int {
 	return 1
 }
 
-// WindowBound reports whether a tmux window stamped with windowDir is where
-// branch's newest dispatch or resume row in crew says its work runs: that row's
-// repo, plus /crew. Window stamps are set by whoever holds the tmux server, a
-// worker included, so a state-only caller (no checkout to compare against)
-// trusts a window only when the dispatcher's own row backs its dir.
+// WindowBound reports whether a tmux window is the one branch's work runs in
+// per the newest dispatch, resume or window row for it in crew. Window options
+// are set by whoever holds the tmux server, a worker included, so a state-only
+// caller (no checkout to compare against) trusts a window only when the
+// dispatcher's own row backs it: by the window id that row recorded.
 //
-// The dir is readable by that same worker, so a stamp copying it is caught only
-// while the real window lives (callers refuse two windows for one branch);
-// closing that needs the dispatcher to record the window id in its rows.
-func WindowBound(rows []bus.Event, branch, crew, windowDir string) bool {
+// A row with a window_id key at all (even null or empty: a dispatch row whose
+// window is not yet open, a window the tmux server reported no id for) binds
+// nothing but that id. Only a row with no such key, written by an older binary,
+// falls back to its repo plus /crew matching windowDir; a dir is readable by the
+// worker, so that binding is caught only while the real window lives (callers
+// refuse two windows for one branch).
+//
+// An id is unique within one tmux server's lifetime, not across restarts: after
+// one, a window can be handed the id a row recorded before it.
+func WindowBound(rows []bus.Event, branch, crew, windowID, windowDir string) bool {
 	for i := len(rows) - 1; i >= 0; i-- {
 		e := rows[i]
-		if e.CrewID != crew || e.Branch != branch || e.Kind != bus.KindDispatch && e.Kind != bus.KindResume {
+		if e.CrewID != crew || e.Branch != branch {
+			continue
+		}
+		if e.Kind != bus.KindDispatch && e.Kind != bus.KindResume && e.Kind != bus.KindWindow {
 			continue
 		}
 		doc, _ := e.Doc.(map[string]any)
+		if v, ok := doc["window_id"]; ok {
+			id, _ := v.(string)
+			return id != "" && windowID == id
+		}
 		repo, _ := doc["repo"].(string)
 		return repo != "" && sameDir(repo+"/crew", windowDir)
 	}

@@ -59,11 +59,14 @@ func TestWaitLockUnderCrewStateRoot(t *testing.T) {
 
 // A visiting crew's call is state-only (Dir ""): there is no checkout to compare a
 // window's dir with, and any process on the tmux server can stamp @crew_id, so a
-// window counts only when the crew's own dispatch row for its branch names its dir.
+// window counts only when the crew's own dispatch, resume or window row for its
+// branch names its tmux window id (else, for a row without one, its dir).
 // The wait lock stays under the store dir rather than a path relative to the cwd.
 func TestVisitingCrewWindowIsBoundToItsDispatchRow(t *testing.T) {
 	const clone = "/some/clone"
 	row := `{"ts":1,"crew_id":"c1","kind":"dispatch","branch":"feat/x","repo":"` + clone + `"}`
+	winRow := `{"ts":2,"crew_id":"c1","kind":"window","branch":"feat/x","repo":"` + clone + `","window_id":"@7"}`
+	resumeRow := `{"ts":3,"crew_id":"c1","kind":"resume","branch":"feat/x","repo":"` + clone + `","window_id":"@8"}`
 	real := "@7\tfeat/x\t" + clone + "/crew\tc1\tlead"
 	// A worker of another crew stamps its own window with this crew's id and branch.
 	forged := "@9\tfeat/x\t/other/clone/crew\tc1\tevil"
@@ -83,6 +86,13 @@ func TestVisitingCrewWindowIsBoundToItsDispatchRow(t *testing.T) {
 		{"forged id, no dispatch row", nil, real, false, "no worker matches"},
 		{"forged id, row of another crew", []string{strings.Replace(row, `"c1"`, `"c2"`, 1)}, real, false, "no worker matches"},
 		{"forged id, row of another branch", []string{strings.Replace(row, "feat/x", "feat/y", 1)}, real, false, "no worker matches"},
+		// The real window closed and a worker copied every stamp of it, dir included.
+		{"recorded window id", []string{row, winRow}, real, true, ""},
+		{"copied stamps after the real window closed", []string{row, winRow}, copied, false, "no live pane"},
+		{"copied stamps beside the real window, recorded id", []string{row, winRow}, copied + "\n" + real, true, ""},
+		{"a dispatch row whose window is not open yet binds no window", []string{strings.Replace(row, `"kind":"dispatch"`, `"kind":"dispatch","window_id":null`, 1)}, copied, false, "no live pane"},
+		{"a resume row's id replaces the window row's", []string{row, winRow, resumeRow}, real, false, "no live pane"},
+		{"a legacy resume row keeps the dir binding", []string{row, winRow, strings.Replace(resumeRow, `,"window_id":"@8"`, "", 1)}, real, true, ""},
 		// The rows after a torn line could move the branch to another clone.
 		{"torn log line before a newer row", []string{row, "{\"ts\":", strings.Replace(row, clone, "/moved", 1)}, real, false, "cannot read the crew log"},
 		{"copied stamps beside the real window", []string{row}, copied + "\n" + real, false, "ambiguous branch"},
