@@ -72,8 +72,8 @@ type Request struct {
 	NoNudge bool
 }
 
-// Run is the arm: the target, then the append. Nothing prints on success, so
-// there is no stdout to write.
+// Run is the arm: the target, then the append. The row append is silent on
+// stdout; the one stderr line, when there is one, is the auto-nudge's.
 func Run(ctx context.Context, req Request, paths bus.Paths, stderr io.Writer, o Options) int {
 	to, body := req.To, req.Body
 	crew := req.Crew
@@ -116,13 +116,19 @@ func Run(ctx context.Context, req Request, paths bus.Paths, stderr io.Writer, o 
 		// A reply routed to a remote host never starts a local process; the
 		// skip line still names why, so the caller sees the same contract.
 		if o.Nudge != nil {
-			reason := "remote host"
+			reason := "remote host: its own reply decides"
 			if req.NoNudge {
 				reason = "--no-nudge"
 			}
 			say(stderr, "reply: no nudge (%s)\n", reason)
 		}
-		return o.Remote(host, as, []string{"crew", "reply", "--crew", as, "--", to, body})
+		// --no-nudge crosses the hop so the host's own reply skips its wait too;
+		// the `--` keeps it an option and still ends the flags before the body.
+		argv := []string{"crew", "reply", "--crew", as}
+		if req.NoNudge {
+			argv = append(argv, "--no-nudge")
+		}
+		return o.Remote(host, as, append(argv, "--", to, body))
 	}
 
 	if strings.HasPrefix(to, "worker:") && !bus.IsSessionID(to) {
@@ -180,9 +186,10 @@ func nudgeAfter(stderr io.Writer, req Request, o Options, crew, dir, log, to str
 		say(stderr, "reply: no nudge (role recipient)\n")
 		return
 	}
-	// A missing or unreadable log is not an error here: it only means no engine
-	// is recorded, which reads the same as a log with no dispatch row.
-	events, _ := bus.ReadEventsTolerant(log)
+	// A torn tail is tolerated: the rows read so far are what the lookup gets,
+	// exactly as nudge's own arm reads them. A missing log is the same "no
+	// engine recorded"; only a log that could not be read at all reads differently.
+	events, readErr := bus.ReadEventsTolerant(log)
 	docs := make([]any, len(events))
 	for i, ev := range events {
 		docs[i] = ev.Doc
@@ -190,6 +197,10 @@ func nudgeAfter(stderr io.Writer, req Request, o Options, crew, dir, log, to str
 	switch engine := nudge.EngineOf(docs, crew, to); engine {
 	case "claude", "pi":
 	case "":
+		if readErr != nil && !errors.Is(readErr, bus.ErrNoLog) {
+			say(stderr, "reply: no nudge (the bus log could not be read)\n")
+			return
+		}
 		say(stderr, "reply: no nudge (no engine recorded)\n")
 		return
 	default:

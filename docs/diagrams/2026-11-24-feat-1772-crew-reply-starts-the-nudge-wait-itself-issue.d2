@@ -1,4 +1,4 @@
-// The directive lands, and nothing tells the idle lead it is there.
+# The directive lands, and nothing tells the idle lead it is there.
 dispatcher: dispatcher pane\n`crew reply worker:<branch> "<directive>"` {
   shape: rectangle
 }
@@ -13,18 +13,18 @@ lead: idle claude/pi lead pane\nnothing on screen to read {
 }
 hand: background `crew nudge <lead> --wait`\nstarted by hand {
   shape: rectangle
-  style.stroke: #C62828
+  style.stroke: "#C62828"
 }
 wait: crew/internal/nudge arm.wait()\none lock per lead, types the inbox line {
   shape: rectangle
 }
 watch: crew stall-watch\n`unread:` auto-nudge after 10 min {
   shape: rectangle
-  style.stroke: #C62828
+  style.stroke: "#C62828"
 }
 gap: skipped step:\nnobody starts the wait {
   shape: text
-  style.stroke: #C62828
+  style.stroke: "#C62828"
 }
 
 dispatcher -> reply: posts the directive

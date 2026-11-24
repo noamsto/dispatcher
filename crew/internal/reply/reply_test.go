@@ -935,15 +935,15 @@ func TestReplyToARoleNeverStartsAWait(t *testing.T) {
 	tr.wantRow(t, row("c1", "role:feat/x:reviewer", "go"))
 }
 
-// A remote reply posts on the host and starts nothing locally; --no-nudge still
-// wins the reason.
+// A remote reply posts on the host and starts nothing locally; the host's own
+// reply decides there, and --no-nudge crosses the hop to tell it not to.
 func TestReplyToARemoteWorkerStartsNoLocalWait(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
 		nudge  bool
 		reason string
 	}{
-		{name: "remote host", reason: "remote host"},
+		{name: "remote host", reason: "remote host: its own reply decides"},
 		{name: "--no-nudge wins", nudge: true, reason: "--no-nudge"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -964,7 +964,12 @@ func TestReplyToARemoteWorkerStartsNoLocalWait(t *testing.T) {
 			if len(calls) != 0 {
 				t.Fatal("a remote reply started a local wait")
 			}
-			want := []remoteCall{{"mini", "c1", []string{"crew", "reply", "--crew", "c1", "--", "worker:feat/far", "go"}}}
+			argv := []string{"crew", "reply", "--crew", "c1"}
+			if tc.nudge {
+				argv = append(argv, "--no-nudge")
+			}
+			argv = append(argv, "--", "worker:feat/far", "go")
+			want := []remoteCall{{"mini", "c1", argv}}
 			if !reflect.DeepEqual(remote, want) {
 				t.Fatalf("remote calls = %v, want %v", remote, want)
 			}
@@ -987,6 +992,35 @@ func TestReplyWithNoEngineRecordedStartsNoWait(t *testing.T) {
 	}
 	if len(calls) != 0 {
 		t.Fatal("started a wait with no engine recorded")
+	}
+	tr.wantRow(t, row("c1", "worker:feat/x#s1-1", "go"))
+}
+
+// A log the process cannot read is not "no engine recorded": the reason says the
+// read failed, and the directive still lands. A write-only mode makes the read
+// fail while the append still succeeds (0o000 would refuse the append too).
+func TestReplyUnreadableBusLogNamesTheReadFailure(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads a write-only log")
+	}
+	tr := setup(t)
+	tr.write(t,
+		engineDispatch(1785950000000, "c1", "feat/x", "s1-1", "claude"),
+		status(1785951000000, "c1", "worker:feat/x#s1-1", "working"),
+	)
+	if err := os.Chmod(tr.paths.Log, 0o200); err != nil {
+		t.Fatal(err)
+	}
+	var calls []nudgeCall
+	errs, code := tr.run(t, Options{Nudge: nudgeRecorder(&calls, nil)}, "worker:feat/x#s1-1", "go")
+	if err := os.Chmod(tr.paths.Log, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if code != 0 || errs != "reply: no nudge (the bus log could not be read)\n" {
+		t.Fatalf("code %d stderr %q", code, errs)
+	}
+	if len(calls) != 0 {
+		t.Fatal("started a wait on an unreadable log")
 	}
 	tr.wantRow(t, row("c1", "worker:feat/x#s1-1", "go"))
 }
@@ -1037,7 +1071,13 @@ func TestReplyTwoRepliesJoinOneWaitLock(t *testing.T) {
 	)
 	o := Options{Nudge: func(argv []string, logPath string) error {
 		sid := argv[len(argv)-1]
-		dir := nudge.WaitLockDir(filepath.Dir(logPath), sid)
+		// The lock must sit where the wait's crew dir is, not merely where this
+		// reply's log happens to be: the reply's log path must not be the source
+		// of the lock dir.
+		if got := filepath.Dir(logPath); got != tr.paths.Dir {
+			t.Errorf("wait log dir = %q, want the crew dir %q", got, tr.paths.Dir)
+		}
+		dir := nudge.WaitLockDir(tr.paths.Dir, sid)
 		if err := os.MkdirAll(filepath.Dir(dir), 0o755); err != nil {
 			return err
 		}
@@ -1072,17 +1112,41 @@ func TestReplyTwoRepliesJoinOneWaitLock(t *testing.T) {
 	t.Cleanup(func() { lock.Release(locks[0]) })
 }
 
-// detachedNudge reports an entry it cannot exec instead of swallowing it, and a
-// failed start leaves no log behind.
+// detachedNudge reports an entry it cannot exec instead of swallowing it.
 func TestDetachedNudgeReportsAnExecFailure(t *testing.T) {
 	dir := t.TempDir()
 	self := filepath.Join(dir, "no-such-crew")
 	logPath := filepath.Join(dir, "nudge-wait.log")
-	err := detachedNudge(self)([]string{"nudge", "--wait"}, logPath)
-	if err == nil {
+	if err := detachedNudge(self)([]string{"nudge", "--wait"}, logPath); err == nil {
 		t.Fatal("detachedNudge started a nonexistent self")
 	}
-	if _, statErr := os.Stat(logPath); !os.IsNotExist(statErr) {
-		t.Fatalf("a failed start left a log: %v", statErr)
+}
+
+// startDetached runs the child it is handed and logs exactly the argv it was
+// given; the test owns the command, so it waits on it rather than polling.
+func TestStartDetachedRunsTheChildAndLogsIt(t *testing.T) {
+	dir := t.TempDir()
+	self := filepath.Join(dir, "fake-crew")
+	if err := os.WriteFile(self, []byte("#!/bin/sh\necho \"$@\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	logPath := filepath.Join(dir, "nudge-wait.log")
+	argv := []string{"nudge", "--crew", "c1", "--wait", "--", "worker:feat/x#s1-1"}
+	cmd, err := startDetached(self, argv, logPath)
+	if err != nil {
+		t.Fatalf("startDetached: %v", err)
+	}
+	if err := cmd.Wait(); err != nil {
+		t.Fatalf("the child failed: %v", err)
+	}
+	if got := cmd.ProcessState.ExitCode(); got != 0 {
+		t.Fatalf("child exited %d, want 0", got)
+	}
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("no log at the path the caller passed (%s): %v", logPath, err)
+	}
+	if want := strings.Join(argv, " ") + "\n"; string(data) != want {
+		t.Fatalf("log\n got %q\nwant %q", string(data), want)
 	}
 }
