@@ -1222,6 +1222,9 @@ func TestNewRequest(t *testing.T) {
 		{"no wait", "nova", nil, Request{Target: "nova"}, true},
 		{"bare wait is the default", "nova", str(""), Request{Target: "nova", Wait: "1800"}, true},
 		{"digits", "nova", str("5"), Request{Target: "nova", Wait: "5"}, true},
+		{"at the cap", "nova", str("86400"), Request{Target: "nova", Wait: "86400"}, true},
+		{"over the cap", "nova", str("86401"), Request{Target: "nova", Wait: "86400"}, true},
+		{"overflowing", "nova", str("99999999999999999999999"), Request{Target: "nova", Wait: "86400"}, true},
 		// `--wait abc nova` is two targets, which the arm refuses rather than reading as a wait.
 		{"word with a target is a second target", "nova", str("abc"), Request{Target: "nova"}, false},
 		// `--wait nova` is a wait for a target named nova, budget still the default.

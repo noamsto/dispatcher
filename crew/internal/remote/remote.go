@@ -30,6 +30,7 @@ import (
 	"regexp"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"syscall"
 
@@ -152,6 +153,10 @@ func checkCrewArgv(argv []string, crew string) error {
 
 var digitsRe = regexp.MustCompile(`\A[0-9]+\z`)
 
+// MaxNudgeWait caps `crew nudge --wait`, in seconds: an uncapped wait keeps the
+// remote child polling, and holding its lead's wait lock, until the lead reads.
+const MaxNudgeWait = 86400
+
 // checkCrewVerb holds reply, nudge and where to one grammar: argv[2:] is
 // `--crew <crew>` plus the verb's own flags, then `--` and the positionals. The
 // positionals are free text (a reply body) and never read as flags, so a flag
@@ -187,8 +192,14 @@ func checkCrewVerb(argv []string, crew string) error {
 	if noNudge > 1 || len(waits) > 1 {
 		return fmt.Errorf("crew scope: crew %s repeats a flag", verb)
 	}
-	if len(waits) == 1 && !digitsRe.MatchString(waits[0]) {
-		return errors.New("crew scope: --wait needs a number")
+	if len(waits) == 1 {
+		if !digitsRe.MatchString(waits[0]) {
+			return errors.New("crew scope: --wait needs a number")
+		}
+		// An overflowing value fails Atoi: refused as over the cap too.
+		if n, err := strconv.Atoi(waits[0]); err != nil || n > MaxNudgeWait {
+			return fmt.Errorf("crew scope: --wait is at most %d seconds", MaxNudgeWait)
+		}
 	}
 	want := map[string]int{"reply": 2, "nudge": 1, "where": 1}[verb]
 	pos := args[sep+1:]
@@ -555,6 +566,34 @@ func BranchLayout(rows []bus.Event, branch, crew string) int {
 		return 1
 	}
 	return 1
+}
+
+// WindowBound reports whether a tmux window stamped with windowDir is where
+// branch's newest dispatch row in crew says its work runs: that row's repo, plus
+// /crew. Window stamps are set by whoever holds the tmux server, a worker
+// included, so a state-only caller (no checkout to compare against) trusts a
+// window only when the dispatcher's own row backs its dir.
+func WindowBound(rows []bus.Event, branch, crew, windowDir string) bool {
+	for i := len(rows) - 1; i >= 0; i-- {
+		doc, ok := dispatchRow(rows[i], crew)
+		if !ok || rows[i].Branch != branch {
+			continue
+		}
+		repo, _ := doc["repo"].(string)
+		return repo != "" && sameDir(repo+"/crew", windowDir)
+	}
+	return false
+}
+
+// sameDir compares two paths as the same directory: equal once cleaned, else
+// equal once symlinks are resolved (a stamp is not always the realpath a row holds).
+func sameDir(a, b string) bool {
+	if filepath.Clean(a) == filepath.Clean(b) {
+		return true
+	}
+	ra, errA := filepath.EvalSymlinks(a)
+	rb, errB := filepath.EvalSymlinks(b)
+	return errA == nil && errB == nil && ra == rb
 }
 
 // RouteAny is Route for a caller with no crew: the host and crew of the one

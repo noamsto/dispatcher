@@ -491,29 +491,44 @@ func TestRemoteWorkerRoutesAsCrewScopeByLayout(t *testing.T) {
 	}
 }
 
-// A visiting crew's call is state-only (Dir ""): its window carries the remote
-// clone's crew dir, so only a matching @crew_id picks it.
-func TestVisitingCrewWindowMatchesByCrewIDAlone(t *testing.T) {
-	tr := setup(t)
-	tr.paths.Dir = ""
-	panes := paneLine("@624", "%204", "lead", "1")
+// A visiting crew's call is state-only (Dir ""): there is no checkout to compare a
+// window's dir with, and any process on the tmux server can stamp @crew_id, so a
+// window counts only when the crew's own dispatch row for its branch names its dir.
+func TestVisitingCrewWindowIsBoundToItsDispatchRow(t *testing.T) {
+	const clone = "/some/clone"
+	row := fmt.Sprintf(`{"ts":1,"crew_id":"c1","kind":"dispatch","branch":"feat/x","name":"nova","host":"h1","repo":%q}`, clone)
+	panes := paneLine("@624", "%204", "lead", "1") + "\n" + paneLine("@700", "%300", "lead", "1")
 	want := `nova — sess:3.1 "win-name" (lead pane)   jump: ! tmux switch-client -t %204` + "\n"
+	real := winLine(clone+"/crew", "@624", "feat/x", "c1", "nova", "sess", "3", "win-name")
 	for _, tc := range []struct {
-		name, crew string
-		found      bool
+		name  string
+		rows  []string
+		wins  string
+		found bool
+		err   string
 	}{
-		{"crew id matches", "c1", true},
-		{"other crew", "c2", false},
-		{"no crew id", "", false},
+		{"id and row dir match", []string{row}, real, true, ""},
+		{"other crew id", []string{row}, winLine(clone+"/crew", "@624", "feat/x", "c2", "nova", "sess", "3", "win-name"), false, ""},
+		{"no crew id", []string{row}, winLine(clone+"/crew", "@624", "feat/x", "", "nova", "sess", "3", "win-name"), false, ""},
+		// A worker of another crew stamps its own window with this crew's id and branch.
+		{"forged id, its own dir", []string{row}, winLine("/other/clone/crew", "@700", "feat/x", "c1", "evil", "sess", "4", "w"), false, ""},
+		{"forged id, no dispatch row", nil, real, false, ""},
+		{"forged id, row of another crew", []string{strings.ReplaceAll(row, `"c1"`, `"c2"`)}, real, false, ""},
+		{"forged id, row of another branch", []string{strings.ReplaceAll(row, "feat/x", "feat/y")}, real, false, ""},
+		// Every stamp copied: both windows pass, so neither is guessed.
+		{"copied stamps beside the real window", []string{row},
+			real + "\n" + winLine(clone+"/crew", "@700", "feat/x", "c1", "evil", "sess", "4", "w"), false, "ambiguous branch"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			wins := winLine("/some/clone/crew", "@624", "feat/x", tc.crew, "nova", "sess", "3", "win-name")
-			out, errOut, code := tr.run(t, wins, panes, crewIs("c1"), "feat/x")
+			tr := setup(t)
+			tr.write(t, tc.rows...)
+			tr.paths.Dir = ""
+			out, errOut, code := tr.run(t, tc.wins, panes, crewIs("c1"), "feat/x")
 			if tc.found && (code != 0 || out != want) {
 				t.Errorf("code %d, out %q, err %q; want %q", code, out, errOut, want)
 			}
-			if !tc.found && code == 0 {
-				t.Errorf("out %q: a window of crew %q matched", out, tc.crew)
+			if !tc.found && (code == 0 || !strings.Contains(errOut, tc.err)) {
+				t.Errorf("code %d, out %q, err %q: a window of another crew matched, or the refusal lacks %q", code, out, errOut, tc.err)
 			}
 		})
 	}

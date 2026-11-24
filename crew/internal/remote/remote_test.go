@@ -721,6 +721,9 @@ func (v crewVerb) accepted() []namedArgv {
 		{"--crew=", v.argv([]string{"--crew=c1"}, v.flags, sep, v.pos)},
 		{"flags first", v.argv(v.flags, crew, sep, v.pos)},
 	}
+	if v.name == "nudge" {
+		rows = append(rows, namedArgv{"--wait at the cap", v.argv(crew, []string{"--wait", "86400"}, sep, v.pos)})
+	}
 	if v.name == "reply" {
 		rows = append(rows, namedArgv{"body that reads --crew=", v.argv(crew, sep, []string{v.pos[0], "--crew=zzz"})})
 	}
@@ -760,6 +763,8 @@ func (v crewVerb) refusals() []namedArgv {
 			namedArgv{"--wait abc", v.argv(crew, []string{"--wait", "abc"}, sep, v.pos)},
 			namedArgv{"--wait empty", v.argv(crew, []string{"--wait", ""}, sep, v.pos)},
 			namedArgv{"--wait=30", v.argv(crew, []string{"--wait=30"}, sep, v.pos)},
+			namedArgv{"--wait over the cap", v.argv(crew, []string{"--wait", "86401"}, sep, v.pos)},
+			namedArgv{"--wait overflowing", v.argv(crew, []string{"--wait", "99999999999999999999999"}, sep, v.pos)},
 			namedArgv{"--wait no value", v.argv(crew, []string{"--wait"}, sep, v.pos)},
 			namedArgv{"duplicate --wait", v.argv(crew, v.flags, v.flags, sep, v.pos)})
 	}
@@ -926,6 +931,46 @@ func TestBranchLayout(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := BranchLayout(busRows(t, tc.lines...), "b", "c"); got != tc.want {
 				t.Fatalf("BranchLayout = %d, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
+// WindowBound trusts a window's dir only as far as the crew's newest dispatch row
+// for the branch: its repo plus /crew, compared by realpath when the spellings differ.
+func TestWindowBound(t *testing.T) {
+	real := t.TempDir()
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	for _, d := range []string{real, link} {
+		if err := os.MkdirAll(filepath.Join(d, "crew"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	row := func(crew, branch, repo string) bus.Event {
+		return bus.Event{Kind: bus.KindDispatch, CrewID: crew, Branch: branch, Doc: map[string]any{"repo": repo}}
+	}
+	for _, tc := range []struct {
+		name string
+		rows []bus.Event
+		win  string
+		want bool
+	}{
+		{"row repo's crew dir", []bus.Event{row("c1", "b", real)}, real + "/crew", true},
+		{"same dir through a symlink", []bus.Event{row("c1", "b", real)}, link + "/crew", true},
+		{"another dir", []bus.Event{row("c1", "b", real)}, "/elsewhere/crew", false},
+		{"repo itself, not its crew dir", []bus.Event{row("c1", "b", real)}, real, false},
+		{"no row", nil, real + "/crew", false},
+		{"row of another crew", []bus.Event{row("c2", "b", real)}, real + "/crew", false},
+		{"row of another branch", []bus.Event{row("c1", "x", real)}, real + "/crew", false},
+		{"row with no repo", []bus.Event{row("c1", "b", "")}, "/crew", false},
+		{"the newest row wins", []bus.Event{row("c1", "b", real), row("c1", "b", "/moved")}, real + "/crew", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := WindowBound(tc.rows, "b", "c1", tc.win); got != tc.want {
+				t.Errorf("WindowBound = %v, want %v", got, tc.want)
 			}
 		})
 	}

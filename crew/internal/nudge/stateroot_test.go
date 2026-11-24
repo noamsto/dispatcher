@@ -57,27 +57,51 @@ func TestWaitLockUnderCrewStateRoot(t *testing.T) {
 	})
 }
 
-// A visiting crew's call is state-only (Dir ""): its window carries the remote
-// clone's crew dir, so only @crew_id picks it, and the wait lock stays under the
-// store dir rather than a path relative to the cwd.
-func TestVisitingCrewDirLessWindowMatchAndWaitLock(t *testing.T) {
-	const foreign = "/some/clone/crew"
+// A visiting crew's call is state-only (Dir ""): there is no checkout to compare a
+// window's dir with, and any process on the tmux server can stamp @crew_id, so a
+// window counts only when the crew's own dispatch row for its branch names its dir.
+// The wait lock stays under the store dir rather than a path relative to the cwd.
+func TestVisitingCrewWindowIsBoundToItsDispatchRow(t *testing.T) {
+	const clone = "/some/clone"
+	row := `{"ts":1,"crew_id":"c1","kind":"dispatch","branch":"feat/x","repo":"` + clone + `"}`
+	real := "@7\tfeat/x\t" + clone + "/crew\tc1\tlead"
+	// A worker of another crew stamps its own window with this crew's id and branch.
+	forged := "@9\tfeat/x\t/other/clone/crew\tc1\tevil"
+	copied := "@9\tfeat/x\t" + clone + "/crew\tc1\tevil"
 	for _, tc := range []struct {
 		name    string
+		rows    []string
 		windows string
 		found   bool
+		err     string
 	}{
-		{"crew id matches", "@7\tfeat/x\t" + foreign + "\tc1\tlead", true},
-		{"other crew", "@7\tfeat/x\t" + foreign + "\tother\tlead", false},
-		{"no crew id", "@7\tfeat/x\t" + foreign + "\t\tlead", false},
+		{"id and row dir match", []string{row}, real, true, ""},
+		{"other crew", []string{row}, "@7\tfeat/x\t" + clone + "/crew\tother\tlead", false, "no live pane"},
+		{"no crew id", []string{row}, "@7\tfeat/x\t" + clone + "/crew\t\tlead", false, "no live pane"},
+		{"forged id, its own dir", []string{row}, forged, false, "no live pane"},
+		{"forged id listed before the real window", []string{row}, forged + "\n" + real, true, ""},
+		{"forged id, no dispatch row", nil, real, false, "no worker matches"},
+		{"forged id, row of another crew", []string{strings.Replace(row, `"c1"`, `"c2"`, 1)}, real, false, "no worker matches"},
+		{"forged id, row of another branch", []string{strings.Replace(row, "feat/x", "feat/y", 1)}, real, false, "no worker matches"},
+		{"copied stamps beside the real window", []string{row}, copied + "\n" + real, false, "ambiguous branch"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newArm(t)
-			f.paths, _ = pinCrew(t, f.paths, "c1")
+			var store string
+			f.paths, store = pinCrew(t, f.paths, "c1")
 			f.paths.Dir = ""
+			if len(tc.rows) > 0 {
+				if err := os.WriteFile(filepath.Join(store, "events.jsonl"), []byte(strings.Join(tc.rows, "\n")+"\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
 			f.pane.windows = tc.windows
-			if rc := f.run(Request{Target: featX}); (rc == 0) != tc.found {
-				t.Fatalf("rc = %d, stderr %q, want window found %t", rc, f.errOut(), tc.found)
+			rc := f.run(Request{Target: featX})
+			if tc.found && rc != 0 {
+				t.Fatalf("rc = %d, stderr %q, want the window found", rc, f.errOut())
+			}
+			if !tc.found && (rc == 0 || !strings.Contains(f.errOut(), tc.err)) {
+				t.Fatalf("rc = %d, stderr %q, want a refusal naming %q", rc, f.errOut(), tc.err)
 			}
 		})
 	}
@@ -86,7 +110,10 @@ func TestVisitingCrewDirLessWindowMatchAndWaitLock(t *testing.T) {
 		var store string
 		f.paths, store = pinCrew(t, f.paths, "c1")
 		f.paths.Dir = ""
-		f.pane.windows = "@7\tfeat/x\t" + foreign + "\tc1\tlead"
+		if err := os.WriteFile(filepath.Join(store, "events.jsonl"), []byte(row+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		f.pane.windows = real
 		f.holdLock = strconv.Itoa(os.Getpid())
 		cwd := t.TempDir()
 		t.Chdir(cwd)
