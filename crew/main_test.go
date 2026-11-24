@@ -1975,7 +1975,7 @@ const (
 	fleetReapEvery       = "crew: fleet stream: --reap-every is not supported — the fleet lane does not reap (each repo's own stream or dispatch does)"
 	stackUsage           = "usage: crew stack cut [--record] <child-branch|PR#> [<oid>]\n       crew stack align <top-PR#|branch>"
 	rateRootNeedsDir     = "crew: rate --root needs a directory"
-	whereUsage           = "usage: crew where <target> [--crew ID] | crew where --log|--dir [--crew ID]"
+	whereUsage           = "usage: crew where <target> [--crew ID] | crew where --log|--dir [--crew ID] | crew where --json [--crew ID]"
 	reapUsage            = "crew: reap takes --quiet, --dry-run, --no-wait, --fleet, --json, --idle S, --stale-after S and --discard BRANCH "
 	baselineUsage        = "usage: crew git-baseline [--accept]"
 	wantRemoteRunUsage   = "usage: crew remote-run --host H [--crew-scope] [--env K=V]... [--spec-file F] [--migrate-dir D] -- <argv>..."

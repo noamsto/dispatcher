@@ -531,7 +531,7 @@ func repoOptional(p crewArgs) bool {
 	case "register", "deregister", "crews", "index":
 		return true
 	case "where":
-		return p.typed.Where.Log || p.typed.Where.Dir
+		return p.typed.Where.Log || p.typed.Where.Dir || p.typed.Where.JSON
 	}
 	return false
 }
@@ -1245,9 +1245,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 	}
 	if sub == "where" {
 		w := parsed.typed.Where
-		if w.Log || w.Dir {
+		if w.Log || w.Dir || w.JSON {
 			// No window lookup: these modes never read tmux.
-			return where.RunPath(where.PathRequest{Crew: str(w.Crew), Log: w.Log}, paths, stdout, stderr, func() string {
+			return where.RunPath(where.PathRequest{Crew: str(w.Crew), Log: w.Log, JSON: w.JSON}, paths, stdout, stderr, func() string {
 				id, _ := bus.ResolveCrewID(ctx, cwd, bus.Lookup{})
 				return id
 			})

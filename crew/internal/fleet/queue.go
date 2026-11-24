@@ -102,13 +102,21 @@ type queued struct {
 	repoPrio         int64
 	lastRelease      int64 // its repo's newest fleet release, 0 for none
 	eligible         bool
+	layout2          bool // read from a layout-2 crew's log; common is its home repo, "" for none
 }
 
 // holdKey is a hold's identity on the machine: a hold id is unique only within
-// its crew's sink.
+// its crew's sink. A layout-2 crew id is unique on the machine, so its holds
+// are keyed by crew alone: the record must not follow the home repo's path or
+// registration.
 type holdKey struct{ common, crew, id string }
 
-func (h *queued) key() holdKey { return holdKey{h.common, h.crew, h.id} }
+func (h *queued) key() holdKey {
+	if h.layout2 {
+		return holdKey{"", h.crew, h.id}
+	}
+	return holdKey{h.common, h.crew, h.id}
+}
 
 // releasedHold is a fleet hold released within the pending window.
 type releasedHold struct {
@@ -148,8 +156,8 @@ func (u unread) kept(rec map[holdKey]dueEntry, nowMS int64) map[holdKey]dueEntry
 	return out
 }
 
-// busReader reads one repo's bus as readBus does.
-type busReader func(common string) (events []bus.Event, torn, skip string)
+// busReader reads one log as readLog does.
+type busReader func(path string) (events []bus.Event, torn, skip string)
 
 // busCache reads each bus once per command, so a status pass and its queue
 // evaluation see one snapshot.
@@ -161,29 +169,48 @@ type busRead struct {
 }
 
 func (c busCache) read(common string) ([]bus.Event, string, string) {
-	r, ok := c[common]
+	return c.readLog(bus.PathsFor(common).Log)
+}
+
+func (c busCache) readLog(path string) ([]bus.Event, string, string) {
+	r, ok := c[path]
 	if !ok {
-		r.events, r.torn, r.skip = readBus(common)
-		c[common] = r
+		r.events, r.torn, r.skip = readLog(path)
+		c[path] = r
 	}
 	return r.events, r.torn, r.skip
 }
 
 // scanFleet reads the registry's repos, never the walk: the walk's roots are
-// the caller's, and every dispatcher must see the same queue.
-func scanFleet(registry string, getenv func(string) string, read busReader, nowMS int64) fleetScan {
+// the caller's, and every dispatcher must see the same queue. The live
+// layout-2 crews are read beside them, each under its home repo, and a crew
+// id that is layout 2 is dead in a repo bus.
+func scanFleet(registry string, getenv func(string) string, read busReader, nowMS int64, stderr io.Writer) fleetScan {
 	s := fleetScan{lastRelease: map[string]int64{}, unread: unread{repos: map[string]bool{}, crews: map[crewRef]bool{}}}
-	for _, r := range repos.Registered(registry, getenv) {
+	registered := repos.Registered(registry, getenv)
+	crews := readLayout2(bus.StateRoot(getenv), stderr)
+	groups := groupLayout2(crews, knownCommons(registered))
+	for _, r := range registered {
 		if r.Status != repos.StatusOK {
 			continue
 		}
 		s.commons = append(s.commons, r.Common)
-		events, _, skip := read(r.Common)
+		events, _, skip := read(bus.PathsFor(r.Common).Log)
 		if skip != "" {
 			s.unread.repos[r.Common] = true
 			continue
 		}
-		s.addRepo(r.Common, events, nowMS)
+		s.addRepo(r.Common, withoutCrews(events, crews), false, nowMS)
+	}
+	for _, common := range slices.Sorted(maps.Keys(groups)) {
+		for _, c := range groups[common] {
+			events, _, skip := read(c.log)
+			if skip != "" && skip != string(repos.StatusNoBus) {
+				s.unread.crews[crewRef{"", c.id}] = true
+				continue
+			}
+			s.addRepo(common, events, true, nowMS)
+		}
 	}
 	return s
 }
@@ -202,7 +229,7 @@ type holdAdd struct {
 // input. Which holds are outstanding is hold.Outstanding's answer over the
 // dispatcher's rows, the fold `crew hold due` matches the verdict against; a
 // hold's ts is its first add row's, and a release counts once, at its first row.
-func (s *fleetScan) addRepo(common string, events []bus.Event, nowMS int64) {
+func (s *fleetScan) addRepo(common string, events []bus.Event, layout2 bool, nowMS int64) {
 	adds := map[crewHold]holdAdd{}
 	releasedAt := map[crewHold]int64{}
 	var docs []any
@@ -235,7 +262,11 @@ func (s *fleetScan) addRepo(common string, events []bus.Event, nowMS int64) {
 	for _, crew := range fleetCrews {
 		out, err := hold.Outstanding(docs, crew)
 		if err != nil {
-			s.unread.crews[crewRef{common, crew}] = true
+			ref := crewRef{common, crew}
+			if layout2 {
+				ref.common = ""
+			}
+			s.unread.crews[ref] = true
 			continue
 		}
 		list, _ := out.([]any)
@@ -248,7 +279,7 @@ func (s *fleetScan) addRepo(common string, events []bus.Event, nowMS int64) {
 				continue
 			}
 			seen[id] = true
-			s.holds = append(s.holds, &queued{common: common, crew: crew, id: id, branch: a.branch, prio: a.prio, weight: a.weight, ts: a.ts})
+			s.holds = append(s.holds, &queued{common: common, crew: crew, id: id, branch: a.branch, prio: a.prio, weight: a.weight, ts: a.ts, layout2: layout2})
 		}
 	}
 	for k, at := range releasedAt {
@@ -349,7 +380,16 @@ func newQueue(ctx context.Context, o QueueOptions, scan fleetScan, s QueueSettin
 	q := &queue{settings: s, nowMS: now.UnixMilli(), holds: slices.Clone(scan.holds), unread: scan.unread}
 	q.load, q.owned = measure(ctx, s.Budget, o.LoadOptions, scan.released)
 	prios := readPriorities(priorityPath(o.Getenv))
+	state := bus.StateRoot(o.Getenv)
 	eligible := map[crewRef]bool{}
+	layout2Eligible := func(h *queued) bool {
+		paths := bus.StatePaths(state)
+		if h.common != "" {
+			paths = bus.PathsFor(h.common).WithState(state)
+		}
+		c, err := paths.Crew(h.crew)
+		return err == nil && c.Layout == 2 && readSession(c.Dir, fleetLane(o.Getenv, h.crew), t, now).eligible()
+	}
 	read := func(common, crew string) session {
 		c, err := bus.PathsFor(common).Crew(crew)
 		if err != nil {
@@ -368,6 +408,10 @@ func newQueue(ctx context.Context, o QueueOptions, scan fleetScan, s QueueSettin
 	for _, h := range q.holds {
 		ref := crewRef{h.common, h.crew}
 		ok, seen := eligible[ref]
+		if !seen && h.layout2 {
+			ok, seen = layout2Eligible(h), true
+			eligible[ref] = ok
+		}
 		if !seen {
 			ok = read(h.common, h.crew).eligible()
 			// Only a per-repo stream runs `hold due` for its repo; the fleet
@@ -540,7 +584,11 @@ func (q *queue) first(rec map[holdKey]dueEntry) *queued {
 // crew's, and the crew's parked holds (demoted, oversize or ineligible), which
 // its owner must hear about.
 func (q *queue) verdict(common, crew string, rec map[holdKey]dueEntry, due *queued) hold.FleetVerdict {
-	mine := func(h *queued) bool { return h.crew == crew && filepath.Clean(h.common) == filepath.Clean(common) }
+	// A layout-2 crew id is unique on the machine, and the cwd repo the caller
+	// names need not be the crew's home.
+	mine := func(h *queued) bool {
+		return h.crew == crew && (h.layout2 || filepath.Clean(h.common) == filepath.Clean(common))
+	}
 	var v hold.FleetVerdict
 	if due != nil && mine(due) {
 		v.Due = []string{due.id}
@@ -705,7 +753,7 @@ func writeAtomic(path string, data []byte) (err error) {
 // a recording run writes the demotion record.
 func Due(ctx context.Context, common, crew string, record bool, o QueueOptions) (hold.FleetVerdict, error) {
 	now := o.Clock.Now()
-	scan := scanFleet(o.Registry, o.Getenv, readBus, now.UnixMilli())
+	scan := scanFleet(o.Registry, o.Getenv, readLog, now.UnixMilli(), o.Stderr)
 	path := duePath(o.Getenv)
 	var v hold.FleetVerdict
 	step := func(rec map[holdKey]dueEntry) map[holdKey]dueEntry { return scan.unread.kept(rec, now.UnixMilli()) }
@@ -796,7 +844,7 @@ func Queue(ctx context.Context, req QueueRequest, stdout, stderr io.Writer, o Qu
 		return ExitError
 	}
 	now := o.Clock.Now()
-	scan := scanFleet(o.Registry, o.Getenv, readBus, now.UnixMilli())
+	scan := scanFleet(o.Registry, o.Getenv, readLog, now.UnixMilli(), o.Stderr)
 	if req.Admit > 0 && len(scan.holds) == 0 {
 		return ExitFits
 	}
@@ -929,6 +977,9 @@ func (q *queue) report(rec map[holdKey]dueEntry, names func(string) string) Queu
 func repoNamer(ctx context.Context, g git.Client) func(common string) string {
 	names := map[string]string{}
 	return func(common string) string {
+		if common == "" {
+			return noRepo
+		}
 		if n, ok := names[common]; ok {
 			return n
 		}

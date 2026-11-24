@@ -16,6 +16,7 @@ package where
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -34,7 +35,7 @@ const (
 	// caller can tell it from a failure it may fall back on.
 	exitRefused = 3
 	// Usage is the arm's `crew where` signature, quoted in every refusal.
-	Usage = "usage: crew where <target> [--crew ID] | crew where --log|--dir [--crew ID]"
+	Usage = "usage: crew where <target> [--crew ID] | crew where --log|--dir [--crew ID] | crew where --json [--crew ID]"
 	// jump is the line's tail: what a human or a dispatcher pastes to get there.
 	jump = "   jump: ! tmux switch-client -t "
 )
@@ -86,14 +87,26 @@ type Request struct {
 	Crew, Target string
 }
 
-// PathRequest is `crew where --log|--dir [--crew ID]`: Crew is the flag ("" for
-// the task doc and env), Log picks the log over the dir.
+// PathRequest is `crew where --log|--dir|--json [--crew ID]`: Crew is the flag
+// ("" for the task doc and env), Log picks the log over the dir, JSON prints
+// the whole answer instead.
 type PathRequest struct {
 	Crew string
 	Log  bool
+	JSON bool
 }
 
-// RunPath prints the resolved crew's log or dir. It reads no tmux, so the
+// pathJSON is the `--json` answer; Meta is null for a layout-1 crew.
+type pathJSON struct {
+	CrewID  string    `json:"crew_id"`
+	Layout  int       `json:"layout"`
+	Dir     string    `json:"dir"`
+	Log     string    `json:"log"`
+	RepoDir *string   `json:"repo_dir"`
+	Meta    *bus.Meta `json:"meta"`
+}
+
+// RunPath prints the resolved crew's log or dir, or with JSON the whole answer. It reads no tmux, so the
 // crew comes from the flag or crewID alone, and it needs a repo only for a
 // layout-1 crew.
 func RunPath(req PathRequest, paths bus.Paths, stdout, stderr io.Writer, crewID func() string) int {
@@ -117,11 +130,36 @@ func RunPath(req PathRequest, paths bus.Paths, stdout, stderr io.Writer, crewID 
 		say(stderr, "crew: %v\n", err)
 		return exitFailure
 	}
+	if req.JSON {
+		return printJSON(bc, paths, stdout, stderr)
+	}
 	path := bc.Dir
 	if req.Log {
 		path = bc.Log
 	}
 	say(stdout, "%s\n", path)
+	return 0
+}
+
+func printJSON(bc bus.Crew, paths bus.Paths, stdout, stderr io.Writer) int {
+	ans := pathJSON{CrewID: bc.ID, Layout: bc.Layout, Dir: bc.Dir, Log: bc.Log}
+	if bc.RepoDir != "" {
+		ans.RepoDir = &bc.RepoDir
+	}
+	if bc.Layout == 2 {
+		m, err := bus.ReadMeta(paths.State, bc.ID)
+		if err != nil {
+			say(stderr, "crew: %v\n", err)
+			return exitFailure
+		}
+		ans.Meta = &m
+	}
+	data, err := json.Marshal(ans)
+	if err != nil {
+		say(stderr, "crew: %v\n", err)
+		return exitFailure
+	}
+	say(stdout, "%s\n", data)
 	return 0
 }
 

@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/proc/proctest"
 )
 
@@ -24,6 +25,8 @@ func writeRelayFile(t *testing.T, common, crew, name, text string, mtime time.Ti
 	}
 }
 
+func crewDirOf(common string) string { return bus.PathsFor(common).CrewDir("c1") }
+
 func TestCrewRelays(t *testing.T) {
 	common := t.TempDir()
 	hm, mm := time.UnixMilli(1700000010000), time.UnixMilli(1700000020000)
@@ -34,12 +37,12 @@ func TestCrewRelays(t *testing.T) {
 
 	live := proctest.New(map[int]bool{4242: true}, nil)
 	want := []RelayStatus{{Host: "halo", Live: true, CursorTS: &hts}, {Host: "mbp", CursorTS: &mts}}
-	if got := crewRelays(common, "c1", live); !reflect.DeepEqual(got, want) {
+	if got := crewRelays(crewDirOf(common), live); !reflect.DeepEqual(got, want) {
 		t.Errorf("live holder: got %+v, want %+v", got, want)
 	}
 
 	want[0].Live = false
-	if got := crewRelays(common, "c1", proctest.New(nil, nil)); !reflect.DeepEqual(got, want) {
+	if got := crewRelays(crewDirOf(common), proctest.New(nil, nil)); !reflect.DeepEqual(got, want) {
 		t.Errorf("dead holder: got %+v, want %+v", got, want)
 	}
 }
@@ -47,14 +50,14 @@ func TestCrewRelays(t *testing.T) {
 func TestCrewRelaysLockOnly(t *testing.T) {
 	common := t.TempDir()
 	writeRelayFile(t, common, "c1", "halo.lock.d/pid", "4242\n", time.Now())
-	got := crewRelays(common, "c1", proctest.New(map[int]bool{4242: true}, nil))
+	got := crewRelays(crewDirOf(common), proctest.New(map[int]bool{4242: true}, nil))
 	if want := []RelayStatus{{Host: "halo", Live: true}}; !reflect.DeepEqual(got, want) {
 		t.Errorf("got %+v, want %+v", got, want)
 	}
 }
 
 func TestCrewRelaysNoDir(t *testing.T) {
-	got := crewRelays(t.TempDir(), "c1", proctest.New(nil, nil))
+	got := crewRelays(crewDirOf(t.TempDir()), proctest.New(nil, nil))
 	if got == nil || len(got) != 0 {
 		t.Errorf("got %#v, want empty non-nil", got)
 	}

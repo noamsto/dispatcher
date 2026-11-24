@@ -8,7 +8,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/lock"
 	"github.com/noamsto/dispatcher/crew/internal/proc"
 )
@@ -21,10 +20,11 @@ type RelayStatus struct {
 	CursorTS *int64 `json:"cursor_ts"`
 }
 
-// crewRelays reads the crew's relay dir, shared by the per-repo stream and a
-// fleet stream lane: one entry per host with a lock or a cursor.
-func crewRelays(common, crew string, procs proc.Table) []RelayStatus {
-	dir := filepath.Join(bus.PathsFor(common).CrewDir(crew), "relay")
+// crewRelays reads the relay dir of the crew whose dir is crewDir, shared by
+// the per-repo stream and a fleet stream lane: one entry per host with a lock
+// or a cursor.
+func crewRelays(crewDir string, procs proc.Table) []RelayStatus {
+	dir := filepath.Join(crewDir, "relay")
 	entries, _ := os.ReadDir(dir)
 	hosts := map[string]bool{}
 	for _, e := range entries {
