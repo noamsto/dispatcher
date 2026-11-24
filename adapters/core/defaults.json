@@ -471,6 +471,7 @@
   "workerDeniedMcpServers": ["plugin_hm_playwright", "plugin_hm_firefox-devtools"],
   "dispatcherChrome": false,
   "freshSeams": false,
+  "crewLayout": 1,
   "dashTailscale": false,
   "dashAutoOpen": true,
   "dashPlacement": "side",

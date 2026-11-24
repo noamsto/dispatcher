@@ -3263,3 +3263,153 @@ STUB
   [ "$output" = "setup-stub --yes" ]
   [ ! -s "$STUB_LOG" ]
 }
+
+# ---- #1747: crew layout 2 ----
+
+# A directory that is no git repo, as the cwd of a launch.
+_outside_repo() {
+  export GIT_CEILING_DIRECTORIES="$BATS_TEST_TMPDIR"
+  NOREPO="$BATS_TEST_TMPDIR/norepo"
+  mkdir -p "$NOREPO"
+  cd "$NOREPO"
+}
+
+_l2_dir() { "$CREW" where --dir --crew "$1"; }
+
+@test "1747: layout 2 registers outside a repo, an in-session --fresh stores its note in the crew's state dir, the exit deregisters" {
+  _real_crew_logged
+  _engine_stub claude "$_handoff_body"
+  umask 077
+  export LAUNCHER HANDOFF_NOTE_SRC="$BATS_TEST_TMPDIR/note.md"
+  _outside_repo
+  CREW_LAYOUT=2 CREW_ID=c-l2 run --separate-stderr run_launcher
+  [ "$status" -eq 0 ]
+  cmp "$HANDOFF_NOTE_SRC" "$XDG_STATE_HOME/crew/crews/c-l2/handoff/c-l2.md"
+  [ "$(_launches)" = 2 ]
+  grep -qx 'deregister' "$STUB_LOG"
+  [ -d "$XDG_STATE_HOME/crew/crews/c-l2" ]
+}
+
+@test "1747: a legacy crew dir keeps a layout-2 launch on layout 1, handoff dir included" {
+  _real_crew_logged
+  _engine_stub claude "$_handoff_body"
+  umask 077
+  export LAUNCHER HANDOFF_NOTE_SRC="$BATS_TEST_TMPDIR/note.md"
+  mkdir -p "$(_crew_dir c1)"
+  CREW_LAYOUT=2 CREW_ID=c1 run --separate-stderr run_launcher
+  [ "$status" -eq 0 ]
+  cmp "$HANDOFF_NOTE_SRC" "$(_handoff_dir)/c1.md"
+  [ ! -e "$XDG_STATE_HOME/crew/crews/c1" ]
+}
+
+@test "1747: CREW_LAYOUT in the env beats crewLayout in the settings" {
+  _real_crew_logged
+  _engine_stub claude 'printf "%s" "$CREW_LAYOUT" >"$STUB_DIR/layout"'
+  echo '{"crewLayout":2}' >"$XDG_CONFIG_HOME/dispatcher/settings.json"
+  CREW_ID=c-set run run_launcher
+  [ "$status" -eq 0 ]
+  [ "$(cat "$STUB_DIR/layout")" = 2 ]
+  [ -d "$XDG_STATE_HOME/crew/crews/c-set" ]
+  CREW_LAYOUT=1 CREW_ID=c-env run run_launcher
+  [ "$status" -eq 0 ]
+  [ ! -e "$XDG_STATE_HOME/crew/crews/c-env" ]
+}
+
+@test "1747: crewLayout defaults to layout 1" {
+  _real_crew_logged
+  CREW_ID=c-def run run_launcher
+  [ "$status" -eq 0 ]
+  [ ! -e "$XDG_STATE_HOME/crew/crews/c-def" ]
+}
+
+# A dead layout-2 crew c2 (home repo $TEST_REPO, or none when outside) with a
+# launch record, behind the relaunch stubs; the dispatcher stub writes the pid
+# into the crew's own dir.
+_relaunch_l2_setup() { # [outside]
+  _relaunch_setup
+  [ "${1:-}" != outside ] || _outside_repo
+  CREW_LAYOUT=2 CREW_ID=c2 "$CREW" register 999999
+  C2="$(_l2_dir c2)"
+  printf '%s\n' '{"agent":"claude","model":"sonnet","effort":"max","autocompact":200000}' >"$C2/launch"
+  crews_tsv "$(printf 'c2\t5\t5\t1\t999999\tno')" >"$STUB_DIR/crews.tsv"
+  cat >"$STUB_DIR/crew" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$1" in
+crews) cat "$STUB_DIR/crews.tsv" ;;
+where | engine-cmd) exec "$CREW" "$@" ;;
+esac
+exit 0
+STUB
+  cat >"$STUB_DIR/dispatcher" <<'STUB'
+#!/usr/bin/env bash
+echo $$ >"$STUB_DIR/dispatcher.pid"
+echo $$ >"$("$CREW" where --dir --crew "$CREW_ID")/pid"
+exec sleep 15
+STUB
+}
+
+@test "1747: --relaunch of a dead layout-2 crew succeeds from its state dir" {
+  _relaunch_l2_setup
+  run run_launcher --relaunch c2 --repo "$TEST_REPO"
+  [ "$status" -eq 0 ]
+  live_pid=$(cat "$STUB_DIR/dispatcher.pid")
+  [[ "$output" == *"relaunched crew c2 in pane %9"* ]]
+  [[ $(cat "$C2/relaunch") =~ ^[0-9]+$ ]]
+  [ ! -e "$C2/.relaunch.lock" ]
+  [ ! -e "$(_crew_dir c2)" ]
+}
+
+@test "1747: --relaunch of a live layout-2 crew refuses as before" {
+  _relaunch_l2_setup
+  crews_tsv "$(printf 'c2\t5\t5\t1\t4321\tyes')" >"$STUB_DIR/crews.tsv"
+  : >"$STUB_LOG"
+  run run_launcher --relaunch c2 --repo "$TEST_REPO"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"crew c2's dispatcher (pid 4321) is still live"* ]]
+  _no_new_window
+}
+
+@test "1747: --relaunch of a null-home layout-2 crew outside a repo opens the window in the cwd" {
+  _relaunch_l2_setup outside
+  run run_launcher --relaunch c2
+  [ "$status" -eq 0 ]
+  live_pid=$(cat "$STUB_DIR/dispatcher.pid")
+  grep -qxF "$NOREPO" "$STUB_DIR/new-window.argv"
+  [[ $(cat "$C2/relaunch") =~ ^[0-9]+$ ]]
+}
+
+@test "1747: --relaunch of a legacy crew outside a repo still refuses" {
+  _relaunch_setup
+  _outside_repo
+  : >"$STUB_LOG"
+  run run_launcher --relaunch c1
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"is not a git repo"* ]]
+  _no_new_window
+}
+
+@test "1747: a plain dispatcher in a repo switches to the live layout-2 crew" {
+  _real_crew_stub
+  sleep 30 &
+  live_pid=$!
+  CREW_LAYOUT=2 CREW_ID=c-l2 "$CREW" register "$live_pid"
+  stub_tmux_panes %7 "$live_pid"
+  CREW_LAYOUT=2 TMUX=/tmp/fake,1,0 TMUX_PANE=%1 run run_launcher
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"crew c-l2 already has a live dispatcher in pane %7"* ]]
+  grep -qx 'switch-client -t %7' "$STUB_LOG"
+}
+
+@test "1747: a plain dispatcher outside a repo switches to the live null-home layout-2 crew" {
+  _real_crew_stub
+  _outside_repo
+  sleep 30 &
+  live_pid=$!
+  CREW_LAYOUT=2 CREW_ID=c-l2 "$CREW" register "$live_pid"
+  stub_tmux_panes %7 "$live_pid"
+  CREW_LAYOUT=2 TMUX=/tmp/fake,1,0 TMUX_PANE=%1 run run_launcher
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"crew c-l2 already has a live dispatcher in pane %7"* ]]
+  grep -qx 'switch-client -t %7' "$STUB_LOG"
+}
