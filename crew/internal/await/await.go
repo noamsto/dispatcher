@@ -100,7 +100,7 @@ func Run(req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int 
 	deadline := start + int64(c.timeout)*1000
 	// The marks are read once, before the loop: a mark another reader raises
 	// while this await polls does not shrink what this caller is owed.
-	delivered := marks.Read(paths.Dir, crew, c.me)
+	delivered := marks.Read(cr.State, crew, c.me)
 
 	for {
 		if rows := due(cr.Log, crew, c, delivered); len(rows) > 0 {
@@ -120,7 +120,7 @@ func Run(req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int 
 					return 1
 				}
 			}
-			marks.Record(paths.Dir, crew, c.me, rows)
+			marks.Record(cr.State, crew, c.me, rows)
 			return 0
 		}
 		now := o.Clock.NowMS()

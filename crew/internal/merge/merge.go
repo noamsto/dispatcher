@@ -410,7 +410,11 @@ func checkUnread(lines []string, events []bus.Event, req Request, url string, pa
 	}
 	var undelivered []map[string]any
 	for _, crew := range sessionCrews(events, session, row.CrewID) {
-		found, err := unread.Directives(events, crew, session, marks.Read(paths.Dir, crew, session))
+		state := paths.Dir
+		if bc, err := paths.Crew(crew); err == nil {
+			state = bc.State
+		}
+		found, err := unread.Directives(events, crew, session, marks.Read(state, crew, session))
 		if err != nil {
 			return refuse("could not check %s for undelivered msgs: %s", plain(session), plain(err.Error()))
 		}

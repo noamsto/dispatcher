@@ -47,8 +47,12 @@ func (r *run) forget(branch string) {
 		if c == "" || id == "" {
 			continue
 		}
-		rmF(marks.Path(dir, c, id))
-		rmF(marks.LockPath(dir, c, id))
+		markDir := dir
+		if bc, err := r.paths.Crew(c); err == nil {
+			markDir = bc.State
+		}
+		rmF(marks.Path(markDir, c, id))
+		rmF(marks.LockPath(markDir, c, id))
 		key := sanitize(id)
 		rmF(dir + "/phase-status/" + key + "." + strconv.FormatUint(uint64(identity.CKsum([]byte(id))), 10))
 		d := dir + "/directive-delivery/" + key

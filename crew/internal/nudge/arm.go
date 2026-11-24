@@ -388,7 +388,7 @@ func (a *arm) wait(ctx context.Context, wait string) int {
 	start := a.o.Deps.Clock.Seconds()
 	startMS := a.o.Deps.Clock.NowMS()
 
-	dir := filepath.Join(a.paths.Dir, "nudge-wait")
+	dir := filepath.Join(a.bc.State, "nudge-wait")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fail(a.stderr, err.Error())
 	}

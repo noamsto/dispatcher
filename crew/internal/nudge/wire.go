@@ -89,7 +89,7 @@ func Default(paths bus.Paths, stderr io.Writer, pid int, crewID func() string) O
 				return ""
 			}
 			return unread.Scan(unread.Request{
-				Dir: paths.Dir, Log: c.Log, Crew: crew, Branch: branch,
+				Dir: c.State, Log: c.Log, Crew: crew, Branch: branch,
 				Me: "worker:" + branch, FromID: sid,
 			}, unread.Any)
 		},
