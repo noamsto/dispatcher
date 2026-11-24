@@ -87,6 +87,10 @@ func Run(ctx context.Context, req Request, paths bus.Paths, stderr io.Writer, o 
 		return 1
 	}
 	bc, err := paths.Crew(cfg.crew)
+	if bus.IsRefusal(err) {
+		_, _ = fmt.Fprintf(stderr, "crew: %v\n", err)
+		return 1
+	}
 	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "crew: stall-watch: invalid crew id %s\n", cfg.crew)
 		return 1

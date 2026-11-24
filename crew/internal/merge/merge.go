@@ -130,6 +130,10 @@ func Run(ctx context.Context, req Request, paths bus.Paths, stdout, stderr io.Wr
 	log := paths.Log
 	if req.Crew != "" {
 		c, err := paths.Crew(req.Crew)
+		if bus.IsRefusal(err) {
+			say(stderr, "crew: %v\n", err)
+			return exitFailure
+		}
 		if err != nil {
 			say(stderr, "crew: merge: invalid crew id %s\n", req.Crew)
 			return exitFailure

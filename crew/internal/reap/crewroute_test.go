@@ -2,13 +2,16 @@ package reap
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
+	"github.com/noamsto/dispatcher/crew/internal/marks"
 )
 
 // stampTmux answers `display-message -p -t <window> #{@crew_id}` per window.
@@ -20,6 +23,10 @@ func (s stampTmux) Run(_ context.Context, args ...string) (string, error) {
 
 func dispatchRow(branch, id string) string {
 	return fmt.Sprintf(`{"ts":1,"kind":"dispatch","branch":%q,"crew_id":%q}`, branch, id)
+}
+
+func repoDispatchRow(branch, id, repo string, ts int) string {
+	return fmt.Sprintf(`{"ts":%d,"kind":"dispatch","branch":%q,"crew_id":%q,"repo":%q}`, ts, branch, id, repo)
 }
 
 func writeLog(t *testing.T, path string, rows ...string) {
@@ -67,7 +74,8 @@ func TestRowCrewIDResolvesLayout2ThroughIndex(t *testing.T) {
 	if err != nil || c.Layout != 2 {
 		t.Fatalf("crew = %+v, %v", c, err)
 	}
-	writeLog(t, c.Log, dispatchRow("other", "zz"), dispatchRow(rb, "c2"))
+	tag := repoTag(common)
+	writeLog(t, c.Log, repoDispatchRow("other", "zz", tag, 1), repoDispatchRow(rb, "c2", tag, 1), dispatchRow(rb, "nr"), repoDispatchRow(rb, "elsewhere", "/other/.git", 9))
 
 	id := rowCrewID(context.Background(), stampTmux{}, []string{"@1"}, filepath.Join(root, "wt"), rb, eventDocs(paths.Log), indexCrewDocs(paths))
 	if id != "c2" {
@@ -78,22 +86,48 @@ func TestRowCrewIDResolvesLayout2ThroughIndex(t *testing.T) {
 	}
 }
 
-func TestRowCrewIDIndexIsLastResort(t *testing.T) {
+// When both the repo log and an index-listed crew dispatched the branch, the
+// newer dispatch row names the crew; a tie keeps the repo log's.
+func TestRowCrewIDNewestDispatchWins(t *testing.T) {
 	root, common := routeRepo(t)
 	paths := bus.PathsFor(common)
-	writeLog(t, paths.Log, dispatchRow(rb, "d1"))
-	called := false
-	spy := func() []map[string]any { called = true; return nil }
 	wt := filepath.Join(root, "wt")
-
-	if id := rowCrewID(context.Background(), stampTmux{}, nil, wt, rb, eventDocs(paths.Log), spy); id != "d1" || called {
-		t.Fatalf("crew id = %q, index read = %v; want d1, false", id, called)
+	tag := repoTag(common)
+	rows := func(rows ...string) func() []map[string]any {
+		return func() []map[string]any {
+			var docs []map[string]any
+			for _, r := range rows {
+				var doc map[string]any
+				if err := json.Unmarshal([]byte(r), &doc); err != nil {
+					t.Fatal(err)
+				}
+				docs = append(docs, doc)
+			}
+			return docs
+		}
 	}
+	for _, tc := range []struct {
+		name      string
+		repo, idx func() []map[string]any
+		want      string
+	}{
+		{"index newer", rows(repoDispatchRow(rb, "d1", tag, 5)), rows(repoDispatchRow(rb, "c2", tag, 9)), "c2"},
+		{"repo newer", rows(repoDispatchRow(rb, "d1", tag, 9)), rows(repoDispatchRow(rb, "c2", tag, 5)), "d1"},
+		{"tie", rows(repoDispatchRow(rb, "d1", tag, 7)), rows(repoDispatchRow(rb, "c2", tag, 7)), "d1"},
+		{"repo only", rows(repoDispatchRow(rb, "d1", tag, 7)), rows(), "d1"},
+		{"index only", rows(), rows(repoDispatchRow(rb, "c2", tag, 7)), "c2"},
+		{"repo only, nil index", rows(repoDispatchRow(rb, "d1", tag, 7)), nil, "d1"},
+		{"neither", rows(), rows(), ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if id := rowCrewID(context.Background(), stampTmux{}, nil, wt, rb, tc.repo, tc.idx); id != tc.want {
+				t.Fatalf("crew id = %q, want %q", id, tc.want)
+			}
+		})
+	}
+	writeLog(t, paths.Log, dispatchRow(rb, "d1"))
 	if id := rowCrewID(context.Background(), stampTmux{}, nil, wt, rb, eventDocs(paths.Log), nil); id != "d1" {
-		t.Fatalf("nil indexDocs: crew id = %q", id)
-	}
-	if id := rowCrewID(context.Background(), stampTmux{}, nil, wt, "none", eventDocs(paths.Log), func() []map[string]any { return nil }); id != "" {
-		t.Fatalf("empty indexDocs: crew id = %q", id)
+		t.Fatalf("repo log on disk: crew id = %q", id)
 	}
 }
 
@@ -124,6 +158,42 @@ func TestRowLogLayout1KeepsEveryRowInRepoLog(t *testing.T) {
 					t.Fatalf("rowLog = %q, want repo log %q", got, paths.Log)
 				}
 			})
+		}
+	}
+}
+
+// A layout-2 crew's sessions are on its own log and their await marks under its
+// store dir: forget finds and drops them even with no repo log.
+func TestForgetLayout2CrewMarks(t *testing.T) {
+	f := newFx(t)
+	f.paths = f.paths.WithState(filepath.Join(f.root, "state"))
+	if err := bus.CreateMeta(f.paths.State, bus.Meta{ID: "c2", CreatedBy: "register"}); err != nil {
+		t.Fatal(err)
+	}
+	c, err := f.paths.Crew("c2")
+	if err != nil || c.Layout != 2 {
+		t.Fatalf("crew = %+v, %v", c, err)
+	}
+	writeLog(t, c.Log, `{"ts":2,"crew_id":"c2","kind":"dispatch","branch":"`+rb+`","session":"s3"}`)
+	id, other := "worker:"+rb+"#s3", "worker:feat/other#s9"
+	var gone, kept []string
+	for _, p := range []string{marks.Path(c.State, "c2", id), marks.LockPath(c.State, "c2", id), marks.Path(c.State, "c2", other)} {
+		writeLog(t, p, "{}")
+		if strings.Contains(p, "other") {
+			kept = append(kept, p)
+		} else {
+			gone = append(gone, p)
+		}
+	}
+	f.run().forget(rb, "c2")
+	for _, p := range gone {
+		if _, err := os.Lstat(p); !os.IsNotExist(err) {
+			t.Errorf("%s still there", p)
+		}
+	}
+	for _, p := range kept {
+		if _, err := os.Lstat(p); err != nil {
+			t.Errorf("%s removed: %v", p, err)
 		}
 	}
 }

@@ -9,8 +9,11 @@ import (
 	"path/filepath"
 	"reflect"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/noamsto/dispatcher/crew/internal/lock"
 )
 
 func TestIndexPath(t *testing.T) {
@@ -201,5 +204,40 @@ func TestIndexRebuildEmptyStateCreatesNoIndex(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(state, "index")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("index dir created: %v", err)
+	}
+}
+
+// IndexAdd shares gc.lock.d with IndexRebuild: it waits out a holder, and
+// fails rather than appending once the wait runs out.
+func TestIndexAddTakesTheGCLock(t *testing.T) {
+	state := filepath.Join(t.TempDir(), "crew")
+	if err := os.MkdirAll(state, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	lockDir := filepath.Join(state, "gc.lock.d")
+	if !lock.Acquire(lockDir, "rebuilder") {
+		t.Fatal("cannot take gc.lock.d")
+	}
+	old := gcLockWait
+	gcLockWait = 200 * time.Millisecond
+	t.Cleanup(func() { gcLockWait = old })
+
+	if _, err := IndexAdd(state, "/r/.git", "o/r", "c1", time.UnixMilli(10)); err == nil || !strings.Contains(err.Error(), "gc.lock.d is held") {
+		t.Fatalf("IndexAdd under a held gc.lock.d: %v", err)
+	}
+	if _, err := os.Lstat(IndexPath(state, "/r/.git")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("index written under a held lock: %v", err)
+	}
+
+	gcLockWait = 5 * time.Second
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		lock.Release(lockDir)
+	}()
+	if added, err := IndexAdd(state, "/r/.git", "o/r", "c1", time.UnixMilli(10)); err != nil || !added {
+		t.Fatalf("IndexAdd after release: %v, %v", added, err)
+	}
+	if _, err := os.Lstat(lockDir); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("gc.lock.d left behind: %v", err)
 	}
 }

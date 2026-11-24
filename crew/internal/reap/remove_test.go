@@ -554,7 +554,7 @@ func TestForget(t *testing.T) {
 	gone = slices.DeleteFunc(gone, func(p string) bool { return p == dir+"/directive-delivery/"+sanitize(id) })
 	kept = append(kept, write(dir+"/directive-delivery/"+sanitize(id), "d\nworker:feat/r#s1x\n"))
 
-	f.run().forget(rb)
+	f.run().forget(rb, "")
 	for _, p := range gone {
 		if _, err := os.Lstat(p); !os.IsNotExist(err) {
 			t.Errorf("%s still there", p)

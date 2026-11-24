@@ -118,10 +118,21 @@ func table(ctx context.Context, homeOnly bool, paths bus.Paths, stdout, stderr i
 		return 0
 	}
 
+	// A corrupt log contributes nothing to stats (jq -s failed whole,
+	// `|| echo '{}'`); a layout-2 crew's rows are on its own log.
+	var docs []any
+	if logOK {
+		for _, ev := range events {
+			docs = append(docs, ev.Doc)
+		}
+	}
 	meta := make([]any, 0, len(ids))
 	for _, id := range ids {
 		var pid, pidfile string
 		if crew, err := paths.Crew(id); err == nil {
+			if crew.Layout == 2 {
+				docs = append(docs, crewDocs(crew)...)
+			}
 			pidfile = crew.Dir + "/pid"
 			var hasFile bool
 			if pid, hasFile = PidFileText(pidfile); !hasFile {
@@ -141,14 +152,8 @@ func table(ctx context.Context, homeOnly bool, paths bus.Paths, stdout, stderr i
 		meta = append(meta, map[string]any{"id": id, "pid": pidV, "alive": alive})
 	}
 
-	// A corrupt log contributes nothing to stats (jq -s failed whole,
-	// `|| echo '{}'`).
 	var stats any = map[string]any{}
-	if logOK {
-		docs := make([]any, len(events))
-		for i, ev := range events {
-			docs[i] = ev.Doc
-		}
+	if len(docs) > 0 {
 		if v, err := jqrun.RunAny(statsProgram, docs, nowSec, nil); err == nil {
 			stats = v
 		}
@@ -169,6 +174,22 @@ func table(ctx context.Context, homeOnly bool, paths bus.Paths, stdout, stderr i
 		say(stdout, "%s\n", s)
 	}
 	return 0
+}
+
+// crewDocs is layout-2 crew c's own rows, none when its log is missing or
+// corrupt.
+func crewDocs(c bus.Crew) []any {
+	events, err := bus.ReadEventsTolerant(c.Log)
+	if err != nil {
+		return nil
+	}
+	var docs []any
+	for _, ev := range events {
+		if ev.CrewID == c.ID {
+			docs = append(docs, ev.Doc)
+		}
+	}
+	return docs
 }
 
 // IDs is the crew set `crew crews` lists for a bus.

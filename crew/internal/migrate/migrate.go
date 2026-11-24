@@ -104,6 +104,10 @@ func prelude(ctx context.Context, action string, req Request, paths bus.Paths, c
 		return nil, r.refuse("no crew id — pass --crew or set CREW_ID")
 	}
 	c, err := paths.Crew(req.Crew)
+	if bus.IsRefusal(err) {
+		_, _ = fmt.Fprintf(stderr, "crew: %v\n", err)
+		return nil, 1
+	}
 	if err != nil {
 		return nil, r.refuse("invalid crew id '" + req.Crew + "'")
 	}

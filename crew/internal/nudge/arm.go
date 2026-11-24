@@ -126,6 +126,10 @@ func Run(ctx context.Context, r Request, paths bus.Paths, stdout, stderr io.Writ
 		return fail(stderr, "CREW_ID not set and no WORKER_TASK.md crew_id — pass --crew <id>")
 	}
 	bc, err := paths.Crew(a.crew)
+	if bus.IsRefusal(err) {
+		say(stderr, "crew: %v\n", err)
+		return exitFailure
+	}
 	if err != nil {
 		return fail(stderr, "invalid crew id "+a.crew)
 	}

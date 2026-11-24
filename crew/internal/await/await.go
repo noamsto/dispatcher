@@ -79,6 +79,10 @@ func Run(req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int 
 		return 1
 	}
 	cr, err := paths.Crew(crew)
+	if bus.IsRefusal(err) {
+		say(stderr, "crew: %v\n", err)
+		return 1
+	}
 	if err != nil {
 		say(stderr, "crew: await: invalid crew id %s\n", crew)
 		return 1

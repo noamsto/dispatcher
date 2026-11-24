@@ -45,6 +45,10 @@ func RunOverseerRelay(ctx context.Context, req OverseerMsgRequest, paths bus.Pat
 // postOverseerRow is the row both entry points write, so its shape cannot drift.
 func postOverseerRow(sub string, req OverseerMsgRequest, from string, ts int64, paths bus.Paths, stderr io.Writer) int {
 	c, err := paths.Crew(req.Crew)
+	if bus.IsRefusal(err) {
+		say(stderr, "crew: %v\n", err)
+		return exitFailure
+	}
 	if err != nil {
 		say(stderr, "crew: %s: invalid crew id %s\n", sub, req.Crew)
 		return exitFailure

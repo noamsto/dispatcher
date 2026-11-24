@@ -2,6 +2,7 @@ package reap
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"strings"
 
@@ -12,9 +13,10 @@ import (
 
 // rowCrewID is the crew id a reap or release row carries: the first valid one
 // of the window stamps, the worktree record's fifth line, then the newest
-// dispatch row of the branch in docs, then in indexDocs (the layout-2 crews the
-// repo index lists; may be nil). Each is read only when the earlier sources name
-// none. It must run before the windows are killed and the record removed.
+// dispatch row of the branch across docs and indexDocs (the layout-2 crews the
+// repo index lists; may be nil), by ts with ties to docs. The record is read
+// only when no stamp names a crew, and the logs only when neither does. It must
+// run before the windows are killed and the record removed.
 func rowCrewID(ctx context.Context, tm tmux.Client, windows []string, wt, branch string, docs, indexDocs func() []map[string]any) string {
 	for _, w := range windows {
 		out, _ := tm.Run(ctx, "display-message", "-p", "-t", w, "#{@crew_id}")
@@ -25,28 +27,37 @@ func rowCrewID(ctx context.Context, tm tmux.Client, windows []string, wt, branch
 	if id := recordCrewID(wt); bus.ValidCrewID(id) {
 		return id
 	}
-	if id := newestDispatchCrewID(docs(), branch); id != "" {
+	id, ts := newestDispatch(docs(), branch)
+	if indexDocs == nil {
 		return id
 	}
-	if indexDocs == nil {
-		return ""
+	if iid, its := newestDispatch(indexDocs(), branch); iid != "" && (id == "" || its > ts) {
+		return iid
 	}
-	return newestDispatchCrewID(indexDocs(), branch)
+	return id
 }
 
-// newestDispatchCrewID is the valid crew id of the last dispatch row of branch
-// in docs, "" when there is none.
-func newestDispatchCrewID(docs []map[string]any, branch string) string {
+// newestDispatch is the valid crew id and ts of the last dispatch row of
+// branch in docs, "" when there is none.
+func newestDispatch(docs []map[string]any, branch string) (string, float64) {
 	var newest map[string]any
 	for _, doc := range docs {
 		if doc["kind"] == "dispatch" && doc["branch"] == branch {
 			newest = doc
 		}
 	}
-	if id, _ := newest["crew_id"].(string); bus.ValidCrewID(id) {
-		return id
+	id, _ := newest["crew_id"].(string)
+	if !bus.ValidCrewID(id) {
+		return "", 0
 	}
-	return ""
+	var ts float64
+	switch v := newest["ts"].(type) {
+	case json.Number:
+		ts, _ = v.Float64()
+	case float64:
+		ts = v
+	}
+	return id, ts
 }
 
 // rowLog is the log a row carrying crew id goes to; an id that does not resolve

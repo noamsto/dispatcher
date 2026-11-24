@@ -71,6 +71,10 @@ func Run(q Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int {
 	log, state := paths.Log, paths.Dir
 	if crew != "" {
 		c, err := paths.Crew(crew)
+		if bus.IsRefusal(err) {
+			say(stderr, "crew: %v\n", err)
+			return 1
+		}
 		if err != nil {
 			say(stderr, "crew: inbox: invalid crew id %s\n", crew)
 			return 1

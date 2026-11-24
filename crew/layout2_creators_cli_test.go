@@ -14,7 +14,8 @@ import (
 )
 
 // creatorArgs are the arms that created crews/<id>/ or its log's directory
-// before layout 2; each takes the crew from CREW_ID.
+// before layout 2, and the arms that read or write a crew's log; each takes
+// the crew from CREW_ID.
 var creatorArgs = map[string][]string{
 	"status":        {"status", "worker:feat/x#s1-1", "working"},
 	"reply":         {"reply", "worker:feat/x#s1-1", "go"},
@@ -23,6 +24,17 @@ var creatorArgs = map[string][]string{
 	"stream":        {"stream", "--status"},
 	"queue add":     {"queue", "add", "--ref", "#12", "title"},
 	"queue drop":    {"queue", "drop", "q1"},
+	"await":         {"await", "worker:feat/x#s1-1", "--timeout", "0"},
+	"inbox":         {"inbox", "worker:feat/x#s1-1"},
+	"merge":         {"merge", "1", "--dry-run"},
+	"migrate":       {"migrate", "stop", "feat/x"},
+	"nudge":         {"nudge", "feat/x"},
+}
+
+// crewFlagArgs are the creatorArgs arms that take the crew from --crew.
+var crewFlagArgs = map[string]bool{
+	"reply": true, "watch": true, "stream": true, "roster-render": true,
+	"queue add": true, "queue drop": true, "merge": true, "migrate": true, "nudge": true,
 }
 
 func TestCreatorsRefuseArchivedAndIndexOnlyCrews(t *testing.T) {
@@ -57,7 +69,7 @@ func TestCreatorsRefuseArchivedAndIndexOnlyCrews(t *testing.T) {
 			t.Run(name+"/"+id, func(t *testing.T) {
 				c.as(id)
 				argv := append([]string{}, args...)
-				if name == "reply" || name == "watch" || strings.HasPrefix(name, "queue") || name == "stream" || name == "roster-render" {
+				if crewFlagArgs[name] {
 					argv = append(argv, "--crew", id)
 				}
 				_, errOut, code := c.run(argv...)

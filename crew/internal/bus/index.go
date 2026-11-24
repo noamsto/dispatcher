@@ -46,7 +46,8 @@ func IndexPath(state, repoTag string) string {
 
 // IndexAdd lists id in repoTag's index, writing the header first when the file
 // is new. An id already listed is left alone (added false); otherwise the entry
-// is one O_APPEND write.
+// is one O_APPEND write. It runs under state/gc.lock.d, so an IndexRebuild
+// replacing or removing the file cannot drop the append.
 func IndexAdd(state, repoTag, slug, id string, now time.Time) (bool, error) {
 	if !ValidCrewID(id) {
 		return false, &InvalidCrewIDError{ID: id}
@@ -55,6 +56,11 @@ func IndexAdd(state, repoTag, slug, id string, now time.Time) (bool, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return false, err
 	}
+	release, err := acquireGCLock(state)
+	if err != nil {
+		return false, err
+	}
+	defer release()
 	path := IndexPath(state, repoTag)
 	if _, err := os.Lstat(path); errors.Is(err, fs.ErrNotExist) {
 		hdr, err := json.Marshal(IndexHeader{V: indexVersion, Common: repoTag, Slug: slug})
@@ -123,8 +129,23 @@ func readIndex(path string) []string {
 	return ids
 }
 
-// rebuildWait bounds how long IndexRebuild waits for another gc.lock.d holder.
-const rebuildWait = 10 * time.Second
+// gcLockWait bounds how long an index writer waits for another gc.lock.d
+// holder.
+var gcLockWait = 10 * time.Second
+
+// acquireGCLock takes state/gc.lock.d, polling until gcLockWait runs out.
+func acquireGCLock(state string) (release func(), err error) {
+	lockDir := state + "/gc.lock.d"
+	owner := strconv.Itoa(os.Getpid())
+	deadline := time.Now().Add(gcLockWait)
+	for !lock.Acquire(lockDir, owner) {
+		if time.Now().After(deadline) {
+			return nil, fmt.Errorf("%s is held by pid %s", lockDir, lock.Holder(lockDir))
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	return func() { lock.Release(lockDir) }, nil
+}
 
 // IndexRebuild regenerates every repo index from the logs: a crew with a
 // crews/ or archive/ meta.json is listed for each repo its own dispatch rows
@@ -135,16 +156,11 @@ func IndexRebuild(state string, slugOf func(common string) string) error {
 	if err := os.MkdirAll(state, 0o755); err != nil {
 		return err
 	}
-	lockDir := state + "/gc.lock.d"
-	owner := strconv.Itoa(os.Getpid())
-	deadline := time.Now().Add(rebuildWait)
-	for !lock.Acquire(lockDir, owner) {
-		if time.Now().After(deadline) {
-			return fmt.Errorf("%s is held by pid %s", lockDir, lock.Holder(lockDir))
-		}
-		time.Sleep(50 * time.Millisecond)
+	release, err := acquireGCLock(state)
+	if err != nil {
+		return err
 	}
-	defer lock.Release(lockDir)
+	defer release()
 
 	repos := map[string]map[string]int64{} // repo → crew → earliest dispatch ts
 	for _, root := range []string{state + "/crews", state + "/archive"} {

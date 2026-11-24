@@ -17,8 +17,9 @@ var forgetProg string
 // forget is `_reap_forget`: drop the reaped branch's grants, protocol-dirs and
 // leads files and its sessions' await marks, phase-status and
 // directive-delivery records, by exact derived path. artifacts/<branch> stays:
-// it can hold a --discard patch. Best-effort throughout.
-func (r *run) forget(branch string) {
+// it can hold a --discard patch. Best-effort throughout. A layout-2 crewID
+// adds its own log's sessions, whose marks live under its store dir.
+func (r *run) forget(branch, crewID string) {
 	dir := r.paths.Dir
 	parent := ""
 	if i := strings.LastIndex(branch, "/"); i >= 0 {
@@ -35,6 +36,11 @@ func (r *run) forget(branch string) {
 	}
 
 	raws, err := readRaws(r.paths.Log)
+	if bc, cerr := r.paths.Crew(crewID); crewID != "" && cerr == nil && bc.Layout == 2 {
+		if more, merr := readRaws(bc.Log); merr == nil {
+			raws, err = append(raws, more...), nil
+		}
+	}
 	if err != nil {
 		return
 	}

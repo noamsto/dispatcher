@@ -49,13 +49,15 @@ func TestLayout1Golden(t *testing.T) {
 		for old, repl := range map[string]string{c.repo: "<REPO>", home: "<HOME>", state: "<STATE>", clockFile: "<CLOCK>"} {
 			s = strings.ReplaceAll(s, old, repl)
 		}
-		for _, p := range []string{pid, strconv.Itoa(os.Getpid())} {
-			s = regexp.MustCompile(`\b`+p+`\b`).ReplaceAllString(s, "<PID>")
-		}
 		s = goldenBy.ReplaceAllString(s, " by=<BY>")
 		s = goldenISO.ReplaceAllString(s, "<ISO>")
 		s = goldenUID.ReplaceAllString(s, "<START>")
-		return goldenTS.ReplaceAllString(s, "<TS>")
+		s = goldenTS.ReplaceAllString(s, "<TS>")
+		// Last, so a small pid cannot match inside a timestamp or start token.
+		for _, p := range []string{pid, strconv.Itoa(os.Getpid())} {
+			s = regexp.MustCompile(`\b`+p+`\b`).ReplaceAllString(s, "<PID>")
+		}
+		return s
 	}
 
 	// snapshot lists every file under root; content is shown for the files

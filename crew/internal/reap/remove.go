@@ -131,7 +131,7 @@ func (r *run) remove(ctx context.Context, c *candidate) (removed bool, code int)
 		_, _ = fmt.Fprintf(r.stderr, "crew reap: could not record the reap row for %s: %v\n", c.branch, err)
 	}
 	r.postReaped(c)
-	r.forget(c.branch)
+	r.forget(c.branch, c.crewID)
 	r.deleteBranch(ctx, c)
 	r.deleteOriginBranch(ctx, c)
 	r.releaseLabels(ctx, c)

@@ -259,7 +259,7 @@ func (r *run) retireGhost(ctx context.Context, row latestRow) (bool, int) {
 		return false, 0
 	}
 	r.postReaped(&candidate{latestRow: row, mode: "ghost", label: "worktree already gone"})
-	r.forget(row.branch)
+	r.forget(row.branch, "")
 	r.note("retired " + row.branch + " (worktree already gone)")
 	return true, 0
 }

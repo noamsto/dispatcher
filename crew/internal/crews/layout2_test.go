@@ -133,3 +133,30 @@ func TestPidfileLogWritesUnderTheStateRoot(t *testing.T) {
 		t.Errorf("repo pidfile.log written for a layout-2 crew: %v", err)
 	}
 }
+
+// A layout-2 crew's rows are on its own log, so its stats come from there;
+// foreign crew_ids on that log stay out.
+func TestCrewsTableStatsALayout2CrewFromItsOwnLog(t *testing.T) {
+	p := layout2Fixture(t)
+	body := strings.Join([]string{
+		status(1785951000000, "c-live", "worker:feat/x#s1"),
+		status(1785950000000, "c-live", "worker:feat/y#s2"),
+		status(1785950500000, "c-legacy", "worker:feat/z#s3"),
+	}, "\n") + "\n"
+	if err := os.WriteFile(bus.StoreDir(p.State, "c-live")+"/events.jsonl", []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, errB, code := run(t, p, opts(map[int]bool{4321: true}, nil))
+	if code != 0 || errB != "" {
+		t.Fatalf("code %d, stderr %q", code, errB)
+	}
+	want := strings.Join([]string{
+		header,
+		"c-live\t264\t1264\t2\t4321\tyes",
+		"c-dead\t—\t—\t0\t8888\tno",
+		"c-legacy\t—\t—\t0\t—\t—",
+	}, "\n") + "\n"
+	if out != want {
+		t.Errorf("got:\n%s\nwant:\n%s", out, want)
+	}
+}

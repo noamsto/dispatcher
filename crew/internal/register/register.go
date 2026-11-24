@@ -13,6 +13,7 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -172,7 +173,7 @@ func Run(sub, pid string, paths bus.Paths, stderr io.Writer, o Options) int {
 // registerCrew resolves crew for register under CREW_LAYOUT. Unset, "" and 1
 // are today's resolution. 2 creates the layout-2 crew unless the id already
 // resolves to one (the pin is sticky either way), is refused (archived,
-// index-only), or has a legacy dir in this repo, which keeps it layout 1.
+// index-only), or has a legacy trace in this repo, which keeps it layout 1.
 func registerCrew(paths bus.Paths, crew string, o Options) (bus.Crew, error) {
 	switch v := o.Getenv("CREW_LAYOUT"); v {
 	case "", "1":
@@ -189,7 +190,7 @@ func registerCrew(paths bus.Paths, crew string, o Options) (bus.Crew, error) {
 	}
 	bc, err := paths.Crew(crew)
 	switch {
-	case err == nil && (bc.Layout == 2 || filekind.IsDir(bc.Dir)):
+	case err == nil && (bc.Layout == 2 || legacy(paths, bc)):
 		return bc, nil
 	case err != nil && !errors.Is(err, bus.ErrNotRepo):
 		return bc, err
@@ -202,6 +203,16 @@ func registerCrew(paths bus.Paths, crew string, o Options) (bus.Crew, error) {
 		return bus.Crew{}, &errCreate{err}
 	}
 	return paths.Crew(crew)
+}
+
+// legacy reports whether layout-1 crew bc left a trace in this repo: its dir,
+// its home record, or a row on the repo log. Deregister removes only the dir,
+// so a running legacy crew between register cycles has just the other two.
+func legacy(paths bus.Paths, bc bus.Crew) bool {
+	if filekind.IsDir(bc.Dir) || filekind.IsRegular(crews.HomePath(paths, bc.ID)) {
+		return true
+	}
+	return slices.Contains(crews.IDs(paths), bc.ID)
 }
 
 // newMeta is the meta.json of a crew register creates where paths is.
