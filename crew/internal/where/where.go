@@ -60,7 +60,7 @@ type Options struct {
 	// Remote runs argv on host as crew with its stdout going to stdout, and
 	// returns its status: how a worker dispatched there is asked where it is.
 	// Nil routes nothing.
-	Remote func(host, crew string, argv []string, stdout io.Writer) int
+	Remote func(host, crew string, argv []string, stdout io.Writer, crewScope bool) int
 }
 
 // window is one crew-anchored window, in the six fields the arm kept from the
@@ -232,9 +232,13 @@ func Run(ctx context.Context, req Request, paths bus.Paths, stdout, stderr io.Wr
 		return die(stderr, "cannot read tmux panes (is a tmux server running?)")
 	}
 	panes := readPanes(panesRaw)
+	wins, err := readWindows(winsRaw, paths, crew)
+	if err != nil {
+		return die(stderr, "cannot read the crew log: %v", err)
+	}
 
 	if o.Remote != nil {
-		host, branch, err := remote.ResolveTarget(resolve.Rows(paths.Log), target, crew, localMatch(readWindows(winsRaw, paths.Dir, crew), target))
+		host, branch, err := remote.ResolveTarget(resolve.Rows(paths.Log), target, crew, localMatch(wins, target))
 		if err != nil {
 			return die(stderr, "%v", err)
 		}
@@ -251,7 +255,7 @@ func Run(ctx context.Context, req Request, paths bus.Paths, stdout, stderr io.Wr
 		}
 	}
 
-	win, hit, code := resolveTarget(readWindows(winsRaw, paths.Dir, crew), panes, target, crew, paths, stderr)
+	win, hit, code := resolveTarget(wins, panes, target, crew, paths, stderr)
 	if code != 0 {
 		return code
 	}
@@ -307,7 +311,9 @@ func whereRemote(host, branch, crew, winsRaw string, panes []pane, paths bus.Pat
 	mirror, ok := mirrorWindow(winsRaw, branch, crew)
 	if !ok {
 		var out bytes.Buffer
-		if rc := o.Remote(host, crew, []string{"crew", "where", "--crew", crew, "--", branch}, &out); rc != 0 {
+		events, _ := bus.ReadEventsTolerant(paths.Log)
+		crewScope := remote.BranchLayout(events, branch, crew) == 2
+		if rc := o.Remote(host, crew, []string{"crew", "where", "--crew", crew, "--", branch}, &out, crewScope); rc != 0 {
 			return rc
 		}
 		say(stdout, "%s [host %s]\n", strings.TrimSuffix(out.String(), "\n"), host)
@@ -353,12 +359,31 @@ func mirrorWindow(raw, branch, crew string) (window, bool) {
 // readWindows is the arm's crew filter over `list-windows`: the eight format
 // fields, a non-empty branch, this repo's crew dir, and this crew's id when the
 // window carries one. An empty caller crew (no CREW_ID, no WORKER_TASK.md)
-// filters nothing at all.
-func readWindows(raw, dir, crew string) []window {
+// filters nothing at all. A state-only call (dir "") has no checkout, so a
+// window is this crew's only when its id says so and the crew's own dispatch row
+// for its branch names its dir: any process on the tmux server can stamp a window
+// with a crew's id, so the id alone binds nothing (remote.WindowBound, whose doc
+// says what a copied dir still gets past).
+func readWindows(raw string, paths bus.Paths, crew string) ([]window, error) {
+	dir := paths.Dir
+	var events []bus.Event
+	if dir == "" && crew != "" {
+		var err error
+		if events, err = remote.BoundRows(paths.Log); err != nil {
+			return nil, err
+		}
+	}
 	var wins []window
 	for _, line := range strings.Split(raw, "\n") {
 		f := strings.Split(line, "\t")
-		if len(f) < 8 || f[1] == "" || f[2] != dir {
+		if len(f) < 8 || f[1] == "" {
+			continue
+		}
+		if dir == "" {
+			if crew == "" || f[3] != crew || !remote.WindowBound(events, f[1], crew, f[2]) {
+				continue
+			}
+		} else if f[2] != dir {
 			continue
 		}
 		if crew != "" && f[3] != "" && f[3] != crew {
@@ -368,7 +393,7 @@ func readWindows(raw, dir, crew string) []window {
 			id: f[0], branch: f[1], name: f[4], session: f[5], index: f[6], winName: f[7],
 		})
 	}
-	return wins
+	return wins, nil
 }
 
 // readPanes is the raw `list-panes` list: the arm searched every pane, not just
@@ -403,10 +428,19 @@ func resolveTarget(wins []window, panes []pane, target, crew string, paths bus.P
 		return window{}, pane{}, die(stderr, "pane %s is not a pane of this crew", target)
 	}
 
+	var byBranch []window
 	for _, w := range wins {
 		if w.branch == target {
-			return w, pane{}, 0
+			byBranch = append(byBranch, w)
 		}
+	}
+	// A state-only call picks windows by stamp and dispatch row alone, so two for
+	// one branch (a copied stamp, a stale window) is refused rather than guessed.
+	if len(byBranch) > 1 && paths.Dir == "" {
+		return window{}, pane{}, die(stderr, "ambiguous branch '%s' — %d windows carry it", target, len(byBranch))
+	}
+	if len(byBranch) > 0 {
+		return byBranch[0], pane{}, 0
 	}
 
 	var matches []window

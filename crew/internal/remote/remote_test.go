@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -689,6 +690,87 @@ func TestBuildRequestLayout(t *testing.T) {
 
 var crewEnv = []string{"CREW_ID=c1", "DISPATCH_ORIGIN_HOST=halo"}
 
+// crewVerb is a crew-scope verb with its own flags and positionals, as the
+// origin sends them.
+type crewVerb struct {
+	name       string
+	flags, pos []string
+}
+
+var crewVerbs = []crewVerb{
+	{"reply", []string{"--no-nudge"}, []string{"worker:b#s1-1", "body"}},
+	{"nudge", []string{"--wait", "30"}, []string{"b"}},
+	{"where", nil, []string{"b"}},
+}
+
+type namedArgv struct {
+	name string
+	argv []string
+}
+
+func (v crewVerb) argv(parts ...[]string) []string {
+	return slices.Concat(append([][]string{{"crew", v.name}}, parts...)...)
+}
+
+// accepted are argvs the verb grammar must admit for crew c1.
+func (v crewVerb) accepted() []namedArgv {
+	crew, sep := []string{"--crew", "c1"}, []string{"--"}
+	rows := []namedArgv{
+		{"good", v.argv(crew, v.flags, sep, v.pos)},
+		{"no flags", v.argv(crew, sep, v.pos)},
+		{"--crew=", v.argv([]string{"--crew=c1"}, v.flags, sep, v.pos)},
+		{"flags first", v.argv(v.flags, crew, sep, v.pos)},
+	}
+	if v.name == "nudge" {
+		rows = append(rows, namedArgv{"--wait at the cap", v.argv(crew, []string{"--wait", "86400"}, sep, v.pos)})
+	}
+	if v.name == "reply" {
+		rows = append(rows, namedArgv{"body that reads --crew=", v.argv(crew, sep, []string{v.pos[0], "--crew=zzz"})})
+	}
+	return rows
+}
+
+// refusals are argvs the verb grammar must refuse for crew c1.
+func (v crewVerb) refusals() []namedArgv {
+	crew, sep := []string{"--crew", "c1"}, []string{"--"}
+	rows := []namedArgv{
+		{"no --crew", v.argv(v.flags, sep, v.pos)},
+		{"--crew mismatch", v.argv([]string{"--crew", "far"}, v.flags, sep, v.pos)},
+		{"--crew= mismatch", v.argv([]string{"--crew=far"}, v.flags, sep, v.pos)},
+		{"duplicate --crew", v.argv(crew, crew, v.flags, sep, v.pos)},
+		{"duplicate --crew=", v.argv(crew, []string{"--crew=c1"}, v.flags, sep, v.pos)},
+		{"--crew then --", v.argv([]string{"--crew"}, sep, v.pos)},
+		{"no --", v.argv(crew, v.flags, v.pos)},
+		{"too few positionals", v.argv(crew, v.flags, sep, v.pos[:len(v.pos)-1])},
+		{"too many positionals", v.argv(crew, v.flags, sep, v.pos, []string{"extra"})},
+	}
+	for _, extra := range [][]string{
+		{"--log"}, {"--dir"}, {"--json"}, {"--home"}, {"--crew-scope"}, {"--spec-file", "x"}, {"--pane", "%1"},
+		{"--wait", "30"}, {"--no-nudge"},
+	} {
+		if len(v.flags) > 0 && v.flags[0] == extra[0] {
+			continue
+		}
+		rows = append(rows, namedArgv{"extra " + extra[0], v.argv(crew, extra, v.flags, sep, v.pos)})
+	}
+	switch v.name {
+	case "reply":
+		rows = append(rows,
+			namedArgv{"target not worker:", v.argv(crew, v.flags, sep, []string{"b#s1-1", "body"})},
+			namedArgv{"duplicate --no-nudge", v.argv(crew, v.flags, v.flags, sep, v.pos)})
+	case "nudge":
+		rows = append(rows,
+			namedArgv{"--wait abc", v.argv(crew, []string{"--wait", "abc"}, sep, v.pos)},
+			namedArgv{"--wait empty", v.argv(crew, []string{"--wait", ""}, sep, v.pos)},
+			namedArgv{"--wait=30", v.argv(crew, []string{"--wait=30"}, sep, v.pos)},
+			namedArgv{"--wait over the cap", v.argv(crew, []string{"--wait", "86401"}, sep, v.pos)},
+			namedArgv{"--wait overflowing", v.argv(crew, []string{"--wait", "99999999999999999999999"}, sep, v.pos)},
+			namedArgv{"--wait no value", v.argv(crew, []string{"--wait"}, sep, v.pos)},
+			namedArgv{"duplicate --wait", v.argv(crew, v.flags, v.flags, sep, v.pos)})
+	}
+	return rows
+}
+
 func TestBuildCrewRequest(t *testing.T) {
 	data, err := BuildCrewRequest([]string{"crew", "dispatch-row", "--crew", "c1", "--session", "s1-1"}, crewEnv)
 	if err != nil {
@@ -699,6 +781,18 @@ func TestBuildCrewRequest(t *testing.T) {
 	}
 	if _, err := BuildCrewRequest([]string{"crew", "relay", "--since", "0", "--crew=c1"}, crewEnv); err != nil {
 		t.Fatalf("relay --crew=c1 refused: %v", err)
+	}
+	for _, v := range crewVerbs {
+		for _, tc := range v.accepted() {
+			if _, err := BuildCrewRequest(tc.argv, crewEnv); err != nil {
+				t.Errorf("%s %s refused: %v", v.name, tc.name, err)
+			}
+		}
+		for _, tc := range v.refusals() {
+			if data, err := BuildCrewRequest(tc.argv, crewEnv); err == nil {
+				t.Errorf("%s %s accepted: %s", v.name, tc.name, data)
+			}
+		}
 	}
 	relay := []string{"crew", "relay", "--crew", "c1"}
 	for _, tc := range []struct {
@@ -761,7 +855,8 @@ func TestRunCrewScopeRefusesBeforeSSH(t *testing.T) {
 		{Call{Host: "mini", Cwd: cwd, CrewScope: true, Env: crewEnv, SpecFile: "spec.md", Argv: relay}, "crew: remote-run: --spec-file is not allowed with --crew-scope\n"},
 		{Call{Host: "mini", Cwd: cwd, CrewScope: true, Env: crewEnv, MigrateDir: "bundle", Argv: relay}, "crew: remote-run: --migrate-dir is not allowed with --crew-scope\n"},
 		{Call{Host: "maxi", Cwd: cwd, CrewScope: true, Env: crewEnv, Argv: relay}, "crew: remote-run: unknown host 'maxi' (no hosts.maxi in settings)\n"},
-		{Call{Host: "mini", Cwd: cwd, CrewScope: true, Env: crewEnv, Argv: []string{"crew", "reply", "--crew", "c1"}}, "crew: remote-run: argv not allowed in crew scope: [\"crew\" \"reply\"]\n"},
+		{Call{Host: "mini", Cwd: cwd, CrewScope: true, Env: crewEnv, Argv: []string{"crew", "reply", "--crew", "c1"}}, "crew: remote-run: crew scope: crew reply needs -- before its positionals\n"},
+		{Call{Host: "mini", Cwd: cwd, CrewScope: true, Env: crewEnv, Argv: []string{"crew", "reap", "--crew", "c1"}}, "crew: remote-run: argv not allowed in crew scope: [\"crew\" \"reap\"]\n"},
 		{Call{Host: "mini", Cwd: cwd, CrewScope: true, Env: crewEnv[:1], Argv: relay}, "crew: remote-run: crew scope needs env CREW_ID and DISPATCH_ORIGIN_HOST\n"},
 	} {
 		var stderr bytes.Buffer
@@ -811,5 +906,97 @@ func TestTailBufferCaps(t *testing.T) {
 	_, _ = b.Write([]byte("end"))
 	if got := b.String(); len(got) != maxStderrTail || !strings.HasSuffix(got, "aend") {
 		t.Fatalf("tail len %d, suffix %q", len(got), got[max(0, len(got)-4):])
+	}
+}
+
+func TestBranchLayout(t *testing.T) {
+	row := func(crew, branch, extra string) string {
+		return `{"kind":"dispatch","crew_id":"` + crew + `","branch":"` + branch + `","host":"mini","remote":true` + extra + `}`
+	}
+	for _, tc := range []struct {
+		name  string
+		lines []string
+		want  int
+	}{
+		{"layout 2", []string{row("c", "b", `,"crew_layout":2`)}, 2},
+		{"newest wins: 2 then 1", []string{row("c", "b", `,"crew_layout":2`), row("c", "b", "")}, 1},
+		{"newest wins: 1 then 2", []string{row("c", "b", ""), row("c", "b", `,"crew_layout":2`)}, 2},
+		{"absent", []string{row("c", "b", "")}, 1},
+		{"layout 1", []string{row("c", "b", `,"crew_layout":1`)}, 1},
+		{"string 2", []string{row("c", "b", `,"crew_layout":"2"`)}, 1},
+		{"other branch ignored", []string{row("c", "b", ""), row("c", "x", `,"crew_layout":2`)}, 1},
+		{"other crew ignored", []string{row("c", "b", ""), row("d", "b", `,"crew_layout":2`)}, 1},
+		{"no row", nil, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := BranchLayout(busRows(t, tc.lines...), "b", "c"); got != tc.want {
+				t.Fatalf("BranchLayout = %d, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
+// WindowBound trusts a window's dir only as far as the crew's newest dispatch row
+// for the branch: its repo plus /crew, compared by realpath when the spellings differ.
+func TestWindowBound(t *testing.T) {
+	real := t.TempDir()
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	for _, d := range []string{real, link} {
+		if err := os.MkdirAll(filepath.Join(d, "crew"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	row := func(crew, branch, repo string) bus.Event {
+		return bus.Event{Kind: bus.KindDispatch, CrewID: crew, Branch: branch, Doc: map[string]any{"repo": repo}}
+	}
+	resume := row("c1", "b", real)
+	resume.Kind = bus.KindResume
+	for _, tc := range []struct {
+		name string
+		rows []bus.Event
+		win  string
+		want bool
+	}{
+		{"row repo's crew dir", []bus.Event{row("c1", "b", real)}, real + "/crew", true},
+		{"same dir through a symlink", []bus.Event{row("c1", "b", real)}, link + "/crew", true},
+		{"another dir", []bus.Event{row("c1", "b", real)}, "/elsewhere/crew", false},
+		{"repo itself, not its crew dir", []bus.Event{row("c1", "b", real)}, real, false},
+		{"no row", nil, real + "/crew", false},
+		{"row of another crew", []bus.Event{row("c2", "b", real)}, real + "/crew", false},
+		{"row of another branch", []bus.Event{row("c1", "x", real)}, real + "/crew", false},
+		{"row with no repo", []bus.Event{row("c1", "b", "")}, "/crew", false},
+		{"a newer resume row in this dir", []bus.Event{row("c1", "b", "/moved"), resume}, real + "/crew", true},
+		{"a newer resume row in another dir", []bus.Event{row("c1", "b", real), func() bus.Event { r := row("c1", "b", "/moved"); r.Kind = bus.KindResume; return r }()}, real + "/crew", false},
+		{"the newest row wins", []bus.Event{row("c1", "b", real), row("c1", "b", "/moved")}, real + "/crew", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := WindowBound(tc.rows, "b", "c1", tc.win); got != tc.want {
+				t.Errorf("WindowBound = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestBoundRows(t *testing.T) {
+	d := t.TempDir()
+	write := func(name, content string) string {
+		p := filepath.Join(d, name)
+		if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	const row = `{"ts":1,"crew_id":"c1","kind":"dispatch","branch":"b"}` + "\n"
+	if rows, err := BoundRows(filepath.Join(d, "absent")); err != nil || len(rows) != 0 {
+		t.Errorf("missing log: %v, %v; want no rows and no error", rows, err)
+	}
+	if rows, err := BoundRows(write("ok", row)); err != nil || len(rows) != 1 {
+		t.Errorf("whole log: %v, %v; want one row", rows, err)
+	}
+	if _, err := BoundRows(write("torn", row+"{\"ts\":\n"+row)); err == nil {
+		t.Error("a log torn before its last row was read as whole")
 	}
 }

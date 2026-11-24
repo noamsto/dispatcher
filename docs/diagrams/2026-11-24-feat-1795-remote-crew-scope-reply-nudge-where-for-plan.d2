@@ -1,0 +1,22 @@
+direction: right
+origin: "origin host" {
+  routes: "reply.routeHost / nudge.route / where.whereRemote\nNEW: remote.BranchLayout(rows, branch, crew)\ncrew_layout 2 -> crewScope" {style.stroke: green}
+  closure: "main.go closures\nNEW remoteCrew: Call{CrewScope, CREW_ID,\nDISPATCH_ORIGIN_HOST = meta home_host}" {style.stroke: green}
+  repo: "layout 1: remoteAs, repo scope\nunchanged bytes"
+  routes -> closure: "layout 2"
+  routes -> repo: "layout 1"
+}
+exec: "remote host: remote-exec" {
+  crew: "admitCrew (unchanged)\nCrewArgv += reply, nudge, where\nNEW checkCrewVerb: strict flag grammar" {style.stroke: green}
+  home: "serveHome: cwd = home dir, no clone"
+  crew -> home
+}
+closure -> exec.crew: "scope crew, v2"
+visit: "visiting crew (home_repo null)" {
+  state: "state-only paths (stateOnly + where,\nerrNoHomeRepo tolerated)" {style.stroke: green}
+  match: "windows matched by @crew_id when Dir is empty;\nwait lock under bc.State" {style.stroke: green}
+  wait: "remote reply starts the one nudge wait\n(replyNudge deleted)" {style.stroke: green}
+  state -> match
+  state -> wait
+}
+exec.home -> visit

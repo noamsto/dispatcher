@@ -2762,3 +2762,58 @@ func TestCleanupHumanOnly(t *testing.T) {
 		t.Errorf("worker --auto: code %d stderr %q", code, stderr.String())
 	}
 }
+
+// remoteCrewCLI is a layout-2 crew c1 under a temp state root whose meta names
+// homeHost (none when ""), with a remote dispatch row of feat/far on mini at the
+// given layout, run from outside any repo, and ssh stubbed to capture the request.
+func remoteCrewCLI(t *testing.T, homeHost string, layout int) (c *lifecycleCLI, sent string) {
+	t.Helper()
+	c = newLifecycleCLI(t)
+	if err := bus.CreateMeta(c.state, bus.Meta{ID: "c1", Created: 1700000000000, HomeHost: homeHost, CreatedBy: "register"}); err != nil {
+		t.Fatal(err)
+	}
+	row := fmt.Sprintf(`{"ts":1700000002000,"crew_id":"c1","kind":"dispatch","branch":"feat/far","name":"iris","host":"mini","remote":true,"crew_layout":%d}`+"\n", layout)
+	if err := os.WriteFile(c.store("c1")+"/events.jsonl", []byte(row), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	unsetenv(t, "CREW_ID", "CREW_WORKER_ID", "CREW_ROLE_ID")
+	visitingTmux(t, "", "")
+	return c, remoteStubs(t, c.repo, "exit 0")
+}
+
+func TestLayout2RemoteVerbsGoToTheirHostInCrewScope(t *testing.T) {
+	for name, tc := range map[string]struct {
+		args []string
+		argv string
+	}{
+		"reply":            {[]string{"reply", "--crew", "c1", "worker:feat/far#s1-2", "go on"}, `["crew","reply","--crew","c1","--","worker:feat/far#s1-2","go on"]`},
+		"reply --no-nudge": {[]string{"reply", "--crew", "c1", "--no-nudge", "worker:feat/far#s1-2", "go on"}, `["crew","reply","--crew","c1","--no-nudge","--","worker:feat/far#s1-2","go on"]`},
+		"nudge":            {[]string{"nudge", "--crew", "c1", "feat/far"}, `["crew","nudge","--crew","c1","--","feat/far"]`},
+		"nudge --wait":     {[]string{"nudge", "--crew", "c1", "--wait", "30", "feat/far"}, `["crew","nudge","--crew","c1","--wait","30","--","feat/far"]`},
+		"where":            {[]string{"where", "--crew", "c1", "feat/far"}, `["crew","where","--crew","c1","--","feat/far"]`},
+	} {
+		t.Run(name, func(t *testing.T) {
+			c, sent := remoteCrewCLI(t, "originbox", 2)
+			c.expectIn(c.outside, 0, tc.args...)
+			got, err := os.ReadFile(sent)
+			if err != nil {
+				t.Fatalf("not routed: %v", err)
+			}
+			want := `{"v":2,"scope":"crew","repo":"","slug":"","argv":` + tc.argv + `,"env":{"CREW_ID":"c1","DISPATCH_ORIGIN_HOST":"originbox"}}`
+			if string(got) != want {
+				t.Errorf("sent %s\nwant %s", got, want)
+			}
+		})
+	}
+}
+
+func TestLayout2RemoteVerbWithoutHomeHostSendsNothing(t *testing.T) {
+	c, sent := remoteCrewCLI(t, "", 2)
+	_, errOut := c.expectIn(c.outside, 1, "reply", "--crew", "c1", "worker:feat/far#s1-2", "go on")
+	if want := "crew: reply: crew c1 has no readable home_host in its meta.json\n"; !strings.HasSuffix(errOut, want) {
+		t.Errorf("stderr %q, want it to end with %q", errOut, want)
+	}
+	if _, err := os.Stat(sent); err == nil {
+		t.Errorf("a request was sent")
+	}
+}

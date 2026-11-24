@@ -149,8 +149,11 @@ func childEnv(req Request) []string {
 }
 
 // serveHome runs an admitted host- or crew-scope request: no clone and no
-// scratch, so the child starts in the remote user's home with sshd's env plus
-// the request's (none for host scope).
+// scratch, so the child starts with sshd's env plus the request's (none for
+// host scope): in the remote user's home for host scope, in "/" for crew
+// scope. A crew-scope child must start outside any work tree: a $HOME that is
+// a git checkout would let the crew locate a repo, and a located repo turns
+// off the by-crew-id window match that nudge and where rely on.
 func serveHome(req Request, o ServeOptions, stdout, stderr io.Writer) int {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -163,6 +166,9 @@ func serveHome(req Request, o ServeOptions, stdout, stderr io.Writer) int {
 		return 127
 	}
 	cmd.Dir = home
+	if req.Scope == scopeCrew {
+		cmd.Dir = "/"
+	}
 	cmd.Env = childEnv(req)
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr

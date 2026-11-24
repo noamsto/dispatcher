@@ -1,0 +1,17 @@
+direction: right
+origin: "origin host" {
+  routes: "reply.routeHost / nudge.route / where.whereRemote\n(crew/internal/{reply,nudge,where})"
+  closure: "main.go remoteAs\nCall{Cwd, Env: CREW_ID}\nrepo scope only"
+  routes -> closure
+}
+exec: "remote host: remote-exec admit()\nexec.go" {
+  repo: "repo scope: checkRepo needs a clone"
+  crew: "crew scope: admitCrew\nCrewArgv = relay, dispatch-row only"
+}
+closure -> exec.repo: "v1 request today"
+closure -> exec.crew: "reply/nudge/where REFUSED\n(argv not allowed)" {style.stroke: red}
+visit: "visiting crew on remote\nmeta.json visiting:true\nhome_repo: null, no clone" {
+  nudge_gap: "nudge/where: @crew_dir == paths.Dir\nDir is empty -> no window matches"
+  home_gap: "main.go homePaths errors\nno home repo -> nudge exits 1"
+}
+exec.crew -> visit: "never reached for reply/nudge/where"

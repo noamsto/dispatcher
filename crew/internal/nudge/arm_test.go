@@ -58,7 +58,7 @@ type armFixture struct {
 	// holdLock is a live pid owning the wait lock, so the arm joins instead.
 	holdLock string
 	// remote is Options.Remote: where a remote worker's nudge goes.
-	remote func(host string, argv []string) int
+	remote func(host string, argv []string, _ bool) int
 	// sender is Options.Sender; zero checks nothing.
 	sender sender.Probes
 }
@@ -1222,6 +1222,9 @@ func TestNewRequest(t *testing.T) {
 		{"no wait", "nova", nil, Request{Target: "nova"}, true},
 		{"bare wait is the default", "nova", str(""), Request{Target: "nova", Wait: "1800"}, true},
 		{"digits", "nova", str("5"), Request{Target: "nova", Wait: "5"}, true},
+		{"at the cap", "nova", str("86400"), Request{Target: "nova", Wait: "86400"}, true},
+		{"over the cap", "nova", str("86401"), Request{Target: "nova", Wait: "86400"}, true},
+		{"overflowing", "nova", str("99999999999999999999999"), Request{Target: "nova", Wait: "86400"}, true},
 		// `--wait abc nova` is two targets, which the arm refuses rather than reading as a wait.
 		{"word with a target is a second target", "nova", str("abc"), Request{Target: "nova"}, false},
 		// `--wait nova` is a wait for a target named nova, budget still the default.
@@ -1270,7 +1273,7 @@ func TestRunRoutesARemoteWorker(t *testing.T) {
 			f := newArm(t)
 			f.remoteLog(farRow)
 			var calls []remoteCall
-			f.remote = func(host string, argv []string) int {
+			f.remote = func(host string, argv []string, _ bool) int {
 				calls = append(calls, remoteCall{host, argv})
 				return 3
 			}
@@ -1287,10 +1290,41 @@ func TestRunRoutesARemoteWorker(t *testing.T) {
 	}
 }
 
+// The newest dispatch row's crew_layout decides crew scope; argv is the same.
+func TestRunRoutesAsCrewScopeByLayout(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		row   string
+		scope bool
+	}{
+		{"layout 2", `{"ts":5,"crew_id":"c1","kind":"dispatch","branch":"feat/far","name":"iris","host":"mini","remote":true,"crew_layout":2}`, true},
+		{"layout 1", `{"ts":5,"crew_id":"c1","kind":"dispatch","branch":"feat/far","name":"iris","host":"mini","remote":true,"crew_layout":1}`, false},
+		{"no layout", farRow, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newArm(t)
+			f.remoteLog(tc.row)
+			var scope []bool
+			var argvs [][]string
+			f.remote = func(_ string, argv []string, crewScope bool) int {
+				scope, argvs = append(scope, crewScope), append(argvs, argv)
+				return 0
+			}
+			if rc := f.run(Request{Target: "iris", Wait: "60"}); rc != 0 {
+				t.Fatalf("rc = %d, stderr = %q", rc, f.errOut())
+			}
+			want := []string{"crew", "nudge", "--crew", "c1", "--wait", "60", "--", "feat/far"}
+			if !reflect.DeepEqual(scope, []bool{tc.scope}) || !reflect.DeepEqual(argvs, [][]string{want}) {
+				t.Fatalf("scope %v argv %v, want %v %v", scope, argvs, tc.scope, want)
+			}
+		})
+	}
+}
+
 func TestRunWithoutARemoteRowStaysLocal(t *testing.T) {
 	f := newArm(t)
 	f.remoteLog(farRow)
-	f.remote = func(string, []string) int { t.Fatal("a local worker's nudge reached Remote"); return 0 }
+	f.remote = func(string, []string, bool) int { t.Fatal("a local worker's nudge reached Remote"); return 0 }
 	if rc := f.run(Request{Target: featX}); rc != 0 {
 		t.Fatalf("rc = %d, stderr = %q", rc, f.errOut())
 	}
@@ -1303,7 +1337,7 @@ func TestRunRefusesATargetOnBothSides(t *testing.T) {
 	f := newArm(t)
 	f.pane.windows = f.windowRows("@7", featX, "iris")
 	f.remoteLog(farRow)
-	f.remote = func(string, []string) int { t.Fatal("an ambiguous target reached Remote"); return 0 }
+	f.remote = func(string, []string, bool) int { t.Fatal("an ambiguous target reached Remote"); return 0 }
 	want := "ambiguous target 'iris' — matches a local worker (feat/x) and a remote one on mini (feat/far); pass a branch"
 	if rc := f.run(Request{Target: "iris"}); rc != 1 || f.errOut() != want {
 		t.Errorf("rc = %d, stderr = %q, want 1 and %q", rc, f.errOut(), want)
@@ -1314,7 +1348,7 @@ func TestRunDispatcherGateComesBeforeRouting(t *testing.T) {
 	f := newArm(t)
 	f.env = map[string]string{"CREW_WORKER_ID": "worker:feat/x#s1-1"}
 	f.remoteLog(farRow)
-	f.remote = func(string, []string) int { t.Fatal("a worker's nudge reached Remote"); return 0 }
+	f.remote = func(string, []string, bool) int { t.Fatal("a worker's nudge reached Remote"); return 0 }
 	if rc := f.run(Request{Target: "iris"}); rc != 2 {
 		t.Errorf("rc = %d, want the dispatcher-only refusal's 2", rc)
 	}

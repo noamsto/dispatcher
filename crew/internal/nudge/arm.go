@@ -70,7 +70,7 @@ type Options struct {
 	PID int
 	// Remote runs argv on host and returns its status: how a nudge reaches a
 	// worker dispatched there, whose pane is on that host's tmux. Nil routes nothing.
-	Remote func(host string, argv []string) int
+	Remote func(host string, argv []string, crewScope bool) int
 	Sender sender.Probes // the sender check's reads; zero checks nothing
 }
 
@@ -83,6 +83,7 @@ type Request struct {
 // NewRequest folds the typed argv into a Request. A --wait value is a number of
 // seconds only when it is all digits: `--wait nova` waits the default and leaves
 // `nova` the target, and `nova --wait abc` has no such target to give, so ok is false.
+// A number over remote.MaxNudgeWait is held to it.
 func NewRequest(crew, target string, wait *string) (r Request, ok bool) {
 	r = Request{Crew: crew, Target: target}
 	switch {
@@ -90,7 +91,11 @@ func NewRequest(crew, target string, wait *string) (r Request, ok bool) {
 	case *wait == "":
 		r.Wait = "1800"
 	case ascii.IsDigits(*wait):
-		r.Wait = *wait
+		secs, err := strconv.Atoi(*wait)
+		if err != nil || secs > remote.MaxNudgeWait {
+			secs = remote.MaxNudgeWait
+		}
+		r.Wait = strconv.Itoa(secs)
 	case target != "":
 		return r, false
 	default:
@@ -161,11 +166,37 @@ func Run(ctx context.Context, r Request, paths bus.Paths, stdout, stderr io.Writ
 	}
 
 	// Only this checkout's crew, and only windows that carry a branch: an unanchored
-	// window is somebody's shell, never a worker's.
+	// window is somebody's shell, never a worker's. A state-only call (no Dir) has no
+	// checkout to compare a window's dir with, and any process on the tmux server can
+	// stamp a window with a crew's id: so a window counts only when this crew's own
+	// dispatch row for its branch names its dir (remote.WindowBound).
+	var events []bus.Event
+	if paths.Dir == "" {
+		if events, err = remote.BoundRows(a.bc.Log); err != nil {
+			return fail(stderr, "cannot read the crew log: "+err.Error())
+		}
+	}
 	var cwins [][]string
 	for _, r := range tsvRows(wins) {
-		if len(r) >= 5 && r[1] != "" && r[2] == paths.Dir && r[3] == a.crew {
-			cwins = append(cwins, r)
+		if len(r) < 5 || r[1] == "" || r[3] != a.crew {
+			continue
+		}
+		if paths.Dir == "" && !remote.WindowBound(events, r[1], a.crew, r[2]) || paths.Dir != "" && r[2] != paths.Dir {
+			continue
+		}
+		cwins = append(cwins, r)
+	}
+	if paths.Dir == "" {
+		// Two bound windows for one branch (a copied stamp, a stale window): typing
+		// into whichever lists first could hit the wrong pane.
+		n := 0
+		for _, r := range cwins {
+			if field(r, 1) == target {
+				n++
+			}
+		}
+		if n > 1 {
+			return fail(stderr, "ambiguous branch '"+target+"' — "+strconv.Itoa(n)+" windows carry it")
 		}
 	}
 	win := firstWhere(cwins, func(r []string) bool { return field(r, 1) == target })
@@ -288,7 +319,8 @@ func (a *arm) route(target, want, wait, localBranch string, stderr io.Writer) (c
 	if wait != "" {
 		argv = append(argv, "--wait", wait)
 	}
-	return a.o.Remote(host, append(argv, "--", cmp.Or(want, branch))), true
+	events, _ := bus.ReadEventsTolerant(a.bc.Log)
+	return a.o.Remote(host, append(argv, "--", cmp.Or(want, branch)), remote.BranchLayout(events, branch, a.crew) == 2), true
 }
 
 // resolveFallback is the arm's `_resolve_target` step: the target names a branch on the
@@ -404,7 +436,7 @@ func (a *arm) wait(ctx context.Context, wait string) int {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fail(a.stderr, err.Error())
 	}
-	lockDir := WaitLockDir(a.paths.Dir, a.sid)
+	lockDir := WaitLockDir(a.bc.State, a.sid)
 	owner := strconv.Itoa(a.o.PID)
 	joining := false
 	for !lock.Acquire(lockDir, owner) {

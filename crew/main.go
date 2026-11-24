@@ -538,8 +538,8 @@ func repoOptional(p crewArgs) bool {
 
 // stateOnly reports whether a call may run outside a repo because it needs no
 // repo path: remote-run in crew scope, and relay or dispatch-row naming a
-// layout-2 crew under the state root. reply, merge, watch, stream, nudge and
-// hold due qualify the same way.
+// layout-2 crew under the state root. reply, merge, watch, stream, nudge, hold
+// due and where (outside its path modes) qualify the same way.
 func stateOnly(p crewArgs, state string) bool {
 	var crew *string
 	switch p.sub {
@@ -559,6 +559,11 @@ func stateOnly(p crewArgs, state string) bool {
 		crew = p.typed.Stream.Crew
 	case "nudge":
 		crew = p.typed.Nudge.Crew
+	case "where":
+		if repoOptional(p) {
+			return false
+		}
+		crew = p.typed.Where.Crew
 	case "hold":
 		if p.cmd != "hold due" {
 			return false
@@ -574,30 +579,20 @@ func stateOnly(p crewArgs, state string) bool {
 	return err == nil && bc.Layout == 2
 }
 
+var errNoHomeRepo = errors.New("no home repo")
+
 // homePaths is the bus of the repo a layout-2 crew was registered in, resolving
 // crews under state, so a call outside any repo sees the same paths the crew's
-// dispatch stamped. It errors when the crew has no home repo.
+// dispatch stamped. It wraps errNoHomeRepo when the crew has no home repo.
 func homePaths(state, crew string) (bus.Paths, error) {
 	m, err := bus.ReadMeta(state, crew)
 	if err != nil {
 		return bus.Paths{}, err
 	}
 	if m.HomeRepo == nil {
-		return bus.Paths{}, fmt.Errorf("crew %s has no home repo", crew)
+		return bus.Paths{}, fmt.Errorf("crew %s has no home repo: %w", crew, errNoHomeRepo)
 	}
 	return bus.PathsFor(*m.HomeRepo).WithState(state), nil
-}
-
-// replyNudge is reply's nudge starter. Outside a repo with no home repo the
-// detached `crew nudge` could not resolve the lead's window, so reply says so
-// instead of reporting a wait that dies at once.
-func replyNudge(located bool, home bus.Paths, start func([]string, string) error) func([]string, string) error {
-	if located || home.Common != "" {
-		return start
-	}
-	return func([]string, string) error {
-		return errors.New("layout-2 crew with no home repo, outside a repo")
-	}
 }
 
 // runIndexAdd is `crew index add --crew <id>`: it lists a layout-2 crew in this
@@ -941,13 +936,17 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 			crew = str(parsed.typed.Merge.Crew)
 		case "nudge":
 			crew = str(parsed.typed.Nudge.Crew)
+		case "where":
+			crew = str(parsed.typed.Where.Crew)
 		case "hold":
 			crew = str(parsed.typed.Hold.Due.Crew)
 		}
 		if crew != "" {
 			var herr error
 			home, herr = homePaths(paths.State, crew)
-			if herr != nil && sub != "reply" && sub != "hold" {
+			// A crew with no home repo, a visiting one included, has its windows found by crew id.
+			tolerated := sub == "reply" || sub == "hold" || (errors.Is(herr, errNoHomeRepo) && (sub == "nudge" || sub == "where"))
+			if herr != nil && !tolerated {
 				say(stderr, "crew: %s: %v\n", sub, herr)
 				return exitFailure
 			}
@@ -959,7 +958,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 					return exitFailure
 				}
 				cwd, paths = home.Common, home
-			case sub == "nudge" || sub == "hold":
+			case sub == "nudge" || sub == "hold" || sub == "where":
 				paths = home
 			}
 		}
@@ -1271,10 +1270,13 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 			Clock:  clock.FromEnv(),
 			Proc:   e.proc,
 			Sender: senderProbes(e.proc),
-			Remote: func(host, crew string, argv []string) int {
+			Remote: func(host, crew string, argv []string, crewScope bool) int {
+				if crewScope {
+					return remoteCrew(ctx, e, paths.State, cwd, "reply", crew)(host, argv, stdout, stderr)
+				}
 				return remoteAs(ctx, e, cmp.Or(home.Common, cwd), crew)(host, argv, stdout, stderr)
 			},
-			Nudge: replyNudge(located, home, reply.DetachedNudge()),
+			Nudge: reply.DetachedNudge(),
 		})
 	}
 
@@ -1286,8 +1288,12 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 		crewID := sync.OnceValue(func() string { return e.crewID(ctx, cwd, str(n.Crew), false) })
 		o := nudge.Default(paths, stderr, os.Getpid(), crewID)
 		o.Sender = senderProbes(e.proc)
-		o.Remote = func(host string, argv []string) int {
-			return remoteAs(ctx, e, cwd, cmp.Or(req.Crew, crewID()))(host, argv, stdout, stderr)
+		o.Remote = func(host string, argv []string, crewScope bool) int {
+			crew := cmp.Or(req.Crew, crewID())
+			if crewScope {
+				return remoteCrew(ctx, e, paths.State, cwd, "nudge", crew)(host, argv, stdout, stderr)
+			}
+			return remoteAs(ctx, e, cwd, crew)(host, argv, stdout, stderr)
 		}
 		return nudge.Run(ctx, req, paths, stdout, stderr, o)
 	}
@@ -1335,7 +1341,10 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 		return where.Run(ctx, where.Request{Crew: str(w.Crew), Target: w.Target}, paths, stdout, stderr, where.Options{
 			CrewID: crewID,
 			Tmux:   tmux.Exec{},
-			Remote: func(host, crew string, argv []string, out io.Writer) int {
+			Remote: func(host, crew string, argv []string, out io.Writer, crewScope bool) int {
+				if crewScope {
+					return remoteCrew(ctx, e, paths.State, cwd, "where", crew)(host, argv, out, stderr)
+				}
 				return remoteAs(ctx, e, cwd, crew)(host, argv, out, stderr)
 			},
 		})
@@ -1560,6 +1569,22 @@ func crewPaths(paths bus.Paths, crew string) bus.Paths {
 func remoteAs(ctx context.Context, e env, cwd, crew string) func(host string, argv []string, stdout, stderr io.Writer) int {
 	return func(host string, argv []string, stdout, stderr io.Writer) int {
 		return remoteRun(ctx, e, remote.Call{Host: host, Cwd: cwd, Env: []string{"CREW_ID=" + crew}, Argv: argv}, stdout, stderr)
+	}
+}
+
+// remoteCrew runs a command on a remote host in crew scope, outside any clone,
+// as crew. The host admits it only for a crew visiting from this host, which it
+// knows by the home_host this crew's meta records, so a crew without one sends
+// nothing.
+func remoteCrew(ctx context.Context, e env, state, cwd, verb, crew string) func(host string, argv []string, stdout, stderr io.Writer) int {
+	return func(host string, argv []string, stdout, stderr io.Writer) int {
+		m, err := bus.ReadMeta(state, crew)
+		if err != nil || m.HomeHost == "" {
+			say(stderr, "crew: %s: crew %s has no readable home_host in its meta.json\n", verb, crew)
+			return exitFailure
+		}
+		vars := []string{"CREW_ID=" + crew, "DISPATCH_ORIGIN_HOST=" + m.HomeHost}
+		return remoteRun(ctx, e, remote.Call{Host: host, Cwd: cwd, CrewScope: true, Env: vars, Argv: argv}, stdout, stderr)
 	}
 }
 

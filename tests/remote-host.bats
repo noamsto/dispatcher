@@ -465,6 +465,35 @@ l2_dispatch() {
   [[ "$output" == *hello* ]]
 }
 
+@test "layout-2 origin: reply from outside any repo runs in crew scope and the remote reply decides the nudge wait" {
+  l2_origin
+  l2_dispatch
+  worker_id="$(sed -n 's/^worker_id: //p' <<<"$output" | head -1)"
+  [ -n "$worker_id" ]
+  wt="$(remote_wt "$(jq -r 'select(.kind == "dispatch") | .branch' "$L2_LOG")")"
+
+  mkdir -p "$BATS_TEST_TMPDIR/nowhere"
+  cd "$BATS_TEST_TMPDIR/nowhere"
+  run --separate-stderr crew reply --crew c1 "$worker_id" "hi2"
+  [ "$status" -eq 0 ] || {
+    echo "$stderr" >&2
+    false
+  }
+  jq -s -e 'any(.[]; .scope == "crew" and .argv[1] == "reply" and .repo == "" and .slug == "")' "$SSH_REQS"
+  [[ "$stderr" == *"reply: nudge wait started"* ]]
+  [[ "$stderr" != *"start failed"* ]]
+  wlog="$RHOME/state/crew/crews/c1/nudge-wait.log"
+  [[ "$stderr" == *"(log: $wlog)"* ]]
+  poll_for 100 grep -q 'lead has not posted its first status yet' "$wlog" || {
+    cat "$wlog" >&2
+    false
+  }
+  jq -e 'select(.kind == "msg" and .body == "hi2")' "$RHOME/state/crew/crews/c1/events.jsonl"
+  run on_remote "$wt" crew inbox "$worker_id"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *hi2* ]]
+}
+
 # pinned_remote_session — the remote tmux server and session `main` already
 # exist with a state root other than the remote dispatch's.
 pinned_remote_session() {
