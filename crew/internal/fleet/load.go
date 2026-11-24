@@ -445,7 +445,7 @@ func resolveBudget(ctx context.Context, flag *int, o LoadOptions) (int, error) {
 // collectLoad reads the machine's capacity against budget, and the branches
 // that already have a lead pane.
 func collectLoad(ctx context.Context, budget int, o LoadOptions) (LoadDoc, map[string]bool) {
-	return measure(ctx, budget, o, scanFleet(o.Registry, o.Getenv, readLog, o.Clock.Now().UnixMilli()).released)
+	return measure(ctx, budget, o, scanFleet(o.Registry, o.Getenv, readLog, o.Clock.Now().UnixMilli(), o.Stderr).released)
 }
 
 // measure is collectLoad over a fleet scan already read. A fleet hold released

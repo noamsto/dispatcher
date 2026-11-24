@@ -1,6 +1,8 @@
 package fleet
 
 import (
+	"io"
+
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/repos"
 )
@@ -12,13 +14,21 @@ const noRepo = "(no repo)"
 // and where its dir and log are.
 type layout2Crew struct{ id, home, dir, log string }
 
-// readLayout2 is every crew under the state root with a readable meta.json.
-func readLayout2(state string) []layout2Crew {
+// readLayout2 is every crew under the state root with a readable meta.json. One
+// whose meta.json is there but unreadable is left out with a stderr note: its
+// file pins it to layout 2, so its rows and holds can't be placed anywhere else.
+func readLayout2(state string, stderr io.Writer) []layout2Crew {
 	if state == "" {
 		return nil
 	}
+	metas, bad := bus.ScanMetas(state)
+	for _, b := range bad {
+		if stderr != nil {
+			say(stderr, "crew fleet: crew %s: unreadable meta.json (%s) — not listed\n", b.ID, oneLine(b.Err))
+		}
+	}
 	var out []layout2Crew
-	for _, m := range bus.LiveMetas(state) {
+	for _, m := range metas {
 		bc, err := bus.StatePaths(state).Crew(m.ID)
 		if err != nil || bc.Layout != 2 {
 			continue

@@ -1,9 +1,11 @@
 package fleet
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
@@ -458,5 +460,30 @@ func TestAnUnreadableLayout2CrewLogKeepsItsClocks(t *testing.T) {
 	got, ok := f.record()[k]
 	if !ok || got.Accrued <= 0 || got.FirstDue != 0 {
 		t.Errorf("record %v, want h2's entry kept with its due stretch banked", f.record())
+	}
+}
+
+func TestLayout2UnreadableMetaIsNotListedButNoted(t *testing.T) {
+	f := newQueueFix(t, "alpha")
+	f.register("alpha", "c1", livePID)
+	f.layout2("l2", f.tag("alpha"), wstatus(20, "l2", "feat/b", "working", ""))
+	f.write(filepath.Join(bus.StoreDir(f.stateRoot(), "mismatch"), "meta.json"),
+		`{"layout":2,"id":"other","created":1,"home_host":"box","home_repo":null,"visiting":false,"created_by":"register"}`+"\n")
+	f.write(filepath.Join(bus.StoreDir(f.stateRoot(), "badlayout"), "meta.json"),
+		`{"layout":1,"id":"badlayout","created":1,"home_host":"box","home_repo":null,"visiting":false,"created_by":"register"}`+"\n")
+
+	var stderr bytes.Buffer
+	d := CollectStatus(t.Context(), StatusRequest{}, &stderr, f.statusOpts())
+	if got := d.crewIDs(); !slices.Equal(got, []string{"c1", "l2"}) {
+		t.Errorf("crews = %v, want the healthy c1 and l2 only", got)
+	}
+	for _, id := range []string{"mismatch", "badlayout"} {
+		want := "crew fleet: crew " + id + ": unreadable meta.json ("
+		if !strings.Contains(stderr.String(), want) {
+			t.Errorf("stderr %q lacks %q", stderr.String(), want)
+		}
+	}
+	if n := strings.Count(stderr.String(), "— not listed\n"); n != 2 {
+		t.Errorf("%d not-listed notes in %q, want one per unreadable crew", n, stderr.String())
 	}
 }

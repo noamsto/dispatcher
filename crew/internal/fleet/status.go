@@ -344,7 +344,8 @@ func collectStatus(ctx context.Context, req StatusRequest, stderr io.Writer, o S
 		say(stderr, "crew: fleet status: machine: %s\n", oneLine(err))
 	} else {
 		lo := LoadOptions{Getenv: o.Getenv, Registry: o.Registry, Tmux: once, Git: o.Git, Clock: o.Clock, BudgetFile: o.BudgetFile, Cmd: o.Cmd, LocalModels: o.LocalModels, Stderr: stderr}
-		q := newQueue(ctx, QueueOptions{LoadOptions: lo, Proc: o.Proc}, scanFleet(o.Registry, o.Getenv, buses.readLog, nowMS), s, now)
+		// The layout-2 read above has already noted any unreadable meta.json.
+		q := newQueue(ctx, QueueOptions{LoadOptions: lo, Proc: o.Proc}, scanFleet(o.Registry, o.Getenv, buses.readLog, nowMS, io.Discard), s, now)
 		var rec map[holdKey]dueEntry
 		rec, due = q.advance(readRecord(duePath(o.Getenv)))
 		doc.Machine = &q.load
@@ -377,7 +378,7 @@ func collectStatus(ctx context.Context, req StatusRequest, stderr io.Writer, o S
 	// Layout-2 crews join the local pass only, each under its home repo.
 	var l2 []layout2Crew
 	if o.Served == nil {
-		l2 = readLayout2(stateRoot)
+		l2 = readLayout2(stateRoot, stderr)
 	}
 	groups := groupLayout2(l2, knownCommons(found))
 	layout2IDs := map[string]bool{}

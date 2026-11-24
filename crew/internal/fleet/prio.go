@@ -183,7 +183,7 @@ func registeredRepo(ctx context.Context, arg string, o QueueOptions) (common, na
 	for _, r := range repos.Registered(o.Registry, o.Getenv) {
 		consider(r.Common)
 	}
-	for _, c := range readLayout2(bus.StateRoot(o.Getenv)) {
+	for _, c := range readLayout2(bus.StateRoot(o.Getenv), o.Stderr) {
 		if c.home != "" {
 			consider(c.home)
 		}
