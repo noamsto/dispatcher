@@ -198,7 +198,12 @@ func (r *run) foldFailed(err error) int {
 	if errors.Is(err, bus.ErrNoLog) {
 		msg, code = "No such file or directory", 2
 	}
-	_, _ = fmt.Fprintf(r.stderr, "crew: reap: %s: %s\n", r.paths.Log, msg)
+	log := r.paths.Log
+	var decode *bus.DecodeError
+	if errors.As(err, &decode) {
+		log = decode.Path
+	}
+	_, _ = fmt.Fprintf(r.stderr, "crew: reap: %s: %s\n", log, msg)
 	return code
 }
 

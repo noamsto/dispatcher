@@ -257,3 +257,18 @@ func TestReadRepoEventsKeepsRepoLogOrder(t *testing.T) {
 		t.Fatalf("merged = %v, want %v", rowIDs(got), want)
 	}
 }
+
+func TestRepoCrewRowsDropsOtherRepoDispatch(t *testing.T) {
+	f := newRepoFx(t)
+	f.crew("c1",
+		f.dispatch("c1", "feat/x", f.tag, 10),
+		f.dispatch("c1", "feat/x", "/other/.git", 20),
+	)
+	got := f.rows()
+	if want := []string{"c1/dispatch/feat/x"}; !reflect.DeepEqual(rowIDs(got.Events), want) {
+		t.Fatalf("Events = %v, want %v", rowIDs(got.Events), want)
+	}
+	if got.Crews["feat/x"] != "c1" {
+		t.Fatalf("Crews = %v, want feat/x owned by c1", got.Crews)
+	}
+}

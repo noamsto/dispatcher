@@ -904,9 +904,13 @@ func TestSweepTornCrewLogFailsLikeTornRepoLog(t *testing.T) {
 	if err := os.WriteFile(f.paths.Log, []byte("torn{\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	_, want := f.runQuiet()
+	repoLog := f.paths.Log
+	repoStderr, want := f.runQuiet()
 	if want == 0 {
 		t.Fatal("torn repo log exited 0")
+	}
+	if !strings.Contains(repoStderr, repoLog) {
+		t.Fatalf("stderr %q does not name the repo log %q", repoStderr, repoLog)
 	}
 	if err := os.Remove(f.paths.Log); err != nil {
 		t.Fatal(err)
@@ -928,8 +932,12 @@ func TestSweepTornCrewLogFailsLikeTornRepoLog(t *testing.T) {
 	if err := os.WriteFile(bus.StoreDir(state, "c1")+"/events.jsonl", []byte(row+"\ntorn{\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if stderr, code := f.runQuiet(); code != want {
+	stderr, code := f.runQuiet()
+	if code != want {
 		t.Fatalf("exit %d (%s), want %d", code, stderr, want)
+	}
+	if crewLog := bus.StoreDir(state, "c1") + "/events.jsonl"; !strings.Contains(stderr, crewLog) || strings.Contains(stderr, f.paths.Log) {
+		t.Fatalf("stderr %q does not name the crew log %q alone", stderr, crewLog)
 	}
 	if got := f.rows(); len(got) != 0 {
 		t.Fatalf("store rows = %v", got)

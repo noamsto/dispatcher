@@ -539,6 +539,9 @@ func TestLayout2TornCrewLogFailsFold(t *testing.T) {
 	if rc := l.reap(Request{}); rc != 5 {
 		t.Fatalf("rc=%d, want 5; stdout=%q stderr=%q", rc, l.stdout.String(), l.stderr.String())
 	}
+	if got := l.stderr.String(); !strings.Contains(got, l.crewLog) || strings.Contains(got, l.paths.Log) {
+		t.Fatalf("stderr %q does not name the crew log %q alone", got, l.crewLog)
+	}
 	wantDir(t, l.wt, true)
 	l.noKill()
 	if len(l.rows) != 0 {

@@ -103,7 +103,12 @@ func runSweep(paths bus.Paths, cwd string, stderr io.Writer, o Options) int {
 	s.lockd = filepath.Join(filepath.Dir(s.store), "ratings.lock.d")
 	if err != nil {
 		msg, code := bus.JQFailure(err)
-		say(stderr, "crew: rate: %s: %v\n", paths.Log, msg)
+		log := paths.Log
+		var decode *bus.DecodeError
+		if errors.As(err, &decode) {
+			log = decode.Path
+		}
+		say(stderr, "crew: rate: %s: %v\n", log, msg)
 		return code
 	}
 
