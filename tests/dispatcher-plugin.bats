@@ -198,6 +198,15 @@ monitor_for() {
   ! grep -q 'stream --crew c1' "$STUB_LOG"
 }
 
+@test "monitor --promoted: several crews with no ancestor match start nothing" {
+  unset CREW_ID DISPATCHER_LAUNCHER_PID
+  export MINE="c1\nc2\n"
+  mkdir -p "${CREW_DIR%/c1}/c2"
+  CREWS_ROWS="c1\t1\t1\t1\t1\tyes\nc2\t1\t1\t1\t2\tyes\n" run timeout 5 bash "$MON" --promoted
+  [ "$status" -eq 0 ] && [ -z "$output" ]
+  ! grep -q 'stream' "$STUB_LOG"
+}
+
 @test "monitor --promoted: silent when nothing resolves" {
   unset CREW_ID DISPATCHER_LAUNCHER_PID
   CREW_BUS_MONITOR_PROMOTE_WAIT=0 MINE= CREWS_ROWS="c1\t1\t1\t1\t1\tyes\nc2\t1\t1\t1\t—\t—\n" run timeout 5 bash "$MON" --promoted
