@@ -1,0 +1,31 @@
+direction: right
+
+l2: "layout-2 store\n\$S/crews/<id>/\nmeta.json + events.jsonl" {shape: cylinder}
+idx: "repo index\n\$S/index/repos/<sha>" {shape: cylinder}
+repolog: "repo log\n<common>/crew/events.jsonl" {shape: cylinder}
+
+discover: "repos.Discover\n(registry + \$HOME walk)"
+
+reap: "reap.Run folds\nfolds.go latest/idle/claimed\nreap.go:100 early return"
+fleet: "reap --fleet\nfleet.go:62 Dir(common)"
+rate: "rate --sweep-all\nsweepall.go:47 / sweep.go:89"
+lane: "overseer lane\nstream/overseer.go join/poll\ncursor overseer/buses/<sha8>"
+msg: "overseer msg/deliver/trust\nonBus: crews.IDs(PathsFor)"
+adopt: "crew adopt\nno meta.json read"
+relaunch: "dispatcher --relaunch\nwt=\$PWD for layout 2"
+
+discover -> fleet
+discover -> rate
+discover -> lane
+discover -> msg
+reap -> repolog: reads only
+fleet -> reap
+rate -> repolog: reads only
+lane -> repolog: reads only
+msg -> repolog: crew must be here
+
+l2 -> reap: never read {style.stroke-dash: 4; style.stroke: red}
+l2 -> lane: never followed {style.stroke-dash: 4; style.stroke: red}
+idx -> fleet: never enumerated {style.stroke-dash: 4; style.stroke: red}
+l2 -> adopt: visiting / homed elsewhere adopted {style.stroke-dash: 4; style.stroke: red}
+l2 -> relaunch: home_repo ignored {style.stroke-dash: 4; style.stroke: red}
