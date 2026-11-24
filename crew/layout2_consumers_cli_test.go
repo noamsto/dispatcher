@@ -15,6 +15,10 @@ import (
 const doneRow1 = `{"ts":1785951264000,"crew_id":"c1","from":"worker:feat/x","to":"dispatcher:c1","kind":"status","body":{"state":"done"}}`
 const doneRow2 = `{"ts":1785951265000,"crew_id":"c1","from":"worker:feat/y","to":"dispatcher:c1","kind":"status","body":{"state":"done"}}`
 
+// visitingBranchRow is the visiting crew's dispatch row for feat/x, naming the
+// remote clone whose crew dir its tmux window is stamped with.
+const visitingBranchRow = `{"ts":2,"crew_id":"c1","kind":"dispatch","branch":"feat/x","repo":"/some/clone"}` + "\n"
+
 // homeCommon is the real path of the test repo's git common dir.
 func homeCommon(t *testing.T, c *lifecycleCLI) string {
 	t.Helper()
@@ -110,8 +114,9 @@ func TestLayout2ConsumersNudgeResolvesWindowOutsideRepo(t *testing.T) {
 	}
 
 	// A visiting crew has no home repo: its window carries the remote clone's
-	// crew dir, so only @crew_id picks it.
+	// crew dir, which its own dispatch row for the branch has to name.
 	n := homeCrewCLI(t, false)
+	appendTo(t, n.store("c1")+"/events.jsonl", visitingBranchRow)
 	t.Setenv("TMUX_WINDOWS", "@1\tfeat/x\t/some/clone/crew\tc1\tsage")
 	_, errOut = n.expectIn(n.outside, 1, "nudge", "--crew", "c1", "feat/x")
 	if !strings.Contains(errOut, "no pane in the window") {
@@ -139,6 +144,7 @@ exit 0
 func TestLayout2ConsumersVisitingCrewWhereAndNudgeOutsideRepo(t *testing.T) {
 	const foreign = "/some/clone/crew"
 	c := homeCrewCLI(t, false)
+	appendTo(t, c.store("c1")+"/events.jsonl", visitingBranchRow)
 	visitingTmux(t,
 		"@1\tfeat/x\t"+foreign+"\tc1\tsage\tsess\t3\twin\n@2\tfeat/x\t"+foreign+"\tother\tmuse\tsess\t4\twin2",
 		"@1\t%9\tlead\t1\n@2\t%8\tlead\t1")
@@ -148,10 +154,10 @@ func TestLayout2ConsumersVisitingCrewWhereAndNudgeOutsideRepo(t *testing.T) {
 		t.Fatalf("where stdout %q (stderr %q), want %q", out, errOut, want)
 	}
 
-	// The dispatch row has no session row: reaching `no session` proves the
-	// dir-less window match resolved the lead pane.
+	// The dispatch row has no status row: reaching that refusal proves the
+	// dispatch-row-bound window match resolved the lead pane.
 	_, errOut = c.expectIn(c.outside, 2, "nudge", "--crew", "c1", "--", "feat/x")
-	if !strings.Contains(errOut, "no session on feat/x") {
+	if !strings.Contains(errOut, "lead has not posted its first status yet") {
 		t.Fatalf("nudge stderr %q, want the session refusal", errOut)
 	}
 }
