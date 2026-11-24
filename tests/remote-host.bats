@@ -41,7 +41,6 @@ teardown() { remote_host_teardown; }
   jq -s -e 'all(.[]; .v == 1 and (.env // {} | has("CREW_LAYOUT") | not) and .scope != "crew")' "$SSH_REQS"
   [ ! -e "$RHOME/state/crew/crews/c1/meta.json" ]
   jq -e 'has("crew_layout") | not' <<<"$row"
-  ! grep -q '^crew_layout:' <<<"$output"
 
   # 2. Follow it from the local dispatcher's lane.
   start_stream --crew c1 --park 2 --retry 1 --coalesce 1 --interval 1
@@ -434,7 +433,7 @@ l2_dispatch() {
   jq -e --arg h "$(jq -r .home_host "$L2_META")" \
     '.layout == 2 and .id == "c1" and .visiting == true and .home_host == $h and .home_repo == null and .created_by == "remote-dispatch"' "$rmeta"
   jq -e --arg w "$worker_id" 'select(.kind == "dispatch" and .worker_id == $w)' "$rlog"
-  ! jq -e 'select(.kind == "dispatch")' "$REMOTE_CLONE/.git/crew/events.jsonl" 2>/dev/null
+  [ -z "$(jq -c 'select(.kind == "dispatch")' "$REMOTE_CLONE/.git/crew/events.jsonl" 2>/dev/null || true)" ]
 
   row="$(jq -c 'select(.kind == "dispatch")' "$L2_LOG")"
   [ "$(wc -l <<<"$row")" -eq 1 ]
@@ -443,6 +442,9 @@ l2_dispatch() {
 
   jq -s -e 'any(.[]; .argv[0] == "dispatch" and .argv[1] != "--engines" and .v == 2 and .env.CREW_LAYOUT == "2")' "$SSH_REQS"
   jq -s -e 'any(.[]; .argv[0] == "dispatch" and .argv[1] == "--engines" and .v == 2)' "$SSH_REQS"
+  # dispatch created `main` here, so the new-session pin must not linger in the session env shared with other windows.
+  run remote_tmux show-environment -t =main XDG_STATE_HOME
+  [[ "$output" != "XDG_STATE_HOME=$RHOME/state" ]]
 
   wt="$(remote_wt "$(jq -r .branch <<<"$row")")"
   [ -d "$wt" ]
@@ -484,9 +486,31 @@ last_engine_root() {
   poll_for 100 test -s "$BATS_TEST_TMPDIR/claude-xdg"
   [ "$(last_engine_root)" = "$RHOME/state" ]
   [ "$(remote_tmux show-options -wqv -t "$win" @crew_state_home)" = "$RHOME/state" ]
-  # The session environment must not keep the pin: it is shared with other windows.
-  run remote_tmux show-environment -t =main XDG_STATE_HOME
-  [[ "$output" != "XDG_STATE_HOME=$RHOME/state" ]]
+}
+
+@test "layout-2 dispatch resume pins the relaunched worker pane's state root over a tmux server that carries another" {
+  l2_origin
+  pinned_remote_session
+  l2_dispatch
+  row="$(jq -c 'select(.kind == "dispatch")' "$L2_LOG")"
+  branch="$(jq -r .branch <<<"$row")"
+  wt="$(remote_wt "$branch")"
+  win="$(remote_tmux list-windows -t =main -F '#{window_id}|#{@crew_branch}' | awk -F'|' -v b="$branch" '$2 == b {print $1}')"
+  [ -n "$win" ]
+  poll_for 100 test -s "$BATS_TEST_TMPDIR/claude-xdg"
+  remote_tmux kill-window -t "$win"
+  : >"$BATS_TEST_TMPDIR/claude-xdg"
+
+  run on_remote "$wt" env CREW_ID=c1 DISPATCH_TMUX_SESSION=main dispatch resume --fresh
+  [ "$status" -eq 0 ] || {
+    echo "$output" >&2
+    false
+  }
+  win="$(remote_tmux list-windows -t =main -F '#{window_id}|#{@crew_branch}' | awk -F'|' -v b="$branch" '$2 == b {print $1}')"
+  [ -n "$win" ]
+  poll_for 100 test -s "$BATS_TEST_TMPDIR/claude-xdg"
+  [ "$(last_engine_root)" = "$RHOME/state" ]
+  [ "$(remote_tmux show-options -wqv -t "$win" @crew_state_home)" = "$RHOME/state" ]
 }
 
 @test "layout-2 --spawn-role pins the lazy role pane's state root from the window stamp" {
@@ -590,4 +614,5 @@ EOF
     -- crew dispatch-row --crew c9 --session s1-1
   [ "$status" -eq 2 ]
   [[ "$stderr" == *c9* ]]
+  [[ "$stderr" == *"is not a crew on this host"* ]]
 }

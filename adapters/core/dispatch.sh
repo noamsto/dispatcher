@@ -2803,7 +2803,7 @@ _remote_pre2b_guard() {
   old_branch="$(jq -rnR --arg h "$remote_host" --arg c "$crew_id" '
     [inputs | fromjson? | objects | select(.kind == "dispatch" and .remote == true and .host == $h and .crew_id == $c and (.crew_layout != 2))] | first | .branch // empty' "$crew_log")"
   [ -z "$old_branch" ] && return 0
-  echo "dispatch: --host $remote_host: crew $crew_id already has a pre-layout-2 worker ($old_branch) on $remote_host — finish it before dispatching this layout-2 crew there, or dispatch elsewhere" >&2
+  echo "dispatch: --host $remote_host: crew $crew_id already ran a pre-layout-2 worker ($old_branch) on $remote_host; this layout-2 crew cannot dispatch there (its log would switch under that worker) — dispatch it to another host, or from a new crew" >&2
   exit 1
 }
 

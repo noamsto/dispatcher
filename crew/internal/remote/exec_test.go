@@ -955,6 +955,37 @@ func TestAdmitRequestVersion(t *testing.T) {
 	}
 }
 
+func TestServeLayoutEnvComesOnlyFromTheRequest(t *testing.T) {
+	e := newServeEnv(t)
+	t.Setenv("CREW_LAYOUT", "2")
+	self := filepath.Join(t.TempDir(), "crew")
+	writeScript(t, self, `echo "${CREW_LAYOUT-unset}"`)
+	o := ServeOptions{
+		LookPath: func(name string) (string, error) { return "", fmt.Errorf("%s looked up", name) },
+		Self:     func() (string, error) { return self, nil },
+	}
+	req := func(v int, env map[string]string) string {
+		data, err := json.Marshal(map[string]any{"v": v, "repo": e.repo, "slug": "acme/widget", "argv": []string{"crew", "where", "x"}, "env": env})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(data)
+	}
+	for _, tc := range []struct {
+		name, stdin, want string
+	}{
+		{"v1", req(1, map[string]string{"CREW_ID": "c1"}), "unset\n"},
+		{"v2", req(2, map[string]string{"CREW_ID": "c1", "CREW_LAYOUT": "2"}), "2\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rc, stdout, stderr := e.serveWith(t, tc.stdin, o)
+			if rc != 0 || stdout != tc.want {
+				t.Fatalf("rc %d, stdout %q, stderr %q, want stdout %q", rc, stdout, stderr, tc.want)
+			}
+		})
+	}
+}
+
 // crewRequest is a crew-scope request for argv from crew c1 of origin halo;
 // mut edits it before encoding.
 func crewRequest(t *testing.T, argv []string, mut func(m map[string]any)) string {
@@ -1001,6 +1032,13 @@ func TestServeCrewScopeRefusals(t *testing.T) {
 		return withEnv(map[string]string{"CREW_ID": id, "DISPATCH_ORIGIN_HOST": "halo"})
 	}
 	migrate := map[string]any{"meta": testMeta()}
+	badMeta := filepath.Join(os.Getenv("XDG_STATE_HOME"), "crew", "crews", "bad", "meta.json")
+	if err := os.MkdirAll(filepath.Dir(badMeta), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(badMeta, []byte("{"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	for _, tc := range []struct {
 		name, stdin, want string
 	}{
@@ -1027,6 +1065,7 @@ func TestServeCrewScopeRefusals(t *testing.T) {
 		{"--crew mismatch", crewRequest(t, []string{"crew", "relay", "--crew", "far"}, nil), "--crew"},
 		{"--crew= mismatch", crewRequest(t, []string{"crew", "dispatch-row", "--crew=far"}, nil), "--crew"},
 		{"no meta", crewRequest(t, []string{"crew", "relay", "--crew", "ghost"}, asCrew("ghost")), "crew: remote-exec: crew ghost is not a crew on this host\n"},
+		{"garbled meta", crewRequest(t, []string{"crew", "relay", "--crew", "bad"}, asCrew("bad")), "crew: remote-exec: crew bad: "},
 		{"own crew", crewRequest(t, []string{"crew", "relay", "--crew", "own"}, asCrew("own")), "crew: remote-exec: crew own is this host's own crew, not a visiting one\n"},
 		{"other origin", crewRequest(t, []string{"crew", "relay", "--crew", "far"}, asCrew("far")), "crew: remote-exec: crew far is visiting from elsewhere, not halo\n"},
 	} {

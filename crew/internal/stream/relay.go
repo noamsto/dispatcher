@@ -229,7 +229,10 @@ func (r *relay) relayArgs() ([]string, error) {
 		return rs.remoteArgs(r.host, tail...), nil
 	}
 	m, err := bus.ReadMetaAt(rs.cdir, rs.crew)
-	if err != nil || m.HomeHost == "" {
+	if err != nil {
+		return nil, fmt.Errorf("crew %s meta: %w", rs.crew, err)
+	}
+	if m.HomeHost == "" {
 		return nil, fmt.Errorf("crew %s has no readable home_host in its meta.json", rs.crew)
 	}
 	return append([]string{"remote-run", "--host", r.host, "--crew-scope",

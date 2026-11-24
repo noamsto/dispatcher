@@ -284,3 +284,16 @@ func TestRegisterVisitingCLI(t *testing.T) {
 		t.Errorf("pid stderr = %q", errOut)
 	}
 }
+
+func TestRegisterVisitingBindsEnvCrewOverTaskDoc(t *testing.T) {
+	c := newLifecycleCLI(t)
+	if err := os.WriteFile(filepath.Join(c.repo, "WORKER_TASK.md"), []byte("crew_id: victim\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	c.as("intended")
+	c.mustRun("register", "--visiting", "halo")
+	if m := c.meta("intended"); m["visiting"] != true {
+		t.Errorf("meta = %v", m)
+	}
+	missing(t, c.store("victim")+"/meta.json")
+}

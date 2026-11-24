@@ -1405,7 +1405,7 @@ clone. A+ adds a crew scope beside the existing host scope (`crew/internal/remot
 `crew/internal/remote/exec.go:210-218`). Crew-scope requests are version 2; a version 1 request carrying scope `crew` or
 `CREW_LAYOUT` is refused. A crew-scope request names no repo, carries `CREW_ID` and `DISPATCH_ORIGIN_HOST` only, and runs
 `crew relay` or `crew dispatch-row` (phase 2b). `reply`, `nudge`, `where` and `roster` stay repo-scoped until phase 3 makes them
-repo-optional, and they reach the visiting crew through `meta.json` in the clone. The argv must carry exactly one `--crew`, equal
+repo-optional, and, run from the clone, they resolve the visiting crew through its `meta.json` under H's state root. The argv must carry exactly one `--crew`, equal
 to the request's `CREW_ID`; without it the callee would fall back to a `WORKER_TASK.md` in the cwd. `admitCrew` refuses a crew id with no
 `meta.json`, one with `visiting: false`, and one whose `home_host` differs from the request's origin. That origin is
 `DISPATCH_ORIGIN_HOST`, which the caller sets and `EnvAllow` only regex-checks (`crew/internal/remote/remote.go:58`), so the

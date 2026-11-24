@@ -166,7 +166,7 @@ type Target struct {
 // reads. Field order is the wire order.
 type Request struct {
 	V       int               `json:"v"`
-	Scope   string            `json:"scope,omitempty"` // "" for repo scope, or scopeHost
+	Scope   string            `json:"scope,omitempty"` // "" for repo scope, scopeHost or scopeCrew
 	Repo    string            `json:"repo"`
 	Slug    string            `json:"slug"`
 	Argv    []string          `json:"argv"`

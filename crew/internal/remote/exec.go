@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -132,9 +133,10 @@ func Serve(stdin io.Reader, stdout, stderr io.Writer, o ServeOptions) int {
 	return reportStatus(cmd.Run(), stderr, "crew: remote-exec: "+req.Argv[0])
 }
 
-// childEnv is sshd's env with the request's env added in key order.
+// childEnv is sshd's env, minus any CREW_LAYOUT so only the request can pick
+// the layout, with the request's env added in key order.
 func childEnv(req Request) []string {
-	env := os.Environ()
+	env := slices.DeleteFunc(os.Environ(), func(kv string) bool { return strings.HasPrefix(kv, layoutEnv+"=") })
 	keys := make([]string, 0, len(req.Env))
 	for k := range req.Env {
 		keys = append(keys, k)
@@ -168,7 +170,7 @@ func serveHome(req Request, o ServeOptions, stdout, stderr io.Writer) int {
 }
 
 // admit decodes and checks a request, returning it and its clone's git common
-// dir ("" for host scope). Nothing runs before every check has passed.
+// dir ("" for host and crew scope). Nothing runs before every check has passed.
 func admit(ctx context.Context, stdin io.Reader) (Request, string, error) {
 	req, err := decode(stdin)
 	if err != nil {
@@ -257,8 +259,10 @@ func admitCrew(req Request) error {
 	}
 	meta, err := bus.ReadMeta(state, id)
 	switch {
-	case err != nil:
+	case errors.Is(err, fs.ErrNotExist):
 		return fmt.Errorf("crew %s is not a crew on this host", id)
+	case err != nil:
+		return fmt.Errorf("crew %s: %v", id, err)
 	case !meta.Visiting:
 		return fmt.Errorf("crew %s is this host's own crew, not a visiting one", id)
 	case meta.HomeHost != origin:

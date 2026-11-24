@@ -564,17 +564,25 @@ func TestRelayCrewScopeArgvAndRepoScopedReap(t *testing.T) {
 	}
 }
 
-func TestRelayCrewScopeWithoutHomeHostStartsNoChild(t *testing.T) {
-	p := layout2Bus(t, "")
-	self, dir := relayStub(t)
-	s := startStream(t, p, self, Request{}, fastRelay())
+func TestRelayCrewScopeUnusableMetaStartsNoChild(t *testing.T) {
+	for _, tc := range []struct{ name, meta, want string }{
+		{"missing", "", "crew c1 meta: "},
+		{"garbled", "{", "crew c1 meta: "},
+		{"no home_host", `{"layout":2,"id":"c1"}`, "home_host"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := layout2Bus(t, tc.meta)
+			self, dir := relayStub(t)
+			s := startStream(t, p, self, Request{}, fastRelay())
 
-	waitFor(t, "the lost report", func() bool { return line(s.lines(), isStream("error")) != nil })
-	l := line(s.lines(), isStream("error"))
-	if d, _ := l["detail"].(string); !strings.Contains(d, "home_host") {
-		t.Errorf("detail = %q, want it to name home_host", d)
-	}
-	if a := argvLog(dir); len(a) != 0 {
-		t.Errorf("a child started: %q", a)
+			waitFor(t, "the lost report", func() bool { return line(s.lines(), isStream("error")) != nil })
+			l := line(s.lines(), isStream("error"))
+			if d, _ := l["detail"].(string); !strings.Contains(d, tc.want) {
+				t.Errorf("detail = %q, want it to name %q", d, tc.want)
+			}
+			if a := argvLog(dir); len(a) != 0 {
+				t.Errorf("a child started: %q", a)
+			}
+		})
 	}
 }

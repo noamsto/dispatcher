@@ -1328,6 +1328,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 			Slug:     func(common string) string { return remote.CloneSlug(ctx, common) },
 		}
 		if v := parsed.typed.Register.Visiting; sub == "register" && v != nil {
+			o.CrewID = func() string { return e.crewID(ctx, cwd, "", true) }
 			return register.RunVisiting(*v, paths, stderr, o)
 		}
 		return register.Run(sub, parsed.typed.Register.PID, paths, stderr, o)
