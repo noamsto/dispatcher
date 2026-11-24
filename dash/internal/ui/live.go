@@ -574,11 +574,7 @@ func (v liveView) budgetLines(w int) []string {
 		segs = append(segs, engineSegment(name, b.Report.Engines[name]))
 	}
 	if c := b.Report.AnthropicCredit; c != nil {
-		pct := c.UsedPct
-		if c.Exhausted() {
-			pct = 100
-		}
-		segs = append(segs, budgetSeg{text: fmt.Sprintf("pi anthropic %.0f%%", c.UsedPct), color: gaugeColor(pct)})
+		segs = append(segs, budgetSeg{text: fmt.Sprintf("pi anthropic %.0f%%", c.UsedPct), color: gaugeColor(creditPct(c))})
 	}
 	return flowSegments(segs, w, 2)
 }
@@ -993,4 +989,12 @@ func eventDetail(ev data.Event) string {
 	default:
 		return ""
 	}
+}
+
+// creditPct is the usage that colours a credit: full once expired or spent.
+func creditPct(c *data.AnthropicCredit) float64 {
+	if c.Exhausted() {
+		return 100
+	}
+	return c.UsedPct
 }

@@ -49,8 +49,16 @@ func WindowLabel(engine, key string) string {
 
 // Detail is the credit's full-text line for the Budget views.
 func (c *AnthropicCredit) Detail() string {
-	return "pi anthropic: " + c.LeftText() + " of $" + dollars(c.BalanceUSD) + ", " +
+	text := "pi anthropic: $" + dollars(max(c.RemainingUSD, 0)) + " of $" + dollars(c.BalanceUSD) + " left, " +
 		strconv.FormatFloat(c.UsedPct, 'f', -1, 64) + "% used"
+	if c.Expired {
+		text += " (expired)"
+	}
+	return text
+}
+
+func dollars(f float64) string {
+	return strconv.FormatFloat(f, 'f', 2, 64)
 }
 
 // SpendText is "$spent/$target" for an engine with both figures, else "".
@@ -59,8 +67,4 @@ func (e *EngineBudget) SpendText() string {
 		return ""
 	}
 	return "$" + dollars(*e.SpendUSD) + "/$" + strconv.FormatFloat(*e.TargetUSD, 'f', -1, 64)
-}
-
-func dollars(f float64) string {
-	return strconv.FormatFloat(f, 'f', 2, 64)
 }

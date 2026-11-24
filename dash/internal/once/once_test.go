@@ -320,7 +320,7 @@ func TestBudgetPaneLabelsPiBudgets(t *testing.T) {
 		texts = append(texts, l.text)
 	}
 	out := strings.Join(texts, "\n")
-	for _, want := range []string{"pi openrouter", "pi anthropic", "$20.00 left"} {
+	for _, want := range []string{"pi openrouter", "pi anthropic", "$20.00 of $50.00 left"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("budget pane lacks %q:\n%s", want, out)
 		}

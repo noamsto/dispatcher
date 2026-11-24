@@ -5,9 +5,9 @@
 │ 4 ✗ far far on far: ssh: connect to host far port 22: timed out        now → peek                │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭ CREWS ──────────────────────────── 7 crews · 13 workers ─╮╭ CAPACITY ─────────────────── 3 free ─╮
-│ ● c1 @lap a alive 3w 1pr 1? 4!                           ││ weight      ██████████░░░░░░ 5/8 (+1)│
-│ ●   ╰─ b    alive 1pr                                    ││ load        1.5/8                    │
-│ ● c5 @lap b stale 1b        2!                           ││ qwen        1/2                      │
+│ ● c1 @lap a alive 3w 1pr 1? 4!                           ││ weight        █████████░░░░░ 5/8 (+1)│
+│ ●   ╰─ b    alive 1pr                                    ││ load          1.5/8                  │
+│ ● c5 @lap b stale 1b        2!                           ││ qwen          1/2                    │
 │ ✗ c3 @lap a —     1w 1pr    1! orphaned                  ││ BUDGET ──────────────────────────────│
 │ PEERS ───────────────────────────────────────────────────││ claude 5h     ██░░░░░░░░░░░░░░  10%  │
 │ ○ @box p2         1w                                     ││ claude 7d     ██████████░░░░░░  62% ↑│

@@ -6,6 +6,7 @@ import (
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/progress"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/noamsto/dispatcher/dash/internal/data"
@@ -159,7 +160,7 @@ func (v budgetView) tableView(w int) string {
 	}
 	if c := v.report.AnthropicCredit; c != nil {
 		lines = append(lines, truncateLine(headerStyle.Render("pi anthropic (prepaid credit)"), w),
-			truncateLine("  "+c.Detail(), w))
+			truncateLine(creditStyle(c).Render("  "+c.Detail()), w))
 	}
 	return strings.Join(lines, "\n")
 }
@@ -282,4 +283,12 @@ func (v budgetView) detailView(w int) string {
 	lines := append([]string{truncateLine(header, w), ""}, wrapped...)
 	lines = append(lines, "", "esc back")
 	return strings.Join(lines, "\n")
+}
+
+// creditStyle paints an expired or spent credit in the danger colour.
+func creditStyle(c *data.AnthropicCredit) lipgloss.Style {
+	if c.Exhausted() {
+		return lipgloss.NewStyle().Foreground(lipgloss.Color(gaugeDangerColor))
+	}
+	return lipgloss.NewStyle()
 }

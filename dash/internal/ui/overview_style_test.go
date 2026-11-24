@@ -10,6 +10,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 	"github.com/muesli/termenv"
 
+	"github.com/noamsto/dispatcher/dash/internal/data"
 	vm "github.com/noamsto/dispatcher/dash/internal/view"
 )
 
@@ -206,5 +207,24 @@ func TestBudgetBarDollarTextTruncatesBeforePercent(t *testing.T) {
 	narrow := ansi.Strip(budgetBar(row, newSpans(30, nil), 30))
 	if !strings.Contains(narrow, "60%") || strings.Contains(narrow, "expired") {
 		t.Errorf("narrow row = %q, want the percent kept and the text cut", narrow)
+	}
+}
+
+func TestBudgetBarCriticalIsRed(t *testing.T) {
+	trueColorProfile(t)
+	row := vm.BudgetRow{Label: "pi anthropic", UsedPct: 25, Text: "$37 left expired"}
+	healthy := budgetBar(row, newSpans(60, nil), 60)
+	row.Critical = true
+	if budgetBar(row, newSpans(60, nil), 60) == healthy {
+		t.Error("a critical row renders like a healthy one at 25%")
+	}
+}
+
+func TestCreditPctRedWhenExhausted(t *testing.T) {
+	if got := creditPct(&data.AnthropicCredit{UsedPct: 25, RemainingUSD: 5}); got != 25 {
+		t.Errorf("healthy credit pct = %v", got)
+	}
+	if got := creditPct(&data.AnthropicCredit{UsedPct: 25, RemainingUSD: 5, Expired: true}); got != 100 {
+		t.Errorf("expired credit pct = %v", got)
 	}
 }
