@@ -575,7 +575,7 @@ gh api repos/noamsto/<r>/pulls/<N> --jq '[.merged_at,.title]|@json'
 
 `REPO` is the twelve names plus the alias `lazytmux` (old name of tmux-og), longest-first so `tmux-og` and `tmux-remux` never match as `tmux`. The lock-diff step loads `flake.lock` at `<c>^` and `<c>` with `git show` and compares `locked.rev` of nodes whose `locked.owner` is `noamsto`, because anonymous "update N flake inputs" commits hide the tool name in the subject (23 of nix-config's 60 lock commits are anonymous).
 
-Reading: lockstep is low and is dominated by version pins. The structural coupling that matters is not merge order but the undocumented shapes in 3.3.
+Reading: lockstep is low; most coordinated merges are a producer change followed by a consumer change, and only 2 of the 15 are pin bumps. The structural coupling that matters is not merge order but the undocumented shapes in 3.3.
 
 ### 3.3 Re-declared types and schemas
 
@@ -992,11 +992,11 @@ Counts below come from running each rule through this helper, with an empty allo
 R1, PR state (O4). Only the forged client may ask a forge for PR state. Go sites are matched by argv shape, which catches `exec.Command("gh", "pr", "list", ...)`, `exec.Command(ghPath, "pr", "list", ...)` and dispatcher's seam calls such as `o.GH.Run(ctx, "pr", "view", ...)`, none of which needs a `"gh"` literal next to the verb. Shell sites are matched by the command text. Runs in dispatcher, tmux-og, agent-smith, wtc, prdash, houston:
 
 ```sh
-forbid R1 '"pr",\s*"(view|list|checks)"|"api",.*(pulls|check-runs|actions/)' .ci/allow/r1.txt -g '*.go'
-forbid R1 'gh pr (view|list|checks)|gh api .*(pulls|check-runs|actions/)' .ci/allow/r1.txt -g '*.sh' -g '*.bash' -g '*.nix'
+forbid R1 '"pr",\s*"(view|list|checks)"|"api",.*(pulls|check-runs|actions/)' .ci/allow/r1-go.txt -g '*.go'
+forbid R1 'gh pr (view|list|checks)|gh api .*(pulls|check-runs|actions/)' .ci/allow/r1-sh.txt -g '*.sh' -g '*.bash' -g '*.nix'
 ```
 
-Writes (`gh pr merge`, `gh pr create`) are not PR-state reads, so the patterns leave them out until forged has a write interface (Q4). Fails today: dispatcher has 20 Go sites in 13 files (merge gate, fleet, reap, stack, adopt, follow-ups, retro, the rate sweep and the dash "open in browser" argv) and 4 shell lines in `dispatch.sh` and `pr-watch.sh`; tmux-og has 4 in `picker/prenrich`, agent-smith 2, and wtc 1 (wtc:internal/git/stale.go@2b64687c). prdash and houston pass: prdash talks GraphQL through `githubv4`, which these patterns do not see, and houston reads no PR state through `gh`. Allowlist at introduction: those files, with the dispatcher sites behind the `gh.Client` seam (dispatcher:crew/internal/gh/gh.go@fe9bd05a) leaving first.
+Writes (`gh pr merge`, `gh pr create`) are not PR-state reads, so the patterns leave them out until forged has a write interface (Q4). Fails today: dispatcher has 20 Go sites in 13 files (merge gate, fleet, reap, stack, adopt, follow-ups, retro, the rate sweep and the dash "open in browser" argv) and 4 shell lines in `dispatch.sh` and `pr-watch.sh`; tmux-og has 4 in `picker/prenrich`, agent-smith 2, and wtc 1 (wtc:internal/git/stale.go@2b64687c). prdash and houston pass: prdash talks GraphQL through `githubv4`, which these patterns do not see, and houston reads no PR state through `gh`. Each call has its own allowlist, because the stale-entry check re-scans every entry with that call's pattern: the Go files go in `.ci/allow/r1-go.txt` and the shell files in `.ci/allow/r1-sh.txt`. Allowlist at introduction: those files, with the dispatcher sites behind the `gh.Client` seam (dispatcher:crew/internal/gh/gh.go@fe9bd05a) leaving first.
 
 R2, tmux control mode (O1). Raw control-protocol parsing lives in one module:
 
@@ -1018,9 +1018,10 @@ R4, bus files (O5). Only the crew CLI and the dispatcher's own bus package read 
 
 ```sh
 forbid R4 'events\.jsonl|crews/[^"]*(pane|pid|meta\.json)|"crews"' .ci/allow/r4.txt
+forbid R4 'events\.jsonl|crews/[^"]*(pane|pid|meta\.json)|"crews"' .ci/allow/r4.txt -g 'dash/**'
 ```
 
-Runs in houston and in the `dash` module of dispatcher. Fails today in houston in 10 files: `houston:crewfeed/store.go@95cc422e`, `houston:runs/crewsource.go@95cc422e`, `houston:runs/crewdispatch.go@95cc422e`, `houston:server/dispatch.go@95cc422e` (lists, stats and creates crew directories), `houston:server/dispatcher_restart.go@95cc422e` (reads `crews/<id>/pid`), plus QA and perf scripts and a fixture loader. In `dash` it fails in 10 files, among them `dispatcher:dash/internal/data/bus.go@fe9bd05a`. The dash entries stay until the bus is importable; the houston entries go when houston moves to the CLI stream and a crew-creating verb (Q6).
+Runs in houston (first call) and in the `dash` module of dispatcher (second call, scoped to `dash/` because the helper runs from the repo root and an unscoped call would also hit the owner code under `crew/`). Fails today in houston in 10 files: `houston:crewfeed/store.go@95cc422e`, `houston:runs/crewsource.go@95cc422e`, `houston:runs/crewdispatch.go@95cc422e`, `houston:server/dispatch.go@95cc422e` (lists, stats and creates crew directories), `houston:server/dispatcher_restart.go@95cc422e` (reads `crews/<id>/pid`), plus QA and perf scripts and a fixture loader. In `dash` it fails in 10 files, among them `dispatcher:dash/internal/data/bus.go@fe9bd05a`. The dash entries stay until the bus is importable; the houston entries go when houston moves to the CLI stream and a crew-creating verb (Q6).
 
 R5, engine-name lists (O10). The four engines are listed once, in the contract:
 
@@ -1121,7 +1122,7 @@ func TestRemuxManifestContract(t *testing.T) {
 	if m.V != supportedManifestVersion {
 		t.Fatalf("manifest version %d, reader supports %d", m.V, supportedManifestVersion)
 	}
-	if m.Host == "" || m.SavedAt == 0 || len(m.Sessions) == 0 || m.Sessions[0].Name == "" {
+	if m.Host == "" || m.SavedAt == 0 || len(m.Sessions) == 0 || m.Sessions[0].Name == "" || m.Sessions[0].LastAttached == 0 {
 		t.Fatalf("manifest lost a field the picker reads: %+v", m)
 	}
 }
