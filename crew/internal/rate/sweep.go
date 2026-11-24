@@ -105,8 +105,12 @@ func runSweep(paths bus.Paths, cwd string, stderr io.Writer, o Options) int {
 		msg, code := bus.JQFailure(err)
 		log := paths.Log
 		var decode *bus.DecodeError
-		if errors.As(err, &decode) {
+		var open *bus.OpenError
+		switch {
+		case errors.As(err, &decode):
 			log = decode.Path
+		case errors.As(err, &open):
+			log = open.Path
 		}
 		say(stderr, "crew: rate: %s: %v\n", log, msg)
 		return code

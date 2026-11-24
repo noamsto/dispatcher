@@ -200,8 +200,12 @@ func (r *run) foldFailed(err error) int {
 	}
 	log := r.paths.Log
 	var decode *bus.DecodeError
-	if errors.As(err, &decode) {
+	var open *bus.OpenError
+	switch {
+	case errors.As(err, &decode):
 		log = decode.Path
+	case errors.As(err, &open):
+		log = open.Path
 	}
 	_, _ = fmt.Fprintf(r.stderr, "crew: reap: %s: %s\n", log, msg)
 	return code
