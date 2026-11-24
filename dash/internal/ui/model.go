@@ -183,7 +183,7 @@ func NewModel(deps Deps, now func() time.Time, live liveDeps) Model {
 			Roster: data.RosterSection{Crews: []data.RosterCrew{}},
 		},
 		crew:       deps.Crew,
-		repo:       repoOfEvents(deps.EventsPath),
+		repo:       deps.Repo,
 		fleetWatch: live.fleetWatcher,
 		keys:       DefaultKeyMap(),
 		help:       help.New(),

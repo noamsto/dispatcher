@@ -346,7 +346,7 @@ func ActiveCommons(sec data.FleetSection) []string {
 	crews, _ := fleetCrews(FleetInputs{Fleet: sec})
 	var commons []string
 	for _, c := range crews {
-		if c.origin != OriginLocal || slices.Contains(commons, c.repo.Common) {
+		if c.origin != OriginLocal || c.repo.Common == "" || slices.Contains(commons, c.repo.Common) {
 			continue
 		}
 		active := c.live()
@@ -365,7 +365,7 @@ func (c fleetCrew) live() bool {
 }
 
 func (c fleetCrew) dir() *string {
-	if c.origin == OriginPeer {
+	if c.origin == OriginPeer || c.repo.Common == "" {
 		return nil
 	}
 	root := repoRoot(c.repo.Common)
@@ -418,6 +418,9 @@ func (c fleetCrew) dispatcherLoc() *data.DispatcherLoc {
 
 // digest is the repo's digest with Recent set to this crew's own ring.
 func (c fleetCrew) digest(f FleetInputs) data.BusDigest {
+	if c.repo.Common == "" {
+		return data.BusDigest{}
+	}
 	d, ok := f.Digests[c.repo.Common]
 	if !ok {
 		if e, failed := f.DigestErrs[c.repo.Common]; failed {
@@ -458,7 +461,10 @@ func unfinished(rows []WorkerRow) int {
 
 // relaunchable is a dead dispatcher only: the protocol never relaunches a
 // closed one, and a deregister deletes its launch record.
-func (c fleetCrew) relaunchable() bool { return c.home.Dispatcher.State == "dead" }
+// A crew with no home repo has no root to relaunch in.
+func (c fleetCrew) relaunchable() bool {
+	return c.home.Dispatcher.State == "dead" && c.homeRepo.Common != ""
+}
 
 func (c fleetCrew) orphaned(rows []WorkerRow) bool {
 	if c.origin == OriginPeer {

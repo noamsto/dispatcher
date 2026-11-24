@@ -351,3 +351,99 @@ func TestCollectFleetStatusStampsSince(t *testing.T) {
 		t.Errorf("other-host Since = %v, want nil", *far.Dispatcher.Since)
 	}
 }
+
+func stampSinceDoc(t *testing.T, common, id string) []byte {
+	t.Helper()
+	doc, err := json.Marshal(map[string]any{"host": "lap", "repos": []map[string]any{
+		{"host": "lap", "repo": "a", "common": common, "crews": []map[string]any{
+			{"crew_id": id, "dispatcher": map[string]any{"state": "live"}},
+		}},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return doc
+}
+
+func touchPid(t *testing.T, dir string, mtime time.Time) {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	pid := filepath.Join(dir, "pid")
+	if err := os.WriteFile(pid, []byte("1"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(pid, mtime, mtime); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func whereCalls(r *FakeRunner) int {
+	n := 0
+	for _, c := range r.CallsSnapshot() {
+		if len(c.Args) > 0 && c.Args[0] == "where" {
+			n++
+		}
+	}
+	return n
+}
+
+func TestFleetStampSinceLayout1SkipsWhere(t *testing.T) {
+	common := filepath.Join(t.TempDir(), ".git")
+	mtime := time.Unix(1794799900, 0)
+	touchPid(t, filepath.Join(common, "crew", "crews", "c1"), mtime)
+	r := &FakeRunner{Responses: map[string]FakeResponse{fleetStatusKey: {Stdout: stampSinceDoc(t, common, "c1")}}}
+	st, errMsg := CollectFleetStatus(context.Background(), r, baseConfig(), FleetViewMaxAge)
+	if errMsg != nil {
+		t.Fatal(*errMsg)
+	}
+	if s := st.Repos[0].Crews[0].Dispatcher.Since; s == nil || *s != mtime.Unix() {
+		t.Errorf("Since = %v, want %d", s, mtime.Unix())
+	}
+	if n := whereCalls(r); n != 0 {
+		t.Errorf("crew where called %d times, want 0", n)
+	}
+}
+
+func TestFleetStampSinceLayout2ResolvesDir(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "crews", "c2")
+	mtime := time.Unix(1794799900, 0)
+	touchPid(t, dir, mtime)
+	for _, common := range []string{"", filepath.Join(t.TempDir(), "repo", ".git")} {
+		r := &FakeRunner{Responses: map[string]FakeResponse{
+			fleetStatusKey:               {Stdout: stampSinceDoc(t, common, "c2")},
+			"crew where --dir --crew c2": {Stdout: []byte(dir + "\n")},
+		}}
+		st, errMsg := CollectFleetStatus(context.Background(), r, baseConfig(), FleetViewMaxAge)
+		if errMsg != nil {
+			t.Fatal(*errMsg)
+		}
+		if s := st.Repos[0].Crews[0].Dispatcher.Since; s == nil || *s != mtime.Unix() {
+			t.Errorf("common %q: Since = %v, want %d", common, s, mtime.Unix())
+		}
+		var wantDir string
+		if common != "" {
+			wantDir = filepath.Dir(common)
+		}
+		for _, c := range r.CallsSnapshot() {
+			if len(c.Args) > 0 && c.Args[0] == "where" && c.Dir != wantDir {
+				t.Errorf("common %q: where dir = %q, want %q", common, c.Dir, wantDir)
+			}
+		}
+	}
+}
+
+func TestFleetStampSinceResolverFailureLeavesNil(t *testing.T) {
+	r := &FakeRunner{Responses: map[string]FakeResponse{
+		fleetStatusKey:               {Stdout: stampSinceDoc(t, "", "c2")},
+		"crew where --dir --crew c2": {Err: FakeExitError{Code: 1}},
+	}}
+	st, errMsg := CollectFleetStatus(context.Background(), r, baseConfig(), FleetViewMaxAge)
+	if errMsg != nil {
+		t.Fatal(*errMsg)
+	}
+	if s := st.Repos[0].Crews[0].Dispatcher.Since; s != nil {
+		t.Errorf("Since = %d, want nil", *s)
+	}
+}

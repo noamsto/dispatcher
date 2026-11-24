@@ -7,6 +7,7 @@ import (
 	"math"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -208,24 +209,31 @@ func CollectFleetStatus(ctx context.Context, r Runner, cfg Config, maxAge int) (
 		return nil, &msg
 	}
 	st.normalize(cfg.Now)
-	st.stampSince()
+	st.stampSince(ctx, r, cfg)
 	return &st, nil
 }
 
 // stampSince fills Since on live dispatchers of this host's repos from the
-// crew pid file; other hosts' paths are not on this disk.
-func (st *FleetStatus) stampSince() {
+// crew pid file; other hosts' paths are not on this disk. A layout-1 pid file
+// is statted directly; a miss, or a crew with no home repo, asks crew where.
+func (st *FleetStatus) stampSince(ctx context.Context, r Runner, cfg Config) {
 	for i := range st.Repos {
 		repo := &st.Repos[i]
 		if repo.Host != st.Host {
 			continue
 		}
-		crewsDir := filepath.Join(repo.Common, "crew", "crews")
+		var repoDir string
+		crewsDir := ""
+		if repo.Common != "" {
+			repoDir = strings.TrimSuffix(repo.Common, "/.git")
+			crewsDir = filepath.Join(repo.Common, "crew", "crews")
+		}
 		for j := range repo.Crews {
 			c := &repo.Crews[j]
-			if c.Dispatcher.State == "live" {
-				c.Dispatcher.Since = pidSince(crewsDir, c.CrewID)
+			if c.Dispatcher.State != "live" {
+				continue
 			}
+			c.Dispatcher.Since = crewPidSince(ctx, r, cfg, crewsDir, repoDir, c.CrewID)
 		}
 	}
 }

@@ -75,8 +75,9 @@ func run() int {
 		fmt.Print(once.Render(collect(), colorEnabled()))
 		return 0
 	case "interactive":
-		eventsPath, eventsErr := data.EventsPath(ctx, data.ExecRunner{}, cfg.Git)
 		runner := data.ExecRunner{}
+		bus := resolveBus(ctx, runner, cfg)
+		eventsPath, eventsErr := bus.eventsPath, bus.err
 		scanner := data.NewBusScanner(eventsPath)
 		mapDeps, closeMap := resolveMap(runner)
 		defer closeMap()
@@ -103,6 +104,7 @@ func run() int {
 			InTmux:          os.Getenv("TMUX") != "",
 			EventsPath:      eventsPath,
 			EventsPathErr:   eventsErr,
+			Repo:            bus.repo,
 			Now:             cfg.Now,
 			Narrow:          o.narrow,
 			Map:             mapDeps,
@@ -186,13 +188,14 @@ func sweepMapPNGs(dir string, now time.Time) {
 // collect so later scans only read appended lines.
 func runView(ctx context.Context, cfg data.Config, o opts) int {
 	runner := data.ExecRunner{}
-	eventsPath, eventsErr := data.EventsPath(ctx, runner, cfg.Git)
+	bus := resolveBus(ctx, runner, cfg)
+	eventsPath, eventsErr := bus.eventsPath, bus.err
 	var collect func(context.Context) (any, error)
-	var commons func() []string
+	watch := bus.watch
 	if o.view == "fleet" {
 		fc := newFleetCollector(runner, cfg)
 		fc.background = o.watch
-		commons = fc.knownCommons
+		watch = func() []string { return watchPaths(fc.knownCommons()) }
 		collect = func(ctx context.Context) (any, error) {
 			if o.keeps {
 				fc.blockReapKeeps(ctx)
@@ -208,10 +211,6 @@ func runView(ctx context.Context, cfg data.Config, o opts) int {
 		var fc *fleetCollector
 		if o.keeps {
 			fc = newFleetCollector(runner, cfg)
-		}
-		if eventsErr == nil {
-			repo := filepath.Dir(filepath.Dir(eventsPath))
-			commons = func() []string { return []string{repo} }
 		}
 		collect = func(ctx context.Context) (any, error) {
 			cfg := cfg
@@ -255,12 +254,7 @@ func runView(ctx context.Context, cfg data.Config, o opts) int {
 	// The poll covers every events.jsonl, relay cursor and peer file; the
 	// fsnotify watcher adds low latency for the current repo's bus. Fleet
 	// has no single bus to watch.
-	watchers := []buswatch.Watcher{buswatch.NewPoll(func() []string {
-		if commons == nil {
-			return nil
-		}
-		return watchPaths(commons())
-	}, time.Second)}
+	watchers := []buswatch.Watcher{buswatch.NewPoll(watch, time.Second)}
 	if o.view == "fleet" {
 		// Until a collect learns the repo commons nothing is polled, so a
 		// slow tick lets a consumer recover from a failed first collect.
@@ -275,6 +269,41 @@ func runView(ctx context.Context, cfg data.Config, o opts) int {
 		return 1
 	}
 	return 0
+}
+
+// busInfo is where the dash reads one crew's bus: the events log, the repo
+// label for the crew header and the poll globs for runView's watcher.
+type busInfo struct {
+	eventsPath string
+	err        error
+	repo       string
+	watch      func() []string
+}
+
+// resolveBus asks `crew where` for the bus of cfg.CrewID. A layout-2 crew
+// reads its log under crew state; every other outcome (no crew, layout 1, a
+// resolver failure or empty answer) keeps the repo's git-common-dir bus.
+func resolveBus(ctx context.Context, r data.Runner, cfg data.Config) busInfo {
+	if cfg.CrewID != "" {
+		if b, err := data.ResolveCrewBus(ctx, r, cfg, cfg.CrewID); err == nil && b.Layout == 2 {
+			watch := []string{b.Log, filepath.Join(b.Dir, "relay", "*.cursor")}
+			return busInfo{
+				eventsPath: b.Log,
+				repo:       data.RepoFromLog(b.Log, cfg.CrewID),
+				watch:      func() []string { return watch },
+			}
+		}
+	}
+	eventsPath, err := data.EventsPath(ctx, r, cfg.Git)
+	if err != nil {
+		return busInfo{err: err, watch: func() []string { return nil }}
+	}
+	common := filepath.Dir(filepath.Dir(eventsPath))
+	return busInfo{
+		eventsPath: eventsPath,
+		repo:       ui.RepoOfEvents(eventsPath),
+		watch:      func() []string { return watchPaths([]string{common}) },
+	}
 }
 
 const fleetWatchFallback = 30 * time.Second
@@ -518,7 +547,7 @@ func (fc *fleetCollector) stream(ctx context.Context, nowSec int64, emit func(vi
 		if st != nil {
 			var all []string
 			for _, repo := range st.Repos {
-				if !slices.Contains(all, repo.Common) {
+				if repo.Common != "" && !slices.Contains(all, repo.Common) {
 					all = append(all, repo.Common)
 				}
 			}

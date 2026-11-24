@@ -1,6 +1,8 @@
 package ui
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -98,8 +100,38 @@ func TestRepoOfEvents(t *testing.T) {
 		"/h/dispatcher.git/crew/events.jsonl":  "dispatcher.git",
 		"":                                     "",
 	} {
-		if got := repoOfEvents(in); got != want {
-			t.Errorf("repoOfEvents(%q) = %q, want %q", in, got, want)
+		if got := RepoOfEvents(in); got != want {
+			t.Errorf("RepoOfEvents(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+func labelledModel(t *testing.T, rows string) Model {
+	t.Helper()
+	log := filepath.Join(t.TempDir(), "events.jsonl")
+	if err := os.WriteFile(log, []byte(rows), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	m := sized(loadedModel(loadSnapshot(t), Deps{Repo: data.RepoFromLog(log, "c2")}), 100, 30)
+	m.active = overviewTab
+	m.snap.Roster.Scope = data.Scope{Crew: "c2", Source: "flag", Known: true, Crews: 1}
+	m.snap.Roster.Crews = []data.RosterCrew{{ID: "c2", Lane: &data.LaneStatus{State: "alive"}}}
+	return m
+}
+
+func TestCrewHeaderRepoFromDeps(t *testing.T) {
+	asciiProfile(t)
+	m := labelledModel(t, `{"kind":"dispatch","crew_id":"c2","repo":"/x/myrepo/.git"}`+"\n")
+	if out := stripped(m.View()); !strings.Contains(out, "crew › myrepo c2 · live") {
+		t.Errorf("header lacks repo from Deps.Repo:\n%s", out)
+	}
+}
+
+func TestCrewHeaderNoRepoWithoutDispatchRows(t *testing.T) {
+	asciiProfile(t)
+	m := labelledModel(t, "")
+	out := stripped(m.View())
+	if !strings.Contains(out, "crew › c2 · live") {
+		t.Errorf("header should name the crew without a repo:\n%s", out)
 	}
 }

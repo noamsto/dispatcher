@@ -858,3 +858,42 @@ func TestFleetLaneGraceFollowsDispatcherSince(t *testing.T) {
 		})
 	}
 }
+
+func TestFleetNoRepoGroup(t *testing.T) {
+	in := fleetIn(data.FleetRepo{Repo: "(no repo)", Common: "", Crews: []data.FleetCrew{
+		crewIn("c9", "live", wk("feat/x", "working")),
+		crewIn("c8", "dead", wk("feat/y", "working")),
+	}})
+	r := &data.FakeRunner{}
+	v := view.BuildFleet(in)
+	if len(v.Crews) == 0 {
+		t.Fatal("(no repo) group not rendered")
+	}
+	if got := view.ActiveCommons(in.Fleet); slices.Contains(got, "") {
+		t.Errorf("ActiveCommons = %q, want no empty common", got)
+	}
+	for _, c := range v.Crews {
+		if c.Dir != nil {
+			t.Errorf("crew %s dir = %q, want nil", c.Crew, *c.Dir)
+		}
+		if len(c.Actions) != 0 {
+			t.Errorf("crew %s offers actions %v, want none", c.Crew, c.Actions)
+		}
+		ci, ok := view.CrewInputs(in, c.Key)
+		if !ok {
+			t.Fatalf("no inputs for %s", c.Key)
+		}
+		if ci.Bus.Err != nil || ci.Dir != nil {
+			t.Errorf("crew %s bus err %v dir %v, want none", c.Crew, ci.Bus.Err, ci.Dir)
+		}
+		view.BuildOverview(ci)
+	}
+	for _, it := range v.Attention {
+		if it.Action != nil && it.Action.Verb == "relaunch" {
+			t.Errorf("relaunch offered for a no-repo crew: %+v", it)
+		}
+	}
+	if n := len(r.CallsSnapshot()); n != 0 {
+		t.Errorf("runner calls = %d, want 0", n)
+	}
+}
