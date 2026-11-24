@@ -347,7 +347,10 @@ func TestDiscoverPrunesGoneEntries(t *testing.T) {
 	if err := os.Mkdir(opts.Roots[0], 0o755); err != nil {
 		t.Fatal(err)
 	}
-	discover(t, opts)
+	_, stderr := discover(t, opts)
+	if want := "crew: rate --sweep-all: pruned " + gone + " (git dir gone)\n"; stderr != want {
+		t.Errorf("stderr %q, want %q", stderr, want)
+	}
 	data, err := os.ReadFile(reg)
 	if err != nil {
 		t.Fatal(err)
@@ -383,7 +386,9 @@ func TestPruneKeepsUnreadableEntriesAndMissingRegistry(t *testing.T) {
 	if err := os.WriteFile(reg, []byte(long+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	Prune(reg)
+	if dropped := Prune(reg); len(dropped) != 0 {
+		t.Errorf("Prune dropped %v", dropped)
+	}
 	if data, _ := os.ReadFile(reg); string(data) != long+"\n" {
 		t.Errorf("registry %q, want the unreadable entry kept", data)
 	}

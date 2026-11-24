@@ -150,3 +150,15 @@ func TestGonePaneSessionExited(t *testing.T) {
 		f.portBWantPresent(f.wt)
 	})
 }
+
+func TestGonePaneAppendFailureIsReported(t *testing.T) {
+	f := gonePaneFx(t, "working", "MERGED")
+	f.appendFail = func(string) error { return errors.New("disk full") }
+	f.portBOK(Request{})
+	if got := f.stderr.String(); !strings.Contains(got, "crew reap: cannot mark feat/r exited: disk full\n") {
+		t.Fatalf("stderr %q", got)
+	}
+	if len(f.exitedRows()) != 0 {
+		t.Fatalf("rows %v", f.appended)
+	}
+}

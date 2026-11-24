@@ -56,7 +56,7 @@ that `crew roster` surfaces as needs_cleanup. --json adds stale, stale_reason,
 worktree, inspect and remove to that keep. Reap never removes it. A finished
 session whose worktree is already gone is retired (`would retire` under
 --dry-run).
-A worker session still `working` or `blocked` whose window, engine pane and
+A worker session in any non-terminal state (working, blocked, pr_open) whose window, engine pane and
 stall-watch are all gone is marked `exited` (source "reap"; `would mark`
 under --dry-run) before the pass, then reclaimed or kept like any exited worker.
 

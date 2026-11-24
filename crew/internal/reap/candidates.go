@@ -62,7 +62,7 @@ func Candidates(ctx context.Context, paths bus.Paths, cwd string, stderr io.Writ
 			continue
 		}
 		c := Candidate{Keep: k}
-		// A tip past its merged PR is no stale keep: only a finished worker's.
+		// A non-stale tip-past keep is listed only for a finished worker.
 		if id, ok := identity.Recorded(raws, k.Branch); ok {
 			c.Codename = id.Name
 		}

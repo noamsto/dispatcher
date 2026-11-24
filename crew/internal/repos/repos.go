@@ -121,38 +121,42 @@ func underTemp(path string) bool {
 var pruned sync.Map
 
 // pruneOnce prunes registry the first time this process reads it.
-func pruneOnce(registry string) {
-	if _, done := pruned.LoadOrStore(registry, true); !done {
-		Prune(registry)
+func pruneOnce(registry string) []string {
+	if _, done := pruned.LoadOrStore(registry, true); done {
+		return nil
 	}
+	return Prune(registry)
 }
 
 // Prune drops registry entries whose git dir no longer exists, rewriting the
 // file atomically under the registry lock. An entry that cannot be stat'ed for
-// any other reason is kept, and a held lock skips the prune.
-func Prune(registry string) {
+// any other reason is kept, and a held lock skips the prune. It returns the
+// entries it dropped.
+func Prune(registry string) []string {
 	if _, err := os.Stat(registry); err != nil {
-		return
+		return nil
 	}
 	dir := registry + ".lock.d"
 	if !lock.Acquire(dir, strconv.Itoa(os.Getpid())) {
-		return
+		return nil
 	}
 	defer lock.Release(dir)
 	lines := registryLines(registry)
 	kept := lines[:0:0]
+	var dropped []string
 	for _, c := range lines {
 		if _, err := os.Stat(c); errors.Is(err, os.ErrNotExist) {
+			dropped = append(dropped, c)
 			continue
 		}
 		kept = append(kept, c)
 	}
 	if len(kept) == len(lines) {
-		return
+		return nil
 	}
 	info, err := os.Stat(registry)
 	if err != nil {
-		return
+		return nil
 	}
 	tmp := registry + ".tmp" + strconv.Itoa(os.Getpid())
 	body := strings.Join(kept, "\n")
@@ -161,11 +165,13 @@ func Prune(registry string) {
 	}
 	if err := os.WriteFile(tmp, []byte(body), info.Mode().Perm()); err != nil {
 		_ = os.Remove(tmp)
-		return
+		return nil
 	}
 	if err := os.Chmod(tmp, info.Mode().Perm()); err != nil || os.Rename(tmp, registry) != nil {
 		_ = os.Remove(tmp)
+		return nil
 	}
+	return dropped
 }
 
 // Discover returns every registry or walk candidate, byte-sorted and
@@ -183,7 +189,9 @@ func Discover(o Options) []Repo {
 	if registry == "" {
 		registry = RegistryPath(lookup)
 	}
-	pruneOnce(registry)
+	for _, c := range pruneOnce(registry) {
+		say(stderr, "%s: pruned %s (git dir gone)\n", o.Prefix, c)
+	}
 
 	roots := strings.Join(o.Roots, "\n")
 	if roots == "" {
@@ -234,7 +242,7 @@ func Registered(registry string, getenv func(string) string) []Repo {
 	if registry == "" {
 		registry = RegistryPath(getenv)
 	}
-	pruneOnce(registry)
+	_ = pruneOnce(registry)
 	commons := registryLines(registry)
 	slices.Sort(commons)
 	commons = slices.Compact(commons)

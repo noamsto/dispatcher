@@ -665,6 +665,7 @@ func TestSweepStoreIsADirectory(t *testing.T) {
 // cannot be opened aborts the sweep before any store write, because a repo that
 // never enters the registry is invisible to every later --sweep-all.
 func TestSweepRegistryUnwritable(t *testing.T) {
+	t.Setenv("CREW_REGISTRY_ALLOW_TMP", "1")
 	f := newFixture(t)
 	f.seedSettings()
 	f.seedPRRow()
@@ -686,6 +687,7 @@ func TestSweepWriteOnlyRegistry(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("root ignores the write-only mode")
 	}
+	t.Setenv("CREW_REGISTRY_ALLOW_TMP", "1")
 	f := newFixture(t)
 	f.seedSettings()
 	f.seedPRRow()
@@ -738,6 +740,7 @@ func TestSweepSweptAtIsMergeTimeClock(t *testing.T) {
 }
 
 func TestSweepRegistry(t *testing.T) {
+	t.Setenv("CREW_REGISTRY_ALLOW_TMP", "1")
 	f := newFixture(t)
 	f.seedSettings()
 	f.seedPRRow()
@@ -759,6 +762,23 @@ func TestSweepRegistry(t *testing.T) {
 	again, _ := os.ReadFile(registry)
 	if string(again) != f.paths.Common+"\n" {
 		t.Errorf("registry after a second sweep = %q", again)
+	}
+}
+
+func TestSweepTempRepoIsSweptButNotRegistered(t *testing.T) {
+	t.Setenv("CREW_REGISTRY_ALLOW_TMP", "")
+	f := newFixture(t)
+	f.seedSettings()
+	f.seedPRRow()
+	f.gh = func(string) (string, bool) { return `{}`, true }
+	if _, code := f.runQuiet(); code != 0 {
+		t.Fatalf("exit %d, want 0", code)
+	}
+	if _, err := os.Stat(filepath.Join(filepath.Dir(f.store), "repos")); !os.IsNotExist(err) {
+		t.Errorf("a temp-dir repo was registered (stat err %v)", err)
+	}
+	if len(f.rows()) == 0 {
+		t.Error("the sweep did not write the store")
 	}
 }
 

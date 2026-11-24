@@ -26,6 +26,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/jqrun"
 	"github.com/noamsto/dispatcher/crew/internal/jsonval"
 	"github.com/noamsto/dispatcher/crew/internal/lock"
+	"github.com/noamsto/dispatcher/crew/internal/repos"
 )
 
 //go:embed records.jq
@@ -123,7 +124,7 @@ func runSweep(paths bus.Paths, cwd string, stderr io.Writer, o Options) int {
 	}
 	// `crew rate --sweep-all` also discovers repos from here, so a repo swept
 	// once stays found wherever it lives on disk.
-	if err := appendRegistry(filepath.Join(dir, "repos"), paths.Common); err != nil {
+	if err := repos.Register(filepath.Join(dir, "repos"), paths.Common); err != nil && !errors.Is(err, repos.ErrTempRegistry) {
 		say(stderr, "crew: rate: %s: %v\n", filepath.Join(dir, "repos"), err)
 		return exitFailure
 	}
@@ -477,33 +478,6 @@ func appendBatch(store string, rows []any) error {
 		return err
 	}
 	return f.Close()
-}
-
-// appendRegistry is `grep -qxF "$common" "$registry" || printf '%s\n' …`: an
-// exact whole-line check, then a one-line append. The arm's redirect ran under
-// `set -e`, so a registry that cannot be opened aborted the sweep before any
-// store write: a repo that never enters the registry is invisible to every
-// later `--sweep-all`.
-func appendRegistry(registry, line string) error {
-	if data, err := os.ReadFile(registry); err == nil {
-		for _, have := range strings.Split(strings.TrimSuffix(string(data), "\n"), "\n") {
-			if have == line {
-				return nil
-			}
-		}
-	}
-	// A read error is not fatal: `grep -qxF … 2>/dev/null ||` reads a failure to
-	// read as "the line is not there" and appends, which is how a write-only
-	// registry still gets updated.
-	f, err := os.OpenFile(registry, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = f.Close() }()
-	if _, err := f.WriteString(line + "\n"); err != nil {
-		return err
-	}
-	return nil
 }
 
 // prURLPattern is the arm's `_pr_url_in_repo` regex.

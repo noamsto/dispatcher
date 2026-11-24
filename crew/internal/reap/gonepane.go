@@ -2,6 +2,7 @@ package reap
 
 import (
 	"context"
+	"fmt"
 	"slices"
 	"strings"
 
@@ -96,6 +97,7 @@ func (r *run) gonePane(ctx context.Context) {
 			Body:   reapedBody{State: "exited", Detail: detail, Source: "reap"},
 		}))
 		if err != nil {
+			_, _ = fmt.Fprintf(r.stderr, "crew reap: cannot mark %s exited: %v\n", s.branch, err)
 			continue
 		}
 		marked = true

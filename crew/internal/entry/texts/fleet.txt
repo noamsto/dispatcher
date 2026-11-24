@@ -4,7 +4,8 @@ One row per live branch across every crew bus on the machine, from any
 directory (no git repo needed). Buses come from the repo registry plus a walk of
 $CREW_SWEEP_ROOTS (colon-separated; default $HOME). The first read per run
 prunes registry entries whose git dir is gone (atomic rewrite); registering a
-repo under the system temp dir is refused unless CREW_REGISTRY_ALLOW_TMP is
+repo under the system temp dir is refused (crew hold --fleet enrollment; dispatch's own
+registration is unchanged) unless CREW_REGISTRY_ALLOW_TMP is
 set. Rows are the roster's, with
 a repo column; by default only working, blocked and pr_open branches show. A
 crew whose newest remote dispatch (`dispatch --host`) is under 24 hours old and

@@ -416,7 +416,8 @@ func TestMsgRefusesARepoItCannotUse(t *testing.T) {
 	unknown := func(repo string) string {
 		return prefix + "repo " + repo + " is not a discovered crew bus; pass a repo as crew fleet names it, or its git common dir"
 	}
-	f.refused("owner/unknown", "c1", notice, unknown("owner/unknown"))
+	// The first discovery prunes the gone entry and says so.
+	f.refused("owner/unknown", "c1", notice, prefix+"pruned "+gone+" (git dir gone)\n"+unknown("owner/unknown"))
 	f.refused("bare", "c1", notice, unknown("bare"))
 	f.refused(bare, "c1", notice, prefix+"repo "+bare+" is not a usable crew bus (no bus)")
 	// Discovery prunes a gone registry entry, so it reads as unknown.
