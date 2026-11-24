@@ -159,6 +159,10 @@ func Run(r Request, paths bus.Paths, stdout, stderr io.Writer, opts Options) int
 		return exitUsage
 	}
 	bc, err := paths.Crew(c.crew)
+	if bus.IsRefusal(err) {
+		say(stderr, "crew: %v\n", err)
+		return exitUsage
+	}
 	if err != nil {
 		say(stderr, "%s\n", badCrewMsg)
 		return exitUsage

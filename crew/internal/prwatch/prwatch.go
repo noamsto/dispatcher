@@ -104,6 +104,10 @@ func Run(ctx context.Context, req Request, paths bus.Paths, stdout, stderr io.Wr
 	}
 
 	c, err := paths.Crew(crew)
+	if bus.IsRefusal(err) {
+		say(stderr, "crew: %v\n", err)
+		return exitFailure
+	}
 	if err != nil {
 		say(stderr, "crew: pr-watch: invalid crew id %s\n", crew)
 		return exitFailure

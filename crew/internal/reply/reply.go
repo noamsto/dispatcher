@@ -76,6 +76,10 @@ func Run(ctx context.Context, req Request, paths bus.Paths, stderr io.Writer, o 
 	log, dir := paths.Log, paths.Dir
 	if crew != "" {
 		c, err := paths.Crew(crew)
+		if bus.IsRefusal(err) {
+			say(stderr, "crew: %v\n", err)
+			return exitFailure
+		}
 		if err != nil {
 			say(stderr, "crew: reply: invalid crew id %s\n", crew)
 			return exitFailure
@@ -125,6 +129,10 @@ func Run(ctx context.Context, req Request, paths bus.Paths, stderr io.Writer, o 
 		return exitFailure
 	}
 	c, err := paths.Crew(crew)
+	if bus.IsRefusal(err) {
+		say(stderr, "crew: %v\n", err)
+		return exitFailure
+	}
 	if err != nil {
 		say(stderr, "crew: reply: invalid crew id %s\n", crew)
 		return exitFailure

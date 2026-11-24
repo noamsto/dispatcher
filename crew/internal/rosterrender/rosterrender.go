@@ -102,6 +102,10 @@ func Run(ctx context.Context, req Request, paths bus.Paths, o Options) int {
 		return runMap(ctx, c, paths, o)
 	}
 	bc, err := paths.Crew(c.crew)
+	if bus.IsRefusal(err) {
+		say(o.Stderr, "crew: %v\n", err)
+		return exitUsage
+	}
 	if err != nil {
 		say(o.Stderr, "%s\n", errCrewID)
 		return exitUsage

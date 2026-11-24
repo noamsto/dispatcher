@@ -54,7 +54,7 @@ func TestMain(m *testing.M) {
 		// the test never races the signal handler: `started` means Notify is
 		// registered (Run registers it before it starts the child), `forwarded`
 		// means the first TERM reached the child, which never exits.
-		os.Exit(Run(context.Background(), Request{PR: "42"}, bus.Paths{}, io.Discard, io.Discard,
+		os.Exit(Run(context.Background(), Request{PR: "42"}, bus.PathsFor(os.TempDir()), io.Discard, io.Discard,
 			Options{CrewID: func() string { return "c1" }, Clock: fixedClock(), Start: func(context.Context, []string, io.Writer, io.Writer) (Child, error) {
 				_ = os.WriteFile(os.Getenv(markerEnv), []byte("x"), 0o644)
 				return parkedChild{}, nil
@@ -80,8 +80,9 @@ func newTree(t *testing.T) tree {
 	t.Helper()
 	dir := t.TempDir()
 	return tree{t: t, paths: bus.Paths{
-		Dir: filepath.Join(dir, ".dispatcher", "crew", "c1"),
-		Log: filepath.Join(dir, ".dispatcher", "crew", "c1", "events.jsonl"),
+		Common: dir,
+		Dir:    filepath.Join(dir, ".dispatcher", "crew", "c1"),
+		Log:    filepath.Join(dir, ".dispatcher", "crew", "c1", "events.jsonl"),
 	}}
 }
 
