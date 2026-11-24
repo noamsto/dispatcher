@@ -380,6 +380,10 @@ func collectStatus(ctx context.Context, req StatusRequest, stderr io.Writer, o S
 		l2 = readLayout2(stateRoot)
 	}
 	groups := groupLayout2(l2, knownCommons(found))
+	layout2IDs := map[string]bool{}
+	for _, c := range l2 {
+		layout2IDs[c.id] = true
+	}
 	build := func(common string, events []bus.Event) {
 		dirs := map[string]string{}
 		for _, c := range groups[common] {
@@ -398,7 +402,7 @@ func collectStatus(ctx context.Context, req StatusRequest, stderr io.Writer, o S
 		}
 		slots = append(slots, slot{build: &repoBuild{ctx: ctx, o: o, once: once, common: common, events: events, docs: eventDocs(events),
 			idx: indexBus(events, busHost), now: now, nowMS: nowMS, nowSec: nowSec, overseer: overseer, host: host, stateDir: stateDir, due: due,
-			probe: probe, homes: homes, crewDirs: dirs}})
+			probe: probe, homes: homes, crewDirs: dirs, layout2IDs: layout2IDs}})
 	}
 	grouped := map[string]bool{}
 	for _, r := range found {
@@ -414,10 +418,10 @@ func collectStatus(ctx context.Context, req StatusRequest, stderr io.Writer, o S
 			events, torn, skip = buses.read(r.Common)
 			if skip != "" {
 				slots = append(slots, slot{skip: &Skipped{Path: r.Common, Status: skip}})
-				if !hasCrews {
-					continue
+				if hasCrews {
+					say(stderr, "crew: fleet status: %s: its layout-2 crews are skipped with it\n", r.Common)
 				}
-				events = nil
+				continue
 			}
 			if torn != "" {
 				say(stderr, "crew: fleet status: %s: %s (rows from the readable prefix)\n", r.Common, torn)
@@ -498,6 +502,9 @@ type repoBuild struct {
 	probe    *probeMemo        // the overseer's --host probes, nil for none
 	homes    map[string]string // crew id → home host of its guest windows
 	crewDirs map[string]string // layout-2 crew id → its dir
+	// layout2IDs is every live layout-2 crew id: one dir left in a layout-1
+	// repo is dead state, not a crew.
+	layout2IDs map[string]bool
 
 	repoName   string
 	ghRepo     string // the raw owner/name, the PR-ownership check's identity
@@ -611,7 +618,7 @@ func (b *repoBuild) crewIDs(byCrew map[string][]map[string]any) []string {
 	if b.common != "" {
 		entries, _ := os.ReadDir(bus.PathsFor(b.common).CrewsDir())
 		for _, e := range entries {
-			if e.IsDir() {
+			if e.IsDir() && (!b.layout2IDs[e.Name()] || b.crewDirs[e.Name()] != "") {
 				ids[e.Name()] = true
 			}
 		}

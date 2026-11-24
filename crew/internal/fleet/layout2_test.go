@@ -282,8 +282,9 @@ func TestLayout2StatusSymlinkedRegistryPath(t *testing.T) {
 	}
 }
 
-func TestLayout2StatusUnreadableLayout1RepoKeepsItsSkip(t *testing.T) {
+func TestLayout2StatusUnreadableLayout1RepoKeepsOnlyItsSkip(t *testing.T) {
 	f := newQueueFix(t, "alpha")
+	f.register("alpha", "c1", livePID)
 	f.layout2("l2", f.tag("alpha"), wstatus(20, "l2", "feat/b", "working", ""))
 	if err := os.Chmod(f.busPath("alpha"), 0); err != nil {
 		t.Fatal(err)
@@ -293,11 +294,11 @@ func TestLayout2StatusUnreadableLayout1RepoKeepsItsSkip(t *testing.T) {
 	}
 
 	d := f.status()
-	if got := d.crewIDs(); !slices.Equal(got, []string{"l2"}) {
-		t.Errorf("crews = %v, want l2 built anyway", got)
-	}
 	if len(d.Skipped) != 1 || d.Skipped[0].Path != f.commons["alpha"] {
 		t.Errorf("skipped = %+v, want alpha's read error", d.Skipped)
+	}
+	if len(d.Repos) != 0 {
+		t.Errorf("repos = %+v, want alpha absent: its skip and a group would share one key", d.Repos)
 	}
 }
 
@@ -365,5 +366,66 @@ func TestLayout2PrioSymlinkedHomeCountsOnce(t *testing.T) {
 	}
 	if got := readPriorities(priorityPath(f.opts.Getenv)); got[linked] != 4 || len(got) != 1 {
 		t.Errorf("priorities = %v, want the registry path %q at 4", got, linked)
+	}
+}
+
+func TestLayout2StatusCrewDirInAnotherRepoIsNotListedAgain(t *testing.T) {
+	f := newQueueFix(t, "alpha", "beta")
+	f.layout2("x", f.tag("alpha"), wstatus(20, "x", "feat/b", "working", ""))
+	f.register("beta", "x", livePID)
+
+	d := f.status()
+	if got := d.crewIDs(); !slices.Equal(got, []string{"x"}) {
+		t.Fatalf("crews = %v, want x once", got)
+	}
+	if r := d.repo(t, "acme/alpha"); len(r.Crews) != 1 {
+		t.Errorf("alpha = %+v, want x under its home", r)
+	}
+}
+
+func TestLayout2DueClockRunsWhileTheHomeLayout1BusIsUnreadable(t *testing.T) {
+	f := newQueueFix(t, "alpha")
+	f.add("alpha", "c1", "h1", 1, 100)
+	dir := f.layout2("l2", f.tag("alpha"), fleetAddRow(f.ms(100), "l2", "h2", "feat/h2", "normal", 2))
+	f.write(filepath.Join(dir, "pid"), livePID+"\n")
+	if err := os.Chmod(f.busPath("alpha"), 0); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.ReadFile(f.busPath("alpha")); err == nil {
+		t.Skip("permissions are not enforced")
+	}
+
+	k := holdKey{"", "l2", "h2"}
+	f.due("alpha", "l2", true)
+	f.advance(headTimeout)
+	f.due("alpha", "l2", true)
+	if got := f.record(); got[k].Demoted == 0 {
+		t.Errorf("record %v, want h2 demoted at the timeout", got)
+	}
+}
+
+func TestLayout2DueRecordSurvivesTheHomeBeingRegistered(t *testing.T) {
+	f := newQueueFix(t)
+	real := f.repo("alpha", false)
+	link := filepath.Join(f.root, "link")
+	if err := os.Symlink(filepath.Dir(real), link); err != nil {
+		t.Fatal(err)
+	}
+	linked := filepath.Join(link, ".git")
+	f.origins[linked] = f.origins[real]
+	dir := f.layout2("l2", f.tag("alpha"), fleetAddRow(f.ms(100), "l2", "h2", "feat/h2", "normal", 2))
+	f.write(filepath.Join(dir, "pid"), livePID+"\n")
+
+	k := holdKey{"", "l2", "h2"}
+	f.due("alpha", "l2", true)
+	first := f.record()[k]
+	if first.FirstDue == 0 {
+		t.Fatalf("record %v, want h2's clock running", f.record())
+	}
+	f.appendTo(f.opts.Registry, linked+"\n")
+	f.advance(headTimeout)
+	f.due("alpha", "l2", true)
+	if got := f.record(); got[k].Demoted == 0 || len(got) != 1 {
+		t.Errorf("record %v, want h2's one entry carried over and demoted", got)
 	}
 }

@@ -106,10 +106,17 @@ type queued struct {
 }
 
 // holdKey is a hold's identity on the machine: a hold id is unique only within
-// its crew's sink.
+// its crew's sink. A layout-2 crew id is unique on the machine, so its holds
+// are keyed by crew alone: the record must not follow the home repo's path or
+// registration.
 type holdKey struct{ common, crew, id string }
 
-func (h *queued) key() holdKey { return holdKey{h.common, h.crew, h.id} }
+func (h *queued) key() holdKey {
+	if h.layout2 {
+		return holdKey{"", h.crew, h.id}
+	}
+	return holdKey{h.common, h.crew, h.id}
+}
 
 // releasedHold is a fleet hold released within the pending window.
 type releasedHold struct {
@@ -193,20 +200,16 @@ func scanFleet(registry string, getenv func(string) string, read busReader, nowM
 			s.unread.repos[r.Common] = true
 			continue
 		}
-		s.addRepo(r.Common, withoutCrews(events, crews), nowMS)
+		s.addRepo(r.Common, withoutCrews(events, crews), false, nowMS)
 	}
 	for _, common := range slices.Sorted(maps.Keys(groups)) {
 		for _, c := range groups[common] {
 			events, _, skip := read(c.log)
 			if skip != "" && skip != string(repos.StatusNoBus) {
-				s.unread.crews[crewRef{common, c.id}] = true
+				s.unread.crews[crewRef{"", c.id}] = true
 				continue
 			}
-			n := len(s.holds)
-			s.addRepo(common, events, nowMS)
-			for _, h := range s.holds[n:] {
-				h.layout2 = true
-			}
+			s.addRepo(common, events, true, nowMS)
 		}
 	}
 	return s
@@ -226,7 +229,7 @@ type holdAdd struct {
 // input. Which holds are outstanding is hold.Outstanding's answer over the
 // dispatcher's rows, the fold `crew hold due` matches the verdict against; a
 // hold's ts is its first add row's, and a release counts once, at its first row.
-func (s *fleetScan) addRepo(common string, events []bus.Event, nowMS int64) {
+func (s *fleetScan) addRepo(common string, events []bus.Event, layout2 bool, nowMS int64) {
 	adds := map[crewHold]holdAdd{}
 	releasedAt := map[crewHold]int64{}
 	var docs []any
@@ -259,7 +262,11 @@ func (s *fleetScan) addRepo(common string, events []bus.Event, nowMS int64) {
 	for _, crew := range fleetCrews {
 		out, err := hold.Outstanding(docs, crew)
 		if err != nil {
-			s.unread.crews[crewRef{common, crew}] = true
+			ref := crewRef{common, crew}
+			if layout2 {
+				ref.common = ""
+			}
+			s.unread.crews[ref] = true
 			continue
 		}
 		list, _ := out.([]any)
@@ -272,7 +279,7 @@ func (s *fleetScan) addRepo(common string, events []bus.Event, nowMS int64) {
 				continue
 			}
 			seen[id] = true
-			s.holds = append(s.holds, &queued{common: common, crew: crew, id: id, branch: a.branch, prio: a.prio, weight: a.weight, ts: a.ts})
+			s.holds = append(s.holds, &queued{common: common, crew: crew, id: id, branch: a.branch, prio: a.prio, weight: a.weight, ts: a.ts, layout2: layout2})
 		}
 	}
 	for k, at := range releasedAt {
