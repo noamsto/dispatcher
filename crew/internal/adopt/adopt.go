@@ -121,6 +121,10 @@ func Run(ctx context.Context, req Request, paths bus.Paths, stdout, stderr io.Wr
 	// The same charset bus.ValidCrewID gates every other writer of a crew id
 	// with: an unsanitized id reaches file paths and jq arguments downstream.
 	bc, err := paths.Crew(id)
+	if bus.IsRefusal(err) {
+		say(stderr, "crew: %v\n", err)
+		return exitFailure
+	}
 	if err != nil {
 		say(stderr, "crew: invalid crew id — expected only letters, digits, '.', '_' and '-'\n")
 		return exitFailure
@@ -157,7 +161,7 @@ func Run(ctx context.Context, req Request, paths bus.Paths, stdout, stderr io.Wr
 		// already proved the text is a positive integer, so the parse cannot fail.
 		n, _ := strconv.Atoi(epid)
 		if !proc.IsAncestor(o.Proc, n) {
-			o.pidfileLog(paths, "adopt", "refused", id, epid, pidText)
+			o.pidfileLog(bc.State, "adopt", "refused", id, epid, pidText)
 			say(stderr, "crew: crew '%s' still has a live dispatcher — 'crew new' starts your own; '--force' overrides if that process is a stale pid reuse\n", id)
 			return exitFailure
 		}
@@ -178,7 +182,7 @@ func Run(ctx context.Context, req Request, paths bus.Paths, stdout, stderr io.Wr
 	}
 	// Plain adopt is an explicit takeover by a dispatcher in this repo, so the
 	// crew becomes home here whatever it was before.
-	if err := crews.WriteHome(paths, id); err != nil {
+	if err := crews.WriteHome(paths, bc); err != nil {
 		say(stderr, "crew: adopt: %v\n", err)
 		return exitFailure
 	}
@@ -186,7 +190,7 @@ func Run(ctx context.Context, req Request, paths bus.Paths, stdout, stderr io.Wr
 	if req.Force && live {
 		outcome = "forced"
 	}
-	o.pidfileLog(paths, "adopt", outcome, id, epid, pidText)
+	o.pidfileLog(bc.State, "adopt", outcome, id, epid, pidText)
 
 	// The pane travels with the pid: a stale pane file would keep naming the
 	// previous dispatcher's pane, and readers tolerate its absence.
@@ -348,8 +352,8 @@ func claimRows(paths bus.Paths, id string) []claim {
 }
 
 // pidfileLog is `_pidfile_log` for this run's caller identity.
-func (o Options) pidfileLog(paths bus.Paths, action, outcome, crew, oldPID, newPID string) {
-	crews.PidfileLog(paths, crews.Caller{
+func (o Options) pidfileLog(state, action, outcome, crew, oldPID, newPID string) {
+	crews.PidfileLog(state, crews.Caller{
 		Now: o.Clock.Now(), PID: o.PID, PPID: o.PPID, Pwd: o.Pwd, By: o.Proc.Args(o.PPID),
 	}, action, outcome, crew, oldPID, newPID)
 }

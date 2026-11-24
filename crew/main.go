@@ -82,6 +82,8 @@ const (
 	exitUsage     = 64
 	// exitRemoteUsage is the refusal status of the remote-* transport commands.
 	exitRemoteUsage = 2
+	// exitRefused is a crew the resolver refuses (archived, index-only).
+	exitRefused = 3
 )
 
 // isHelpFlag is the two spellings crew.sh's help preamble matched.
@@ -145,6 +147,10 @@ func routeHelp(sub string, args []string, stdout, stderr io.Writer) (int, bool) 
 		if isHelpFlag(arg(args, 2)) {
 			return entry.RunHelp([]string{"migrate"}, stdout, stderr), true
 		}
+	case "index":
+		if isHelpFlag(arg(args, 2)) {
+			return entry.RunHelp([]string{"index"}, stdout, stderr), true
+		}
 	}
 	if isHelpFlag(arg(args, 1)) {
 		return entry.RunHelp([]string{sub}, stdout, stderr), true
@@ -175,7 +181,7 @@ var subcommands = []string{
 	"id", "new", "engine-cmd", "occupants",
 	"where", "identity", "resolve-target", "crews", "register", "deregister", "log", "sessions", "inbox",
 	"roster", "report", "retro", "rate", "fleet", "stack", "roster-render", "pi-agent-dir",
-	"adopt", "await", "dash", "git-baseline", "merge",
+	"adopt", "index", "await", "dash", "git-baseline", "merge",
 	"git-guard", "help", "hold", "msg", "nudge", "queue", "policy",
 	"pr-watch", "reap", "reap-autosweep", "cleanup",
 	"relay", "reply", "role-watch", "stall-watch", "status", "stream", "watch",
@@ -193,7 +199,7 @@ var typedSubcommands = map[string]bool{
 	"status": true, "msg": true, "reply": true, "hold": true, "queue": true, "policy": true,
 	"nudge": true, "await": true, "watch": true, "relay": true, "stream": true,
 	"git-guard": true, "git-baseline": true, "reap": true, "reap-autosweep": true, "cleanup": true,
-	"adopt": true, "merge": true, "pr-watch": true, "role-watch": true, "stall-watch": true, "help": true,
+	"adopt": true, "index": true, "merge": true, "pr-watch": true, "role-watch": true, "stall-watch": true, "help": true,
 	"remote-run": true, "remote-exec": true, "dispatch-row": true, "peer-sync": true, "peer-claims": true, "decide": true, "decisions": true, "spec-lint": true,
 	"followups": true, "class": true, "overseer": true, "migrate": true, "completion": true,
 }
@@ -274,6 +280,7 @@ type root struct {
 	GitBaseline gitBaselineCmd `cmd:"" name:"git-baseline" help:"List or accept the git-config baseline."`
 
 	Adopt adoptCmd `cmd:"" name:"adopt" help:"Re-attach to a crew already on disk."`
+	Index indexCmd `cmd:"" name:"index" help:"The repo index of layout-2 crews."`
 
 	Merge mergeCmd `cmd:"" name:"merge" help:"Merge a PR only when head, base and ledger are green."`
 
@@ -397,6 +404,8 @@ func refusalKey(args []string) string {
 			return "overseer " + args[1]
 		case args[0] == "migrate" && slices.Contains([]string{"stop", "snapshot", "mark"}, args[1]):
 			return "migrate " + args[1]
+		case args[0] == "index" && slices.Contains([]string{"add", "rebuild"}, args[1]):
+			return "index " + args[1]
 		case args[0] == "fleet" && args[1] == "stream":
 			return "fleet stream"
 		case args[0] == "fleet" && args[1] == "watch":
@@ -513,6 +522,64 @@ func stallRequest(p crewArgs) stall.Request {
 		Launch: c.Launch, Unread: c.Unread, RunawayHits: c.RunawayHits, RunawayTokens: c.RunawayTokens,
 		NoBudget: c.NoBudget, NoNudge: c.NoNudge,
 	}
+}
+
+// repoOptional reports whether a call may run outside a repo against the state
+// root alone: the crew lifecycle commands, which resolve layout-2 crews there.
+func repoOptional(p crewArgs) bool {
+	switch p.sub {
+	case "register", "deregister", "crews", "index":
+		return true
+	case "where":
+		return p.typed.Where.Log || p.typed.Where.Dir
+	}
+	return false
+}
+
+// runIndexAdd is `crew index add --crew <id>`: it lists a layout-2 crew in this
+// repo's index. A layout-1 crew is never indexed, so it is a silent no-op.
+func runIndexAdd(ctx context.Context, id string, paths bus.Paths, stderr io.Writer) int {
+	bc, err := paths.Crew(id)
+	switch {
+	case bus.IsRefusal(err):
+		say(stderr, "crew: %v\n", err)
+		return exitRefused
+	case errors.Is(err, bus.ErrNotRepo):
+		say(stderr, "crew: not in a git repo\n")
+		return exitFailure
+	case err != nil:
+		say(stderr, "crew: index: %v\n", err)
+		return exitFailure
+	case bc.Layout == 1:
+		return 0
+	case paths.Common == "":
+		say(stderr, "crew: not in a git repo\n")
+		return exitFailure
+	}
+	tag, err := bus.RepoTag(paths.Common)
+	if err == nil {
+		_, err = bus.IndexAdd(paths.State, tag, remote.CloneSlug(ctx, paths.Common), id, clock.FromEnv().Now())
+	}
+	if err != nil {
+		say(stderr, "crew: index: %v\n", err)
+		return exitFailure
+	}
+	return 0
+}
+
+// runIndexRebuild is `crew index rebuild`: every repo index under the state
+// root, regenerated from the crews' own logs.
+func runIndexRebuild(ctx context.Context, stderr io.Writer) int {
+	state := bus.StateRoot(os.Getenv)
+	if state == "" {
+		say(stderr, "crew: index: neither XDG_STATE_HOME nor HOME is set\n")
+		return exitFailure
+	}
+	if err := bus.IndexRebuild(state, func(common string) string { return remote.CloneSlug(ctx, common) }); err != nil {
+		say(stderr, "crew: index: %v\n", err)
+		return exitFailure
+	}
+	return 0
 }
 
 // runRoleWatch is the typed role-watch call.
@@ -668,6 +735,15 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 		return cleanup.Run(ctx, cleanup.Request{
 			Fleet: c.Fleet, List: c.List, JSON: c.JSON, PruneArchive: c.PruneArchive, Repo: str(c.Repo), OlderThan: str(c.OlderThan),
 		}, cwd, stdout, stderr, cleanupOptions(ctx, e))
+	case "index":
+		// rebuild is machine-wide, so it runs before Locate and outside any
+		// repo; add falls through to the repo-optional gate below.
+		if parsed.refusal != nil {
+			return refuse(stderr, parsed.refusal)
+		}
+		if parsed.cmd == "index rebuild" {
+			return runIndexRebuild(ctx, stderr)
+		}
 	case "overseer":
 		// It picks its own bus, so it runs before Locate and outside any repo.
 		if parsed.refusal != nil {
@@ -774,8 +850,16 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 
 	paths, err := bus.Locate(ctx, cwd)
 	if err != nil {
-		say(stderr, "crew: not in a git repo\n")
-		return exitFailure
+		// The lifecycle commands also serve layout-2 crews, which live under
+		// the state root and need no repo; a layout-1 id still refuses with
+		// this line, from its own arm. register reaches its arm even with no
+		// state root, so CREW_LAYOUT=2 refuses in its own words.
+		state := bus.StateRoot(os.Getenv)
+		if !repoOptional(parsed) || state == "" && sub != "register" {
+			say(stderr, "crew: not in a git repo\n")
+			return exitFailure
+		}
+		paths = bus.StatePaths(state)
 	}
 
 	if parsed.refusal != nil {
@@ -1140,6 +1224,13 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 	}
 	if sub == "where" {
 		w := parsed.typed.Where
+		if w.Log || w.Dir {
+			// No window lookup: these modes never read tmux.
+			return where.RunPath(where.PathRequest{Crew: str(w.Crew), Log: w.Log}, paths, stdout, stderr, func() string {
+				id, _ := bus.ResolveCrewID(ctx, cwd, bus.Lookup{})
+				return id
+			})
+		}
 		crewID := func() string { return e.crewID(ctx, cwd, "", false) }
 		return where.Run(ctx, where.Request{Crew: str(w.Crew), Target: w.Target}, paths, stdout, stderr, where.Options{
 			CrewID: crewID,
@@ -1205,14 +1296,20 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 	// register and deregister record the caller's own identity like adopt does.
 	if sub == "register" || sub == "deregister" {
 		return register.Run(sub, parsed.typed.Register.PID, paths, stderr, register.Options{
-			CrewID: func() string { return e.crewID(ctx, cwd, "", false) },
-			Proc:   e.proc,
-			Clock:  clock.FromEnv(),
-			PID:    os.Getpid(),
-			PPID:   os.Getppid(),
-			Pwd:    cwd,
-			Getenv: os.Getenv,
+			CrewID:   func() string { return e.crewID(ctx, cwd, "", false) },
+			Proc:     e.proc,
+			Clock:    clock.FromEnv(),
+			PID:      os.Getpid(),
+			PPID:     os.Getppid(),
+			Pwd:      cwd,
+			Getenv:   os.Getenv,
+			Hostname: os.Hostname,
+			Slug:     func(common string) string { return remote.CloneSlug(ctx, common) },
 		})
+	}
+
+	if sub == "index" {
+		return runIndexAdd(ctx, *parsed.typed.Index.Add.Crew, paths, stderr)
 	}
 
 	// stall-watch is a long-lived watch with its own flags: it reads the bus and

@@ -42,6 +42,7 @@ Identity and crews:
   deregister      Drop this crew's registration
   crews           List every crew with traffic on this repo's bus
   adopt           Re-attach to an on-disk crew id
+  index           Add a crew to, or rebuild, the repo index of layout-2 crews
   resolve-target  Resolve a target to branch, codename, host and crew
   pi-agent-dir    Print the pi agent dir prepared for a dispatch
 

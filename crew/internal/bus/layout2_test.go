@@ -27,6 +27,9 @@ func TestStateRoot(t *testing.T) {
 		{"xdg wins", map[string]string{"XDG_STATE_HOME": "/x", "HOME": "/h"}, "/x/crew"},
 		{"home fallback", map[string]string{"HOME": "/h"}, "/h/.local/state/crew"},
 		{"empty xdg falls back", map[string]string{"XDG_STATE_HOME": "", "HOME": "/h"}, "/h/.local/state/crew"},
+		{"relative xdg is ignored", map[string]string{"XDG_STATE_HOME": "rel", "HOME": "/h"}, "/h/.local/state/crew"},
+		{"relative xdg and no home", map[string]string{"XDG_STATE_HOME": "rel"}, ""},
+		{"relative home", map[string]string{"HOME": "h"}, ""},
 		{"neither", nil, ""},
 	}
 	for _, c := range cases {

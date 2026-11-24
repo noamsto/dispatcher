@@ -16,6 +16,7 @@ package where
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -29,8 +30,11 @@ import (
 
 const (
 	exitFailure = 1
+	// exitRefused is a crew the resolver refuses (archived, index-only), so a
+	// caller can tell it from a failure it may fall back on.
+	exitRefused = 3
 	// Usage is the arm's `crew where` signature, quoted in every refusal.
-	Usage = "usage: crew where <codename|branch|%id> [--crew ID]"
+	Usage = "usage: crew where <target> [--crew ID] | crew where --log|--dir [--crew ID]"
 	// jump is the line's tail: what a human or a dispatcher pastes to get there.
 	jump = "   jump: ! tmux switch-client -t "
 )
@@ -80,6 +84,45 @@ func die(stderr io.Writer, format string, args ...any) int {
 // the `_crew_id` default) and Target is never empty.
 type Request struct {
 	Crew, Target string
+}
+
+// PathRequest is `crew where --log|--dir [--crew ID]`: Crew is the flag ("" for
+// the task doc and env), Log picks the log over the dir.
+type PathRequest struct {
+	Crew string
+	Log  bool
+}
+
+// RunPath prints the resolved crew's log or dir. It reads no tmux, so the
+// crew comes from the flag or crewID alone, and it needs a repo only for a
+// layout-1 crew.
+func RunPath(req PathRequest, paths bus.Paths, stdout, stderr io.Writer, crewID func() string) int {
+	crew := req.Crew
+	if crew == "" {
+		crew = crewID()
+	}
+	if crew == "" {
+		say(stderr, "crew: %v\n", bus.ErrNoCrew)
+		return exitFailure
+	}
+	bc, err := paths.Crew(crew)
+	switch {
+	case bus.IsRefusal(err):
+		say(stderr, "crew: %v\n", err)
+		return exitRefused
+	case errors.Is(err, bus.ErrNotRepo):
+		say(stderr, "crew: not in a git repo\n")
+		return exitFailure
+	case err != nil:
+		say(stderr, "crew: %v\n", err)
+		return exitFailure
+	}
+	path := bc.Dir
+	if req.Log {
+		path = bc.Log
+	}
+	say(stdout, "%s\n", path)
+	return 0
 }
 
 // Run is the arm: the two tmux reads, the resolution, the line.

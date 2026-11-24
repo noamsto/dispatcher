@@ -319,6 +319,28 @@ func TestCutInvalidCrewID(t *testing.T) {
 	}
 }
 
+func TestCutArchivedCrew(t *testing.T) {
+	f := newFixture(t)
+	f.cutStack(t)
+	state := filepath.Join(t.TempDir(), "crew")
+	meta := filepath.Join(bus.ArchiveDir(state, "gone"), "meta.json")
+	if err := os.MkdirAll(filepath.Dir(meta), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(meta, []byte(`{"layout":2,"id":"gone"}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CREW_ID", "gone")
+	f.stdout.Reset()
+	f.stderr.Reset()
+	paths := bus.PathsFor(f.common()).WithState(state)
+	code := Run(context.Background(), Request{Child: "feat/child"}, paths, f.main, f.stdout, f.stderr, Options{})
+	_ = os.Chdir(f.main)
+	if code != 1 || f.stdout.String() != "" || f.stderr.String() != "crew: crew gone is archived\n" {
+		t.Fatalf("cut for an archived crew = %d, %q, %q", code, f.stdout.String(), f.stderr.String())
+	}
+}
+
 // runWithCrewID is stackRunIn with Options.CrewID set, so a test can see the
 // cwd the crew id was read for and choose the crew the command then uses.
 func (f *fixture) runWithCrewID(cwd string, req Request, crewID func(context.Context, string) string) (int, string, string) {

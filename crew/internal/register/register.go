@@ -1,16 +1,20 @@
 // Package register is `crew register` and `crew deregister`: a dispatcher
-// claiming, and releasing, its crew directory on the repo bus.
+// claiming, and releasing, its crew directory — on the repo bus (layout 1) or
+// under the state root (layout 2, which register alone creates).
 //
-// The pid and pane files and `$dir/pidfile.log` are shared with the readers in
-// crews, adopt and dispatch, so their text is a contract: the pid is written
+// The pid and pane files and `<state>/pidfile.log` are shared with the readers
+// in crews, adopt and dispatch, so their text is a contract: the pid is written
 // verbatim, whatever the caller passed.
 package register
 
 import (
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"strconv"
+	"strings"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/clock"
@@ -36,9 +40,20 @@ type Options struct {
 	PID, PPID int
 	// Pwd is `$PWD`.
 	Pwd string
-	// Getenv reads TMUX_PANE.
+	// Getenv reads TMUX_PANE and CREW_LAYOUT.
 	Getenv func(string) string
+	// Hostname is os.Hostname, the home_host of a crew register creates.
+	Hostname func() (string, error)
+	// Slug is the owner/repo of the repo whose common dir it is given, "" when
+	// its origin names none: the home_slug of a crew register creates.
+	Slug func(common string) string
 }
+
+// errCreate marks a failure of register's own layout-2 resolution, printed
+// under `crew: register:`.
+type errCreate struct{ err error }
+
+func (e *errCreate) Error() string { return e.err.Error() }
 
 // Run is the `register | deregister)` arm. sub is "register" or "deregister";
 // pid is register's optional pid argument, written verbatim.
@@ -49,9 +64,27 @@ func Run(sub, pid string, paths bus.Paths, stderr io.Writer, o Options) int {
 		return exitFailure
 	}
 	// deregister RemoveAlls the crew dir, so an unvalidated `..` removes the bus.
-	bc, err := paths.Crew(crew)
-	if err != nil {
+	var bc bus.Crew
+	var err error
+	if sub == "register" {
+		bc, err = registerCrew(paths, crew, o)
+	} else {
+		bc, err = paths.Crew(crew)
+	}
+	var invalid *bus.InvalidCrewIDError
+	var create *errCreate
+	switch {
+	case errors.As(err, &invalid):
 		say(stderr, "crew: invalid crew id — expected only letters, digits, '.', '_' and '-'\n")
+		return exitFailure
+	case errors.As(err, &create):
+		say(stderr, "crew: register: %v\n", err)
+		return exitFailure
+	case errors.Is(err, bus.ErrNotRepo):
+		say(stderr, "crew: not in a git repo\n")
+		return exitFailure
+	case err != nil:
+		say(stderr, "crew: %v\n", err)
 		return exitFailure
 	}
 
@@ -66,7 +99,7 @@ func Run(sub, pid string, paths bus.Paths, stderr io.Writer, o Options) int {
 		return crews.Caller{Now: o.Clock.Now(), PID: o.PID, PPID: o.PPID, Pwd: o.Pwd, By: o.Proc.Args(o.PPID)}
 	}
 	logLine := func(action, outcome, newPID string) {
-		crews.PidfileLog(paths, caller(), action, outcome, crew, epid, newPID)
+		crews.PidfileLog(bc.State, caller(), action, outcome, crew, epid, newPID)
 	}
 
 	if sub == "register" {
@@ -91,7 +124,7 @@ func Run(sub, pid string, paths bus.Paths, stderr io.Writer, o Options) int {
 			say(stderr, "crew: register: %v\n", err)
 			return exitFailure
 		}
-		if err := crews.WriteHome(paths, crew); err != nil {
+		if err := crews.WriteHome(paths, bc); err != nil {
 			say(stderr, "crew: register: %v\n", err)
 			return exitFailure
 		}
@@ -119,11 +152,75 @@ func Run(sub, pid string, paths bus.Paths, stderr io.Writer, o Options) int {
 	if filekind.IsDir(cdir) {
 		logLine("deregister", "removed", "")
 	}
+	if bc.Layout == 2 {
+		// The dir, meta.json and log outlive the registration: they are the crew.
+		for _, name := range []string{"pid", "pid.start", "pane", "launch", "relaunch"} {
+			if err := os.Remove(cdir + "/" + name); err != nil && !errors.Is(err, fs.ErrNotExist) {
+				say(stderr, "crew: deregister: %v\n", err)
+				return exitFailure
+			}
+		}
+		return 0
+	}
 	if err := os.RemoveAll(cdir); err != nil {
 		say(stderr, "crew: deregister: %v\n", err)
 		return exitFailure
 	}
 	return 0
+}
+
+// registerCrew resolves crew for register under CREW_LAYOUT. Unset, "" and 1
+// are today's resolution. 2 creates the layout-2 crew unless the id already
+// resolves to one (the pin is sticky either way), is refused (archived,
+// index-only), or has a legacy dir in this repo, which keeps it layout 1.
+func registerCrew(paths bus.Paths, crew string, o Options) (bus.Crew, error) {
+	switch v := o.Getenv("CREW_LAYOUT"); v {
+	case "", "1":
+		return paths.Crew(crew)
+	case "2":
+	default:
+		return bus.Crew{}, &errCreate{fmt.Errorf("CREW_LAYOUT must be 1 or 2 (got '%s')", v)}
+	}
+	if !bus.ValidCrewID(crew) {
+		return bus.Crew{}, &bus.InvalidCrewIDError{ID: crew}
+	}
+	if paths.State == "" {
+		return bus.Crew{}, &errCreate{errors.New("CREW_LAYOUT=2 needs XDG_STATE_HOME or HOME")}
+	}
+	bc, err := paths.Crew(crew)
+	switch {
+	case err == nil && (bc.Layout == 2 || filekind.IsDir(bc.Dir)):
+		return bc, nil
+	case err != nil && !errors.Is(err, bus.ErrNotRepo):
+		return bc, err
+	}
+	m, err := newMeta(paths, crew, o)
+	if err != nil {
+		return bus.Crew{}, &errCreate{err}
+	}
+	if err := bus.CreateMeta(paths.State, m); err != nil && !errors.Is(err, bus.ErrMetaExists) {
+		return bus.Crew{}, &errCreate{err}
+	}
+	return paths.Crew(crew)
+}
+
+// newMeta is the meta.json of a crew register creates where paths is.
+func newMeta(paths bus.Paths, crew string, o Options) (bus.Meta, error) {
+	host, err := o.Hostname()
+	if err != nil {
+		return bus.Meta{}, err
+	}
+	host, _, _ = strings.Cut(host, ".")
+	m := bus.Meta{ID: crew, Created: o.Clock.Now().UnixMilli(), HomeHost: host, CreatedBy: "register"}
+	if paths.Common != "" {
+		tag, err := bus.RepoTag(paths.Common)
+		if err != nil {
+			return bus.Meta{}, err
+		}
+		m.HomeRepo = &tag
+		m.HomeSlug = o.Slug(paths.Common)
+	}
+	return m, nil
 }
 
 func say(w io.Writer, format string, args ...any) { _, _ = fmt.Fprintf(w, format, args...) }

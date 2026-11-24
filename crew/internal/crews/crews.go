@@ -71,7 +71,9 @@ func Run(ctx context.Context, mineOnly, homeOnly bool, paths bus.Paths, stdout, 
 // read.
 func mine(paths bus.Paths, stdout io.Writer, o Options) {
 	now := o.Clock.Now()
-	for _, id := range crewDirs(paths) {
+	ids := append(crewDirs(paths), homedIDs(paths)...)
+	slices.Sort(ids)
+	for _, id := range slices.Compact(ids) {
 		crew, err := paths.Crew(id)
 		if err != nil {
 			continue
@@ -105,7 +107,9 @@ func table(ctx context.Context, homeOnly bool, paths bus.Paths, stdout, stderr i
 	events, logErr := bus.ReadEventsTolerant(paths.Log)
 	logOK := logErr == nil
 
-	ids := discover(paths, events, logErr)
+	ids := append(discover(paths, events, logErr), homedIDs(paths)...)
+	slices.Sort(ids)
+	ids = slices.Compact(ids)
 	if homeOnly {
 		homes := NewHomes(ctx, paths, o)
 		ids = slices.DeleteFunc(ids, func(id string) bool { return !homes.IsHome(id) })
@@ -194,6 +198,9 @@ func discover(paths bus.Paths, events []bus.Event, logErr error) []string {
 // in glob order. Bash sorted the glob with the caller's collation; byte
 // order is the documented, locale-free choice (docs/crew-go-port.md).
 func crewDirs(paths bus.Paths) []string {
+	if paths.Common == "" {
+		return nil // outside a repo there is no repo bus to glob
+	}
 	ents, err := os.ReadDir(paths.CrewsDir())
 	if err != nil {
 		return nil // the arm's `[ -d "$dir/crews" ]` miss
@@ -211,6 +218,48 @@ func crewDirs(paths bus.Paths) []string {
 		}
 	}
 	return out
+}
+
+// homedIDs is the layout-2 crews homed where paths is, live or dead: every
+// crews/*/meta.json under the state root that homedAt accepts.
+func homedIDs(paths bus.Paths) []string {
+	if paths.State == "" {
+		return nil
+	}
+	tag, ok := homeTag(paths)
+	if !ok {
+		return nil
+	}
+	var ids []string
+	for _, m := range bus.LiveMetas(paths.State) {
+		if homedAt(m, tag) {
+			ids = append(ids, m.ID)
+		}
+	}
+	return ids
+}
+
+// homeTag is the home_repo a crew homed where paths is records: the repo's
+// RepoTag, "" outside a repo. ok is false when the repo cannot be resolved.
+func homeTag(paths bus.Paths) (string, bool) {
+	if paths.Common == "" {
+		return "", true
+	}
+	tag, err := bus.RepoTag(paths.Common)
+	return tag, err == nil
+}
+
+// homedAt reports whether a layout-2 crew's dispatcher lives at tag (see
+// homeTag): a visiting crew is never home, and outside a repo only the crews
+// registered outside one (null home_repo) are.
+func homedAt(m bus.Meta, tag string) bool {
+	switch {
+	case m.Visiting:
+		return false
+	case tag == "":
+		return m.HomeRepo == nil
+	}
+	return m.HomeRepo != nil && *m.HomeRepo == tag
 }
 
 // RecordedLive is _recorded_pid_live: <pid> can still be the dispatcher
@@ -321,14 +370,15 @@ type Caller struct {
 }
 
 // PidfileLog is `_pidfile_log`: one line per crew pid file mutation (or
-// refusal) in `$dir/pidfile.log`. It is diagnostic rather than state, so a
-// failed write is dropped as the arm drops it.
-func PidfileLog(paths bus.Paths, c Caller, action, outcome, crew, oldPID, newPID string) {
+// refusal) in `<state>/pidfile.log`, state being the crew's state root
+// (bus.Crew.State). It is diagnostic rather than state, so a failed write is
+// dropped as the arm drops it.
+func PidfileLog(state string, c Caller, action, outcome, crew, oldPID, newPID string) {
 	line := fmt.Sprintf("%s %s %s crew=%s old=%s new=%s pid=%d ppid=%d cwd=%s by=%s",
 		c.Now.UTC().Format("2006-01-02T15:04:05Z"), action, outcome, crew,
 		orDash(oldPID), orDash(newPID), c.PID, c.PPID, c.Pwd, firstRunes(c.By, 120))
-	_ = os.MkdirAll(paths.Dir, 0o755)
-	_ = bus.Append(paths.Dir+"/pidfile.log", line)
+	_ = os.MkdirAll(state, 0o755)
+	_ = bus.Append(state+"/pidfile.log", line)
 }
 
 func orDash(s string) string {

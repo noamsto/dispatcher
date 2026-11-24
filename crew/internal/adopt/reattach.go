@@ -23,6 +23,10 @@ import (
 // present it is silent and exits 0 unless it writes.
 func reattach(ctx context.Context, req Request, paths bus.Paths, stderr io.Writer, o Options) int {
 	bc, err := paths.Crew(req.ID)
+	if bus.IsRefusal(err) {
+		say(stderr, "crew: %v\n", err)
+		return exitFailure
+	}
 	if err != nil {
 		return 0
 	}
@@ -100,12 +104,12 @@ func reattach(ctx context.Context, req Request, paths bus.Paths, stderr io.Write
 		return exitFailure
 	}
 	if repo == crews.RepoHere {
-		if err := crews.WriteHome(paths, req.ID); err != nil {
+		if err := crews.WriteHome(paths, bc); err != nil {
 			say(stderr, "crew: adopt: %v\n", err)
 			return exitFailure
 		}
 	}
-	o.pidfileLog(paths, "reattach", "ok", req.ID, epid, newPID)
+	o.pidfileLog(bc.State, "reattach", "ok", req.ID, epid, newPID)
 	// No claim release: the caller carries on this crew's work, so the labels
 	// it dispatched are still its own.
 	say(stderr, "crew adopt: re-registered crew %s to dispatcher pid %s in pane %s — it had no live registration\n", req.ID, newPID, pane)

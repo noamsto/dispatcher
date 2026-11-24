@@ -110,7 +110,8 @@ func TestFishPositionalSetsNameRealCommands(t *testing.T) {
 // fishValueCollisions are flag names that take a value on one command and are a
 // bool on another. __crew_words skips the word after any value flag of that
 // name, so the bool side loses a word only if it has positionals or children.
-var fishValueCollisions = map[string]bool{"quiet": true}
+// `where --dir` takes no target, so the word it loses is never one.
+var fishValueCollisions = map[string]bool{"quiet": true, "dir": true}
 
 // TestFishFlagKindsAgree fails on a new flag-name collision, so the generated
 // __crew_words cannot silently drop a word; it also fails once an exception stops

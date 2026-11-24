@@ -122,6 +122,10 @@ func Run(ctx context.Context, req Request, paths bus.Paths, cwd string, stdout, 
 		return 1
 	}
 	if _, err := paths.Crew(crew); err != nil {
+		if bus.IsRefusal(err) {
+			_, _ = fmt.Fprintf(stderr, "crew: %v\n", err)
+			return 1
+		}
 		_, _ = fmt.Fprintf(stderr, "crew: stack: invalid crew id %s\n", crew)
 		return 1
 	}

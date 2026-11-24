@@ -12,10 +12,10 @@ import (
 // StateRoot is ${XDG_STATE_HOME:-$HOME/.local/state}/crew, "" when neither is
 // set: layout-2 lookups are then skipped, never an error.
 func StateRoot(getenv func(string) string) string {
-	if state := getenv("XDG_STATE_HOME"); state != "" {
+	if state := getenv("XDG_STATE_HOME"); filepath.IsAbs(state) {
 		return filepath.Join(state, "crew")
 	}
-	if home := getenv("HOME"); home != "" {
+	if home := getenv("HOME"); filepath.IsAbs(home) {
 		return filepath.Join(home, ".local/state", "crew")
 	}
 	return ""

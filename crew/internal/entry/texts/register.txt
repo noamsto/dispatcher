@@ -3,6 +3,10 @@ usage: crew register [pid]
 Register this crew on the repo bus. N crews may share a repo, each keyed by its
 crew id, so there is no cross-crew lock.
 
+CREW_LAYOUT=2 creates the crew's own store under
+${XDG_STATE_HOME:-~/.local/state}/crew/crews/<id>/ with a meta.json, and works
+outside a repo.
+
   [pid]  Long-lived dispatcher pid to record; defaults to the nearest non-shell
          ancestor, which is what an agent's shell tool needs
 

@@ -1,0 +1,14 @@
+usage: crew index add --crew <id> | crew index rebuild
+
+The repo index: which layout-2 crews dispatched in a repo, one file per repo
+under the state root (${XDG_STATE_HOME:-$HOME/.local/state}/crew/index/repos).
+
+  add --crew <id>  List the crew in this repo's index. A crew already listed,
+                   and a layout-1 crew (never indexed), is a silent no-op.
+                   Needs a repo. An archived or index-only crew exits 3.
+  rebuild          Regenerate every repo's index from the crews' meta.json and
+                   the repo field of their own dispatch rows; an entry no log
+                   backs is dropped. Machine-wide, so it runs outside a repo.
+
+  crew index add --crew c-1a2b
+  crew index rebuild

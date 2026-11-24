@@ -53,8 +53,8 @@ func (e *InvalidCrewIDError) Error() string { return fmt.Sprintf("invalid crew i
 // Crew classifies id, in order: invalid; a crews/<id>/meta.json under the state
 // root is layout 2; an archive/<id>/meta.json is *ArchivedError; an id a repo
 // index lists is *IndexOnlyError; anything else is layout 1, which needs a
-// repo. The state-root steps run only when p.State is set. Nothing is created
-// or written on any branch.
+// repo dir or log (StatePaths leaves both empty). The state-root steps run only
+// when p.State is set. Nothing is created or written on any branch.
 func (p Paths) Crew(id string) (Crew, error) {
 	if !ValidCrewID(id) {
 		return Crew{}, &InvalidCrewIDError{ID: id}
@@ -70,7 +70,7 @@ func (p Paths) Crew(id string) (Crew, error) {
 			return Crew{}, &IndexOnlyError{ID: id, Live: liveIDs(p.State)}
 		}
 	}
-	if p.Common == "" {
+	if p.Dir == "" && p.Log == "" {
 		return Crew{}, ErrNotRepo
 	}
 	return Crew{ID: id, Log: p.Log, Dir: p.CrewDir(id), RepoDir: p.Dir, State: p.Dir, Layout: 1}, nil
