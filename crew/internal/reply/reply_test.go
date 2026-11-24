@@ -2,15 +2,19 @@ package reply
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
+	"github.com/noamsto/dispatcher/crew/internal/lock"
+	"github.com/noamsto/dispatcher/crew/internal/nudge"
 	"github.com/noamsto/dispatcher/crew/internal/proc/proctest"
 	"github.com/noamsto/dispatcher/crew/internal/sender"
 	"github.com/noamsto/dispatcher/crew/internal/testjson"
@@ -807,5 +811,372 @@ func TestMalformedLogCrewIDChosenIsRefused(t *testing.T) {
 	}
 	if got := len(tr.rows(t)); got != 1 {
 		t.Fatalf("%d rows, want the bus untouched at 1", got)
+	}
+}
+
+// engineDispatch is a dispatch row the engine lookup can read: the existing
+// dispatch() helper carries neither worker_id nor engine, which nudge.EngineOf
+// needs to name the lead the reply resolved to.
+func engineDispatch(ts int64, crew, branch, session, engine string) string {
+	return fmt.Sprintf(`{"ts":%d,"crew_id":%q,"kind":"dispatch","branch":%q,"session":%q,"worker_id":%q,"engine":%q,"body":{}}`,
+		ts, crew, branch, session, "worker:"+branch+"#"+session, engine)
+}
+
+// claudeWorker is the bus shape the auto-nudge reads: a dispatch row recording
+// the engine and the worker id, then the live status row the branch resolves to.
+func claudeWorker(t *testing.T, tr *tree) {
+	t.Helper()
+	tr.write(t,
+		engineDispatch(1785950000000, "c1", "feat/x", "s1-1", "claude"),
+		status(1785951000000, "c1", "worker:feat/x#s1-1", "working"),
+	)
+}
+
+// nudgeCall is one Options.Nudge start: the argv it was handed and the log it
+// was told to write.
+type nudgeCall struct {
+	argv    []string
+	logPath string
+}
+
+// nudgeRecorder is a Nudge that records each start and answers err, so a test
+// can assert both what reply asked for and that reply does not wait on it.
+func nudgeRecorder(calls *[]nudgeCall, err error) func([]string, string) error {
+	return func(argv []string, logPath string) error {
+		*calls = append(*calls, nudgeCall{argv, logPath})
+		return err
+	}
+}
+
+// A reply to a live local claude lead backgrounds exactly one wait and returns
+// as soon as the starter does, naming the branch and the log it will write.
+func TestReplyStartsOneNudgeWaitForAClaudeLead(t *testing.T) {
+	tr := setup(t)
+	claudeWorker(t, tr)
+	var calls []nudgeCall
+	errs, code := tr.run(t, Options{Nudge: nudgeRecorder(&calls, nil)}, "worker:feat/x", "go")
+	if code != 0 {
+		t.Fatalf("code %d: %s", code, errs)
+	}
+	wantLog := filepath.Join(tr.paths.Dir, "nudge-wait.log")
+	if want := "reply: nudge wait started for feat/x (log: " + wantLog + ")\n"; errs != want {
+		t.Fatalf("stderr\n got %q\nwant %q", errs, want)
+	}
+	want := []nudgeCall{{[]string{"nudge", "--crew", "c1", "--wait", "--", "worker:feat/x#s1-1"}, wantLog}}
+	if !reflect.DeepEqual(calls, want) {
+		t.Fatalf("nudge calls = %v, want %v", calls, want)
+	}
+	tr.wantRow(t, row("c1", "worker:feat/x#s1-1", "go"))
+}
+
+// A pi lead is the other engine that gets a wait.
+func TestReplyStartsAWaitForAPiLead(t *testing.T) {
+	tr := setup(t)
+	tr.write(t,
+		engineDispatch(1785950000000, "c1", "feat/x", "s1-1", "pi"),
+		status(1785951000000, "c1", "worker:feat/x#s1-1", "working"),
+	)
+	var calls []nudgeCall
+	errs, code := tr.run(t, Options{Nudge: nudgeRecorder(&calls, nil)}, "worker:feat/x", "go")
+	if code != 0 || len(calls) != 1 {
+		t.Fatalf("code %d stderr %q calls %v, want one start", code, errs, calls)
+	}
+}
+
+// --no-nudge is the opt-out: the row lands, nothing is started.
+func TestReplyNoNudgePostsOnly(t *testing.T) {
+	tr := setup(t)
+	claudeWorker(t, tr)
+	var calls []nudgeCall
+	errs, code := tr.runReq(t, Options{Nudge: nudgeRecorder(&calls, nil)}, Request{To: "worker:feat/x", Body: "go", NoNudge: true})
+	if code != 0 || errs != "reply: no nudge (--no-nudge)\n" {
+		t.Fatalf("code %d stderr %q", code, errs)
+	}
+	if len(calls) != 0 {
+		t.Fatalf("started %v, want none", calls)
+	}
+	tr.wantRow(t, row("c1", "worker:feat/x#s1-1", "go"))
+}
+
+// Only claude and pi have a wait loop worth starting; another engine is named
+// in the skip line so the caller knows why nothing ran.
+func TestReplySkipsAnEngineWithoutAWait(t *testing.T) {
+	for _, engine := range []string{"codex", "cursor"} {
+		t.Run(engine, func(t *testing.T) {
+			tr := setup(t)
+			tr.write(t,
+				engineDispatch(1785950000000, "c1", "feat/x", "s1-1", engine),
+				status(1785951000000, "c1", "worker:feat/x#s1-1", "working"),
+			)
+			var calls []nudgeCall
+			errs, code := tr.run(t, Options{Nudge: nudgeRecorder(&calls, nil)}, "worker:feat/x", "go")
+			if code != 0 || errs != "reply: no nudge (engine is "+engine+")\n" {
+				t.Fatalf("code %d stderr %q", code, errs)
+			}
+			if len(calls) != 0 {
+				t.Fatal("started a wait for an engine with none")
+			}
+			tr.wantRow(t, row("c1", "worker:feat/x#s1-1", "go"))
+		})
+	}
+}
+
+// A role recipient never gets a wait, whatever is recorded; the row still lands.
+func TestReplyToARoleNeverStartsAWait(t *testing.T) {
+	tr := setup(t)
+	var calls []nudgeCall
+	errs, code := tr.run(t, Options{Nudge: nudgeRecorder(&calls, nil)}, "role:feat/x:reviewer", "go")
+	if code != 0 || errs != "reply: no nudge (role recipient)\n" {
+		t.Fatalf("code %d stderr %q", code, errs)
+	}
+	if len(calls) != 0 {
+		t.Fatal("started a wait for a role")
+	}
+	tr.wantRow(t, row("c1", "role:feat/x:reviewer", "go"))
+}
+
+// A remote reply posts on the host and starts nothing locally; the host's own
+// reply decides there, and --no-nudge crosses the hop to tell it not to.
+func TestReplyToARemoteWorkerStartsNoLocalWait(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		nudge  bool
+		reason string
+	}{
+		{name: "remote host", reason: "remote host: its own reply decides"},
+		{name: "--no-nudge wins", nudge: true, reason: "--no-nudge"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tr := setup(t)
+			tr.write(t, remoteDispatch(1, "feat/far", "mini"))
+			before := tr.rawLog(t)
+			var (
+				calls  []nudgeCall
+				remote []remoteCall
+			)
+			errs, code := tr.runReq(t, Options{
+				Nudge:  nudgeRecorder(&calls, nil),
+				Remote: recorder(&remote, 0),
+			}, Request{Crew: "c1", To: "worker:feat/far", Body: "go", NoNudge: tc.nudge})
+			if code != 0 || errs != "reply: no nudge ("+tc.reason+")\n" {
+				t.Fatalf("code %d stderr %q", code, errs)
+			}
+			if len(calls) != 0 {
+				t.Fatal("a remote reply started a local wait")
+			}
+			argv := []string{"crew", "reply", "--crew", "c1"}
+			if tc.nudge {
+				argv = append(argv, "--no-nudge")
+			}
+			argv = append(argv, "--", "worker:feat/far", "go")
+			want := []remoteCall{{"mini", "c1", argv}}
+			if !reflect.DeepEqual(remote, want) {
+				t.Fatalf("remote calls = %v, want %v", remote, want)
+			}
+			if got := tr.rawLog(t); got != before {
+				t.Fatalf("a routed reply wrote a local row: %q", got[len(before):])
+			}
+		})
+	}
+}
+
+// With no dispatch row naming an engine, nothing is started: the skip line says
+// so, and the directive still lands.
+func TestReplyWithNoEngineRecordedStartsNoWait(t *testing.T) {
+	tr := setup(t)
+	tr.write(t, status(1785951000000, "c1", "worker:feat/x#s1-1", "working"))
+	var calls []nudgeCall
+	errs, code := tr.run(t, Options{Nudge: nudgeRecorder(&calls, nil)}, "worker:feat/x", "go")
+	if code != 0 || errs != "reply: no nudge (no engine recorded)\n" {
+		t.Fatalf("code %d stderr %q", code, errs)
+	}
+	if len(calls) != 0 {
+		t.Fatal("started a wait with no engine recorded")
+	}
+	tr.wantRow(t, row("c1", "worker:feat/x#s1-1", "go"))
+}
+
+// A log the process cannot read is not "no engine recorded": the reason says the
+// read failed, and the directive still lands. A write-only mode makes the read
+// fail while the append still succeeds (0o000 would refuse the append too).
+func TestReplyUnreadableBusLogNamesTheReadFailure(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads a write-only log")
+	}
+	tr := setup(t)
+	tr.write(t,
+		engineDispatch(1785950000000, "c1", "feat/x", "s1-1", "claude"),
+		status(1785951000000, "c1", "worker:feat/x#s1-1", "working"),
+	)
+	if err := os.Chmod(tr.paths.Log, 0o200); err != nil {
+		t.Fatal(err)
+	}
+	var calls []nudgeCall
+	errs, code := tr.run(t, Options{Nudge: nudgeRecorder(&calls, nil)}, "worker:feat/x#s1-1", "go")
+	if err := os.Chmod(tr.paths.Log, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if code != 0 || errs != "reply: no nudge (the bus log could not be read)\n" {
+		t.Fatalf("code %d stderr %q", code, errs)
+	}
+	if len(calls) != 0 {
+		t.Fatal("started a wait on an unreadable log")
+	}
+	tr.wantRow(t, row("c1", "worker:feat/x#s1-1", "go"))
+}
+
+// A starter that fails does not undo the directive: the row stays, the arm
+// still exits 0, and the skip line carries the error.
+func TestReplySurvivesAFailedNudgeStart(t *testing.T) {
+	tr := setup(t)
+	claudeWorker(t, tr)
+	var calls []nudgeCall
+	errs, code := tr.run(t, Options{Nudge: nudgeRecorder(&calls, errors.New("boom"))}, "worker:feat/x", "go")
+	if code != 0 {
+		t.Fatalf("code %d, want 0 even when the start failed", code)
+	}
+	if want := "reply: no nudge (start failed: boom)\n"; errs != want {
+		t.Fatalf("stderr\n got %q\nwant %q", errs, want)
+	}
+	if len(calls) != 1 {
+		t.Fatalf("started %d, want the one attempt", len(calls))
+	}
+	tr.wantRow(t, row("c1", "worker:feat/x#s1-1", "go"))
+}
+
+// A nil starter is crew merge's internal reply.Run: post only, nothing about
+// nudges on stderr, byte-identical to before the auto-nudge existed.
+func TestReplyWithNoNudgeStarterPrintsNothing(t *testing.T) {
+	tr := setup(t)
+	claudeWorker(t, tr)
+	errs, code := tr.run(t, Options{}, "worker:feat/x", "go")
+	if code != 0 || errs != "" {
+		t.Fatalf("code %d stderr %q, want nothing", code, errs)
+	}
+	tr.wantRow(t, row("c1", "worker:feat/x#s1-1", "go"))
+}
+
+// Two replies in a row to the same lead must address the same wait lock: reply
+// names the same lead and the same lock dir both times, and a second Acquire on
+// that lock joins rather than takes it. The dedupe itself is nudge's arm.wait
+// loop, tested there.
+func TestReplyTwoRepliesJoinOneWaitLock(t *testing.T) {
+	tr := setup(t)
+	claudeWorker(t, tr)
+	var (
+		mu      sync.Mutex
+		outcome []string
+		locks   []string
+	)
+	o := Options{Nudge: func(argv []string, logPath string) error {
+		sid := argv[len(argv)-1]
+		// the lock is the wait's, under the bus dir — never derived from the
+		// reply's own log path
+		if got := filepath.Dir(logPath); got != tr.paths.Dir {
+			t.Errorf("wait log dir = %q, want the crew dir %q", got, tr.paths.Dir)
+		}
+		dir := nudge.WaitLockDir(tr.paths.Dir, sid)
+		if err := os.MkdirAll(filepath.Dir(dir), 0o755); err != nil {
+			return err
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		locks = append(locks, dir)
+		// A distinct owner per reply stands in for two separate wait processes;
+		// the lock package treats a different owner on a held lock as a join.
+		owner := fmt.Sprintf("%d", len(locks))
+		if lock.Acquire(dir, owner) {
+			outcome = append(outcome, "waited")
+		} else {
+			outcome = append(outcome, "joined")
+		}
+		return nil
+	}}
+	if _, code := tr.run(t, o, "worker:feat/x", "go"); code != 0 {
+		t.Fatalf("first reply code %d", code)
+	}
+	if _, code := tr.run(t, o, "worker:feat/x", "go"); code != 0 {
+		t.Fatalf("second reply code %d", code)
+	}
+	if len(locks) != 2 {
+		t.Fatalf("spawned %d waits, want both replies to spawn", len(locks))
+	}
+	if locks[0] != locks[1] {
+		t.Fatalf("lock dirs differ: %q vs %q", locks[0], locks[1])
+	}
+	if want := []string{"waited", "joined"}; !reflect.DeepEqual(outcome, want) {
+		t.Fatalf("outcomes = %v, want %v", outcome, want)
+	}
+	t.Cleanup(func() { lock.Release(locks[0]) })
+}
+
+// detachedNudge reports an entry it cannot exec instead of swallowing it.
+func TestDetachedNudgeReportsAnExecFailure(t *testing.T) {
+	dir := t.TempDir()
+	self := filepath.Join(dir, "no-such-crew")
+	logPath := filepath.Join(dir, "nudge-wait.log")
+	if err := detachedNudge(self)([]string{"nudge", "--wait"}, logPath); err == nil {
+		t.Fatal("detachedNudge started a nonexistent self")
+	}
+}
+
+// startDetached runs the child it is handed and logs exactly the argv it was
+// given; the test owns the command, so it waits on it rather than polling.
+func TestStartDetachedRunsTheChildAndLogsIt(t *testing.T) {
+	dir := t.TempDir()
+	self := filepath.Join(dir, "fake-crew")
+	if err := os.WriteFile(self, []byte("#!/bin/sh\necho \"$@\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	logPath := filepath.Join(dir, "nudge-wait.log")
+	argv := []string{"nudge", "--crew", "c1", "--wait", "--", "worker:feat/x#s1-1"}
+	cmd, err := startDetached(self, argv, logPath)
+	if err != nil {
+		t.Fatalf("startDetached: %v", err)
+	}
+	if err := cmd.Wait(); err != nil {
+		t.Fatalf("the child failed: %v", err)
+	}
+	if got := cmd.ProcessState.ExitCode(); got != 0 {
+		t.Fatalf("child exited %d, want 0", got)
+	}
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("no log at the path the caller passed (%s): %v", logPath, err)
+	}
+	if want := strings.Join(argv, " ") + "\n"; string(data) != want {
+		t.Fatalf("log\n got %q\nwant %q", string(data), want)
+	}
+	info, err := os.Stat(logPath)
+	if err != nil {
+		t.Fatalf("stat log: %v", err)
+	}
+	if got := info.Mode().Perm(); got&0o077 != 0 {
+		t.Fatalf("log mode is %v, want no group/other bits", got)
+	}
+}
+
+// TestStartDetachedRefusesASymlinkedLog pins syscall.O_NOFOLLOW and 0o600: a
+// symlink left at the log path must not be followed, and its target stays as
+// it was. startDetached opens the log before it ever execs, so self is unused.
+func TestStartDetachedRefusesASymlinkedLog(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "target")
+	if err := os.WriteFile(target, []byte("keep me"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	logPath := filepath.Join(dir, "nudge-wait.log")
+	if err := os.Symlink(target, logPath); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := startDetached(filepath.Join(dir, "self"), []string{"nudge"}, logPath); err == nil {
+		t.Fatal("startDetached followed a symlinked log")
+	}
+	data, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatalf("read target: %v", err)
+	}
+	if string(data) != "keep me" {
+		t.Fatalf("target contents changed to %q", string(data))
 	}
 }

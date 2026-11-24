@@ -172,16 +172,24 @@ func TestDispatcherStillPostsAsItsCrew(t *testing.T) {
 	t.Setenv("CREW_ID", "c1")
 	unsetenv(t, "CREW_WORKER_ID", "CREW_ROLE_ID")
 
+	// A successful reply now also prints the auto-nudge's one stderr line; the
+	// msg arm stays silent. No dispatch row records a lead engine here, so the
+	// reason is always `no engine recorded`.
+	const noEngine = "reply: no nudge (no engine recorded)\n"
 	for _, argv := range [][]string{
 		{"msg", "dispatcher:c1", to, "go"},
 		{"reply", to, "go"},
 	} {
-		if _, stderr, code := runCrew(t, repo, argv...); code != 0 || stderr != "" {
-			t.Fatalf("%v: code %d, stderr %q", argv, code, stderr)
+		wantStderr := ""
+		if argv[0] == "reply" {
+			wantStderr = noEngine
+		}
+		if _, stderr, code := runCrew(t, repo, argv...); code != 0 || stderr != wantStderr {
+			t.Fatalf("%v: code %d, stderr %q, want %q", argv, code, stderr, wantStderr)
 		}
 	}
 	unsetenv(t, "CREW_ID")
-	if _, stderr, code := runCrew(t, repo, "reply", to, "go", "--crew", "c1"); code != 0 || stderr != "" {
+	if _, stderr, code := runCrew(t, repo, "reply", to, "go", "--crew", "c1"); code != 0 || stderr != noEngine {
 		t.Fatalf("reply --crew: code %d, stderr %q", code, stderr)
 	}
 	if n := len(busLines(t, logPath)); n != 3 {
@@ -194,8 +202,12 @@ func TestDispatcherStillPostsAsItsCrew(t *testing.T) {
 		{"msg", "dispatcher:c1", to, "go"},
 		{"reply", to, "go"},
 	} {
-		if _, stderr, code := runCrew(t, repo, argv...); code != 0 || stderr != "" {
-			t.Fatalf("anchored %v: code %d, stderr %q", argv, code, stderr)
+		wantStderr := ""
+		if argv[0] == "reply" {
+			wantStderr = noEngine
+		}
+		if _, stderr, code := runCrew(t, repo, argv...); code != 0 || stderr != wantStderr {
+			t.Fatalf("anchored %v: code %d, stderr %q, want %q", argv, code, stderr, wantStderr)
 		}
 	}
 	lines := busLines(t, logPath)

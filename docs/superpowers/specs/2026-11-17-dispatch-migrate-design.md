@@ -218,9 +218,11 @@ Entry: `dispatch migrate …` arm in dispatch.sh before the tier parse, `exec`s
 first`.
 4. **Quiesce.**
    - _Cooperative (default):_ `crew reply <worker> <directive JSON>`
-     (`{"directive":"migrate","to_host":"H"}`), `crew nudge <target> --wait
-<S>` (best effort; its result is logged), then poll the worker's status
-     until S (default 1800, `--wait`) elapses. Outcomes: - worker posts `migrated` → go on (its detail may say uncommitted work
+     (`{"directive":"migrate","to_host":"H"}`) goes with `--no-nudge`,
+     because migrate runs its own budgeted `crew nudge <target> --wait <S>`
+     (a reply's own wait defaults to 1800 s and only one wait per lead
+     joins); that nudge is best effort, its result is logged, then poll the
+     worker's status until S (default 1800, `--wait`) elapses. Outcomes: - worker posts `migrated` → go on (its detail may say uncommitted work
      was left for the patch, C8); - worker posts `blocked` whose detail starts `migrate:` (its push failed)
      → print that detail verbatim, exit 1, worker untouched and live; - worker reaches `done`/`failed`/`exited` → exit 1 naming it; - timeout → send `{"directive":"migrate-cancel","to_host":"H"}` (C1) and
      exit 3: `worker did not quiesce within Ns — ask the human;

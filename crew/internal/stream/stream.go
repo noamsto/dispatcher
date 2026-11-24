@@ -43,6 +43,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/ascii"
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/clock"
+	"github.com/noamsto/dispatcher/crew/internal/entry"
 	"github.com/noamsto/dispatcher/crew/internal/invisible"
 	"github.com/noamsto/dispatcher/crew/internal/jqrun"
 	"github.com/noamsto/dispatcher/crew/internal/jsonval"
@@ -115,17 +116,9 @@ func (o Options) withDefaults() Options {
 	return o
 }
 
-// crewScript is the entrypoint the loop re-enters: the path the delegation arm
-// exported as its own `$0`, and failing that the `crew` on PATH — the same
-// script, for a Go binary run directly rather than through it.
+// crewScript is the entrypoint the loop re-enters; entry.CrewEntry is the shared rule.
 func crewScript() string {
-	if self := os.Getenv("CREW_SELF"); self != "" {
-		return self
-	}
-	if self, err := exec.LookPath("crew"); err == nil {
-		return self
-	}
-	return "crew"
+	return entry.CrewEntry(os.Getenv, exec.LookPath)
 }
 
 // call is one parsed invocation. park, interval and states stay the caller's

@@ -57,7 +57,9 @@ func TestReplyCrewFlagWithNoAmbientCrew(t *testing.T) {
 	if code := run(context.Background(), []string{"reply", "worker:feat/x", "go", "--crew", "c2"}, &stdout, &stderr, e); code != 0 {
 		t.Fatalf("code %d, stdout %q stderr %q", code, stdout.String(), stderr.String())
 	}
-	if stdout.Len() != 0 || stderr.Len() != 0 {
+	// The reply lands; the only stderr is the auto-nudge naming why it started
+	// no wait (no dispatch row records this lead's engine here).
+	if stdout.Len() != 0 || stderr.String() != "reply: no nudge (no engine recorded)\n" {
 		t.Fatalf("a reply that landed printed stdout %q stderr %q", stdout.String(), stderr.String())
 	}
 
@@ -107,5 +109,34 @@ func TestReplyDeliversOnlyToTheSessionItResolved(t *testing.T) {
 	got := decodeMsgRow(t, out)
 	if got.From != "dispatcher:c1" || got.To != "worker:feat/x#s1-1" || got.Kind != "msg" || got.Body != "STOP - do not push" {
 		t.Fatalf("row = %+v, want the directive addressed to session 1", got)
+	}
+}
+
+// `crew reply --no-nudge` is the opt-out at the argv boundary: it parses (not an
+// unknown arg), posts the row and starts no wait, so its one stderr line is the
+// skip. The `=true` spelling binds the same value.
+func TestReplyNoNudgeFlagPostsOnly(t *testing.T) {
+	repo, logPath := repoWithLog(t, nil, 0)
+	t.Setenv("CREW_ID", "c1")
+	unsetenv(t, "CREW_WORKER_ID", "CREW_ROLE_ID")
+	e := env{getwd: func() (string, error) { return repo, nil }, proc: proctest.New(nil, nil)}
+
+	for _, argv := range [][]string{
+		{"reply", "--no-nudge", "worker:feat/x#s1-1", "go"},
+		{"reply", "--no-nudge=true", "worker:feat/x#s1-1", "go"},
+	} {
+		var stdout, stderr bytes.Buffer
+		if code := run(context.Background(), argv, &stdout, &stderr, e); code != 0 {
+			t.Fatalf("%v: code %d, stderr %q", argv, code, stderr.String())
+		}
+		if want := "reply: no nudge (--no-nudge)\n"; stderr.String() != want {
+			t.Fatalf("%v: stderr %q, want %q", argv, stderr.String(), want)
+		}
+		if stdout.Len() != 0 {
+			t.Fatalf("%v: stdout %q, want nothing", argv, stdout.String())
+		}
+	}
+	if lines := busLines(t, logPath); len(lines) != 2 {
+		t.Fatalf("%d rows, want one per reply", len(lines))
 	}
 }

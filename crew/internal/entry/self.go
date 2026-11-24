@@ -49,6 +49,19 @@ func EnsureSelf(p SelfProbes, argv0 string) string {
 	return self
 }
 
+// CrewEntry is the `crew` entrypoint a caller re-enters: the path the delegation
+// arm exported as its own `$0`, failing that the `crew` on PATH, failing that the
+// bare name. The probes are parameters so the choice is testable.
+func CrewEntry(getenv func(string) string, lookPath func(string) (string, error)) string {
+	if self := getenv("CREW_SELF"); self != "" {
+		return self
+	}
+	if self, err := lookPath("crew"); err == nil {
+		return self
+	}
+	return "crew"
+}
+
 // EntryArgv is the argv that runs the crew entry `self` names, with `args` after
 // it. The entry is a program — the Go binary, or the PATH wrapper flake.nix
 // installs behind it — so it is named as it is, and a `self` that is not

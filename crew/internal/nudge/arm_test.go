@@ -541,6 +541,77 @@ func TestRunEngineGate(t *testing.T) {
 	}
 }
 
+// EngineOf is the arm's own lookup, so a caller reading the same log gets the same
+// engine the arm refuses and types with.
+func TestEngineOf(t *testing.T) {
+	const other = "worker:feat/x#s100-2"
+	for _, tc := range []struct {
+		name string
+		rows []string
+		want string
+	}{
+		{name: "no rows"},
+		{name: "no matching row", rows: []string{
+			`{"ts":1,"crew_id":"c1","kind":"status","worker_id":"` + idleReq + `","engine":"claude"}`,
+			`{"ts":2,"crew_id":"c1","kind":"msg","worker_id":"` + idleReq + `","engine":"claude"}`,
+		}},
+		{name: "newest dispatch decides", rows: []string{
+			`{"ts":1,"crew_id":"c1","kind":"dispatch","worker_id":"` + idleReq + `","engine":"claude"}`,
+			`{"ts":2,"crew_id":"c1","kind":"dispatch","worker_id":"` + idleReq + `","engine":"pi"}`,
+		}, want: "pi"},
+		{name: "resume counts like a dispatch", rows: []string{
+			`{"ts":1,"crew_id":"c1","kind":"dispatch","worker_id":"` + idleReq + `","engine":"claude"}`,
+			`{"ts":2,"crew_id":"c1","kind":"resume","worker_id":"` + idleReq + `","engine":"codex"}`,
+		}, want: "codex"},
+		{name: "another crew's row is ignored", rows: []string{
+			`{"ts":1,"crew_id":"c1","kind":"dispatch","worker_id":"` + idleReq + `","engine":"claude"}`,
+			`{"ts":2,"crew_id":"c2","kind":"dispatch","worker_id":"` + idleReq + `","engine":"pi"}`,
+		}, want: "claude"},
+		{name: "another worker's row is ignored", rows: []string{
+			`{"ts":1,"crew_id":"c1","kind":"dispatch","worker_id":"` + idleReq + `","engine":"claude"}`,
+			`{"ts":2,"crew_id":"c1","kind":"resume","worker_id":"` + other + `","engine":"pi"}`,
+		}, want: "claude"},
+		{name: "only another worker's row", rows: []string{
+			`{"ts":1,"crew_id":"c1","kind":"dispatch","worker_id":"` + other + `","engine":"pi"}`,
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var docs []any
+			if len(tc.rows) > 0 {
+				docs = anyRows(t, tc.rows...)
+			}
+			if got := EngineOf(docs, "c1", idleReq); got != tc.want {
+				t.Errorf("EngineOf = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// WaitLockDir is where crew reply's nudge waits take their lock, so it has to be the
+// arm's own path: under nudge-wait, named by lockName.
+func TestWaitLockDir(t *testing.T) {
+	crewDir := "/crew"
+	parent := filepath.Join(crewDir, "nudge-wait")
+	for _, sid := range []string{idleReq, "worker:feat/y#s100-2", "worker:feat/x#s1/a..b"} {
+		got := WaitLockDir(crewDir, sid)
+		if filepath.Dir(got) != parent {
+			t.Errorf("WaitLockDir(%q) = %q, not under %q", sid, got, parent)
+		}
+		if want := lockName(sid); filepath.Base(got) != want {
+			t.Errorf("WaitLockDir(%q) last element = %q, want %q", sid, filepath.Base(got), want)
+		}
+	}
+	if a, b := WaitLockDir(crewDir, idleReq), WaitLockDir(crewDir, "worker:feat/y#s100-2"); a == b {
+		t.Errorf("two session ids share the wait dir %q", a)
+	}
+	// lockName rewrites a '/' to '_', so a sid that looks like a path still lands one
+	// level under nudge-wait.
+	odd := WaitLockDir(crewDir, "worker:feat/x#s1/../../etc")
+	if filepath.Dir(odd) != parent || strings.ContainsRune(filepath.Base(odd), '/') {
+		t.Errorf("WaitLockDir of a sid with '/' = %q, want a single name under %q", odd, parent)
+	}
+}
+
 func TestRunUnreadGate(t *testing.T) {
 	f := newArm(t)
 	f.unread = ""

@@ -1,11 +1,20 @@
-usage: crew reply <to> <body> [--crew ID]
+usage: crew reply <to> <body> [--crew ID] [--no-nudge]
 
 Post a message as dispatcher:<crew>, so a dispatcher never rebuilds its own id.
 
-A reply to a worker dispatched to a remote host is posted on that host's bus.
+A reply to a worker dispatched to a remote host is posted on that host's bus,
+and never starts a local wait.
 
-  <to>    Recipient id (worker:<branch>#s…, role:<branch>:<role>)
-  <body>  One argument
-  --crew  Crew id when the caller's env carries no CREW_ID
+A reply to a local claude or pi worker also backgrounds `crew nudge --wait` for
+that lead, so an idle lead reads the directive without the dispatcher waiting by
+hand. The wait's output goes to <crew dir>/nudge-wait.log; --no-nudge posts only.
+One stderr line names what happened: the started wait, or the reason none
+started.
+
+  <to>        Recipient id (worker:<branch>#s…, role:<branch>:<role>)
+  <body>      One argument
+  --crew      Crew id when the caller's env carries no CREW_ID
+  --no-nudge  Post only; start no nudge wait
 
   crew reply "worker:feat/x#s<epoch>-<pid>" "rebase onto main"
+  crew reply --no-nudge "worker:feat/x" "just a note"

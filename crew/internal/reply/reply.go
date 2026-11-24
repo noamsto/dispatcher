@@ -30,6 +30,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/clock"
 	"github.com/noamsto/dispatcher/crew/internal/crews"
+	"github.com/noamsto/dispatcher/crew/internal/nudge"
 	"github.com/noamsto/dispatcher/crew/internal/proc"
 	"github.com/noamsto/dispatcher/crew/internal/remote"
 	"github.com/noamsto/dispatcher/crew/internal/sender"
@@ -54,6 +55,10 @@ type Options struct {
 	// reply to a worker dispatched there reaches that host's bus; nil routes
 	// nothing.
 	Remote func(host, crew string, argv []string) int
+	// Nudge starts the detached `crew nudge --wait` for the lead the reply
+	// reached and returns as soon as it is started (it never waits). nil is
+	// `crew merge`'s internal call: post only, print nothing about nudges.
+	Nudge func(argv []string, logPath string) error
 }
 
 // say writes to a stream whose failure is reported elsewhere (the exit status,
@@ -61,10 +66,14 @@ type Options struct {
 func say(w io.Writer, format string, args ...any) { _, _ = fmt.Fprintf(w, format, args...) }
 
 // Request is `crew reply [--crew ID] <to> <body>`; an empty Crew is the caller's own.
-type Request struct{ Crew, To, Body string }
+type Request struct {
+	Crew, To, Body string
+	// NoNudge is `--no-nudge`: post the row and start no wait.
+	NoNudge bool
+}
 
-// Run is the arm: the target, then the append. Nothing prints on success, so
-// there is no stdout to write.
+// Run is the arm: the target, then the append. The row append is silent on
+// stdout; the one stderr line, when there is one, is the auto-nudge's.
 func Run(ctx context.Context, req Request, paths bus.Paths, stderr io.Writer, o Options) int {
 	to, body := req.To, req.Body
 	crew := req.Crew
@@ -104,7 +113,22 @@ func Run(ctx context.Context, req Request, paths bus.Paths, stderr io.Writer, o 
 		return exitFailure
 	}
 	if host != "" {
-		return o.Remote(host, as, []string{"crew", "reply", "--crew", as, "--", to, body})
+		// A reply routed to a remote host starts no local process: the host's own
+		// reply decides there.
+		if o.Nudge != nil {
+			reason := "remote host: its own reply decides"
+			if req.NoNudge {
+				reason = "--no-nudge"
+			}
+			say(stderr, "reply: no nudge (%s)\n", reason)
+		}
+		// --no-nudge crosses the hop so the host's own reply starts no wait
+		// either; it goes before the `--`, which still ends the flags.
+		argv := []string{"crew", "reply", "--crew", as}
+		if req.NoNudge {
+			argv = append(argv, "--no-nudge")
+		}
+		return o.Remote(host, as, append(argv, "--", to, body))
 	}
 
 	if strings.HasPrefix(to, "worker:") && !bus.IsSessionID(to) {
@@ -142,7 +166,68 @@ func Run(ctx context.Context, req Request, paths bus.Paths, stderr io.Writer, o 
 		say(stderr, "crew: reply: %v\n", err)
 		return exitFailure
 	}
+	nudgeAfter(stderr, req, o, crew, dir, c.Log, to)
 	return 0
+}
+
+// nudgeAfter owns the whole "does this reply start a wait" decision and prints
+// exactly one stderr line about it. It runs only after the row landed, so a
+// refusal to start never costs the directive. dir is the bus directory the wait
+// loop's nudge-wait/ lock sits in, not the per-crew directory.
+func nudgeAfter(stderr io.Writer, req Request, o Options, crew, dir, log, to string) {
+	if o.Nudge == nil {
+		return
+	}
+	if req.NoNudge {
+		say(stderr, "reply: no nudge (--no-nudge)\n")
+		return
+	}
+	if strings.HasPrefix(to, "role:") {
+		say(stderr, "reply: no nudge (role recipient)\n")
+		return
+	}
+	// A torn tail is tolerated: the rows read so far are what the lookup gets,
+	// exactly as nudge's own arm reads them. A missing log is the same "no
+	// engine recorded"; only a log that could not be read at all reads differently.
+	events, readErr := bus.ReadEventsTolerant(log)
+	docs := make([]any, len(events))
+	for i, ev := range events {
+		docs[i] = ev.Doc
+	}
+	switch engine := nudge.EngineOf(docs, crew, to); engine {
+	case "claude", "pi":
+	case "":
+		if readErr != nil && !errors.Is(readErr, bus.ErrNoLog) {
+			say(stderr, "reply: no nudge (the bus log could not be read)\n")
+			return
+		}
+		say(stderr, "reply: no nudge (no engine recorded)\n")
+		return
+	default:
+		say(stderr, "reply: no nudge (engine is %s)\n", engine)
+		return
+	}
+	argv := []string{"nudge", "--crew", crew, "--wait", "--", to}
+	waitLog := filepath.Join(dir, "nudge-wait.log")
+	if err := o.Nudge(argv, waitLog); err != nil {
+		say(stderr, "reply: no nudge (start failed: %v)\n", err)
+		return
+	}
+	say(stderr, "reply: nudge wait started for %s (log: %s)\n", branchOf(to), waitLog)
+}
+
+// branchOf is the branch a recipient names: `worker:<branch>#s…` loses the
+// `worker:` prefix and everything from the last `#`; anything else prints as it
+// came.
+func branchOf(to string) string {
+	branch, ok := strings.CutPrefix(to, "worker:")
+	if !ok {
+		return to
+	}
+	if i := strings.LastIndex(branch, "#"); i >= 0 {
+		branch = branch[:i]
+	}
+	return branch
 }
 
 // routeHost is the host a reply to a worker goes to, the one its branch was

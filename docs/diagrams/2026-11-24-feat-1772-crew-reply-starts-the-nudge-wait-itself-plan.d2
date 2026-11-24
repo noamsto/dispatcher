@@ -1,0 +1,43 @@
+# The same post, with the wait started by the post itself.
+dispatcher: dispatcher pane\n`crew reply worker:<branch> "<directive>"` {
+  shape: rectangle
+}
+reply: crew/internal/reply.Run\nappends the msg, then nudgeAfter() {
+  shape: rectangle
+  style.stroke: "#2E7D32"
+}
+bus: crew bus log\nevents.jsonl {
+  shape: storage
+}
+gate: nudgeAfter's checks\n--no-nudge · role: · remote host · engine {
+  shape: rectangle
+  style.stroke: "#2E7D32"
+}
+engine: nudge.EngineOf\ndispatch/resume row's engine {
+  shape: rectangle
+  style.stroke: "#2E7D32"
+}
+spawn: reply.DetachedNudge\nown session, /dev/null, nudge-wait.log {
+  shape: rectangle
+  style.stroke: "#2E7D32"
+}
+wait: crew nudge --wait\narm.wait(), one lock per lead {
+  shape: rectangle
+}
+lead: idle claude/pi lead pane {
+  shape: rectangle
+}
+skip: stderr `reply: no nudge (<reason>)`\nstdout stays empty {
+  shape: text
+  style.stroke: "#2E7D32"
+}
+
+dispatcher -> reply: posts the directive
+reply -> bus: bus.Append(msg)
+reply -> gate: a local worker got the msg
+engine -> gate: claude/pi only
+gate -> spawn: started, and returns at once
+gate -> skip: nothing started, why
+spawn -> wait: `nudge --crew <id> --wait -- <sid>`
+wait -> lead: types `crew inbox "$CREW_WORKER_ID"` when idle
+wait -> wait: a second reply's wait joins the same lock
