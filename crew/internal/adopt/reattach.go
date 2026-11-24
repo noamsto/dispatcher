@@ -22,7 +22,8 @@ import (
 // that dispatcher. `dispatch` runs it on every call, so once id and pid are
 // present it is silent and exits 0 unless it writes.
 func reattach(ctx context.Context, req Request, paths bus.Paths, stderr io.Writer, o Options) int {
-	if !bus.ValidCrewID(req.ID) {
+	bc, err := paths.Crew(req.ID)
+	if err != nil {
 		return 0
 	}
 	if !ascii.IsDigits(req.PID) {
@@ -61,7 +62,7 @@ func reattach(ctx context.Context, req Request, paths bus.Paths, stderr io.Write
 
 	// Checked after the process gates: loggedCrew can read the whole bus, and
 	// most dispatches fail a cheaper gate first.
-	cdir := paths.CrewDir(req.ID)
+	cdir := bc.Dir
 	if !filekind.IsDir(cdir) && !loggedCrew(paths, req.ID) {
 		return 0
 	}

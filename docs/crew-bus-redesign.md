@@ -1705,9 +1705,12 @@ things:
    the `EXIT` trap removes it (`:4601`), which a `SIGKILL` skips.
 5. Under the lock, `dispatch` re-checks and refuses a second live dispatch of the branch into another repo in the same crew ("live"
    as in 3.2). A refusal here means a concurrent dispatch won between the two checks. Dispatch then cleans up by facts recorded
-   before the switch (3.2): it removes the worktree only when `prev_wt` was empty, deletes the branch only when `switch_mode` was
-   `create` or `fetch-name` (and for `fetch-name` unsets the `branch.<b>.remote` and `branch.<b>.merge` config, `:4820-4821`), and
-   touches nothing when `prev_wt` was set.
+   before the switch (3.2): it removes the worktree only when `prev_wt` was empty and the worktree's admin id was not in the
+   pre-switch listing. It deletes the branch (and, if the switch wrote them, unsets `branch.<b>.remote` and `branch.<b>.merge`)
+   only when the branch did not exist before the switch, a fact recorded before the switch because a `name` switch can create it
+   from `origin/<b>`; a `pr-ref` switch's branch is always kept. A git error while recording that fact never counts as "did not
+   exist". The re-check confirms a candidate repo in that repo's own bus, so planted or stale rows naming another repo, or a
+   repo that has moved, do not refuse. A junk `ts` value orders as 0.
 
 Under layout 1 the check is satisfied by construction. Each repo bus is its own log, and a same-repo duplicate already hits
 git's one-worktree-per-branch refusal (T13). The check starts to matter when phase 2 puts a crew's repos into one log. Shipping it
@@ -1749,6 +1752,9 @@ dir in each new repo (3.2). Also in this phase:
   phase 6. The machine log takes reap and release rows with no resolvable crew.
 - Shell writers get the log path from `crew where --log` and keep it in `crew_log`. `crew_dir` keeps meaning `<c>/crew`.
   `directive-delivery.sh` may inline the path derivation to avoid a fork (3.5), guarded as below.
+- The same-branch confirmation must be re-sourced. Under one shared crew log a candidate repo's legacy bus no longer holds its
+  dispatch rows, so the phase-1 confirmation would stop confirming anything. The suggested source is the candidate repo's
+  worktree HEADs, read as files. The phase adds an acceptance test with both repos' dispatch rows in one crew log.
 - Visiting-crew creation: on host H, the remote `dispatch` creates `meta.json` with `visiting: true`. It reports `crew_layout: 2` on
   stdout beside `dispatch_row:` (`adapters/core/dispatch.sh:5050`). The origin records it on its dispatch row, and relay picks the
   crew scope or today's repo scope from that field.

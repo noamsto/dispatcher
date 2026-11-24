@@ -8016,6 +8016,638 @@ lock_path() { # <branch>
   [ ! -L "$(lock_path feat/42-do-a-thing)" ]
 }
 
+# The codename lock: mandatory, taken after the --pr re-fetch and held from the
+# claim row through the dispatch row.
+ident_lock_path() {
+  printf '%s/crew/identity.lock' "$(git rev-parse --path-format=absolute --git-common-dir)"
+}
+
+# stub_tenth_sleep — `sleep 0.1`, the lock's retry pause, returns at once and is
+# counted; every other duration runs the real sleep. The bound counts tries, so
+# 300 of them run fast.
+stub_tenth_sleep() {
+  local real_sleep
+  real_sleep="$(type -P sleep)"
+  cat >"$STUB_DIR/sleep" <<EOF
+#!/usr/bin/env bash
+if [ "\$*" = 0.1 ]; then
+  echo 0.1 >>"$BATS_TEST_TMPDIR/tenth-sleeps"
+  exit 0
+fi
+exec "$real_sleep" "\$@"
+EOF
+  chmod +x "$STUB_DIR/sleep"
+}
+
+tenth_sleeps() {
+  if [ -f "$BATS_TEST_TMPDIR/tenth-sleeps" ]; then
+    wc -l <"$BATS_TEST_TMPDIR/tenth-sleeps"
+  else
+    echo 0
+  fi
+}
+
+@test "identity lock: this dispatch holds it over the claim row, crew identity and the dispatch row, and drops it after" {
+  stub_launch_bins
+  unset DISPATCH_SESSION_ID
+  lock="$(ident_lock_path)"
+  probe="$BATS_TEST_TMPDIR/lock-probe"
+  real_jq="$(type -P jq)"
+  cat >"$STUB_DIR/jq" <<EOF
+#!/usr/bin/env bash
+case "\$*" in
+*'kind:"claim"}'*) printf 'claim %s\n' "\$(readlink "$lock")" >>"$probe" ;;
+*'kind:"dispatch", repo:'*) printf 'dispatch %s\n' "\$(readlink "$lock")" >>"$probe" ;;
+esac
+exec "$real_jq" "\$@"
+EOF
+  chmod +x "$STUB_DIR/jq"
+  mv "$STUB_DIR/crew" "$STUB_DIR/crew-inner"
+  cat >"$STUB_DIR/crew" <<EOF
+#!/usr/bin/env bash
+if [ "\${1:-}" = identity ] && [ "\${2#--}" = "\${2:-}" ]; then
+  printf 'identity %s\n' "\$(readlink "$lock")" >>"$probe"
+fi
+exec "$STUB_DIR/crew-inner" "\$@"
+EOF
+  chmod +x "$STUB_DIR/crew"
+
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  [ "$status" -eq 0 ]
+  # The session id ends in the dispatch shell's pid, which the lock links to.
+  pid="$(jq -r 'select(.kind == "dispatch") | .session | sub("^.*-"; "")' "$TEST_REPO/.git/crew/events.jsonl")"
+  [[ $pid =~ ^[0-9]+$ ]]
+  [ "$(cat "$probe")" = "$(printf 'claim %s\nidentity %s\ndispatch %s' "$pid" "$pid" "$pid")" ]
+  [ ! -e "$lock" ]
+  [ ! -L "$lock" ]
+  [ ! -L "$lock.break" ]
+}
+
+@test "identity lock: the --pr re-fetch and hard reset run before the lock and the claim row" {
+  setup_stale_pr_worktree eng-1746-prlock
+  lock="$(ident_lock_path)"
+  log="$TEST_REPO/.git/crew/events.jsonl"
+  probe="$BATS_TEST_TMPDIR/git-probe"
+  real_git="$(type -P git)"
+  cat >"$STUB_DIR/git" <<EOF
+#!/usr/bin/env bash
+for a in "\$@"; do
+  case "\$a" in
+  fetch | reset)
+    held=none claims=0
+    [ ! -L "$lock" ] || held="\$(readlink "$lock")"
+    [ ! -f "$log" ] || claims="\$(grep -c '"kind":"claim"' "$log" || true)"
+    printf '%s lock=%s claims=%s\n' "\$a" "\$held" "\$claims" >>"$probe"
+    break
+    ;;
+  esac
+done
+exec "$real_git" "\$@"
+EOF
+  chmod +x "$STUB_DIR/git"
+
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --pr 99 --crew-id c1 "Fix it"
+  [ "$status" -eq 0 ]
+  [ "$(git -C "$TEST_REPO/.worktrees/eng-1746-prlock" rev-parse HEAD)" = "$STALE_NEW_OID" ]
+  grep -qx 'fetch lock=none claims=0' "$probe"
+  grep -qx 'reset lock=none claims=0' "$probe"
+  jq -e 'select(.kind == "claim")' "$log" >/dev/null
+  [ ! -L "$lock" ]
+}
+
+@test "identity lock: a create's base fetch and every wt call run without it" {
+  stub_launch_bins
+  lock="$(ident_lock_path)"
+  probe="$BATS_TEST_TMPDIR/lock-probe"
+  real_git="$(type -P git)"
+  cat >"$STUB_DIR/git" <<EOF
+#!/usr/bin/env bash
+for a in "\$@"; do
+  if [ "\$a" = fetch ]; then
+    printf 'fetch lock=%s\n' "\$(readlink "$lock" || echo none)" >>"$probe"
+    break
+  fi
+done
+exec "$real_git" "\$@"
+EOF
+  chmod +x "$STUB_DIR/git"
+  mv "$STUB_DIR/wt" "$STUB_DIR/wt.orig"
+  cat >"$STUB_DIR/wt" <<EOF
+#!/usr/bin/env bash
+printf 'wt %s lock=%s\n' "\$1" "\$(readlink "$lock" || echo none)" >>"$probe"
+exec "$STUB_DIR/wt.orig" "\$@"
+EOF
+  chmod +x "$STUB_DIR/wt"
+
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  [ "$status" -eq 0 ]
+  grep -qx 'fetch lock=none' "$probe"
+  grep -qx 'wt switch lock=none' "$probe"
+  run ! grep -v ' lock=none$' "$probe"
+  jq -e 'select(.kind == "claim")' "$TEST_REPO/.git/crew/events.jsonl" >/dev/null
+}
+
+@test "identity lock: a live holder past the bound refuses with it named, no claim row and no unlocked fallback" {
+  stub_launch_bins
+  lock="$(ident_lock_path)"
+  mkdir -p "${lock%/*}"
+  sleep 1000 >/dev/null 2>&1 3>&- &
+  live_pid=$!
+  ln -s "$live_pid" "$lock"
+  stub_tenth_sleep
+
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"identity lock busy after 30s — held by pid $live_pid at $lock"* ]]
+  [[ "$output" != *unlocked* ]]
+  n="$(tenth_sleeps)"
+  [ "$n" -ge 299 ]
+  [ "$n" -le 300 ]
+  [ "$(readlink "$lock")" = "$live_pid" ]
+  assert_no_bus_row claim
+  assert_no_bus_row dispatch
+  run ! grep -q 'new-window' "$STUB_LOG"
+}
+
+@test "identity lock: a lock left by a dead pid is broken at once and the dispatch proceeds" {
+  stub_launch_bins
+  stub_tenth_sleep
+  lock="$(ident_lock_path)"
+  mkdir -p "${lock%/*}"
+  # PID 2^31-1 is above any pid_max, so it is never a live process.
+  ln -s 2147483647 "$lock"
+
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  [ "$status" -eq 0 ]
+  [ "$(tenth_sleeps)" -eq 0 ]
+  jq -e 'select(.kind == "claim")' "$TEST_REPO/.git/crew/events.jsonl" >/dev/null
+  [ ! -L "$lock" ]
+  [ ! -L "$lock.break" ]
+  grep -q 'new-window' "$STUB_LOG"
+}
+
+@test "identity lock: an empty pre-upgrade directory lock is broken after the observation window" {
+  stub_launch_bins
+  stub_tenth_sleep
+  lock="$(ident_lock_path)"
+  mkdir -p "$lock"
+
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  [ "$status" -eq 0 ]
+  n="$(tenth_sleeps)"
+  [ "$n" -ge 99 ]
+  [ "$n" -lt 300 ]
+  jq -e 'select(.kind == "claim")' "$TEST_REPO/.git/crew/events.jsonl" >/dev/null
+  [ ! -e "$lock" ]
+  [ ! -L "$lock" ]
+  [ ! -L "$lock.break" ]
+}
+
+@test "identity lock: a directory lock that will not rmdir refuses at the bound and keeps no stray link inside" {
+  stub_launch_bins
+  stub_tenth_sleep
+  lock="$(ident_lock_path)"
+  mkdir -p "$lock"
+  touch "$lock/keep"
+
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"held by a pre-upgrade dispatch (no pid recorded) at $lock"* ]]
+  [ "$(ls -A "$lock")" = keep ]
+  [ ! -L "$lock.break" ]
+  assert_no_bus_row claim
+}
+
+@test "identity lock: a stranded break mutex refuses at the bound naming its path" {
+  stub_launch_bins
+  stub_tenth_sleep
+  lock="$(ident_lock_path)"
+  mkdir -p "${lock%/*}"
+  ln -s 2147483647 "$lock"
+  ln -s 2147483646 "$lock.break"
+
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"held by pid 2147483647 at $lock"* ]]
+  [[ "$output" == *"blocked by $lock.break, held by pid 2147483646"* ]]
+  [[ "$output" == *"rm -f $lock.break and re-dispatch"* ]]
+  [ "$(readlink "$lock")" = 2147483647 ]
+  [ "$(readlink "$lock.break")" = 2147483646 ]
+  assert_no_bus_row claim
+}
+
+@test "identity lock: a dispatch failing inside the lock span releases it on exit" {
+  stub_launch_bins
+  commit_envrc
+  cat >"$STUB_DIR/direnv" <<'EOF'
+#!/usr/bin/env bash
+exit 1
+EOF
+  chmod +x "$STUB_DIR/direnv"
+  lock="$(ident_lock_path)"
+
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"direnv allow failed"* ]]
+  jq -e 'select(.kind == "claim")' "$TEST_REPO/.git/crew/events.jsonl" >/dev/null
+  [ ! -L "$lock" ]
+  [ ! -e "$lock" ]
+}
+
+# Same-branch refusal: one worker per branch name in a crew. Under layout 1 each
+# repo's log holds only its own rows, so these plant the rows another repo's
+# dispatch would write once a crew's repos share one log.
+
+# bus_row <kind> <branch> <ts> [repo|-] [crew] — append a row to the test repo's
+# log; `-` (the default) leaves it untagged.
+bus_row() {
+  mkdir -p "$TEST_REPO/.git/crew"
+  jq -nc --arg k "$1" --arg b "$2" --argjson ts "$3" --arg r "${4:--}" --arg c "${5:-c1}" \
+    '{ts:$ts, kind:$k, crew_id:$c, branch:$b} + (if $r == "-" then {} else {repo:$r} end)' \
+    >>"$TEST_REPO/.git/crew/events.jsonl"
+}
+
+# other_repo — another repo's git common dir; its own log, which confirms what
+# the test repo's log says about it, is other_row's.
+other_repo() { printf '%s/other/.git' "$BATS_TEST_TMPDIR"; }
+
+# other_row <kind> <branch> <ts> [crew] — append a row tagged with other_repo to
+# that repo's own log.
+other_row() {
+  local other
+  other="$(other_repo)"
+  mkdir -p "$other/crew"
+  jq -nc --arg k "$1" --arg b "$2" --argjson ts "$3" --arg r "$other" --arg c "${4:-c1}" \
+    '{ts:$ts, kind:$k, crew_id:$c, branch:$b, repo:$r}' >>"$other/crew/events.jsonl"
+}
+
+# dispatch_rows — how many dispatch rows the test repo's log holds.
+dispatch_rows() {
+  jq -nR '[inputs | fromjson? | objects | select(.kind == "dispatch")] | length' "$TEST_REPO/.git/crew/events.jsonl"
+}
+
+# stub_wt_race_row <branch> — wrap the fixture's wt so that, once a `switch`
+# returns, both logs hold other_repo's live dispatch of <branch>: a dispatch
+# that won between this one's pre-check and its re-check.
+stub_wt_race_row() {
+  local other
+  other="$(other_repo)"
+  mkdir -p "$other/crew"
+  mv "$STUB_DIR/wt" "$STUB_DIR/wt.orig"
+  cat >"$STUB_DIR/wt" <<EOF
+#!/usr/bin/env bash
+"$STUB_DIR/wt.orig" "\$@" || exit
+if [ "\$1" = switch ]; then
+  row='{"ts":100,"kind":"dispatch","crew_id":"c1","branch":"$1","repo":"$other"}'
+  printf '%s\n' "\$row" >>"$TEST_REPO/.git/crew/events.jsonl"
+  printf '%s\n' "\$row" >>"$other/crew/events.jsonl"
+fi
+EOF
+  chmod +x "$STUB_DIR/wt"
+}
+
+@test "same-branch: another repo's live dispatch of the branch refuses before any switch, branch, worktree or claim" {
+  stub_launch_bins
+  b=feat/42-do-a-thing
+  other="$(other_repo)"
+  other_row dispatch "$b" 100
+  # None of the releases or the reap ends the dispatch: the first ties its ts
+  # from an earlier position, the reap and the untagged release are this repo's,
+  # the next is earlier by ts despite its later position, and a junk ts orders
+  # as 0, not above every number.
+  bus_row release "$b" 100 "$other"
+  bus_row dispatch "$b" 100 "$other"
+  bus_row reap "$b" 200 "$(realpath "$TEST_REPO/.git")"
+  bus_row release "$b" 300
+  bus_row release "$b" 50 "$other"
+  bus_row release "$b" '"zzz"' "$other"
+  printf '{"ts":400,"kind":"rel\n' >>"$TEST_REPO/.git/crew/events.jsonl"
+
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"$b is already dispatched live into $other in crew c1"* ]]
+  run ! grep -q '^switch' "$STUB_LOG"
+  run ! git -C "$TEST_REPO" show-ref --verify --quiet "refs/heads/$b"
+  [ ! -e "$TEST_REPO/.dispatch-wt" ]
+  [ "$(git -C "$TEST_REPO" worktree list --porcelain | grep -c '^worktree ')" -eq 1 ]
+  [ "$(dispatch_rows)" -eq 1 ]
+  assert_no_bus_row claim
+}
+
+@test "same-branch: another crew, this repo, an untagged row, or a later reap or release in that repo is no conflict" {
+  stub_launch_bins
+  other="$(other_repo)"
+  # The other repo's own log confirms every candidate, so only this log's rows
+  # can end one.
+  for n in 41 44 45 46; do other_row dispatch "feat/$n-same-branch" 100; done
+  bus_row dispatch feat/41-same-branch 100 "$other" c2
+  bus_row dispatch feat/42-same-branch 100 "$(realpath "$TEST_REPO/.git")"
+  bus_row dispatch feat/43-same-branch 100
+  bus_row dispatch feat/44-same-branch 100 "$other"
+  bus_row reap feat/44-same-branch 200 "$other"
+  bus_row dispatch feat/45-same-branch 100 "$other"
+  bus_row release feat/45-same-branch 200 "$other"
+  # Equal ts: the file position decides.
+  bus_row dispatch feat/46-same-branch 100 "$other"
+  bus_row release feat/46-same-branch 100 "$other"
+
+  for n in 41 42 43 44 45 46; do
+    DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 "$n" "same branch"
+    [ "$status" -eq 0 ] || {
+      echo "case $n: $output"
+      false
+    }
+    git -C "$TEST_REPO" show-ref --verify --quiet "refs/heads/feat/$n-same-branch"
+  done
+}
+
+@test "same-branch: a candidate its own log does not confirm, or a junk-ts dispatch a later row ended, is no conflict" {
+  stub_launch_bins
+  other="$(other_repo)"
+  # 51: the repo does not exist. 52: its log has no dispatch of the branch.
+  # 53: a later release there ended it. 54: a junk ts orders as 0, so the later
+  # release here ends it though its log confirms it. 55: an alias of this repo,
+  # whose log would confirm the row with itself. 56: its log's dispatch is another
+  # crew's. 57: its log's dispatch is tagged with a third repo.
+  bus_row dispatch feat/51-same-branch 100 "$BATS_TEST_TMPDIR/gone/.git"
+  bus_row dispatch feat/52-same-branch 100 "$other"
+  other_row dispatch feat/53-same-branch 100
+  other_row release feat/53-same-branch 200
+  bus_row dispatch feat/53-same-branch 100 "$other"
+  other_row dispatch feat/54-same-branch 100
+  bus_row dispatch feat/54-same-branch '"z"' "$other"
+  bus_row release feat/54-same-branch 200 "$other"
+  bus_row dispatch feat/55-same-branch 100 "$TEST_REPO/.git/"
+  other_row dispatch feat/56-same-branch 100 c2
+  bus_row dispatch feat/56-same-branch 100 "$other"
+  jq -nc --arg r /srv/third/.git '{ts:100, kind:"dispatch", crew_id:"c1", branch:"feat/57-same-branch", repo:$r}' >>"$other/crew/events.jsonl"
+  bus_row dispatch feat/57-same-branch 100 "$other"
+  # 58: its log is a FIFO, which would hang jq if it were opened; the dispatch
+  # runs under timeout so a regression fails instead of hanging.
+  mkdir -p "$BATS_TEST_TMPDIR/fifo/.git/crew"
+  mkfifo "$BATS_TEST_TMPDIR/fifo/.git/crew/events.jsonl"
+  bus_row dispatch feat/58-same-branch 100 "$BATS_TEST_TMPDIR/fifo/.git"
+
+  for n in 51 52 53 54 55 56 57 58; do
+    DISPATCH_PROFILE=personal run timeout 60 bash -euo pipefail "$DISPATCH" standard sonnet --effort medium --crew-id c1 "$n" "same branch"
+    [ "$status" -eq 0 ] || {
+      echo "case $n: $output"
+      false
+    }
+    git -C "$TEST_REPO" show-ref --verify --quiet "refs/heads/feat/$n-same-branch"
+  done
+}
+
+@test "same-branch: a candidate whose own log cannot be read is no conflict" {
+  [ "$(id -u)" -ne 0 ] || skip "root reads a mode-000 file"
+  stub_launch_bins
+  b=feat/42-do-a-thing
+  other="$(other_repo)"
+  other_row dispatch "$b" 100
+  bus_row dispatch "$b" 100 "$other"
+  chmod 000 "$other/crew/events.jsonl"
+
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  chmod 600 "$other/crew/events.jsonl"
+  [ "$status" -eq 0 ]
+  git -C "$TEST_REPO" show-ref --verify --quiet "refs/heads/$b"
+}
+
+@test "same-branch: a create that loses the race removes its worktree and branch, writes no claim and frees the lock" {
+  stub_launch_bins
+  b=feat/42-do-a-thing
+  stub_wt_race_row "$b"
+  lock="$(ident_lock_path)"
+
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"a concurrent dispatch of $b into $(other_repo) in crew c1 won the race"* ]]
+  [[ "$output" == *"removed: worktree "*"/.dispatch-wt/feat-42-do-a-thing"* ]]
+  [[ "$output" == *"removed: branch $b"* ]]
+  [[ "$output" == *"kept: origin's $b, pushed by this dispatch — with the issue's 'dispatched' label it makes the claim gate refuse a re-dispatch of the issue"* ]]
+  [[ "$output" != *"removed: branch.$b."* ]]
+  [[ "$output" != *"could not remove"* ]]
+  grep -q "^switch -c $b" "$STUB_LOG"
+  [ ! -e "$TEST_REPO/.dispatch-wt/feat-42-do-a-thing" ]
+  run ! git -C "$TEST_REPO" show-ref --verify --quiet "refs/heads/$b"
+  [ "$(git -C "$TEST_REPO" worktree list --porcelain | grep -c '^worktree ')" -eq 1 ]
+  git -C "$TEST_REPO/origin.git" show-ref --verify --quiet "refs/heads/$b"
+  [ ! -L "$lock" ]
+  [ "$(dispatch_rows)" -eq 1 ]
+  assert_no_bus_row claim
+}
+
+@test "same-branch: a fetch-name --pr that loses the race removes its worktree, branch and tracking config" {
+  stub_launch_bins
+  stub_pr_bins tmp-head
+  git branch -D tmp-head
+  git push -q origin main:refs/heads/feat/pr-head
+  git update-ref -d refs/remotes/origin/feat/pr-head
+  export PR_HEAD=feat/pr-head
+  stub_wt_race_row feat/pr-head
+
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --pr 99 --crew-id c1 "Review PR 99"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"a concurrent dispatch of feat/pr-head into $(other_repo) in crew c1 won the race"* ]]
+  [[ "$output" != *"could not remove"* ]]
+  grep -q '^switch -c feat/pr-head' "$STUB_LOG"
+  [ ! -e "$TEST_REPO/.worktrees/feat/pr-head" ]
+  run ! git -C "$TEST_REPO" show-ref --verify --quiet refs/heads/feat/pr-head
+  run ! git -C "$TEST_REPO" config --get-all branch.feat/pr-head.remote
+  run ! git -C "$TEST_REPO" config --get-all branch.feat/pr-head.merge
+  [ ! -L "$(ident_lock_path)" ]
+  [ "$(dispatch_rows)" -eq 1 ]
+  assert_no_bus_row claim
+}
+
+@test "same-branch: a fetch-name race loss unsets the tracking config even when the branch cannot be deleted" {
+  stub_launch_bins
+  stub_pr_bins tmp-head
+  git branch -D tmp-head
+  git push -q origin main:refs/heads/feat/pr-head
+  git update-ref -d refs/remotes/origin/feat/pr-head
+  export PR_HEAD=feat/pr-head
+  stub_wt_race_row feat/pr-head
+  # A failed branch -D keeps the branch's config section, so only the unsets can clear it.
+  real_git="$(type -P git)"
+  cat >"$STUB_DIR/git" <<EOF
+#!/usr/bin/env bash
+case " \$* " in *" branch -D "*) exit 1 ;; esac
+exec "$real_git" "\$@"
+EOF
+  chmod +x "$STUB_DIR/git"
+
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --pr 99 --crew-id c1 "Review PR 99"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"could not remove: branch feat/pr-head — remove it by hand"* ]]
+  [[ "$output" == *"removed: branch.feat/pr-head.remote"* ]]
+  [[ "$output" == *"removed: branch.feat/pr-head.merge"* ]]
+  git -C "$TEST_REPO" show-ref --verify --quiet refs/heads/feat/pr-head
+  run ! git -C "$TEST_REPO" config --get-all branch.feat/pr-head.remote
+  run ! git -C "$TEST_REPO" config --get-all branch.feat/pr-head.merge
+}
+
+@test "same-branch: a name --pr off origin's ref alone that loses the race removes the branch it made and its tracking config" {
+  stub_launch_bins
+  stub_pr_bins tmp-head
+  git branch -D tmp-head
+  # The push leaves refs/remotes/origin/feat/pr-head, so the switch is by name
+  # and git sets up a local tracking branch.
+  git push -q origin main:refs/heads/feat/pr-head
+  export PR_HEAD=feat/pr-head
+  stub_wt_race_row feat/pr-head
+
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --pr 99 --crew-id c1 "Review PR 99"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"a concurrent dispatch of feat/pr-head into $(other_repo) in crew c1 won the race"* ]]
+  [[ "$output" == *"removed: branch feat/pr-head"* ]]
+  [[ "$output" != *"could not remove"* ]]
+  grep -qx 'switch feat/pr-head -y --no-hooks' "$STUB_LOG"
+  [ ! -e "$TEST_REPO/.worktrees/feat/pr-head" ]
+  run ! git -C "$TEST_REPO" show-ref --verify --quiet refs/heads/feat/pr-head
+  run ! git -C "$TEST_REPO" config --get-all branch.feat/pr-head.remote
+  run ! git -C "$TEST_REPO" config --get-all branch.feat/pr-head.merge
+  git -C "$TEST_REPO" show-ref --verify --quiet refs/remotes/origin/feat/pr-head
+  git -C "$TEST_REPO/origin.git" show-ref --verify --quiet refs/heads/feat/pr-head
+}
+
+@test "same-branch: a name --pr onto an existing local branch that loses the race removes the worktree and keeps the branch" {
+  stub_launch_bins
+  stub_pr_bins feat/pr-head
+  git config branch.feat/pr-head.remote origin
+  git config branch.feat/pr-head.merge refs/heads/feat/pr-head
+  tip="$(git rev-parse feat/pr-head)"
+  stub_wt_race_row feat/pr-head
+
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --pr 99 --crew-id c1 "Review PR 99"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"removed: worktree "*"/.worktrees/feat/pr-head"* ]]
+  [[ "$output" == *"kept: branch feat/pr-head (it existed before this dispatch)"* ]]
+  grep -qx 'switch feat/pr-head -y --no-hooks' "$STUB_LOG"
+  [ ! -e "$TEST_REPO/.worktrees/feat/pr-head" ]
+  [ "$(git -C "$TEST_REPO" rev-parse feat/pr-head)" = "$tip" ]
+  [ "$(git -C "$TEST_REPO" config branch.feat/pr-head.remote)" = origin ]
+  [ "$(git -C "$TEST_REPO" config branch.feat/pr-head.merge)" = refs/heads/feat/pr-head ]
+}
+
+@test "same-branch: a branch that existed is kept by a lost race when the pre-switch ref check fails with a git error" {
+  stub_launch_bins
+  stub_pr_bins feat/pr-head
+  tip="$(git rev-parse feat/pr-head)"
+  stub_wt_race_row feat/pr-head
+  # Fail the one ref check that follows the worktree listing, as the pre-switch
+  # check does; every other git call reaches the real git.
+  real_git="$(type -P git)"
+  cat >"$STUB_DIR/git" <<EOF
+#!/usr/bin/env bash
+marker="$BATS_TEST_TMPDIR/after-list"
+case " \$* " in
+  *" worktree list --porcelain "*) : >"\$marker" ;;
+  *" show-ref --verify --quiet refs/heads/feat/pr-head "*)
+    if [ -e "\$marker" ]; then
+      rm -f "\$marker"
+      echo x >>"$BATS_TEST_TMPDIR/ref-fails"
+      exit 128
+    fi
+    ;;
+esac
+exec "$real_git" "\$@"
+EOF
+  chmod +x "$STUB_DIR/git"
+
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --pr 99 --crew-id c1 "Review PR 99"
+  [ "$status" -eq 1 ]
+  [ "$(wc -l <"$BATS_TEST_TMPDIR/ref-fails")" -eq 1 ]
+  [[ "$output" == *"kept: branch feat/pr-head (it existed before this dispatch)"* ]]
+  [[ "$output" != *"removed: branch feat/pr-head"* ]]
+  [ "$(git -C "$TEST_REPO" rev-parse feat/pr-head)" = "$tip" ]
+}
+
+@test "same-branch: a dispatch onto an existing worktree that loses the race touches nothing" {
+  b=feat/42-do-a-thing
+  setup_resume_branch "$b"
+  wt="$TEST_REPO/.dispatch-wt/feat-42-do-a-thing"
+  git -C "$TEST_REPO" config "branch.$b.remote" origin
+  git -C "$TEST_REPO" config "branch.$b.merge" "refs/heads/$b"
+  tip="$(git -C "$TEST_REPO" rev-parse "$b")"
+  stub_wt_race_row "$b"
+
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"a concurrent dispatch of $b into $(other_repo) in crew c1 won the race"* ]]
+  [[ "$output" == *"kept: worktree "*" and branch $b (both existed before this dispatch)"* ]]
+  [[ "$output" != *"removed:"* ]]
+  grep -q "^switch $b" "$STUB_LOG"
+  [ -d "$wt" ]
+  [ "$(git -C "$TEST_REPO" worktree list --porcelain | grep -c '^worktree ')" -eq 2 ]
+  [ "$(git -C "$TEST_REPO" rev-parse "$b")" = "$tip" ]
+  [ "$(git -C "$TEST_REPO" config branch.$b.remote)" = origin ]
+  [ "$(git -C "$TEST_REPO" config branch.$b.merge)" = "refs/heads/$b" ]
+  [ ! -L "$(ident_lock_path)" ]
+  [ "$(dispatch_rows)" -eq 1 ]
+  assert_no_bus_row claim
+}
+
+@test "same-branch: a resume that made the worktree and loses the race removes the worktree and keeps the branch" {
+  b=feat/42-do-a-thing
+  setup_resume_branch_no_worktree "$b"
+  tip="$(git -C "$TEST_REPO" rev-parse "$b")"
+  stub_wt_race_row "$b"
+
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"removed: worktree "*"/.dispatch-wt/feat-42-do-a-thing"* ]]
+  [[ "$output" == *"kept: branch $b (it existed before this dispatch)"* ]]
+  grep -q "^switch $b" "$STUB_LOG"
+  [ ! -e "$TEST_REPO/.dispatch-wt/feat-42-do-a-thing" ]
+  [ "$(git -C "$TEST_REPO" rev-parse "$b")" = "$tip" ]
+  assert_no_bus_row claim
+}
+
+@test "same-branch: a worktree that predates the listing and moved onto the branch since is kept by a lost race" {
+  b=feat/42-do-a-thing
+  stub_launch_bins
+  git -C "$TEST_REPO" branch "$b"
+  side="$TEST_REPO/.dispatch-wt/side"
+  git -C "$TEST_REPO" worktree add -q -b side "$side"
+  # Off the branch at the listing; the switch finds it on the branch and attaches.
+  cat >"$STUB_DIR/wt" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >>"$STUB_LOG"
+if [ "\$1" = switch ]; then
+  git -C "$side" checkout -q "$b"
+fi
+exit 0
+EOF
+  chmod +x "$STUB_DIR/wt"
+  stub_wt_race_row "$b"
+
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"a concurrent dispatch of $b into $(other_repo) in crew c1 won the race"* ]]
+  [[ "$output" == *"kept: worktree "*"/.dispatch-wt/side and branch $b (the worktree predates this dispatch, which attached to it)"* ]]
+  [[ "$output" != *"removed:"* ]]
+  [ -d "$side" ]
+  [ "$(git -C "$side" symbolic-ref HEAD)" = "refs/heads/$b" ]
+  git -C "$TEST_REPO" show-ref --verify --quiet "refs/heads/$b"
+}
+
+@test "same-branch: a log that exists but cannot be read refuses at the pre-check" {
+  [ "$(id -u)" -ne 0 ] || skip "root reads a mode-000 file"
+  stub_launch_bins
+  log="$TEST_REPO/.git/crew/events.jsonl"
+  mkdir -p "${log%/*}"
+  : >"$log"
+  chmod 000 "$log"
+
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 ENG-1234 "Do a thing"
+  chmod 600 "$log"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"/crew/events.jsonl to check eng-1234-do-a-thing for a live dispatch from another repo — refusing"* ]]
+  run ! grep -q '^switch' "$STUB_LOG"
+  run ! git -C "$TEST_REPO" show-ref --verify --quiet refs/heads/eng-1234-do-a-thing
+}
+
 # Create-mode base resolution (#41): `wt switch -c` with no -b bases off the
 # LOCAL default branch, which nothing here fetches or fast-forwards first —
 # routine staleness on a machine that dispatches more than it pulls. These
@@ -8541,6 +9173,7 @@ EOF
   log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
   run jq -r 'select(.kind=="claim-issue") | .issue' "$log"
   [ "$output" = "42" ]
+  [ "$(jq -r 'select(.kind=="claim-issue") | .repo' "$log")" = "$(realpath -e -- "$TEST_REPO/.git")" ]
 }
 
 @test "claim: '#42' canonicalises to issue 42 (#320)" {
@@ -10533,6 +11166,7 @@ EOF
   log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
   run jq -r 'select(.kind=="claim-issue") | .pid | type' "$log"
   [ "$output" = "number" ]
+  [ "$(jq -r 'select(.kind=="claim-issue") | .repo' "$log")" = "$(realpath -e -- "$TEST_REPO/.git")" ]
 }
 
 @test "claim: a Linear dispatch writes no claim-issue row" {
@@ -11662,6 +12296,9 @@ ROWS
   [ "${lines[1]}" = "$(realpath -m -- "$TEST_REPO/.git/crew")" ]
   [ "${lines[2]}" = feat/42-anchor-record ]
   [ "${lines[3]}" = "$(realpath -e -- "$(git -C "$wt" rev-parse --absolute-git-dir)")" ]
+  [ "${lines[4]}" = c1 ]
+  [ "${#lines[@]}" -eq 5 ]
+  [ "$(jq -r 'select(.kind=="dispatch") | .repo' "$TEST_REPO/.git/crew/events.jsonl")" = "$(realpath -e -- "$TEST_REPO/.git")" ]
 }
 
 # git >=2.48 can link a worktree by a relative gitdir back-pointer

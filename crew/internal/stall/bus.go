@@ -22,7 +22,11 @@ func (w *watch) refresh() error {
 	w.bus = busView{}
 	// Rows older than the run are dropped by the reader and by the jq below: a
 	// whole-log read every 4th tick costs memory proportional to the log.
-	rows, ok := w.p.BusRows(w.paths.Log, w.cfg.runStartMS, 0)
+	c, err := w.paths.Crew(w.cfg.crew)
+	if err != nil {
+		return err
+	}
+	rows, ok := w.p.BusRows(c.Log, w.cfg.runStartMS, 0)
 	if !ok {
 		return nil
 	}

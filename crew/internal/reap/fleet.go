@@ -60,7 +60,7 @@ func RunFleet(ctx context.Context, req Request, stdout, stderr io.Writer, o Opti
 		// A repo's checkout is its common dir's parent, the same derivation
 		// `crew fleet` and `rate --sweep-all` make.
 		workdir := filepath.Dir(common)
-		if rc := o.fleetReap(ctx, req, busAt(common), workdir, stdout, stderr); rc != 0 {
+		if rc := o.fleetReap(ctx, req, bus.PathsFor(common), workdir, stdout, stderr); rc != 0 {
 			say(stderr, "crew reap --fleet: %s: failed (rc=%d)\n", common, rc)
 			failed++
 		}
@@ -72,13 +72,6 @@ func RunFleet(ctx context.Context, req Request, stdout, stderr io.Writer, o Opti
 }
 
 func say(w io.Writer, format string, args ...any) { _, _ = fmt.Fprintf(w, format, args...) }
-
-// busAt is a discovered repo's bus: the bus.Locate layout, spelled here
-// because discovery already proved <common>/crew/events.jsonl exists.
-func busAt(common string) bus.Paths {
-	dir := common + "/crew"
-	return bus.Paths{Common: common, Dir: dir, Log: dir + "/events.jsonl"}
-}
 
 // fleetReap is the loop's per-repo child: Options.FleetReap when the caller set
 // one, the repo-keyed reap otherwise.

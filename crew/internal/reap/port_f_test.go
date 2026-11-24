@@ -195,7 +195,7 @@ func TestPortFDiscardCleanTreeClosedIssueKeepsBranch(t *testing.T) {
 		t.Fatal("branch deleted")
 	}
 	portFNoPatch(f)
-	wantJSON(t, f.rows("reap")[0], fmt.Sprintf(`{"ts":%d,"kind":"reap","branch":"feat/r","pr":"","pr_state":"ISSUE_CLOSED","worktree":%q,"issues":["5"],"discarded":""}`, nowUnix*1000, f.wt))
+	wantJSON(t, f.rows("reap")[0], fmt.Sprintf(`{"ts":%d,"kind":"reap","branch":"feat/r","repo":%q,"pr":"","pr_state":"ISSUE_CLOSED","worktree":%q,"issues":["5"],"discarded":""}`, nowUnix*1000, f.paths.Common, f.wt))
 }
 
 func TestPortFClosedIssueNeedsCommitsOnARemoteRef(t *testing.T) {

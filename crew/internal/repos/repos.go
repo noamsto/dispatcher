@@ -11,6 +11,8 @@ import (
 	"slices"
 	"sort"
 	"strings"
+
+	"github.com/noamsto/dispatcher/crew/internal/bus"
 )
 
 // Status says whether a discovered candidate can be read as a bus.
@@ -41,9 +43,11 @@ type Options struct {
 	Prefix string
 }
 
-const (
-	busSuffix = "/.git/crew/events.jsonl"
-	maxDepth  = 6
+const maxDepth = 6
+
+var (
+	busSuffix = bus.PathsFor("/.git").Log
+	logTail   = bus.PathsFor("").Log
 )
 
 // RegistryPath is `${XDG_DATA_HOME:-$HOME/.local/share}/crew/repos`, the file
@@ -173,7 +177,7 @@ func statusOf(common string) Status {
 	if info, err := os.Stat(common); err != nil || !info.IsDir() {
 		return StatusGone
 	}
-	if info, err := os.Stat(filepath.Join(common, "crew", "events.jsonl")); err != nil || !info.Mode().IsRegular() {
+	if info, err := os.Stat(bus.PathsFor(common).Log); err != nil || !info.Mode().IsRegular() {
 		return StatusNoBus
 	}
 	return StatusOK
@@ -203,7 +207,7 @@ func walk(root string, add func(string)) {
 				path = dir + name
 			}
 			if strings.HasSuffix(path, busSuffix) {
-				add(strings.TrimSuffix(path, "/crew/events.jsonl"))
+				add(strings.TrimSuffix(path, logTail))
 			}
 			if e.IsDir() && depth < maxDepth {
 				visit(path, depth+1)

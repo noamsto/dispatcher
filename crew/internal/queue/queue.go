@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strconv"
@@ -352,10 +353,11 @@ func orNull(s string) *string {
 }
 
 func add(ctx context.Context, req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int {
-	crew, ok := resolveCrew(req.Crew, stderr, o)
+	c, ok := resolveCrew(req.Crew, paths, stderr, o)
 	if !ok {
 		return exitFailure
 	}
+	crew := c.ID
 	title := clean(strings.Join(req.Title, " "))
 	ref, branch := clean(req.Ref), clean(req.Branch)
 	if title == "" {
@@ -376,10 +378,10 @@ func add(ctx context.Context, req Request, paths bus.Paths, stdout, stderr io.Wr
 		}
 	}
 
-	events, err := bus.ReadEvents(paths.Log)
+	events, err := bus.ReadEvents(c.Log)
 	if err != nil && !errors.Is(err, bus.ErrNoLog) {
 		msg, code := bus.JQFailure(err)
-		say(stderr, "crew: queue: %s: %s\n", paths.Log, msg)
+		say(stderr, "crew: queue: %s: %s\n", c.Log, msg)
 		return code
 	}
 	fresh := Entry{Task: Task{Ref: orNull(ref), Branch: orNull(branch)}}
@@ -399,7 +401,7 @@ func add(ctx context.Context, req Request, paths bus.Paths, stdout, stderr io.Wr
 		}
 	}
 
-	if err := os.MkdirAll(paths.Dir, 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(c.Log), 0o755); err != nil {
 		say(stderr, "crew: queue add: %v\n", err)
 		return exitFailure
 	}
@@ -414,7 +416,7 @@ func add(ctx context.Context, req Request, paths bus.Paths, stdout, stderr io.Wr
 			Body: encode(Entry{ID: id, Task: Task{Ref: orNull(ref), Branch: orNull(branch), Title: title}, After: after}),
 		})
 	}, title)
-	if err := bus.Append(paths.Log, line); err != nil {
+	if err := bus.Append(c.Log, line); err != nil {
 		say(stderr, "crew: queue add: %v\n", err)
 		return exitFailure
 	}
@@ -423,14 +425,15 @@ func add(ctx context.Context, req Request, paths bus.Paths, stdout, stderr io.Wr
 }
 
 func list(req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int {
-	crew, ok := resolveCrew(req.Crew, stderr, o)
+	c, ok := resolveCrew(req.Crew, paths, stderr, o)
 	if !ok {
 		return exitFailure
 	}
-	events, err := bus.ReadEvents(paths.Log)
+	crew := c.ID
+	events, err := bus.ReadEvents(c.Log)
 	if err != nil && !errors.Is(err, bus.ErrNoLog) {
 		msg, code := bus.JQFailure(err)
-		say(stderr, "crew: queue: %s: %s\n", paths.Log, msg)
+		say(stderr, "crew: queue: %s: %s\n", c.Log, msg)
 		return code
 	}
 	entries := Outstanding(events, crew)
@@ -458,11 +461,12 @@ func drop(ctx context.Context, req Request, paths bus.Paths, stderr io.Writer, o
 		say(stderr, "%s\n", DropUsage)
 		return exitFailure
 	}
-	crew, ok := resolveCrew(req.Crew, stderr, o)
-	if !ok || !mayPost(ctx, "drop", crew, stderr, o) {
+	c, ok := resolveCrew(req.Crew, paths, stderr, o)
+	if !ok || !mayPost(ctx, "drop", c.ID, stderr, o) {
 		return exitFailure
 	}
-	if err := os.MkdirAll(paths.Dir, 0o755); err != nil {
+	crew := c.ID
+	if err := os.MkdirAll(filepath.Dir(c.Log), 0o755); err != nil {
 		say(stderr, "crew: queue drop: %v\n", err)
 		return exitFailure
 	}
@@ -474,27 +478,28 @@ func drop(ctx context.Context, req Request, paths bus.Paths, stderr io.Writer, o
 			CrewID: crew, From: "dispatcher:" + crew, To: "queue:" + crew, Kind: "msg", Body: b,
 		})
 	}, encode(dropBody{ID: req.ID, Dropped: true}))
-	if err := bus.Append(paths.Log, line); err != nil {
+	if err := bus.Append(c.Log, line); err != nil {
 		say(stderr, "crew: queue drop: %v\n", err)
 		return exitFailure
 	}
 	return 0
 }
 
-func resolveCrew(raw string, stderr io.Writer, o Options) (string, bool) {
+func resolveCrew(raw string, paths bus.Paths, stderr io.Writer, o Options) (bus.Crew, bool) {
 	crew := raw
 	if crew == "" && o.CrewID != nil {
 		crew = o.CrewID()
 	}
 	if crew == "" {
 		say(stderr, "crew: CREW_ID unset and no WORKER_TASK.md crew_id\n")
-		return "", false
+		return bus.Crew{}, false
 	}
-	if !bus.ValidCrewID(crew) {
+	c, err := paths.Crew(crew)
+	if err != nil {
 		say(stderr, "crew: invalid crew id — expected only letters, digits, '.', '_' and '-'\n")
-		return "", false
+		return bus.Crew{}, false
 	}
-	return crew, true
+	return c, true
 }
 
 func mayPost(ctx context.Context, sub, crew string, stderr io.Writer, o Options) bool {

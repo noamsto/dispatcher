@@ -72,7 +72,11 @@ func Run(ctx context.Context, mineOnly, homeOnly bool, paths bus.Paths, stdout, 
 func mine(paths bus.Paths, stdout io.Writer, o Options) {
 	now := o.Clock.Now()
 	for _, id := range crewDirs(paths) {
-		pidfile := paths.Dir + "/crews/" + id + "/pid"
+		crew, err := paths.Crew(id)
+		if err != nil {
+			continue
+		}
+		pidfile := crew.Dir + "/pid"
 		pid, ok := PidFileText(pidfile)
 		if !ok {
 			continue // no readable file reads as the empty pid
@@ -112,10 +116,13 @@ func table(ctx context.Context, homeOnly bool, paths bus.Paths, stdout, stderr i
 
 	meta := make([]any, 0, len(ids))
 	for _, id := range ids {
-		pidfile := paths.Dir + "/crews/" + id + "/pid"
-		pid, hasFile := PidFileText(pidfile)
-		if !hasFile {
-			pid = ""
+		var pid, pidfile string
+		if crew, err := paths.Crew(id); err == nil {
+			pidfile = crew.Dir + "/pid"
+			var hasFile bool
+			if pid, hasFile = PidFileText(pidfile); !hasFile {
+				pid = ""
+			}
 		}
 		// `$(cat ... || true)` of an empty value is null, a junk or 0 pid is
 		// not alive, and only a positive-integer live-and-not-recycled pid
@@ -187,7 +194,7 @@ func discover(paths bus.Paths, events []bus.Event, logErr error) []string {
 // in glob order. Bash sorted the glob with the caller's collation; byte
 // order is the documented, locale-free choice (docs/crew-go-port.md).
 func crewDirs(paths bus.Paths) []string {
-	ents, err := os.ReadDir(paths.Dir + "/crews")
+	ents, err := os.ReadDir(paths.CrewsDir())
 	if err != nil {
 		return nil // the arm's `[ -d "$dir/crews" ]` miss
 	}
@@ -198,7 +205,7 @@ func crewDirs(paths bus.Paths) []string {
 			continue
 		}
 		if e.Type()&os.ModeSymlink != 0 {
-			if st, err := os.Stat(paths.Dir + "/crews/" + e.Name()); err == nil && st.IsDir() {
+			if st, err := os.Stat(paths.CrewDir(e.Name())); err == nil && st.IsDir() {
 				out = append(out, e.Name())
 			}
 		}

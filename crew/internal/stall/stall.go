@@ -81,16 +81,21 @@ type watch struct {
 
 // Run is the arm: it returns the status the arm exited with.
 func Run(ctx context.Context, req Request, paths bus.Paths, stderr io.Writer, o Options) int {
-	if o.Nudge == nil {
-		deps := nudge.PaneDeps(paths, stderr, o.Clock)
-		o.Nudge = func(ctx context.Context, req nudge.PaneRequest) (string, int) {
-			return nudge.Pane(ctx, req, deps)
-		}
-	}
 	cfg, err := parseArgs(req, o.CrewID)
 	if err != nil {
 		_, _ = fmt.Fprintln(stderr, err)
 		return 1
+	}
+	bc, err := paths.Crew(cfg.crew)
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "crew: stall-watch: invalid crew id %s\n", cfg.crew)
+		return 1
+	}
+	if o.Nudge == nil {
+		deps := nudge.PaneDeps(paths, func() string { return cfg.crew }, stderr, o.Clock)
+		o.Nudge = func(ctx context.Context, req nudge.PaneRequest) (string, int) {
+			return nudge.Pane(ctx, req, deps)
+		}
 	}
 	if reason := sender.Watch(ctx, cfg.fromID, cfg.crew, cfg.pane, o.Sender); reason != "" {
 		_, _ = fmt.Fprintf(stderr, "crew: stall-watch: refusing sender '%s' on pane %s: %s\n", cfg.fromID, cfg.pane, reason)
@@ -104,7 +109,7 @@ func Run(ctx context.Context, req Request, paths bus.Paths, stderr io.Writer, o 
 	if w.o.Unread == nil {
 		w.o.Unread = func(ctx context.Context, mode unread.Mode) string {
 			return unread.Scan(unread.Request{
-				Dir: paths.Dir, Log: paths.Log, Crew: cfg.crew, Branch: cfg.branch,
+				Dir: paths.Dir, Log: bc.Log, Crew: cfg.crew, Branch: cfg.branch,
 				Me: cfg.me, FromID: cfg.fromID, T0: cfg.runStartMS,
 			}, mode)
 		}

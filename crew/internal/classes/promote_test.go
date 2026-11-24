@@ -893,3 +893,18 @@ func TestIncumbentPartlyCostedBurnMeasured(t *testing.T) {
 		t.Errorf("reasons = %q", c.Reasons)
 	}
 }
+
+func TestInvalidCrewID(t *testing.T) {
+	f := newPromoteFixture(t, catalogJSON, nil)
+	f.env.CrewID = "bad id"
+	var stderr bytes.Buffer
+	if got := Promote("codex", "standard", "gpt-5.7-terra", f.env, &stderr); got != 1 {
+		t.Errorf("Promote = %d, want 1", got)
+	}
+	if want := "crew: class: invalid crew id bad id\n"; stderr.String() != want {
+		t.Errorf("Promote stderr = %q, want %q", stderr.String(), want)
+	}
+	if s := f.stateBytes(); s != "" {
+		t.Errorf("state written: %s", s)
+	}
+}

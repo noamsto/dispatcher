@@ -88,6 +88,13 @@ func Run(ctx context.Context, req Request, paths bus.Paths, stdout, stderr io.Wr
 	if crew == "" && o.CrewID != nil {
 		crew = o.CrewID()
 	}
+	if crew != "" {
+		c, err := paths.Crew(crew)
+		if err != nil {
+			return die(stderr, "invalid crew id %s", crew)
+		}
+		paths.Log = c.Log
+	}
 
 	// A tmux read failure is not "the target is gone".
 	winsRaw, err := o.Tmux.Run(ctx, windowsArgs...)

@@ -281,3 +281,19 @@ func TestEngineAlive(t *testing.T) {
 		}
 	}
 }
+
+func TestRunRefusesInvalidCrewID(t *testing.T) {
+	f := newFake()
+	h := newHarness(t, f)
+	h.crew = "../x"
+	code, stderr := h.run(Request{Target: "worker:feat/x#s1-1", Pane: ptr("%1")})
+	if code != 1 {
+		t.Errorf("exit %d, want 1", code)
+	}
+	if want := "crew: stall-watch: invalid crew id ../x\n"; stderr != want {
+		t.Errorf("stderr %q, want %q", stderr, want)
+	}
+	if f.newProbes != 0 {
+		t.Errorf("NewProbes called %d times, want 0", f.newProbes)
+	}
+}

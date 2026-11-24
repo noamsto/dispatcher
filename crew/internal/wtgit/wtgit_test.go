@@ -409,6 +409,16 @@ func TestTrustedCwdRecordOK(t *testing.T) {
 	}
 }
 
+func TestTrustedCwdFiveLineRecordOK(t *testing.T) {
+	r := newRepo(t)
+	writeRecord(t, r.wt, "branch", r.common+"/crew", r.admin, "gitdir", "crew-1")
+	var stderr bytes.Buffer
+	got, err := TrustedCwd(r.common, r.wt, &stderr)
+	if err != nil || got != r.main || stderr.Len() != 0 {
+		t.Fatalf("TrustedCwd = %q, %v, %q; want %q", got, err, stderr.String(), r.main)
+	}
+}
+
 func TestTrustedCwdFollowsPhysicalCwd(t *testing.T) {
 	r := newRepo(t)
 	writeRecord(t, r.wt, "branch", r.common+"/crew", r.admin)

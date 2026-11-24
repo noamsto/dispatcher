@@ -237,8 +237,12 @@ func paneAspect(cols, rows int, ok bool) float64 {
 
 // busSize is the loop's `rr_size=0; [ ! -f "$log" ] || rr_size=$(wc -c <"$log")`:
 // a bus that does not exist yet is a zero, not a missing signature part.
-func busSize(paths bus.Paths) int64 {
-	st, err := os.Stat(paths.Log)
+func busSize(paths bus.Paths, crew string) int64 {
+	bc, err := paths.Crew(crew)
+	if err != nil {
+		return 0
+	}
+	st, err := os.Stat(bc.Log)
 	if err != nil {
 		return 0
 	}

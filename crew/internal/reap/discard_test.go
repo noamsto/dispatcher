@@ -77,7 +77,7 @@ func TestDiscardSavesApplicablePatch(t *testing.T) {
 	if len(reap) != 1 {
 		t.Fatalf("appended %q", f.appended)
 	}
-	wantJSON(t, reap[0], fmt.Sprintf(`{"ts":%d,"kind":"reap","branch":"feat/r","pr":%q,"pr_state":"MERGED","worktree":%q,"discarded":%q}`, nowUnix*1000, prURL, f.wt, patch))
+	wantJSON(t, reap[0], fmt.Sprintf(`{"ts":%d,"kind":"reap","branch":"feat/r","repo":%q,"pr":%q,"pr_state":"MERGED","worktree":%q,"discarded":%q}`, nowUnix*1000, f.paths.Common, prURL, f.wt, patch))
 	// --discard keeps the branch: the patch applies to its tip.
 	fresh := filepath.Join(f.root, "fresh")
 	runGit(t, f.main, "worktree", "add", "-q", fresh, rb)
@@ -105,7 +105,7 @@ func TestDiscardCleanTree(t *testing.T) {
 		t.Fatalf("rc=%d stderr=%q", rc, f.stderr.String())
 	}
 	f.wantOut("crew reap: no uncommitted changes to save", "crew reap: reaped feat/r (MERGED, discarded)")
-	wantJSON(t, f.rows("reap")[0], fmt.Sprintf(`{"ts":%d,"kind":"reap","branch":"feat/r","pr":%q,"pr_state":"MERGED","worktree":%q,"discarded":""}`, nowUnix*1000, prURL, f.wt))
+	wantJSON(t, f.rows("reap")[0], fmt.Sprintf(`{"ts":%d,"kind":"reap","branch":"feat/r","repo":%q,"pr":%q,"pr_state":"MERGED","worktree":%q,"discarded":""}`, nowUnix*1000, f.paths.Common, prURL, f.wt))
 	f.noScratch()
 	if _, err := os.Lstat(f.paths.Dir + "/artifacts"); !os.IsNotExist(err) {
 		t.Fatalf("artifacts made for an empty patch: %v", err)
