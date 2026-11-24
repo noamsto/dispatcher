@@ -70,6 +70,7 @@ func paneScope(ctx context.Context, r Runner, cfg Config, rows []crewRow) Scope 
 		return Scope{Err: err.Error()}
 	}
 	crewsDir := filepath.Join(filepath.Dir(events), "crews")
+	repoRoot := strings.TrimSuffix(filepath.Dir(filepath.Dir(events)), "/.git")
 	panes := map[string]bool{}
 	for _, id := range strings.Fields(string(out)) {
 		if id != cfg.Pane {
@@ -82,7 +83,7 @@ func paneScope(ctx context.Context, r Runner, cfg Config, rows []crewRow) Scope 
 		file := filepath.Join(crewsDir, row.id, "pane")
 		b, err := os.ReadFile(file)
 		if err != nil {
-			dir, derr := cfg.Dirs.Resolve(ctx, r, cfg, "/", row.id)
+			dir, derr := cfg.Dirs.Resolve(ctx, r, cfg, repoRoot, row.id)
 			if derr != nil {
 				continue
 			}

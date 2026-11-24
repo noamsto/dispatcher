@@ -67,8 +67,9 @@ func ResolveCrewDir(ctx context.Context, r Runner, cfg Config, dir, id string) (
 	return got, nil
 }
 
-// CrewDirs caches crew where --dir answers for the dash process: a live crew's
-// dir never moves. Failures and refusals are not cached. The zero value and a
+// CrewDirs caches crew where --dir answers for the dash process, keyed by the
+// run dir and crew id (a layout-1 answer depends on the repo it runs from): a
+// live crew's dir never moves. Failures and refusals are not cached. The zero value and a
 // nil pointer are both usable; nil never caches.
 type CrewDirs struct {
 	mu   sync.Mutex
@@ -79,9 +80,10 @@ func NewCrewDirs() *CrewDirs { return &CrewDirs{dirs: map[string]string{}} }
 
 // Resolve is ResolveCrewDir through the cache.
 func (c *CrewDirs) Resolve(ctx context.Context, r Runner, cfg Config, dir, id string) (string, error) {
+	key := dir + "\x00" + id
 	if c != nil {
 		c.mu.Lock()
-		got, ok := c.dirs[id]
+		got, ok := c.dirs[key]
 		c.mu.Unlock()
 		if ok {
 			return got, nil
@@ -95,7 +97,7 @@ func (c *CrewDirs) Resolve(ctx context.Context, r Runner, cfg Config, dir, id st
 	if c.dirs == nil {
 		c.dirs = map[string]string{}
 	}
-	c.dirs[id] = got
+	c.dirs[key] = got
 	c.mu.Unlock()
 	return got, nil
 }

@@ -310,13 +310,15 @@ func TestScopePaneResolvesLayout2CrewDir(t *testing.T) {
 			t.Fatalf("Scope = %+v, want c2 via pane", sc)
 		}
 	}
-	c2 := 0
+	c2 := map[string]int{}
 	for _, c := range r.CallsSnapshot() {
 		if fakeKey(c.Name, c.Args) == "crew where --dir --crew c2" {
-			c2++
+			c2[c.Dir]++
 		}
 	}
-	if c2 != 1 {
-		t.Errorf("c2 dir looked up %d times, want 1 (cached)", c2)
+	for dir, n := range c2 {
+		if n != 1 {
+			t.Errorf("c2 dir looked up %d times from %q, want 1 (cached)", n, dir)
+		}
 	}
 }
