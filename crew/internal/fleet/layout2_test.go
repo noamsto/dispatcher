@@ -570,3 +570,17 @@ func TestLayout2ServedStatusListsCrewsInTheServedScope(t *testing.T) {
 		t.Errorf("no-repo group = %+v, want l3", r)
 	}
 }
+
+func TestLayout2ServedStatusInboxStartsAtServedSinceNotTheCrewCursor(t *testing.T) {
+	f := newQueueFix(t, "alpha")
+	f.layout2("l2", f.tag("alpha"), f.toOverseer("l2", 3000), f.toOverseer("l2", 2000), f.toOverseer("l2", 1000))
+	f.writeCursor(lane.OverseerCrewCursor(f.stateRoot(), "l2"), 1500)
+
+	o := f.statusOpts()
+	o.Served = &ServedStatus{Origin: "box", Since: f.ms(2500)}
+	d := CollectStatus(t.Context(), StatusRequest{}, os.Stderr, o)
+	want := []int64{f.ms(2000), f.ms(1000)}
+	if got := inboxTS(d.crew(t, "l2")); !slices.Equal(got, want) {
+		t.Errorf("l2 inbox = %v, want %v", got, want)
+	}
+}
