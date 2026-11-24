@@ -366,8 +366,8 @@ type CrewRef struct{ Crew, Common string }
 // Key identifies the crew in ScanCrews results; ids alone may repeat across repos.
 func (c CrewRef) Key() string { return c.Common + "|" + c.Crew }
 
-// ScanCrews folds the own log of every layout-2 crew among crews, keyed by
-// crew id. A crew with a layout-1 dir under its common, or whose dir crew
+// ScanCrews folds the own log of every layout-2 crew among crews. A crew with a
+// layout-1 dir under its common, or whose dir crew
 // where cannot give, is left to the repo-wide Scan. Results are keyed by Key.
 func (f *FleetScanners) ScanCrews(ctx context.Context, r Runner, cfg Config, crews []CrewRef, nowMS int64) (map[string]BusDigest, map[string]string) {
 	logs := map[string]string{}
