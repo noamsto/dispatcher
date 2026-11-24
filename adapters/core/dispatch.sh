@@ -5829,11 +5829,17 @@ if [ -n "$client_width" ]; then
   fi
 fi
 
+# A window id is unique only within one tmux server's lifetime: a restart hands
+# them out again from @0, so the row names the server the id came from.
+tmux_server="$(tmux display-message -p -t "$win" '#{pid}:#{start_time}' 2>/dev/null || true)"
+
 # The dispatch row predates the window, so the id rides in a row of its own; the
 # dispatch row's `window_id:null` keeps it from binding a window until this lands.
 _crew_append "$(jq -nc --arg crew "$crew_id" --arg branch "$branch" --arg session "$session" \
   --arg worker "$worker_id" --arg repo "$(_crew_repo)" --arg window_id "$win" \
-  '{ts:(now*1000|floor), crew_id:$crew, kind:"window", repo:$repo, branch:$branch, session:$session, worker_id:$worker, window_id:$window_id}')"
+  --arg tmux_server "$tmux_server" \
+  '{ts:(now*1000|floor), crew_id:$crew, kind:"window", repo:$repo, branch:$branch, session:$session, worker_id:$worker, window_id:$window_id}
+   + (if $tmux_server == "" then {} else {tmux_server:$tmux_server} end)')"
 
 # Printed so the dispatcher can address this session in the gap before the worker
 # boots — its startup drain is unbounded, so a scoping note posted now still lands.

@@ -48,7 +48,7 @@ const (
 // "the target is gone".
 var (
 	windowsArgs = []string{"list-windows", "-a", "-F",
-		"#{window_id}\t#{@crew_branch}\t#{@crew_dir}\t#{@crew_id}\t#{@crew_name}\t#{session_name}\t#{window_index}\t#{window_name}\t#{@bridge_crew_branch}\t#{@bridge_crew_id}"}
+		"#{window_id}\t#{@crew_branch}\t#{@crew_dir}\t#{@crew_id}\t#{@crew_name}\t#{session_name}\t#{window_index}\t#{window_name}\t#{@bridge_crew_branch}\t#{@bridge_crew_id}\t#{pid}:#{start_time}"}
 	panesArgs = []string{"list-panes", "-a", "-F", "#{window_id}\t#{pane_id}\t#{@crew_role}\t#{pane_index}"}
 )
 
@@ -356,14 +356,15 @@ func mirrorWindow(raw, branch, crew string) (window, bool) {
 	return window{}, false
 }
 
-// readWindows is the arm's crew filter over `list-windows`: the eight format
+// readWindows is the arm's crew filter over `list-windows`: the eleven format
 // fields, a non-empty branch, this repo's crew dir, and this crew's id when the
 // window carries one. An empty caller crew (no CREW_ID, no WORKER_TASK.md)
 // filters nothing at all. A state-only call (dir "") has no checkout, so a
 // window is this crew's only when its id says so and the crew's own dispatch,
-// resume or window row for its branch names its tmux window id: any process on
-// the tmux server can stamp a window with a crew's id, so the stamp alone binds
-// nothing (remote.WindowBound).
+// resume or window row for its branch names its tmux window id, and (a row that
+// recorded one) the identity of this tmux server, which the row's id is unique
+// within: any process on the tmux server can stamp a window with a crew's id, so
+// the stamp alone binds nothing (remote.WindowBound).
 func readWindows(raw string, paths bus.Paths, crew string) ([]window, error) {
 	dir := paths.Dir
 	var events []bus.Event
@@ -380,7 +381,11 @@ func readWindows(raw string, paths bus.Paths, crew string) ([]window, error) {
 			continue
 		}
 		if dir == "" {
-			if crew == "" || f[3] != crew || !remote.WindowBound(events, f[1], crew, f[0], f[2]) {
+			srv := ""
+			if len(f) > 10 {
+				srv = f[10]
+			}
+			if crew == "" || f[3] != crew || !remote.WindowBound(events, f[1], crew, f[0], f[2], srv) {
 				continue
 			}
 		} else if f[2] != dir {

@@ -64,13 +64,16 @@ func TestWaitLockUnderCrewStateRoot(t *testing.T) {
 // The wait lock stays under the store dir rather than a path relative to the cwd.
 func TestVisitingCrewWindowIsBoundToItsDispatchRow(t *testing.T) {
 	const clone = "/some/clone"
+	// srv is the live tmux server's identity (pid:start_time), the sixth field the
+	// arm's list-windows prints.
+	const srv = "111:222"
 	row := `{"ts":1,"crew_id":"c1","kind":"dispatch","branch":"feat/x","repo":"` + clone + `"}`
-	winRow := `{"ts":2,"crew_id":"c1","kind":"window","branch":"feat/x","repo":"` + clone + `","window_id":"@7"}`
-	resumeRow := `{"ts":3,"crew_id":"c1","kind":"resume","branch":"feat/x","repo":"` + clone + `","window_id":"@8"}`
-	real := "@7\tfeat/x\t" + clone + "/crew\tc1\tlead"
+	winRow := `{"ts":2,"crew_id":"c1","kind":"window","branch":"feat/x","repo":"` + clone + `","window_id":"@7","tmux_server":"` + srv + `"}`
+	resumeRow := `{"ts":3,"crew_id":"c1","kind":"resume","branch":"feat/x","repo":"` + clone + `","window_id":"@8","tmux_server":"` + srv + `"}`
+	real := "@7\tfeat/x\t" + clone + "/crew\tc1\tlead\t" + srv
 	// A worker of another crew stamps its own window with this crew's id and branch.
-	forged := "@9\tfeat/x\t/other/clone/crew\tc1\tevil"
-	copied := "@9\tfeat/x\t" + clone + "/crew\tc1\tevil"
+	forged := "@9\tfeat/x\t/other/clone/crew\tc1\tevil\t" + srv
+	copied := "@9\tfeat/x\t" + clone + "/crew\tc1\tevil\t" + srv
 	for _, tc := range []struct {
 		name    string
 		rows    []string
@@ -93,6 +96,10 @@ func TestVisitingCrewWindowIsBoundToItsDispatchRow(t *testing.T) {
 		{"a dispatch row whose window is not open yet binds no window", []string{strings.Replace(row, `"kind":"dispatch"`, `"kind":"dispatch","window_id":null`, 1)}, copied, false, "no live pane"},
 		{"a resume row's id replaces the window row's", []string{row, winRow, resumeRow}, real, false, "no live pane"},
 		{"a legacy resume row keeps the dir binding", []string{row, winRow, strings.Replace(resumeRow, `,"window_id":"@8"`, "", 1)}, real, true, ""},
+		// A row from before the tmux server restarted names an id this server handed
+		// to somebody else's window.
+		{"a row of another tmux server does not bind", []string{row, strings.Replace(winRow, srv, "999:888", 1)}, real, false, "no live pane"},
+		{"a window on the server the row recorded binds", []string{row, strings.Replace(winRow, srv, "999:888", 1)}, "@7\tfeat/x\t" + clone + "/crew\tc1\tlead\t999:888", true, ""},
 		// The rows after a torn line could move the branch to another clone.
 		{"torn log line before a newer row", []string{row, "{\"ts\":", strings.Replace(row, clone, "/moved", 1)}, real, false, "cannot read the crew log"},
 		{"copied stamps beside the real window", []string{row}, copied + "\n" + real, false, "ambiguous branch"},

@@ -75,7 +75,7 @@ func (f *fakePane) run(args []string) (string, error) {
 		if f.failWindows {
 			return "", tmuxtest.ErrNoServer
 		}
-		// The bats stub answers per query: the arm asks for five columns including
+		// The bats stub answers per query: the arm asks for six columns including
 		// @crew_dir, the pane's own anchor gate for three. One fixture, projected.
 		if !strings.Contains(args[len(args)-1], "@crew_dir") {
 			return project(f.windows), nil
@@ -128,9 +128,10 @@ func newDeps(p *fakePane, b *fakeBus, getenv map[string]string) Deps {
 }
 
 // anchored is the window and pane the address gates read: @7 anchored to this crew's
-// feat/x window, its lead pane running claude.
+// feat/x window, its lead pane running claude. The window row ends in the tmux
+// server identity, the arm's last column.
 func anchored() (string, string) {
-	return "@7\tfeat/x\t/rep/crew\tc1\treef", "@7\t%9\tlead\tclaude"
+	return "@7\tfeat/x\t/rep/crew\tc1\treef\t" + tmuxServer, "@7\t%9\tlead\tclaude"
 }
 
 // project drops the columns the anchor gate's shorter query does not ask for.
@@ -328,13 +329,13 @@ func TestPaneAnchorRefusals(t *testing.T) {
 		},
 		{
 			name: "other crew",
-			pane: &fakePane{frames: []string{fixture(t, "done_idle.txt")}, windows: "@7\tfeat/x\t/rep/crew\tc2\treef", panes: panes},
+			pane: &fakePane{frames: []string{fixture(t, "done_idle.txt")}, windows: "@7\tfeat/x\t/rep/crew\tc2\treef\t" + tmuxServer, panes: panes},
 			bus:  &fakeBus{rows: sessionRows(t, idleReq, "working")},
 			want: "anchor: window @7 of %9 is not anchored to crew c1",
 		},
 		{
 			name: "window of another branch",
-			pane: &fakePane{frames: []string{fixture(t, "done_idle.txt")}, windows: "@7\tfeat/other\t/rep/crew\tc1\treef", panes: panes},
+			pane: &fakePane{frames: []string{fixture(t, "done_idle.txt")}, windows: "@7\tfeat/other\t/rep/crew\tc1\treef\t" + tmuxServer, panes: panes},
 			bus:  &fakeBus{rows: sessionRows(t, idleReq, "working")},
 			want: "anchor: window @7 of %9 is not feat/x's window",
 		},

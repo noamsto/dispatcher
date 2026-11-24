@@ -125,6 +125,9 @@ printf '%s\n' "$*" >>"$STUB_LOG"
 if [ "$1" = new-window ]; then
   printf '%s %s\n' '%1' '%1'
 fi
+case "$*" in
+*'#{pid}:#{start_time}'*) printf '%s\n' '4321:8765' ;;
+esac
 exit 0
 EOF
   chmod +x "$STUB_DIR/tmux"
@@ -6968,8 +6971,8 @@ EOF
   [ "$output" = "dispatch,window" ]
   run jq -rs '(map(select(.kind == "dispatch"))[0]) as $d
     | map(select(.kind == "window"))[0]
-    | [.crew_id == "c1", .branch == $d.branch, .session == "s7-7", .repo == $d.repo, .window_id] | join(",")' "$log"
-  [ "$output" = "true,true,true,true,@5" ]
+    | [.crew_id == "c1", .branch == $d.branch, .session == "s7-7", .repo == $d.repo, .window_id, .tmux_server] | join(",")' "$log"
+  [ "$output" = "true,true,true,true,@5,4321:8765" ]
   # The dispatch row marks itself as window-bound with a null id: until the window
   # row lands it binds no window, instead of falling back to the copyable dir.
   run jq -rs 'map(select(.kind == "dispatch"))[0] | has("window_id") and .window_id == null' "$log"

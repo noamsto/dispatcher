@@ -97,6 +97,7 @@ new-window) printf '%s %s\n' '%99' '%99' ;;
 display-message)
   case "$*" in
   *'#{session_name}'*) printf '%s\n' "${STUB_SESSION_NAME:-main}" ;;
+  *'#{pid}:#{start_time}'*) printf '%s\n' '4321:8765' ;;
   *) printf '%s\n' '80 24 on' ;;
   esac
   ;;
@@ -1002,6 +1003,7 @@ new-window) printf '%s %s\n' '%99' '%99' ;;
 display-message)
   case "\$*" in
   *'#{pane_pid}'*) printf '%s\n' "\${STUB_PANE_PID:-}" ;;
+  *'#{pid}:#{start_time}'*) printf '%s\n' '4321:8765' ;;
   *) printf '%s\n' '80 24 on' ;;
   esac
   ;;
@@ -1302,6 +1304,7 @@ _lead_pane() { sed -n 's/^set-option -p -t \([^ ]*\) @crew_model .*/\1/p' "$STUB
   run run_resume
   [ "$status" -eq 0 ]
   [ "$(jq -r 'select(.kind == "resume") | .window_id' "$(bus_log)" | tail -1)" = "@4" ]
+  [ "$(jq -r 'select(.kind == "resume") | .tmux_server' "$(bus_log)" | tail -1)" = "4321:8765" ]
 }
 
 @test "resume row carries the new window's id when it opens one" {
@@ -1313,6 +1316,7 @@ _lead_pane() { sed -n 's/^set-option -p -t \([^ ]*\) @crew_model .*/\1/p' "$STUB
   run run_resume
   [ "$status" -eq 0 ]
   [ "$(jq -r 'select(.kind == "resume") | .window_id' "$(bus_log)" | tail -1)" = "@98" ]
+  [ "$(jq -r 'select(.kind == "resume") | .tmux_server' "$(bus_log)" | tail -1)" = "4321:8765" ]
 }
 
 @test "claude resume row carries the repo, the realpath of the common dir" {

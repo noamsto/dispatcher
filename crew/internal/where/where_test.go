@@ -74,11 +74,17 @@ func okTmux(wins, panes string) *tmuxtest.Fake {
 	return &tmuxtest.Fake{Out: map[string]string{"list-windows": wins, "list-panes": panes}}
 }
 
-// win is one `list-windows` line, in the arm's eight-field format: window id,
-// branch, crew dir, crew id, codename, session, window index, window name.
+// win is one `list-windows` line, in the arm's format: window id, branch, crew
+// dir, crew id, codename, session, window index, window name, then the mirror
+// window's @bridge_crew_branch and @bridge_crew_id, and last the tmux server's
+// identity (pid:start_time).
 func winLine(dir, id, branch, crew, name, session, index, winName string) string {
-	return strings.Join([]string{id, branch, dir, crew, name, session, index, winName}, "\t")
+	return strings.Join([]string{id, branch, dir, crew, name, session, index, winName, "", "", tmuxServer}, "\t")
 }
+
+// tmuxServer is the identity (pid:start_time) the fake tmux server reports in the
+// arm's last list-windows field.
+const tmuxServer = "111:222"
 
 // pane is one `list-panes` line: window id, pane id, role, pane index.
 func paneLine(winID, paneID, role, index string) string {
@@ -373,9 +379,10 @@ func TestTmuxFailure(t *testing.T) {
 }
 
 // mirrorLine is a `list-windows` line of a mirror window: the eight fields with
-// no @crew_branch, then @bridge_crew_branch and @bridge_crew_id.
+// no @crew_branch, then @bridge_crew_branch, @bridge_crew_id and the tmux
+// server's identity.
 func mirrorLine(id, bridgeBranch, bridgeCrew, session, index, winName string) string {
-	return strings.Join([]string{id, "", "", "", "", session, index, winName, bridgeBranch, bridgeCrew}, "\t")
+	return strings.Join([]string{id, "", "", "", "", session, index, winName, bridgeBranch, bridgeCrew, tmuxServer}, "\t")
 }
 
 func remoteDispatch(ts int64, branch, name, host string) string {
@@ -498,8 +505,8 @@ func TestRemoteWorkerRoutesAsCrewScopeByLayout(t *testing.T) {
 func TestVisitingCrewWindowIsBoundToItsDispatchRow(t *testing.T) {
 	const clone = "/some/clone"
 	row := fmt.Sprintf(`{"ts":1,"crew_id":"c1","kind":"dispatch","branch":"feat/x","name":"nova","host":"h1","repo":%q}`, clone)
-	winRow := fmt.Sprintf(`{"ts":2,"crew_id":"c1","kind":"window","branch":"feat/x","repo":%q,"window_id":"@624"}`, clone)
-	resumeRow := fmt.Sprintf(`{"ts":3,"crew_id":"c1","kind":"resume","branch":"feat/x","repo":%q,"window_id":"@625"}`, clone)
+	winRow := fmt.Sprintf(`{"ts":2,"crew_id":"c1","kind":"window","branch":"feat/x","repo":%q,"window_id":"@624","tmux_server":%q}`, clone, tmuxServer)
+	resumeRow := fmt.Sprintf(`{"ts":3,"crew_id":"c1","kind":"resume","branch":"feat/x","repo":%q,"window_id":"@625","tmux_server":%q}`, clone, tmuxServer)
 	copied := winLine(clone+"/crew", "@700", "feat/x", "c1", "evil", "sess", "4", "w")
 	panes := paneLine("@624", "%204", "lead", "1") + "\n" + paneLine("@700", "%300", "lead", "1")
 	want := `nova — sess:3.1 "win-name" (lead pane)   jump: ! tmux switch-client -t %204` + "\n"
@@ -526,6 +533,10 @@ func TestVisitingCrewWindowIsBoundToItsDispatchRow(t *testing.T) {
 		{"a dispatch row whose window is not open yet binds no window", []string{strings.Replace(row, `"kind":"dispatch"`, `"kind":"dispatch","window_id":null`, 1)}, copied, false, ""},
 		{"a resume row's id replaces the window row's", []string{row, winRow, resumeRow}, real, false, ""},
 		{"a legacy resume row keeps the dir binding", []string{row, winRow, strings.Replace(resumeRow, `,"window_id":"@625"`, "", 1)}, real, true, ""},
+		// The id a row recorded is unique only within the lifetime of the server it
+		// recorded: after a restart the same id can name another branch's window.
+		{"a row of another tmux server binds nothing", []string{row, strings.Replace(winRow, tmuxServer, "999:888", 1)}, real, false, "no live pane"},
+		{"a row of another tmux server beside the live window", []string{row, strings.Replace(winRow, tmuxServer, "999:888", 1)}, real + "\n" + copied, false, "no live pane"},
 		// The rows after a torn line could move the branch to another clone.
 		{"torn log line before a newer row", []string{row, "{\"ts\":", strings.ReplaceAll(row, clone, "/moved")}, real, false, "cannot read the crew log"},
 		// Every stamp copied: both windows pass, so neither is guessed.
