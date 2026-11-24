@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -25,6 +26,12 @@ const (
 
 // errDrift is reap's own refusal text for a git config that left its baseline.
 var errDrift = errors.New("git config drift (run `crew git-baseline`)")
+
+// errTampered is the refusal when the worktree's .git changed mid-cleanup.
+var errTampered = errors.New("its .git changed during cleanup; possible tampering: tell the human")
+
+// errBranchKept marks a removal that took the worktree but not its branch.
+var errBranchKept = errors.New("worktree removed, but branch delete failed")
 
 // archiveRoot is ${XDG_DATA_HOME:-$HOME/.local/share}/crew/cleanup-archive.
 func (o Options) archiveRoot() string {
@@ -85,6 +92,10 @@ func (o Options) remove(ctx context.Context, it *Item, stderr io.Writer) (string
 		return "", fmt.Errorf("archive failed, nothing removed: %w", err)
 	}
 
+	if err := o.verifyArchive(ctx, it, dir, before, stderr); err != nil {
+		_ = os.RemoveAll(dir)
+		return "", fmt.Errorf("archive failed, nothing removed: %w", err)
+	}
 	if after, err := o.treeState(ctx, admin, it, stderr); err != nil || after != before {
 		return dir, errors.New("changed while saving; archived, but nothing removed — review it again")
 	}
@@ -94,7 +105,7 @@ func (o Options) remove(ctx context.Context, it *Item, stderr io.Writer) (string
 		return dir, err
 	}
 	if !wtgit.GitlinkOK(admin, wt) {
-		return dir, errors.New("its .git changed during cleanup; possible tampering: tell the human")
+		return dir, errTampered
 	}
 	cmd, err := wtgit.CommonCommand(ctx, common, wtgit.Opts{Stderr: io.Discard}, "worktree", "remove", "--force", wt)
 	if err != nil {
@@ -112,9 +123,59 @@ func (o Options) remove(ctx context.Context, it *Item, stderr io.Writer) (string
 		return dir, errDrift
 	}
 	if err := cmd.Run(); err != nil {
-		return dir, fmt.Errorf("worktree removed, but branch delete failed: %w", err)
+		return dir, fmt.Errorf("%w: %w", errBranchKept, err)
 	}
 	return dir, nil
+}
+
+// verifyArchive proves the archive at dir holds the work before anything is
+// deleted: the bundle verifies, and a patch exists, non-empty, whenever the
+// worktree held uncommitted changes. before is treeState's "tree\ntip".
+func (o Options) verifyArchive(ctx context.Context, it *Item, dir, before string, stderr io.Writer) error {
+	b, err := os.ReadFile(filepath.Join(dir, infoName))
+	if err != nil {
+		return err
+	}
+	var meta info
+	if err := json.Unmarshal(b, &meta); err != nil {
+		return err
+	}
+	bundle := filepath.Join(dir, bundleName)
+	_, statErr := os.Stat(bundle)
+	if meta.Commits && errors.Is(statErr, fs.ErrNotExist) {
+		return errors.New("the commit bundle is missing")
+	}
+	if statErr == nil {
+		cmd, err := wtgit.CommonCommand(ctx, it.paths.Common, wtgit.Opts{Stderr: stderr}, "bundle", "verify", bundle)
+		if err != nil {
+			return errDrift
+		}
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("the commit bundle does not verify: %w", err)
+		}
+	} else if !errors.Is(statErr, fs.ErrNotExist) {
+		return statErr
+	}
+	if meta.Uncommit {
+		fi, err := os.Stat(filepath.Join(dir, patchName))
+		if err != nil || fi.Size() == 0 {
+			return errors.New("the uncommitted patch is missing or empty")
+		}
+		return nil
+	}
+	tree, tip, _ := strings.Cut(before, "\n")
+	cmd, err := wtgit.CommonCommand(ctx, it.paths.Common, wtgit.Opts{Stderr: stderr}, "rev-parse", "--verify", tip+"^{tree}")
+	if err != nil {
+		return errDrift
+	}
+	head, err := cmd.Output()
+	if err != nil {
+		return errors.New("could not read the branch tip's tree")
+	}
+	if tree != strings.TrimSpace(string(head)) {
+		return errors.New("it has uncommitted changes but no patch was written")
+	}
+	return nil
 }
 
 // checkBaseline is reap's pair of git-config checks: the admin dir and the
@@ -162,7 +223,10 @@ func (o Options) archive(ctx context.Context, it *Item, admin, rel string, stder
 		}
 	}()
 	opts := wtgit.Opts{Stderr: stderr}
-	revs := []string{"refs/heads/" + it.Branch, "--not", "--remotes"}
+	revs := []string{"refs/heads/" + it.Branch}
+	if def := defaultRef(ctx, it.paths.Common, opts); def != "" {
+		revs = append(revs, "--not", def)
+	}
 	cmd, err := wtgit.CommonCommand(ctx, it.paths.Common, opts, append([]string{"rev-list"}, revs...)...)
 	if err != nil {
 		return "", errDrift
@@ -204,6 +268,27 @@ func (o Options) archive(ctx context.Context, it *Item, admin, rel string, stder
 		return "", err
 	}
 	return dir, nil
+}
+
+// defaultRef is the default branch's remote ref, or "" when none resolves. It
+// is verified because a dangling origin/HEAD would make rev-list fail, and the
+// bundle must not depend on commits only a deletable remote branch holds.
+func defaultRef(ctx context.Context, common string, opts wtgit.Opts) string {
+	candidates := []string{"refs/remotes/origin/main"}
+	if cmd, err := wtgit.CommonCommand(ctx, common, opts, "symbolic-ref", "-q", "refs/remotes/origin/HEAD"); err == nil {
+		if out, err := cmd.Output(); err == nil {
+			if ref := strings.TrimSpace(string(out)); ref != "" {
+				candidates = append([]string{ref}, candidates...)
+			}
+		}
+	}
+	for _, ref := range candidates {
+		cmd, err := wtgit.CommonCommand(ctx, common, opts, "rev-parse", "--verify", "--quiet", ref+"^{commit}")
+		if err == nil && cmd.Run() == nil {
+			return ref
+		}
+	}
+	return ""
 }
 
 // patchText is the item's full uncommitted diff, saved the way the archive
@@ -256,7 +341,7 @@ func (o Options) treeState(ctx context.Context, admin string, it *Item, stderr i
 	if err != nil {
 		return "", errors.New("could not read its uncommitted state")
 	}
-	return tree + "\n" + string(tip), nil
+	return tree + "\n" + strings.TrimSpace(string(tip)), nil
 }
 
 // inside reports whether dir is wt or below it, through symlinks.

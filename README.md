@@ -111,6 +111,24 @@ and in reap's stale report. `--fleet` covers every repo, `--list`/`--json` are r
 and open to workers and dispatchers, and `--prune-archive [--older-than 30d]` drops old bundles. It
 refuses when `CREW_WORKER_ID` or `CREW_ROLE_ID` is set or there is no terminal.
 
+`crew cleanup --auto` runs the same archive-then-remove with no prompts and works
+without a terminal (the worker/role refusal stays). An item is removed only when it
+is stale, its last status is at least `cleanup.autoAfterDays` old (default 14; a
+missing status counts as unknown age and is skipped), it is not snoozed, and it is
+settled: no issue or PR is open or in an unknown state (an unreadable `gh` result
+blocks removal), and either every linked issue is closed or the PR is merged or
+closed. Each archive is verified (`git bundle verify`, non-empty patch when there
+were uncommitted changes) before anything is removed; any failure skips the item.
+`cleanup.archiveDays` (default 365, 0 keeps forever) prunes older bundles at the end of
+the run, and `cleanup.auto: false` disables it. `--dry-run` prints what it would do
+and writes nothing. Every decision is logged as a JSON line in
+`${XDG_DATA_HOME:-~/.local/share}/crew/cleanup-archive/auto.log`, and `crew cleanup --list` shows
+the last run's summary. To restore, `git fetch <archive>/commits.bundle <branch>` and
+`git apply uncommitted.patch` in a checkout of it. The reap timer runs
+`crew cleanup --auto --fleet` after each reap unless the home-manager option
+`programs.dispatcher.cleanup.auto` is false; it re-queries `gh` per stale item every
+10 minutes.
+
 Three design notes worth knowing. `reap` gates on **the PR having landed**, never
 on elapsed time — a worker sits in `done` for as long as review takes, and a
 time-based sweep would delete live work. A claude or pi worker that reported `done` (or

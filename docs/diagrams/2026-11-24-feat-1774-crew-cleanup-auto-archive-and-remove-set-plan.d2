@@ -1,0 +1,15 @@
+direction: right
+timer: dispatcher-reap timer { }
+reap: "crew reap --fleet" { }
+auto: "crew cleanup --auto --fleet (new, auto.go)" { style.stroke: green }
+settings: "cleanup.auto / autoAfterDays / archiveDays (dispatch-config)" { style.stroke: green }
+elig: "eligibility: stale, past grace, settled, not snoozed" { style.stroke: green }
+remove: "remove.go: archive, verifyArchive (new), remove" { style.stroke: green }
+log: "auto.log + prune after archiveDays" { style.stroke: green }
+timer -> reap
+timer -> auto: after reap
+settings -> auto
+auto -> elig
+elig -> remove
+remove -> log
+auto -> log

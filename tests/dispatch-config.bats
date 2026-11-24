@@ -734,6 +734,36 @@ EOF
   done
 }
 
+@test "cleanup defaults to auto on, a 14 d grace and a 365 d archive; the user layer overrides them" {
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 0 ]
+  jq -e '.cleanup == {"auto": true, "autoAfterDays": 14, "archiveDays": 365}' <<<"$output"
+
+  user_settings '{"cleanup":{"auto":false,"autoAfterDays":3,"archiveDays":0}}'
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 0 ]
+  jq -e '.cleanup == {"auto": false, "autoAfterDays": 3, "archiveDays": 0}' <<<"$output"
+}
+
+@test "a bad cleanup.auto, autoAfterDays or archiveDays is refused" {
+  user_settings '{"cleanup":{"auto":"yes"}}'
+  run --separate-stderr "$CONFIG"
+  [ "$status" -ne 0 ]
+  [[ "$stderr" == *"cleanup.auto must be a boolean"* ]]
+  for bad in 0 -1 1.5 '"7"'; do
+    user_settings "{\"cleanup\":{\"autoAfterDays\":$bad}}"
+    run --separate-stderr "$CONFIG"
+    [ "$status" -ne 0 ]
+    [[ "$stderr" == *"cleanup.autoAfterDays must be a positive integer (days)"* ]]
+  done
+  for bad in -1 1.5 '"7"'; do
+    user_settings "{\"cleanup\":{\"archiveDays\":$bad}}"
+    run --separate-stderr "$CONFIG"
+    [ "$status" -ne 0 ]
+    [[ "$stderr" == *"cleanup.archiveDays must be a non-negative integer (days)"* ]]
+  done
+}
+
 @test "overseer defaults to no auto relaunch and a 4 h digest; the user layer overrides them" {
   run --separate-stderr "$CONFIG"
   [ "$status" -eq 0 ]

@@ -1,0 +1,12 @@
+direction: right
+timer: dispatcher-reap timer (nix/hm-module.nix) { }
+reap: "crew reap --fleet" { }
+cleanup: "crew cleanup (cleanup.go)\ninteractive + TTY only" { }
+remove: "remove.go: archive then remove" { }
+human: owner types r { }
+timer -> reap
+reap -> cleanup: keeps "needs human cleanup" { style.stroke-dash: 3 }
+human -> cleanup
+cleanup -> remove
+gap: "no unattended path: stale worktrees pile up" { style.stroke: red }
+reap -> gap

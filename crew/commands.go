@@ -522,6 +522,8 @@ type cleanupCmd struct {
 	List         bool    `name:"list"`
 	JSON         bool    `name:"json"`
 	PruneArchive bool    `name:"prune-archive"`
+	Auto         bool    `name:"auto"`
+	DryRun       bool    `name:"dry-run"`
 	Repo         *string `name:"repo"`
 	OlderThan    *string `name:"older-than"`
 }
@@ -1341,7 +1343,8 @@ func validate(sub string, r *root) *refusal {
 		}
 	case "cleanup":
 		c := r.Cleanup
-		if given(c.Repo) || given(c.OlderThan) || (c.Fleet && c.Repo != nil) || (!c.PruneArchive && c.OlderThan != nil) ||
+		if given(c.Repo) || given(c.OlderThan) || (c.Fleet && c.Repo != nil) || (!c.PruneArchive && !c.Auto && c.OlderThan != nil) ||
+			(c.DryRun && !c.Auto) || (c.Auto && (c.PruneArchive || c.Repo != nil || c.List || c.JSON)) ||
 			(c.PruneArchive && (c.Fleet || c.Repo != nil || c.List || c.JSON)) {
 			return fail(cleanup.Usage)
 		}

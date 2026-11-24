@@ -30,6 +30,9 @@ type Candidate struct {
 	PR string
 	// Issues are the branch's claimed issue numbers.
 	Issues []string
+	// UnverifiedClaims counts claimed issues dropped from Issues because gh
+	// cannot be pointed at them (non-numeric or cross-repo).
+	UnverifiedClaims int
 }
 
 // Candidates runs reap's own classification read-only (--dry-run --json, which
@@ -84,6 +87,8 @@ func Candidates(ctx context.Context, paths bus.Paths, cwd string, stderr io.Writ
 			for n := range strings.SplitSeq(claimed, "\n") {
 				if numericRe.MatchString(n) {
 					c.Issues = append(c.Issues, n)
+				} else if n != "" {
+					c.UnverifiedClaims++
 				}
 			}
 		}

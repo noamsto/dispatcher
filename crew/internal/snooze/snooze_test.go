@@ -52,3 +52,16 @@ func TestDifferentTipOrWorktreeIsNotSnoozed(t *testing.T) {
 		}
 	}
 }
+
+func TestSnoozedListsOnlyRunningEntries(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Unix(1_800_000_000, 0)
+	k := Key{Tip: "t1", Worktree: "/wt"}
+	_ = Set(dir, "b", k, now, now.Add(time.Hour))
+	_ = Set(dir, "a", k, now, now.Add(2*time.Hour))
+	_ = Set(dir, "gone", k, now, now.Add(time.Minute))
+	got := Snoozed(dir, now.Add(5*time.Minute))
+	if len(got) != 2 || got[0].Branch != "a" || got[1].Branch != "b" || got[0].Key != k || !got[0].Until.Equal(now.Add(2*time.Hour)) {
+		t.Fatalf("snoozed %+v", got)
+	}
+}
