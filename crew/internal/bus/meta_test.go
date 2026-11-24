@@ -132,7 +132,7 @@ func TestLiveMetas(t *testing.T) {
 	if got := LiveMetas(state); got != nil {
 		t.Fatalf("no crews dir: %v", got)
 	}
-	for _, id := range []string{"b", "A", "a"} {
+	for _, id := range []string{"c", "B", "a"} {
 		if err := CreateMeta(state, Meta{ID: id}); err != nil {
 			t.Fatal(err)
 		}
@@ -145,7 +145,7 @@ func TestLiveMetas(t *testing.T) {
 	for _, m := range LiveMetas(state) {
 		ids = append(ids, m.ID)
 	}
-	if want := []string{"A", "a", "b"}; !reflect.DeepEqual(ids, want) {
+	if want := []string{"B", "a", "c"}; !reflect.DeepEqual(ids, want) {
 		t.Fatalf("LiveMetas ids = %v, want %v", ids, want)
 	}
 }
