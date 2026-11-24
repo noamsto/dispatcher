@@ -22,6 +22,7 @@ const (
 	classOpenIssue
 	classUnpushed
 	classNoDefault
+	classTipPast
 )
 
 // staleInfo is a stale keep's evidence: the reason, the worktree and the two

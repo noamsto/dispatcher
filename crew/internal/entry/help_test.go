@@ -151,3 +151,15 @@ func firstLine(s string) string {
 	line, _, _ := strings.Cut(s, "\n")
 	return line
 }
+
+func TestHelpFleetNamesRegistryPruneAndTempOptIn(t *testing.T) {
+	stdout, _, code := runHelp("fleet")
+	if code != 0 {
+		t.Fatalf("help fleet exit %d", code)
+	}
+	for _, want := range []string{"prunes registry entries whose git dir is gone", "CREW_REGISTRY_ALLOW_TMP"} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("fleet help lacks %q", want)
+		}
+	}
+}

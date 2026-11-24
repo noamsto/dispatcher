@@ -227,7 +227,7 @@ func (r *run) prGate(ctx context.Context, c *candidate) bool {
 	case 0:
 		return true
 	case 1:
-		r.keep(c, "its tip has commits past "+c.pr+c.ign())
+		r.keepHuman(ctx, c, "its tip has commits past "+c.pr+c.ign(), classTipPast)
 	default:
 		r.keep(c, "could not compare with "+c.pr+" head (not fetched?)"+c.ign())
 	}

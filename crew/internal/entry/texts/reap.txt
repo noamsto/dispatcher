@@ -49,12 +49,16 @@ recent output, or a newer user turn) keeps it on that marker-less path. A live
 background agent (`← 1 agent` footer) does not block.
 
 A kept worktree that needs a human (uncommitted changes; a failed no-PR worker with
-an open issue; or a no-PR worker with unpushed commits or no default ref) and is stale prints
+an open issue; a no-PR worker with unpushed commits or no default ref; or a tip past
+the head of a landed PR) and is stale prints
 a stale:, inspect: and remove: line, and a non-dry run posts a `stale` bus row
 that `crew roster` surfaces as needs_cleanup. --json adds stale, stale_reason,
 worktree, inspect and remove to that keep. Reap never removes it. A finished
 session whose worktree is already gone is retired (`would retire` under
 --dry-run).
+A worker session still `working` or `blocked` whose window, engine pane and
+stall-watch are all gone is marked `exited` (source "reap"; `would mark`
+under --dry-run) before the pass, then reclaimed or kept like any exited worker.
 
 No crew filter: the workers worth reaping belong to earlier dispatcher sessions.
 

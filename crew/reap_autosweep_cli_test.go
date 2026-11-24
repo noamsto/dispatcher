@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/noamsto/dispatcher/crew/internal/repos/repostest"
 	"github.com/rogpeppe/go-internal/testscript"
 )
 
@@ -24,7 +25,9 @@ func TestMain(m *testing.M) {
 	if len(os.Args) > 1 && os.Args[1] == "reap-autosweep" {
 		os.Exit(run(context.Background(), os.Args[1:], os.Stdout, os.Stderr, env{getwd: os.Getwd}))
 	}
-	testscript.Main(m, map[string]func(){"crew": crewMain, "tmux": fakeTmux})
+	// Hold tests register t.TempDir repos, which Register refuses otherwise.
+	_ = os.Setenv("CREW_REGISTRY_ALLOW_TMP", "1")
+	testscript.Main(repostest.Guard(m), map[string]func(){"crew": crewMain, "tmux": fakeTmux})
 }
 
 // pkgDir is the package directory, captured before any test changes cwd

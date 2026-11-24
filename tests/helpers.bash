@@ -3,6 +3,8 @@
 # `load helpers` runs once per test setup, so this is a fresh suite-local store
 # even for tests that do not need a throwaway repository.
 export XDG_DATA_HOME="$BATS_TEST_TMPDIR/data"
+# Tests register mktemp repos in that store, which Register refuses otherwise.
+export CREW_REGISTRY_ALLOW_TMP=1
 
 # Real `crew reap` invocations across the suite would each fork a ratings
 # sweep; the fork would outlive the test and race teardown_repo's rm -rf.
@@ -70,6 +72,7 @@ setup_repo() {
   # Every test gets a private data store; never let crew state leak in from
   # the shell running bats.
   export XDG_DATA_HOME="$BATS_TEST_TMPDIR/data"
+  export CREW_REGISTRY_ALLOW_TMP=1
   assert_isolated_xdg_data_home || return 1
   # Overriding $HOME is not enough: $XDG_CONFIG_HOME survives it, so git still
   # reads ~/.config/git/config, whose commit.gpgSign and tilde-relative

@@ -2,9 +2,11 @@ package repos
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -106,7 +108,8 @@ func TestStatusGoneAndNoBus(t *testing.T) {
 	for _, r := range rs {
 		got[r.Common] = r.Status
 	}
-	want := map[string]Status{gone: "gone", nobus: "no bus"}
+	// The gone entry is pruned before it is listed.
+	want := map[string]Status{nobus: "no bus"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %v, want %v", got, want)
 	}
@@ -320,11 +323,92 @@ func TestRegisteredIsTheRegistryOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	env := envOf(map[string]string{"XDG_DATA_HOME": data, "CREW_SWEEP_ROOTS": root, "HOME": root})
-	want := []Repo{{a, StatusOK}, {gone, StatusGone}, {z, StatusOK}}
+	want := []Repo{{a, StatusOK}, {z, StatusOK}}
 	if got := Registered("", env); !reflect.DeepEqual(got, want) {
 		t.Errorf("Registered = %v, want %v", got, want)
 	}
 	if got := Registered(filepath.Join(data, "absent"), env); len(got) != 0 {
 		t.Errorf("a missing registry lists %v", got)
+	}
+}
+
+func TestDiscoverPrunesGoneEntries(t *testing.T) {
+	root := t.TempDir()
+	live := mkbus(t, filepath.Join(root, "live"))
+	gone := filepath.Join(root, "missing", ".git")
+	reg := filepath.Join(root, "data", "crew", "repos")
+	if err := os.MkdirAll(filepath.Dir(reg), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(reg, []byte(gone+"\n"+live+"\n"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	opts := Options{Registry: reg, Roots: []string{filepath.Join(root, "empty")}, Getenv: envOf(nil)}
+	if err := os.Mkdir(opts.Roots[0], 0o755); err != nil {
+		t.Fatal(err)
+	}
+	discover(t, opts)
+	data, err := os.ReadFile(reg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != live+"\n" {
+		t.Fatalf("registry %q, want only the live entry", data)
+	}
+	info, err := os.Stat(reg)
+	if err != nil || info.Mode().Perm() != 0o640 {
+		t.Errorf("registry mode %v, err %v", info, err)
+	}
+	if left, _ := filepath.Glob(reg + ".tmp*"); len(left) != 0 {
+		t.Errorf("temp files left: %v", left)
+	}
+	// Once per run: a later gone entry is not pruned by the second read.
+	if err := os.WriteFile(reg, []byte(gone+"\n"+live+"\n"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	discover(t, opts)
+	if data, _ := os.ReadFile(reg); string(data) != gone+"\n"+live+"\n" {
+		t.Errorf("second discovery rewrote the registry: %q", data)
+	}
+}
+
+func TestPruneKeepsUnreadableEntriesAndMissingRegistry(t *testing.T) {
+	root := t.TempDir()
+	Prune(filepath.Join(root, "absent", "repos"))
+	if _, err := os.Stat(filepath.Join(root, "absent")); err == nil {
+		t.Error("Prune created a missing registry's directory")
+	}
+	reg := filepath.Join(root, "repos")
+	long := filepath.Join(root, strings.Repeat("x", 5000), ".git") // ENAMETOOLONG, not ErrNotExist
+	if err := os.WriteFile(reg, []byte(long+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	Prune(reg)
+	if data, _ := os.ReadFile(reg); string(data) != long+"\n" {
+		t.Errorf("registry %q, want the unreadable entry kept", data)
+	}
+}
+
+func TestRegisterRefusesTempDir(t *testing.T) {
+	t.Setenv("CREW_REGISTRY_ALLOW_TMP", "")
+	root := t.TempDir()
+	reg := filepath.Join(root, "data", "crew", "repos")
+	common := filepath.Join(os.TempDir(), "repo", ".git")
+	if err := Register(reg, common); !errors.Is(err, ErrTempRegistry) {
+		t.Fatalf("err %v, want ErrTempRegistry", err)
+	}
+	if _, err := os.Stat(reg); err == nil {
+		t.Error("refused Register wrote the registry")
+	}
+	// A sibling that only shares the prefix is not under the temp dir.
+	if err := Register(reg, "/tmpx/repo/.git"); err != nil {
+		t.Errorf("prefix sibling refused: %v", err)
+	}
+	t.Setenv("CREW_REGISTRY_ALLOW_TMP", "1")
+	if err := Register(reg, common); err != nil {
+		t.Fatal(err)
+	}
+	if got := registryLines(reg); !slices.Contains(got, common) {
+		t.Errorf("registry %v lacks %s", got, common)
 	}
 }
