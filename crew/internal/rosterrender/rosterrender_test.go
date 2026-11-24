@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/identity"
 )
 
@@ -315,5 +316,22 @@ func TestReapedRowIsDone(t *testing.T) {
 func TestMigratedRowIsDoneNotFailed(t *testing.T) {
 	if class, failed := classify("migrated"); class != classDone || failed {
 		t.Errorf("classify(migrated) = %v, %v; want the done sector, not failed", class, failed)
+	}
+}
+
+func TestALayout2CrewStartsOutsideAnyRepo(t *testing.T) {
+	state := t.TempDir()
+	if err := bus.CreateMeta(state, bus.Meta{ID: "c1", HomeHost: "h", CreatedBy: "register"}); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(t.TempDir())
+	l := newLoop(t)
+	l.paths = bus.StatePaths(state)
+
+	if code, stderr := l.once(Request{}); code != exitOK {
+		t.Fatalf("exit %d, want %d: %s", code, exitOK, stderr)
+	}
+	if _, err := os.Stat(filepath.Join(bus.StoreDir(state, "c1"), fileDrawn)); err != nil {
+		t.Errorf("no diagram drawn in the crew dir: %v", err)
 	}
 }
