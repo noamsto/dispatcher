@@ -406,7 +406,7 @@ func (a *arm) wait(ctx context.Context, wait string) int {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fail(a.stderr, err.Error())
 	}
-	lockDir := WaitLockDir(cmp.Or(a.paths.Dir, a.bc.State), a.sid)
+	lockDir := WaitLockDir(a.bc.State, a.sid)
 	owner := strconv.Itoa(a.o.PID)
 	joining := false
 	for !lock.Acquire(lockDir, owner) {

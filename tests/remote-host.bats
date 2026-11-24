@@ -482,6 +482,12 @@ l2_dispatch() {
   jq -s -e 'any(.[]; .scope == "crew" and .argv[1] == "reply" and .repo == "" and .slug == "")' "$SSH_REQS"
   [[ "$stderr" == *"reply: nudge wait started"* ]]
   [[ "$stderr" != *"start failed"* ]]
+  wlog="$RHOME/state/crew/crews/c1/nudge-wait.log"
+  [[ "$stderr" == *"(log: $wlog)"* ]]
+  poll_for 100 grep -q 'lead has not posted its first status yet' "$wlog" || {
+    cat "$wlog" >&2
+    false
+  }
   jq -e 'select(.kind == "msg" and .body == "hi2")' "$RHOME/state/crew/crews/c1/events.jsonl"
   run on_remote "$wt" crew inbox "$worker_id"
   [ "$status" -eq 0 ]

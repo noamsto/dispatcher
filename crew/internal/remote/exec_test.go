@@ -1127,10 +1127,6 @@ exit 3
 		LookPath: func(name string) (string, error) { return "", fmt.Errorf("%s looked up", name) },
 		Self:     func() (string, error) { return self, nil },
 	}
-	wantHome, err := filepath.EvalSymlinks(home)
-	if err != nil {
-		t.Fatal(err)
-	}
 	for _, argv := range [][]string{
 		{"crew", "relay", "--since", "0", "--crew", "c1"},
 		{"crew", "dispatch-row", "--crew=c1", "--session", "s1-1"},
@@ -1141,7 +1137,7 @@ exit 3
 	} {
 		var stdout, stderr bytes.Buffer
 		rc := Serve(strings.NewReader(crewRequest(t, argv, nil)), &stdout, &stderr, o)
-		want := wantHome + "\nc1 halo " + xdg + "\n" + strings.Join(argv[1:], " ") + "\n"
+		want := "/\nc1 halo " + xdg + "\n" + strings.Join(argv[1:], " ") + "\n"
 		if rc != 3 || stdout.String() != want || stderr.String() != "crew-err\n" {
 			t.Fatalf("%q: rc %d, stdout %q, stderr %q, want rc 3, stdout %q", argv, rc, stdout.String(), stderr.String(), want)
 		}
@@ -1153,5 +1149,27 @@ exit 3
 	}
 	if _, err := os.Stat(filepath.Join(xdg, "crew", "remote-exec")); !os.IsNotExist(err) {
 		t.Fatalf("a scratch root was made under the state root (%v)", err)
+	}
+}
+
+// A $HOME that is a git work tree (a dotfiles checkout) must not leak into a
+// crew-scope child: it still starts in "/", where no repo is found.
+func TestServeCrewScopeIgnoresWorkTreeHome(t *testing.T) {
+	home := t.TempDir()
+	if out, err := exec.Command("git", "init", "-q", home).CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, out)
+	}
+	t.Setenv("HOME", home)
+	visitingState(t)
+	self := filepath.Join(t.TempDir(), "crew")
+	writeScript(t, self, "pwd -P\n")
+	o := ServeOptions{
+		LookPath: func(name string) (string, error) { return "", fmt.Errorf("%s looked up", name) },
+		Self:     func() (string, error) { return self, nil },
+	}
+	var stdout, stderr bytes.Buffer
+	rc := Serve(strings.NewReader(crewRequest(t, []string{"crew", "where", "--crew", "c1", "--", "b"}, nil)), &stdout, &stderr, o)
+	if rc != 0 || stdout.String() != "/\n" || stderr.String() != "" {
+		t.Fatalf("rc %d, stdout %q, stderr %q, want rc 0, stdout \"/\\n\"", rc, stdout.String(), stderr.String())
 	}
 }

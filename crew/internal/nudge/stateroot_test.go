@@ -35,6 +35,9 @@ func TestWaitLockUnderCrewStateRoot(t *testing.T) {
 		if !strings.HasPrefix(f.lockDir(), store+"/nudge-wait/") {
 			t.Errorf("lock dir %s not under the store dir %s", f.lockDir(), store)
 		}
+		if want := "(pid " + f.holdLock + ")"; !strings.Contains(f.errOut(), want) {
+			t.Errorf("wait never saw the held lock under %s: stdout %q, stderr %q", store, f.out(), f.errOut())
+		}
 		if _, err := os.Stat(f.paths.Dir + "/nudge-wait"); err == nil {
 			t.Error("nudge-wait created under paths.Dir")
 		}
@@ -70,30 +73,33 @@ func TestVisitingCrewDirLessWindowMatchAndWaitLock(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newArm(t)
-			var store string
-			f.paths, store = pinCrew(t, f.paths, "c1")
+			f.paths, _ = pinCrew(t, f.paths, "c1")
 			f.paths.Dir = ""
 			f.pane.windows = tc.windows
 			if rc := f.run(Request{Target: featX}); (rc == 0) != tc.found {
 				t.Fatalf("rc = %d, stderr %q, want window found %t", rc, f.errOut(), tc.found)
 			}
-			if !tc.found {
-				return
-			}
-			cwd := t.TempDir()
-			t.Chdir(cwd)
-			f.holdLock = strconv.Itoa(os.Getpid())
-			if rc := f.run(Request{Wait: "0", Target: idleReq}); rc != 2 {
-				t.Fatalf("wait rc = %d, stderr %q", rc, f.errOut())
-			}
-			if !strings.HasPrefix(f.lockDir(), store+"/nudge-wait/") {
-				t.Errorf("lock dir %s not under the store dir %s", f.lockDir(), store)
-			}
-			if _, err := os.Stat(filepath.Join(cwd, "nudge-wait")); err == nil {
-				t.Error("nudge-wait created relative to the cwd")
-			}
 		})
 	}
+	t.Run("wait lock", func(t *testing.T) {
+		f := newArm(t)
+		var store string
+		f.paths, store = pinCrew(t, f.paths, "c1")
+		f.paths.Dir = ""
+		f.pane.windows = "@7\tfeat/x\t" + foreign + "\tc1\tlead"
+		f.holdLock = strconv.Itoa(os.Getpid())
+		cwd := t.TempDir()
+		t.Chdir(cwd)
+		if rc := f.run(Request{Wait: "0", Target: idleReq}); rc != 2 {
+			t.Fatalf("wait rc = %d, stderr %q", rc, f.errOut())
+		}
+		if want := "(pid " + f.holdLock + ")"; !strings.Contains(f.errOut(), want) {
+			t.Errorf("wait never saw the held lock under %s: stdout %q, stderr %q", store, f.out(), f.errOut())
+		}
+		if _, err := os.Stat(filepath.Join(cwd, "nudge-wait")); err == nil {
+			t.Error("nudge-wait created relative to the cwd")
+		}
+	})
 }
 
 func TestDefaultUnreadMarkUnderCrewStateRoot(t *testing.T) {

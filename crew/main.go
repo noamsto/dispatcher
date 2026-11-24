@@ -944,7 +944,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 		if crew != "" {
 			var herr error
 			home, herr = homePaths(paths.State, crew)
-			// A visiting crew has no home repo: its windows are found by crew id.
+			// A crew with no home repo, a visiting one included, has its windows found by crew id.
 			tolerated := sub == "reply" || sub == "hold" || (errors.Is(herr, errNoHomeRepo) && (sub == "nudge" || sub == "where"))
 			if herr != nil && !tolerated {
 				say(stderr, "crew: %s: %v\n", sub, herr)
