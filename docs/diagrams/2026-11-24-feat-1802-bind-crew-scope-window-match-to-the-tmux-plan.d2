@@ -4,15 +4,18 @@ ident: "NEW tmux_server = pid:start_time of the server the window was opened on"
 dispatch: "CHANGED dispatch.sh: window row carries window_id + tmux_server"
 resume: "CHANGED dispatch-resume.sh: resume row carries window_id + tmux_server"
 log: "crew/events.jsonl: window_id + tmux_server"
-arm: "CHANGED nudge/arm.go: list-windows -a answers #{pid}:#{start_time}"
-where: "CHANGED where/where.go: readWindows reads the live server identity"
+arm: "CHANGED nudge/arm.go: one display-message read for the live identity"
+where: "CHANGED where/where.go: Run reads the live identity, readWindows takes it"
 bound: "CHANGED remote.WindowBound: id equal AND (row has no tmux_server OR identity equal)"
+server: "live tmux server: list-windows -a carries stamps, display-message -p carries the identity"
 call: "crew nudge / crew where on a visiting crew"
 
 ident -> dispatch
 ident -> resume
 dispatch -> log
 resume -> log
+server -> arm: "window id + stamps, and the identity in its own call"
+server -> where: "window id + stamps, and the identity in its own call"
 arm -> bound
 where -> bound
 log -> bound
@@ -25,3 +28,4 @@ resume.style.stroke: "#c1121f"
 arm.style.stroke: "#c1121f"
 where.style.stroke: "#c1121f"
 bound.style.stroke: "#c1121f"
+server.style.stroke: "#c1121f"
