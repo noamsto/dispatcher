@@ -3,12 +3,12 @@ dash: crew dash {
   main: main.go\nEventsPath via git rev-parse
   fleet: view/fleet.go\nActiveCommons, dir(), digest()
   since: data/fleet.go\nstampSince
-  label: ui/crewheader.go\nrepoOfEvents
+  hdr: ui/crewheader.go\nrepoOfEvents
 }
 l1: "<common>/crew/events.jsonl\n<common>/crew/crews/<id>/pid" {style.stroke-dash: 3}
 l2: "layout-2 crew dir\n(never read by dash)" {style.stroke: "#c0392b"}
 norepo: "(no repo) group\nCommon is empty"
 dash.main -> l1: assumes
 dash.since -> l1: assumes pid path
-dash.label -> l1: label from path
+dash.hdr -> l1: label from path
 dash.fleet -> norepo: empty dir reaches file and exec
