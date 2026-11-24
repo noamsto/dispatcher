@@ -576,13 +576,13 @@ func TestTheLoopSignatureCoversEveryJoinedRepo(t *testing.T) {
 	sig := func(panes string) string {
 		t.Helper()
 		srcs := l.opts.sources(t.Context(), l.paths, l.crew)
-		return loopSig(busSize(l.paths), cdir, roleRows(panes, l.paths.Dir, l.crew), defaultAspect) +
+		return loopSig(busSize(l.paths, l.crew), cdir, roleRows(panes, l.paths.Dir, l.crew), defaultAspect) +
 			joinedSig(srcs[1:], panes, l.crew)
 	}
 
 	// One repo: the signature is what it always was.
 	single := sig("")
-	if want := fmt.Sprintf("%d|%s|%s|%g", busSize(l.paths), record(cdir, filePane), "", defaultAspect); single != want {
+	if want := fmt.Sprintf("%d|%s|%s|%g", busSize(l.paths, l.crew), record(cdir, filePane), "", defaultAspect); single != want {
 		t.Errorf("single-source signature = %q, want %q", single, want)
 	}
 

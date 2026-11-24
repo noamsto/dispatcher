@@ -73,7 +73,7 @@ func (o Options) daemon(ctx context.Context, paths bus.Paths, cdir string, c cal
 		panes := o.rolePanes(ctx)
 		roles := roleRows(panes, paths.Dir, c.crew)
 		aspect := paneAspect(o.viewer(ctx, cdir))
-		newSig := loopSig(busSize(paths), cdir, roles, aspect) +
+		newSig := loopSig(busSize(paths, c.crew), cdir, roles, aspect) +
 			joinedSig(o.sources(ctx, paths, c.crew)[1:], panes, c.crew)
 		if newSig != sig || now-lastBuild >= rebuildBackstop {
 			// A failed pass keeps the last live count rather than reading as

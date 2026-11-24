@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/frame"
 	"github.com/noamsto/dispatcher/crew/internal/git"
 	"github.com/noamsto/dispatcher/crew/internal/jqrun"
@@ -29,12 +30,12 @@ var humanProgram string
 
 var nonAlnum = regexp.MustCompile(`[^A-Za-z0-9]`)
 
-// Deps is what `_release_windows` read from the arm's globals: the git common
-// dir, the bus log, and the say/note output functions. Say and Note receive the
+// Deps is what `_release_windows` read from the arm's globals: the bus paths
+// (git common dir and log), and the say/note output functions. Say and Note receive the
 // bare message text; the caller adds any prefix.
 type Deps struct {
-	Common, Log string
-	Say, Note   func(string)
+	Paths     bus.Paths
+	Say, Note func(string)
 	// Keep, when set, also receives each keep's branch and reason.
 	Keep func(branch, why string)
 	P    Probes
@@ -54,7 +55,7 @@ func (d Deps) keep(branch, why string) {
 // re-checks on its next cycle, else 0. The error is only a failed release-row
 // write or its marshal.
 func ReleaseWindows(ctx context.Context, d Deps, branch, session, state string, tsMS, grace int64, dry bool) (int, error) {
-	porcelain, _ := git.Worktrees(ctx, d.P.Git, "", d.Common)
+	porcelain, _ := git.Worktrees(ctx, d.P.Git, "", d.Paths.Common)
 	wt := roster.WorktreePath(porcelain, branch)
 	if wt == "" {
 		return 0, nil
@@ -88,6 +89,8 @@ func ReleaseWindows(ctx context.Context, d Deps, branch, session, state string, 
 		d.keep(branch, "pane busy: "+why)
 		return 3, nil
 	}
+	// Read before the kill below removes the stamps.
+	crewID := rowCrewID(ctx, d.P.Tmux, windows, wt, branch, eventDocs(d.Paths.Log))
 	for _, w := range windows {
 		if dry {
 			d.Say("would release " + w + " at " + wt + " (" + branch + " " + state + ")")
@@ -102,19 +105,23 @@ func ReleaseWindows(ctx context.Context, d Deps, branch, session, state string, 
 	row := releaseRow{
 		TS:      d.P.Clock.Now().UnixMilli(),
 		Kind:    "release",
+		CrewID:  crewID,
 		Branch:  branch,
+		Repo:    repoTag(d.Paths.Common),
 		Session: session,
 		State:   state,
 		Windows: append([]string{}, windows...),
 	}
-	return 0, d.P.Append(d.Log, rowLine(row))
+	return 0, d.P.Append(rowLog(d.Paths, crewID), rowLine(row))
 }
 
 // releaseRow is the bus row a release appends.
 type releaseRow struct {
 	TS      int64    `json:"ts"`
 	Kind    string   `json:"kind"`
+	CrewID  string   `json:"crew_id,omitempty"`
 	Branch  string   `json:"branch"`
+	Repo    string   `json:"repo,omitempty"`
 	Session string   `json:"session"`
 	State   string   `json:"state"`
 	Windows []string `json:"windows"`

@@ -68,7 +68,16 @@ func Run(q Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int {
 	if crew == "" {
 		crew = o.CrewID()
 	}
-	events, err := readEvents(paths.Log)
+	log := paths.Log
+	if crew != "" {
+		c, err := paths.Crew(crew)
+		if err != nil {
+			say(stderr, "crew: inbox: invalid crew id %s\n", crew)
+			return 1
+		}
+		log = c.Log
+	}
+	events, err := readEvents(log)
 	if errors.Is(err, bus.ErrNoLog) {
 		return 0
 	}
@@ -80,7 +89,7 @@ func Run(q Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int {
 	}
 	if err != nil {
 		msg, code := bus.JQFailure(err)
-		say(stderr, "crew: inbox: %s: %s\n", paths.Log, msg)
+		say(stderr, "crew: inbox: %s: %s\n", log, msg)
 		return code
 	}
 
@@ -133,7 +142,7 @@ func Run(q Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int {
 		case nil:
 			failed = false
 		default:
-			say(stderr, "crew: inbox: %s: cannot index %s with \"crew_id\"\n", paths.Log, typeName(v))
+			say(stderr, "crew: inbox: %s: cannot index %s with \"crew_id\"\n", log, typeName(v))
 			failed = true
 		}
 	}

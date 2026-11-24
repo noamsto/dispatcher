@@ -132,7 +132,16 @@ type Request struct {
 // Run is the `resolve-target` arm.
 func Run(req Request, paths bus.Paths, stdout, stderr io.Writer) int {
 	crew, target := req.Crew, req.Target
-	rows := Resolve(Rows(paths.Log), target, crew)
+	log := paths.Log
+	if crew != "" {
+		c, err := paths.Crew(crew)
+		if err != nil {
+			say(stderr, "crew: resolve-target: invalid crew id %s\n", crew)
+			return exitFailure
+		}
+		log = c.Log
+	}
+	rows := Resolve(Rows(log), target, crew)
 	switch len(rows) {
 	case 0:
 		say(stderr, "crew: resolve-target: no worker matches '%s'\n", target)

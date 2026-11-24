@@ -117,7 +117,7 @@ func (o Options) sources(ctx context.Context, local bus.Paths, crew string) []so
 			if r.Status != repos.StatusOK || sameDir(r.Common, local.Common) {
 				continue
 			}
-			p := bus.Paths{Common: r.Common, Dir: r.Common + "/crew", Log: r.Common + "/crew/events.jsonl"}
+			p := bus.PathsFor(r.Common)
 			events, err := bus.ReadEventsTolerant(p.Log)
 			if err != nil {
 				say(o.Stderr, "crew: roster-render: %s: skipped (%s)\n", r.Common, oneLine(err))
@@ -208,7 +208,7 @@ func oneLine(err error) string { return strings.Join(strings.Fields(err.Error())
 func joinedSig(others []source, panes, crew string) string {
 	var b strings.Builder
 	for _, s := range others {
-		fmt.Fprintf(&b, "|%s|%d|%s", s.paths.Common, busSize(s.paths), joinRows(roleRows(panes, s.paths.Dir, crew)))
+		fmt.Fprintf(&b, "|%s|%d|%s", s.paths.Common, busSize(s.paths, crew), joinRows(roleRows(panes, s.paths.Dir, crew)))
 	}
 	return b.String()
 }

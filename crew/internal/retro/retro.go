@@ -153,10 +153,20 @@ func Run(req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int 
 
 	report, jsonOut := req.Report, req.JSON
 
+	log := paths.Log
+	if req.Draft {
+		c, err := paths.Crew(crew)
+		if err != nil {
+			say(stderr, "crew: retro: invalid crew id %s\n", crew)
+			return exitFailure
+		}
+		log = c.Log
+	}
+
 	// `jq -s` has no torn-tail tolerance: a break anywhere costs every row, so
 	// this is the strict read. With no log the arm exits before its header, and
 	// before jq starts at all.
-	events, err := bus.ReadEvents(paths.Log)
+	events, err := bus.ReadEvents(log)
 	if errors.Is(err, bus.ErrNoLog) {
 		return 0
 	}
@@ -165,7 +175,7 @@ func Run(req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int 
 		// must not read as an empty plan.
 		if err != nil {
 			msg, code := bus.JQFailure(err)
-			say(stderr, "crew: retro: %s: %s\n", paths.Log, msg)
+			say(stderr, "crew: retro: %s: %s\n", log, msg)
 			return code
 		}
 		if req.Sweep {
@@ -178,7 +188,7 @@ func Run(req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int 
 	}
 	if err != nil {
 		msg, code := bus.JQFailure(err)
-		say(stderr, "crew: retro: %s: %s\n", paths.Log, msg)
+		say(stderr, "crew: retro: %s: %s\n", log, msg)
 		return code
 	}
 

@@ -337,7 +337,7 @@ func discoverBuses[B any](discover func(io.Writer) []repos.Repo, n *notes, joine
 			delete(n.noted, r.Common)
 			continue
 		}
-		events, err := bus.ReadEventsTolerant(r.Common + "/crew/events.jsonl")
+		events, err := bus.ReadEventsTolerant(bus.PathsFor(r.Common).Log)
 		var decode *bus.DecodeError
 		switch {
 		case errors.Is(err, bus.ErrNoLog):
@@ -405,6 +405,11 @@ func (f *fleet) join(common string) {
 		f.notes.skip(common, oneLine(err))
 		return
 	}
+	crew, err := bus.PathsFor(common).Crew(f.c.crew)
+	if err != nil {
+		f.notes.skip(common, oneLine(err))
+		return
+	}
 	repo := f.o.repoName(common)
 	l := &loop{
 		c:       f.c,
@@ -420,9 +425,9 @@ func (f *fleet) join(common string) {
 		reapout: filepath.Join(scratch, "stream.reap.out"),
 		reaperr: filepath.Join(scratch, "stream.reap.err"),
 		repo:    repo,
-		yield:   f.yielder(repo, filepath.Join(common, "crew", "crews", f.c.crew)),
+		yield:   f.yielder(repo, crew.Dir),
 	}
-	l.relays = newRelays(l, filepath.Join(common, "crew", "events.jsonl"), filepath.Join(common, "crew", "crews", f.c.crew))
+	l.relays = newRelays(l, crew.Log, crew.Dir)
 	b := &busLoop{sigs: make(chan os.Signal, 1), done: make(chan struct{}), scratch: scratch}
 	f.buses[common] = b
 	f.wg.Add(1)

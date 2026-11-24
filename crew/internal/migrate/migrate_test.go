@@ -355,6 +355,16 @@ func TestSnapshotRefusesAnExistingOrLinkedBundleDir(t *testing.T) {
 	}
 }
 
+func TestSnapshotAcceptsFiveLineRecord(t *testing.T) {
+	f := newFx(t)
+	admin, _ := wtgit.AdminDir(f.paths.Common, f.wt)
+	rec, _ := wtgit.AnchorPath(f.wt)
+	write(t, rec, f.wt+"\n"+f.paths.Dir+"\n"+mb+"\n"+admin+"\ncrew-1\n")
+	if rc := f.snapshot(f.main); rc != 0 {
+		t.Fatalf("rc=%d stderr=%q", rc, f.stderr.String())
+	}
+}
+
 func TestSnapshotRefusals(t *testing.T) {
 	f := newFx(t)
 	write(t, f.wt+"/a.txt", "dirty\n")

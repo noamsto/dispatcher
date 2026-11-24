@@ -102,7 +102,7 @@ func FleetBuses(stderr io.Writer, fo FleetOptions) []bus.Paths {
 			continue
 		}
 		if common, err := filepath.Abs(r.Common); err == nil {
-			out = append(out, busAt(common))
+			out = append(out, bus.PathsFor(common))
 		}
 	}
 	return out

@@ -25,6 +25,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -102,19 +103,24 @@ func (o Options) withDefaults() Options {
 // say writes to a stream whose failure is reported elsewhere, as main.go's does.
 func say(w io.Writer, format string, args ...any) { _, _ = fmt.Fprintf(w, format, args...) }
 
-// begin is the arms' shared preamble: the crew id, then the bus dir the append
-// needs on a repo with no bus yet.
-func begin(sub string, paths bus.Paths, stderr io.Writer, o Options) (string, bool) {
-	crew := o.CrewID()
-	if crew == "" {
+// begin is the arms' shared preamble: the crew, then the directory of its log
+// the append needs on a repo with no bus yet.
+func begin(sub string, paths bus.Paths, stderr io.Writer, o Options) (bus.Crew, bool) {
+	id := o.CrewID()
+	if id == "" {
 		say(stderr, "crew: CREW_ID unset and no WORKER_TASK.md crew_id\n")
-		return "", false
+		return bus.Crew{}, false
 	}
-	if err := os.MkdirAll(paths.Dir, 0o755); err != nil {
+	c, err := paths.Crew(id)
+	if err != nil {
+		say(stderr, "crew: %s: invalid crew id %s\n", sub, id)
+		return bus.Crew{}, false
+	}
+	if err := os.MkdirAll(filepath.Dir(c.Log), 0o755); err != nil {
 		say(stderr, "crew: %s: %v\n", sub, err)
-		return "", false
+		return bus.Crew{}, false
 	}
-	return crew, true
+	return c, true
 }
 
 // refuseSender prints the sender check's refusal; true when the row must not be written.
@@ -158,8 +164,8 @@ func encodeLine(v any) string {
 // post fits the row to a bus line and appends it, the arm's `_fit_line` and
 // `_bus_append`. Callers take ts once before build: FitLine reruns it per shrink
 // pass, and a ts taken inside would move.
-func post(sub string, paths bus.Paths, stderr io.Writer, build func(text string) string, full string) int {
-	if err := bus.Append(paths.Log, bus.FitLine(build, full)); err != nil {
+func post(sub, log string, stderr io.Writer, build func(text string) string, full string) int {
+	if err := bus.Append(log, bus.FitLine(build, full)); err != nil {
 		say(stderr, "crew: %s: %v\n", sub, err)
 		return exitFailure
 	}
@@ -177,10 +183,11 @@ var hostName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 // RunStatus posts a worker's state.
 func RunStatus(ctx context.Context, req StatusRequest, paths bus.Paths, stderr io.Writer, o Options) int {
 	o = o.withDefaults()
-	crew, ok := begin("status", paths, stderr, o)
+	c, ok := begin("status", paths, stderr, o)
 	if !ok {
 		return exitFailure
 	}
+	crew := c.ID
 
 	from, state, detail, pr, restamp, toHost := req.From, req.State, req.Detail, req.PR, req.Restamp, req.ToHost
 	if refuseSender(ctx, "status", from, crew, o, stderr) {
@@ -215,7 +222,7 @@ func RunStatus(ctx context.Context, req StatusRequest, paths bus.Paths, stderr i
 	case state == "migrated" && !hostName.MatchString(toHost):
 		say(stderr, "crew: status: invalid --to-host '%s'\n", toHost)
 		return exitFailure
-	case state == "migrated" && strings.HasPrefix(from, "worker:") && !migrateDirected(paths.Log, crew, from, toHost):
+	case state == "migrated" && strings.HasPrefix(from, "worker:") && !migrateDirected(c.Log, crew, from, toHost):
 		say(stderr, "crew: status: migrated needs a dispatcher migrate directive naming --to-host %s\n", toHost)
 		return exitFailure
 	}
@@ -224,7 +231,7 @@ func RunStatus(ctx context.Context, req StatusRequest, paths bus.Paths, stderr i
 	// twice with an identical batch.
 	switch state {
 	case "pr_open", "done", "failed", "exited", "reaped", "migrated":
-		if lastPosted(paths.Log, crew, from) == state+"\t"+pr+"\t"+toHost {
+		if lastPosted(c.Log, crew, from) == state+"\t"+pr+"\t"+toHost {
 			clearRelaunch(ctx, o, from, state)
 			return 0
 		}
@@ -233,14 +240,14 @@ func RunStatus(ctx context.Context, req StatusRequest, paths bus.Paths, stderr i
 	if undeliveredGate(paths, crew, from, state, stderr) {
 		return exitFailure
 	}
-	g := gate{crew: crew, from: from, state: state, detail: detail, paths: paths, o: o}
+	g := gate{crew: crew, from: from, state: state, detail: detail, log: c.Log, o: o}
 	if line := g.check(ctx); line != "" {
 		say(stderr, "%s\n", line)
 		return exitFailure
 	}
 
 	ts := o.Clock.RealMS()
-	code := post("status", paths, stderr, func(d string) string {
+	code := post("status", c.Log, stderr, func(d string) string {
 		return encodeLine(row[statusBody]{
 			TS: ts, CrewID: crew, From: from, To: "dispatcher:" + crew, Kind: bus.KindStatus,
 			Body: statusBody{State: state, Detail: d, PRURL: pr, Restamp: restamp, ToHost: toHost},

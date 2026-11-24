@@ -518,3 +518,19 @@ func TestArgv(t *testing.T) {
 		})
 	}
 }
+
+func TestInvalidCrewID(t *testing.T) {
+	tr := newTree(t)
+	s := &stub{out: event + "\n", code: 0}
+	var out, errOut strings.Builder
+	if code := Run(context.Background(), Request{PR: "42"}, tr.paths, &out, &errOut,
+		Options{CrewID: func() string { return "bad id" }, Clock: fixedClock(), Start: park(s)}); code != 1 {
+		t.Fatalf("exit = %d, want 1", code)
+	}
+	if want := "crew: pr-watch: invalid crew id bad id\n"; errOut.String() != want {
+		t.Errorf("stderr = %q, want %q", errOut.String(), want)
+	}
+	if s.started() != 0 {
+		t.Errorf("the child ran %d times, want never", s.started())
+	}
+}

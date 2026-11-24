@@ -161,14 +161,19 @@ func trustBus(ctx context.Context, p trustPane, stderr io.Writer, o Options) (st
 // paneCrew is the one crew of common whose crews/<id>/pane file names pane,
 // else the refusal reason.
 func paneCrew(common, pane string) (string, string) {
-	dir := common + "/crew/crews"
+	paths := bus.PathsFor(common)
+	dir := paths.CrewsDir()
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return "", "pane " + pane + " has no @crew_id stamp, and " + dir + " cannot be read"
 	}
 	var named []string
 	for _, e := range entries {
-		data, err := os.ReadFile(dir + "/" + e.Name() + "/pane")
+		crew, err := paths.Crew(e.Name())
+		if err != nil {
+			continue
+		}
+		data, err := os.ReadFile(crew.Dir + "/pane")
 		if err == nil && strings.TrimSpace(string(data)) == pane {
 			named = append(named, e.Name())
 		}

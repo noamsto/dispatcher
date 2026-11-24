@@ -101,7 +101,12 @@ func Run(ctx context.Context, req Request, paths bus.Paths, o Options) int {
 	if c.mapMode {
 		return runMap(ctx, c, paths, o)
 	}
-	cdir := paths.CrewDir(c.crew)
+	bc, err := paths.Crew(c.crew)
+	if err != nil {
+		say(o.Stderr, "%s\n", errCrewID)
+		return exitUsage
+	}
+	cdir := bc.Dir
 	if err := os.MkdirAll(cdir, 0o755); err != nil {
 		say(o.Stderr, "crew: roster-render: %v\n", err)
 		return exitFailure
@@ -184,7 +189,12 @@ func runMap(ctx context.Context, c call, paths bus.Paths, o Options) int {
 	if err != nil {
 		return fail(err)
 	}
-	fr, err := buildFrame(ctx, o, paths, paths.CrewDir(c.crew), c.crew, roleRows(o.rolePanes(ctx), paths.Dir, c.crew), false)
+	bc, err := paths.Crew(c.crew)
+	if err != nil {
+		say(o.Stderr, "%s\n", errCrewID)
+		return exitUsage
+	}
+	fr, err := buildFrame(ctx, o, paths, bc.Dir, c.crew, roleRows(o.rolePanes(ctx), paths.Dir, c.crew), false)
 	if err != nil {
 		return fail(err)
 	}

@@ -377,6 +377,17 @@ EOF
   [[ "$output" == *"detached HEAD"* ]]
 }
 
+@test "resume accepts an anchor record with a fifth line (crew id)" {
+  setup_worker_wt
+  printf 'c1\n' >>"$(anchor_path_for "$WT")"
+  [ "$(wc -l <"$(anchor_path_for "$WT")")" -eq 5 ]
+  stub_tmux_with_pane_at_wt '@4' '%8' '' fish
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 0 ]
+  grep -q 'send-keys' "$STUB_LOG"
+}
+
 @test "resume passes the anchor check when a tag shares the branch name (#688)" {
   setup_worker_wt
   git -C "$TEST_REPO" tag feat/7-a-thing

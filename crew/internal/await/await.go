@@ -78,6 +78,11 @@ func Run(req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int 
 		say(stderr, "%s\n", noCrewMsg)
 		return 1
 	}
+	cr, err := paths.Crew(crew)
+	if err != nil {
+		say(stderr, "crew: await: invalid crew id %s\n", crew)
+		return 1
+	}
 	c, msg := check(req)
 	c.hosts = o.Hosts
 	if msg != "" {
@@ -98,7 +103,7 @@ func Run(req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int 
 	delivered := marks.Read(paths.Dir, crew, c.me)
 
 	for {
-		if rows := due(paths.Log, crew, c, delivered); len(rows) > 0 {
+		if rows := due(cr.Log, crew, c, delivered); len(rows) > 0 {
 			enc := json.NewEncoder(stdout)
 			enc.SetEscapeHTML(false)
 			for _, r := range rows {

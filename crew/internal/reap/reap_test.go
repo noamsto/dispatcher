@@ -121,6 +121,26 @@ func (f *fx) ghCall(args []string) (string, error) {
 	return f.gh[key], nil
 }
 
+// dropWindow is what a kill does to the fake server: the window's @crew_id
+// stamp and list-windows entry are gone for every later read.
+func (f *fx) dropWindow(w string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	delete(f.tmux, "display-message -p -t "+w+" #{@crew_id}")
+	for k, v := range f.tmux {
+		if !strings.HasPrefix(k, "list-windows") {
+			continue
+		}
+		var keep []string
+		for _, line := range strings.Split(v, "\n") {
+			if id, _, _ := strings.Cut(line, " "); id != w && !strings.HasPrefix(line, w+"\t") {
+				keep = append(keep, line)
+			}
+		}
+		f.tmux[k] = strings.Join(keep, "\n")
+	}
+}
+
 func (f *fx) opts() Options {
 	return Options{
 		Probes: Probes{
@@ -128,6 +148,9 @@ func (f *fx) opts() Options {
 			Tmux: &tmuxtest.Fake{Func: func(args []string) (string, error) {
 				key := strings.Join(args, " ")
 				f.record("tmux " + key)
+				if len(args) == 3 && args[0] == "kill-window" {
+					f.dropWindow(args[2])
+				}
 				return f.tmux[key], nil
 			}},
 			Gh: &ghtest.Fake{Func: f.ghCall},
@@ -781,6 +804,8 @@ func TestIdleReleaseWritesRowAndAbortsOnAppendError(t *testing.T) {
 		t.Fatalf("appended %q", f.appended)
 	}
 
+	// The kill removed the window from the fake server; put it back.
+	f.tmux["list-windows -a -F #{window_id}\t#{@crew_name}\t#{pane_current_path}"] = "@5\tworker\t" + f.wt
 	f.appendErr = errors.New("disk full")
 	if rc := f.reap(f.main, Request{Quiet: true}); rc != 1 {
 		t.Fatalf("rc=%d, want 1", rc)

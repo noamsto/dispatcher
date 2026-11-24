@@ -255,13 +255,12 @@ func TestTaskDocEdges(t *testing.T) {
 }
 
 func TestReleaseFailureStillExitsZero(t *testing.T) {
-	dir := t.TempDir()
-	blocker := filepath.Join(dir, "file")
-	if err := os.WriteFile(blocker, nil, 0o644); err != nil {
-		t.Fatal(err)
+	if os.Geteuid() == 0 {
+		t.Skip("a read-only log still takes root's append")
 	}
-	paths := bus.Paths{Common: dir, Dir: filepath.Join(blocker, "bus"), Log: filepath.Join(dir, "events.jsonl")}
-	if err := os.WriteFile(paths.Log, []byte(okRow+"\n"), 0o644); err != nil {
+	dir := t.TempDir()
+	paths := bus.Paths{Common: dir, Dir: dir, Log: filepath.Join(dir, "events.jsonl")}
+	if err := os.WriteFile(paths.Log, []byte(okRow+"\n"), 0o444); err != nil {
 		t.Fatal(err)
 	}
 	g := &ghtest.Fake{Out: map[string]string{viewIn: view("OPEN", "false", "MERGEABLE", okRoll), runsIn: okRuns, mergeG: "merged"}}

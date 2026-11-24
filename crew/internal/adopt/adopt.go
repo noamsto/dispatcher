@@ -120,7 +120,8 @@ func Run(ctx context.Context, req Request, paths bus.Paths, stdout, stderr io.Wr
 	}
 	// The same charset bus.ValidCrewID gates every other writer of a crew id
 	// with: an unsanitized id reaches file paths and jq arguments downstream.
-	if !bus.ValidCrewID(id) {
+	bc, err := paths.Crew(id)
+	if err != nil {
 		say(stderr, "crew: invalid crew id — expected only letters, digits, '.', '_' and '-'\n")
 		return exitFailure
 	}
@@ -133,7 +134,7 @@ func Run(ctx context.Context, req Request, paths bus.Paths, stdout, stderr io.Wr
 		pidText = strconv.Itoa(proc.OwnerPID(o.Proc, o.PPID))
 	}
 
-	cdir := paths.CrewDir(id)
+	cdir := bc.Dir
 	pidfile := cdir + "/pid"
 
 	// A crew is known from the directory, or from the bus when a restart took
@@ -215,7 +216,11 @@ func Run(ctx context.Context, req Request, paths bus.Paths, stdout, stderr io.Wr
 // naming the id, from the readable prefix of the log. A torn tail is what
 // ReadEventsTolerant is for.
 func loggedCrew(paths bus.Paths, id string) bool {
-	events, _ := bus.ReadEventsTolerant(paths.Log)
+	c, err := paths.Crew(id)
+	if err != nil {
+		return false
+	}
+	events, _ := bus.ReadEventsTolerant(c.Log)
 	for _, ev := range events {
 		if ev.CrewID == id {
 			return true
@@ -309,7 +314,11 @@ func (o Options) occupied(ctx context.Context, wt string) bool {
 // or nothing, so an unreadable or corrupt log is no claims at all — the arm's
 // `2>/dev/null || true`.
 func claimRows(paths bus.Paths, id string) []claim {
-	events, err := bus.ReadEvents(paths.Log)
+	c, err := paths.Crew(id)
+	if err != nil {
+		return nil
+	}
+	events, err := bus.ReadEvents(c.Log)
 	if err != nil {
 		return nil
 	}

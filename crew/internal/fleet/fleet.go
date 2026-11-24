@@ -182,7 +182,7 @@ func Run(ctx context.Context, req Request, stdout, stderr io.Writer, o Options) 
 // readBus is a repo's events. skip is why the bus cannot be read at all; torn
 // notes a bad tail, with the events before it still returned.
 func readBus(common string) (events []bus.Event, torn, skip string) {
-	events, err := bus.ReadEventsTolerant(common + "/crew/events.jsonl")
+	events, err := bus.ReadEventsTolerant(bus.PathsFor(common).Log)
 	var decode *bus.DecodeError
 	switch {
 	case errors.Is(err, bus.ErrNoLog):

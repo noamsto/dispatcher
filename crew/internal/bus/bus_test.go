@@ -370,16 +370,6 @@ func TestConstValues(t *testing.T) {
 	}
 }
 
-func TestPaths(t *testing.T) {
-	p := newPaths("/r/.git")
-	if p.Common != "/r/.git" || p.Dir != "/r/.git/crew" || p.Log != "/r/.git/crew/events.jsonl" {
-		t.Fatalf("%+v", p)
-	}
-	if got := p.CrewDir("c1"); got != "/r/.git/crew/crews/c1" {
-		t.Fatalf("CrewDir = %q", got)
-	}
-}
-
 func TestValidCrewID(t *testing.T) {
 	cases := []struct {
 		id   string

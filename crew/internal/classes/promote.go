@@ -50,9 +50,10 @@ const (
 )
 
 var (
-	errWorker = errors.New("refusing to run with CREW_WORKER_ID set")
-	errBusy   = errors.New("class-state is busy; retry")
-	errNoCrew = errors.New("no crew id — run it from the dispatcher pane or set CREW_ID=<crew id>")
+	errWorker  = errors.New("refusing to run with CREW_WORKER_ID set")
+	errBusy    = errors.New("class-state is busy; retry")
+	errNoCrew  = errors.New("no crew id — run it from the dispatcher pane or set CREW_ID=<crew id>")
+	errBadCrew = errors.New("invalid crew id")
 	// errUnusable is a state file Load warned about; no change is made over it.
 	errUnusable = errors.New("class-state is unusable")
 	// errSkip is a promotion the re-evaluation under the lock no longer backs:
@@ -478,7 +479,7 @@ func Check(rows []any, env Env, stderr io.Writer) int {
 		case err == nil:
 			made++
 		case errors.Is(err, errSkip):
-		case errors.Is(err, errBusy), errors.Is(err, errNoCrew), errors.Is(err, errUnusable):
+		case errors.Is(err, errBusy), errors.Is(err, errNoCrew), errors.Is(err, errBadCrew), errors.Is(err, errUnusable):
 			say(stderr, "%s%v\n", prefix, err)
 			return made
 		default:
@@ -605,6 +606,10 @@ func apply(engine, class string, env Env, stderr io.Writer, prefix string, mutat
 	if env.CrewID == "" {
 		return errNoCrew
 	}
+	c, err := env.Paths.Crew(env.CrewID)
+	if err != nil {
+		return fmt.Errorf("%w %s", errBadCrew, env.CrewID)
+	}
 	if reason := env.senderRefusal(); reason != "" {
 		return fmt.Errorf("refusing sender 'dispatcher:%s' — %s", env.CrewID, reason)
 	}
@@ -663,20 +668,20 @@ func apply(engine, class string, env Env, stderr io.Writer, prefix string, mutat
 	msg := func(b string) string {
 		return encodeLine(msgRow{TS: ts, CrewID: crew, From: "crew:class", To: "dispatcher:" + crew, Kind: bus.KindMsg, Body: b})
 	}
-	if err := announce(env.Paths, msg, decision, body); err != nil {
+	if err := announce(c, msg, decision, body); err != nil {
 		say(stderr, "%swarning: the change is saved but its announcement failed: %v\n", prefix, err)
 	}
 	return nil
 }
 
-func announce(paths bus.Paths, msg, decision func(string) string, body string) error {
-	if err := os.MkdirAll(paths.Dir, 0o755); err != nil {
+func announce(c bus.Crew, msg, decision func(string) string, body string) error {
+	if err := os.MkdirAll(filepath.Dir(c.Log), 0o755); err != nil {
 		return err
 	}
-	if err := bus.Append(paths.Log, bus.FitLine(msg, body)); err != nil {
+	if err := bus.Append(c.Log, bus.FitLine(msg, body)); err != nil {
 		return err
 	}
-	return bus.Append(paths.Log, bus.FitLine(decision, body))
+	return bus.Append(c.Log, bus.FitLine(decision, body))
 }
 
 // msgRow is a bus msg row in `crew msg`'s field order.

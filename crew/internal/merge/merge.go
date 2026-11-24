@@ -127,6 +127,15 @@ func Run(ctx context.Context, req Request, paths bus.Paths, stdout, stderr io.Wr
 		say(stderr, "crew: merge: refusing PR %d — %s\n", n, fmt.Sprintf(format, args...))
 		return exitFailure
 	}
+	log := paths.Log
+	if req.Crew != "" {
+		c, err := paths.Crew(req.Crew)
+		if err != nil {
+			say(stderr, "crew: merge: invalid crew id %s\n", req.Crew)
+			return exitFailure
+		}
+		log = c.Log
+	}
 	var provenance string
 	if req.Policy != "" {
 		if req.NoLedger || req.AllowNoCI {
@@ -217,7 +226,7 @@ func Run(ctx context.Context, req Request, paths bus.Paths, stdout, stderr io.Wr
 		pass("base %s: not red", p.BaseRefName)
 	}
 
-	data, err := os.ReadFile(paths.Log)
+	data, err := os.ReadFile(log)
 	if err != nil && !os.IsNotExist(err) {
 		return refuse("could not read the bus: %v", err)
 	}
@@ -317,7 +326,11 @@ func actionsJobID(detailsURL string) string {
 // posts done instead of holding its slot for the dispatcher. The merge already
 // happened, so a failed reply only warns.
 func release(ctx context.Context, n int, policyName string, opened statusRow, paths bus.Paths, stdout, stderr io.Writer, o Options) {
-	data, err := os.ReadFile(paths.Log)
+	log := paths.Log
+	if c, err := paths.Crew(opened.CrewID); err == nil {
+		log = c.Log
+	}
+	data, err := os.ReadFile(log)
 	if err != nil {
 		say(stderr, "crew: merge: could not release %s: %v\n", opened.From, err)
 		return

@@ -89,6 +89,17 @@ type call struct {
 	states                                             []string
 	since, timeout                                     int64
 	hosts                                              *sender.OverseerHosts
+	bc                                                 bus.Crew
+}
+
+// bind resolves the call's crew, "" or the refusal check gives a bad id.
+func (c *call) bind(paths bus.Paths) string {
+	bc, err := paths.Crew(c.crew)
+	if err != nil {
+		return badCrewMsg
+	}
+	c.bc = bc
+	return ""
 }
 
 // Test seam: the signal-window regression parks the child here, right after the
@@ -110,11 +121,14 @@ func Run(req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int 
 	_ = os.MkdirAll(paths.Dir, 0o755)
 
 	c, msg := check(req, o)
+	if msg == "" {
+		msg = c.bind(paths)
+	}
 	if msg != "" {
 		say(stderr, "%s\n", msg)
 		return 1
 	}
-	cdir := paths.CrewDir(c.crew)
+	cdir := c.bc.Dir
 	if err := os.MkdirAll(cdir, 0o755); err != nil {
 		say(stderr, "crew: %v\n", err)
 		return 1
@@ -199,7 +213,7 @@ func Run(req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int 
 // deliver is one fold pass: a qualifying batch is printed, flushed and only
 // then does the cursor advance. found reports a batch; rc is the exit status.
 func deliver(paths bus.Paths, c call, o Options, stdout, stderr io.Writer, orphaned func() bool) (found bool, rc int) {
-	folded, ok := fold(paths.Log, c)
+	folded, ok := fold(c.bc.Log, c)
 	if !ok {
 		return false, 0
 	}
@@ -225,7 +239,7 @@ func deliver(paths bus.Paths, c call, o Options, stdout, stderr io.Writer, orpha
 	if orphaned() {
 		return true, 1
 	}
-	writeCursor(paths.Dir, filepath.Join(paths.CrewDir(c.crew), "cursor"), cursorText(out))
+	writeCursor(c.bc.Dir, filepath.Join(c.bc.Dir, "cursor"), cursorText(out))
 	return true, 0
 }
 
@@ -252,11 +266,14 @@ func Validate(req Request, o Options) string {
 // returns rc 1. It never touches signal handling; the caller owns that.
 func Once(req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) (Outcome, int) {
 	c, msg := check(req, o)
+	if msg == "" {
+		msg = c.bind(paths)
+	}
 	if msg != "" {
 		say(stderr, "%s\n", msg)
 		return Empty, 1
 	}
-	cdir := paths.CrewDir(c.crew)
+	cdir := c.bc.Dir
 	if err := os.MkdirAll(cdir, 0o755); err != nil {
 		say(stderr, "crew: %v\n", err)
 		return Empty, 1
@@ -393,7 +410,7 @@ func cursorText(out map[string]any) string {
 }
 
 // writeCursor is the arm's `mktemp "$dir/.cursor.XXXXXX"` + `printf` + `mv -f`:
-// one tmp file under the bus dir renamed over the crew's cursor, so a reader
+// one tmp file beside the cursor renamed over the crew's cursor, so a reader
 // never sees a half-written cursor.
 func writeCursor(dir, path, text string) {
 	tmp, err := os.CreateTemp(dir, ".cursor.")

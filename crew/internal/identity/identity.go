@@ -201,16 +201,25 @@ func Run(ctx context.Context, req Request, paths bus.Paths, stdout, stderr io.Wr
 	if crew == "" && o.CrewID != nil {
 		crew = o.CrewID()
 	}
+	log := paths.Log
+	if crew != "" {
+		c, err := paths.Crew(crew)
+		if err != nil {
+			say(stderr, "crew: identity: invalid crew id %s\n", crew)
+			return 1
+		}
+		log = c.Log
+	}
 	if o.Clock.Now == nil {
 		o.Clock.Now = time.Now
 	}
 	if req.Occupied {
-		for _, name := range Occupied(ctx, busEvents(paths.Log), crew, o.Tmux, o.Clock.Now().UnixMilli()) {
+		for _, name := range Occupied(ctx, busEvents(log), crew, o.Tmux, o.Clock.Now().UnixMilli()) {
 			say(stdout, "%s\n", name)
 		}
 		return 0
 	}
-	return emit(stdout, Assign(ctx, busEvents(paths.Log), req.Branch, crew, o.Tmux, avoidList(o.Getenv), o.Clock.Now().UnixMilli()))
+	return emit(stdout, Assign(ctx, busEvents(log), req.Branch, crew, o.Tmux, avoidList(o.Getenv), o.Clock.Now().UnixMilli()))
 }
 
 // avoidList is CREW_IDENTITY_AVOID: the codenames a dispatching host already

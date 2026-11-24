@@ -158,7 +158,7 @@ func TestReapRowAndAnchor(t *testing.T) {
 	if len(reap) != 1 {
 		t.Fatalf("appended %q", f.appended)
 	}
-	wantJSON(t, reap[0], fmt.Sprintf(`{"ts":%d,"kind":"reap","branch":"feat/r","pr":%q,"pr_state":"CLOSED","worktree":%q}`, nowUnix*1000, prURL, f.wt))
+	wantJSON(t, reap[0], fmt.Sprintf(`{"ts":%d,"kind":"reap","branch":"feat/r","repo":%q,"pr":%q,"pr_state":"CLOSED","worktree":%q}`, nowUnix*1000, f.paths.Common, prURL, f.wt))
 	for _, w := range []string{"@1", "@2"} {
 		if !slices.Contains(f.calls, "tmux kill-window -t "+w) {
 			t.Fatalf("calls %q missing kill of %s", f.calls, w)
@@ -207,7 +207,7 @@ func TestIssueModeReap(t *testing.T) {
 		t.Fatalf("rc=%d stderr=%q", rc, f.stderr.String())
 	}
 	f.wantOut("crew reap: reaped feat/r (issue #5 CLOSED)")
-	wantJSON(t, f.rows("reap")[0], fmt.Sprintf(`{"ts":%d,"kind":"reap","branch":"feat/r","pr":"","pr_state":"ISSUE_CLOSED","worktree":%q,"issues":["5"]}`, nowUnix*1000, f.wt))
+	wantJSON(t, f.rows("reap")[0], fmt.Sprintf(`{"ts":%d,"kind":"reap","branch":"feat/r","repo":%q,"pr":"","pr_state":"ISSUE_CLOSED","worktree":%q,"issues":["5"]}`, nowUnix*1000, f.paths.Common, f.wt))
 	wantJSON(t, f.rows("status")[0], fmt.Sprintf(`{"ts":%d,"crew_id":"c1","from":"worker:feat/r#s1","to":"dispatcher:c1","kind":"status","body":{"state":"reaped","detail":"issue #5 CLOSED","source":"reap"}}`, nowUnix*1000))
 	if !slices.Contains(f.calls, "gh issue edit 5 --remove-label dispatched") {
 		t.Fatalf("calls %q", f.calls)

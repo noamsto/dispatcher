@@ -22,6 +22,7 @@ teardown() { remote_host_teardown; }
   row="$(local_dispatch_rows)"
   [ "$(wc -l <<<"$row")" -eq 1 ]
   jq -e --arg w "$worker_id" '.host == "mini" and .remote == true and .crew_id == "c1" and .worker_id == $w' <<<"$row"
+  jq -e --arg r "$(realpath -e -- "$TEST_REPO/.git")" '.repo == $r' <<<"$row"
   branch="$(jq -r .branch <<<"$row")"
   wt="$(remote_wt "$branch")"
   [ -d "$wt" ]

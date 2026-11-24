@@ -292,7 +292,7 @@ func (r *run) lockReap() (code int, done bool) {
 // `set -e` did.
 func (r *run) idleRelease(ctx context.Context) int {
 	grace := r.grace()
-	d := Deps{Common: r.paths.Common, Log: r.paths.Log, Say: r.say, Note: r.note, P: r.p}
+	d := Deps{Paths: r.paths, Say: r.say, Note: r.note, P: r.p}
 	for _, row := range r.idleRows() {
 		if row[0] == "" {
 			continue

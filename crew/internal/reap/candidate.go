@@ -26,6 +26,8 @@ type candidate struct {
 	latestRow
 	wtpath string // the branch's worktree
 	admin  string // its realpath admin dir, set by the admin gate
+	// crewID is the row's crew, resolved at the start of remove.
+	crewID string
 	// mode is "pr", "issue" when no PR vouches for the branch, "pushed" when
 	// a done worker has no PR and its issue is still open, or "migrated"
 	// when crew migrate's mark does.

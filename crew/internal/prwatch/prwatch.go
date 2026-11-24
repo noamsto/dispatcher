@@ -20,6 +20,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 
@@ -102,6 +103,12 @@ func Run(ctx context.Context, req Request, paths bus.Paths, stdout, stderr io.Wr
 		return exitFailure
 	}
 
+	c, err := paths.Crew(crew)
+	if err != nil {
+		say(stderr, "crew: pr-watch: invalid crew id %s\n", crew)
+		return exitFailure
+	}
+
 	// The park. Stop signals are caught before the child starts, so one that lands
 	// during the exec is forwarded rather than taken by the default action.
 	//
@@ -162,7 +169,7 @@ func Run(ctx context.Context, req Request, paths bus.Paths, stdout, stderr io.Wr
 		return 0
 	}
 
-	if err := os.MkdirAll(paths.Dir, 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(c.Log), 0o755); err != nil {
 		say(stderr, "crew: pr-watch: %v\n", err)
 		return exitFailure
 	}
@@ -174,7 +181,7 @@ func Run(ctx context.Context, req Request, paths bus.Paths, stdout, stderr io.Wr
 		Kind:   "msg",
 		Body:   ev,
 	})
-	if err := bus.Append(paths.Log, string(b)); err != nil {
+	if err := bus.Append(c.Log, string(b)); err != nil {
 		say(stderr, "crew: pr-watch: %v\n", err)
 		return exitFailure
 	}

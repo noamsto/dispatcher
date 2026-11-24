@@ -37,7 +37,7 @@ const planHint = `plan: required but no plan seam on the bus for this branch; ru
 // gate is the arm's pr_open/done gate for a worker session.
 type gate struct {
 	crew, from, state, detail string
-	paths                     bus.Paths
+	log                       string
 	o                         Options
 }
 
@@ -67,7 +67,7 @@ func (g gate) check(ctx context.Context) string {
 		return ""
 	}
 
-	log := readLog(g.paths.Log)
+	log := readLog(g.log)
 	if g.state == "pr_open" {
 		in := ledger.Input{From: g.from, Crew: g.crew, Detail: g.detail, TaskDoc: doc.text, TaskDocErr: doc.unreadable, Log: log.lines}
 		if line := ledger.Check(in); line != "" {
@@ -228,6 +228,11 @@ func undeliveredGate(paths bus.Paths, crew, from, state string, stderr io.Writer
 	if state != "pr_open" && state != "done" || !strings.HasPrefix(from, "worker:") {
 		return false
 	}
+	c, err := paths.Crew(crew)
+	if err != nil {
+		say(stderr, "crew: status: invalid crew id %s\n", crew)
+		return true
+	}
 	unlock, err := marks.Lock(paths.Dir, crew, from)
 	if err != nil {
 		say(stderr, "crew: refusing %s for %s — cannot lock delivered marks: %v\n", state, from, err)
@@ -235,7 +240,7 @@ func undeliveredGate(paths bus.Paths, crew, from, state string, stderr io.Writer
 	}
 	defer unlock()
 
-	log := readLog(paths.Log)
+	log := readLog(c.Log)
 	switch {
 	case log.err != nil:
 		say(stderr, "crew: refusing %s for %s — could not read the crew log for the unread check: %v\n", state, from, log.err)

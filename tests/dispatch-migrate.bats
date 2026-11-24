@@ -408,6 +408,8 @@ EOF
   [ -d "$wt" ]
   [ "$(scratch_tree "$wt" "$TIP" PLAN.md)" = "$TREE" ]
   [ -z "$(local_dispatch_rows)" ]
+  # The record dispatch wrote carries the crew id as a fifth line; the retry check accepts it.
+  [ "$(wc -l <"$RHOME/data/crew/worktrees/$(printf %s "$(realpath -e -- "$wt")" | sha256sum | cut -c1-64)")" -eq 5 ]
 
   run --separate-stderr on_remote "$REMOTE_CLONE" dispatch --migrate-check "$BRANCH"
   [ "$status" -eq 0 ] || {
