@@ -391,6 +391,29 @@ EOF
   grep -q 'send-keys' "$STUB_LOG"
 }
 
+@test "refuses resume when the header crew id does not match the anchor's fifth line" {
+  setup_worker_wt
+  printf 'c1\n' >>"$(anchor_path_for "$WT")"
+  sed -i 's/^crew_id: c1$/crew_id: forged/' "$WT/WORKER_TASK.md"
+  stub_tmux_with_pane_at_wt '@4' '%8' '' fish
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"crew id (forged) does not match the dispatcher's record (c1)"* ]]
+  run ! grep -q 'send-keys' "$STUB_LOG"
+}
+
+@test "resume accepts any header crew id against a four-line anchor" {
+  setup_worker_wt
+  [ "$(wc -l <"$(anchor_path_for "$WT")")" -eq 4 ]
+  sed -i 's/^crew_id: c1$/crew_id: c2/' "$WT/WORKER_TASK.md"
+  stub_tmux_with_pane_at_wt '@4' '%8' '' fish
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 0 ]
+  grep -q 'send-keys' "$STUB_LOG"
+}
+
 @test "resume passes the anchor check when a tag shares the branch name (#688)" {
   setup_worker_wt
   git -C "$TEST_REPO" tag feat/7-a-thing
@@ -4346,4 +4369,18 @@ EOF
   [ "$status" -eq 1 ]
   [[ "$output" == *"crew: crew c1 is archived"* ]]
   [ ! -e "$TEST_REPO/.git/crew/events.jsonl" ] || run ! jq -e 'select(.kind == "resume")' "$TEST_REPO/.git/crew/events.jsonl"
+}
+
+@test "layout: resume reattaches to a live layout-2 dispatcher: retargets the pane and messages it" {
+  setup_worker_wt
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  _l2_register
+  printf '%s\n' "$$" >"$XDG_STATE_HOME/crew/crews/c1/pid"
+  printf '%%77\n' >"$XDG_STATE_HOME/crew/crews/c1/pane"
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"reattached"* ]]
+  grep -qx 'dispatcher_pane: %77' "$WT/WORKER_TASK.md"
+  grep -q 'msg .* dispatcher:c1 .*do not re-dispatch it' "$STUB_LOG"
 }

@@ -488,6 +488,9 @@ effort="${effort_flag:-$(_hdr effort)}"
 mcp_profile="${mcp_flag_val:-$(_hdr mcp)}"
 tier="$(_hdr tier)"
 crew_id="$(_hdr crew_id)"
+# The header crew id picks the log, so it must match the dispatcher's record
+# where one carries it (anchors before crew ids were recorded have four lines).
+[ -z "${_anchor_lines[4]:-}" ] || [ "${_anchor_lines[4]}" = "$crew_id" ] || _anchor_mismatch "crew id" "$crew_id" "${_anchor_lines[4]}"
 crew_log="$(_crew_log "$crew_dir" "$crew_id")" || exit 1
 # Stamped at dispatch only when the owning dispatcher is on another host.
 dispatcher_host="$(_hdr dispatcher_host)"
@@ -1109,6 +1112,7 @@ mkdir -p "$crew_dir"
 dispatcher_live=""
 dispatcher_pane_new=""
 cdir="$crew_dir/crews/$crew_id"
+[ "$crew_log" = "$crew_dir/events.jsonl" ] || cdir="${crew_log%/events.jsonl}"
 if [ -d "$cdir" ]; then
   epid="$(cat "$cdir/pid" 2>/dev/null || true)"
   case "$epid" in

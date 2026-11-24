@@ -1022,12 +1022,10 @@ _crew_log_init() {
 }
 
 # _crew_append <line> — append to the crew's log, registering the repo first
-# so it is discoverable from the moment its bus exists. A layout-2 crew is also
-# listed in this repo's index, the only way a repo finds the crews that ran here.
+# so it is discoverable from the moment its bus exists.
 _crew_append() {
   if [ -z "${crew_registered:-}" ]; then
     _registry_add "${crew_dir%/crew}"
-    [ "$crew_layout" != 2 ] || crew index add --crew "$crew_id" || true
     crew_registered=1
   fi
   _bus_append "$crew_log" "$1"
@@ -1998,15 +1996,23 @@ _branch_live_repos() {
 
 # _repo_branch_checked_out <common> <branch> — 0 when a worktree of the repo
 # whose git common dir is <common> has <branch> checked out, read from its HEAD
-# files alone: no git command runs in a repo a log row named. A symlinked or
-# non-regular HEAD (a FIFO would hang the read) does not count.
+# files alone: no git command runs in a repo a log row named. Mid-rebase or
+# mid-bisect HEAD holds a SHA, so the rebase's head-name or BISECT_START (a
+# short name) names the branch instead. A symlinked or non-regular file (a FIFO
+# would hang the read) does not count.
 _repo_branch_checked_out() {
-  local head line
+  local head f line
   for head in "$1/HEAD" "$1"/worktrees/*/HEAD; do
-    [ -f "$head" ] && [ ! -L "$head" ] || continue
-    line=""
-    { IFS= read -r line <"$head"; } 2>/dev/null || true
-    [ "$line" != "ref: refs/heads/$2" ] || return 0
+    for f in "$head" "${head%/HEAD}/rebase-merge/head-name" "${head%/HEAD}/rebase-apply/head-name" "${head%/HEAD}/BISECT_START"; do
+      [ -f "$f" ] && [ ! -L "$f" ] || continue
+      line=""
+      { IFS= read -r line <"$f"; } 2>/dev/null || true
+      case $f in
+      */HEAD) [ "$line" != "ref: refs/heads/$2" ] || return 0 ;;
+      */BISECT_START) [ "$line" != "$2" ] || return 0 ;;
+      *) [ "$line" != "refs/heads/$2" ] || return 0 ;;
+      esac
+    done
   done
   return 1
 }
@@ -2793,6 +2799,7 @@ _remote_recover_row() {
 _remote_finish() {
   mkdir -p "$crew_dir"
   _crew_append "$(jq -c --arg h "$remote_host" --arg repo "$(_crew_repo)" '. + {ts:(now*1000|floor), host:$h, remote:true, repo:$repo}' <<<"$1")"
+  [ "$crew_layout" != 2 ] || crew index add --crew "$crew_id" || true
   branch="$(jq -r .branch <<<"$1")"
   mapfile -t also_closes < <(jq -r '.also_closes // [] | .[] | tostring' <<<"$1")
   num=""
@@ -2951,7 +2958,6 @@ _dispatch_remote() {
   # #633: crew and git never run from a worker's worktree. A relative spec is
   # the caller's.
   crew_dir="$(git rev-parse --path-format=absolute --git-common-dir)/crew"
-  _crew_log_init || exit 1
   if [ -n "${DISPATCH_SPEC:-}" ] && [[ $DISPATCH_SPEC != /* ]]; then
     DISPATCH_SPEC="$PWD/$DISPATCH_SPEC"
   fi
@@ -2967,6 +2973,7 @@ _dispatch_remote() {
     fi
   fi
   _wt_trusted_cwd "${crew_dir%/crew}" || exit 1
+  _crew_log_init || exit 1
   # The worker runs on the remote host, so its tools are not checked here.
   _spec_lint --no-host-checks
 
@@ -3143,8 +3150,8 @@ if [ "${1:-}" = --host ] && [ "${3:-}" = --recover ]; then
     exit 1
   }
   crew_dir="$(git rev-parse --path-format=absolute --git-common-dir)/crew"
-  _crew_log_init || exit 1
   _wt_trusted_cwd "${crew_dir%/crew}" || exit 1
+  _crew_log_init || exit 1
   _settings_load
   _remote_recover
   exit 0
@@ -3841,13 +3848,15 @@ model_gate
 # computed after this gate). At this point $* is the title.
 # A Linear id overrides the issue-derived branch at the identity step below, so
 # it has no failed history under the issue's branch name — no escalation.
-# A refused crew reads no history here; the main crew_log computation reports
-# the refusal and exits.
+# crew resolves the log from the trusted checkout in a subshell (#633: never
+# from a worker's worktree), ahead of the main trusted cd below. A refused crew
+# or an untrusted cwd reads no history here; the main crew_log computation and
+# trusted cd report the refusal and exit.
 if [ -n "$gh_issue" ] && [ -z "$linear_id" ]; then
   _escalation_slug="$(printf '%s' "$*" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g' | cut -c1-40 | sed -E 's/^-+//; s/-+$//')"
   _escalation_branch="feat/$gh_issue-$_escalation_slug"
   _escalation_crew_dir="$(git rev-parse --path-format=absolute --git-common-dir)/crew"
-  _escalation_crew_log="$(_crew_log "$_escalation_crew_dir" "$crew_id" 2>/dev/null)" || _escalation_crew_log=""
+  _escalation_crew_log="$(_wt_trusted_cwd "${_escalation_crew_dir%/crew}" >/dev/null 2>&1 && _crew_log "$_escalation_crew_dir" "$crew_id" 2>/dev/null)" || _escalation_crew_log=""
 else
   _escalation_branch=""
   _escalation_crew_log=""
@@ -4294,7 +4303,6 @@ fi
 slug=$(printf '%s' "$title" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g' | cut -c1-40 | sed -E 's/^-+//; s/-+$//')
 
 crew_dir="$(git rev-parse --path-format=absolute --git-common-dir)/crew"
-_crew_log_init || exit 1
 # #633: git and wt never run from a worker's worktree. caller_pwd keeps the
 # checks that are about where the caller stood.
 caller_pwd="$PWD"
@@ -4302,6 +4310,7 @@ if [ -n "${DISPATCH_SPEC:-}" ] && [[ $DISPATCH_SPEC != /* ]]; then
   DISPATCH_SPEC="$caller_pwd/$DISPATCH_SPEC"
 fi
 _wt_trusted_cwd "${crew_dir%/crew}" || exit 1
+_crew_log_init || exit 1
 # The remote half of a --host dispatch was already linted on the caller.
 [ -n "${DISPATCH_EMIT_ROW:-}" ] || _spec_lint
 # A dispatch started over ssh on macOS cannot read the login keychain where gh
@@ -5315,6 +5324,10 @@ line=$(jq -nc --arg crew "$crew_id" --arg branch "$branch" --arg session "$sessi
    + if $migrated_from != "" then {migrated_from:$migrated_from, engine_context:$engine_context} else {} end
    + if $engine_context_why != "" then {engine_context_why:$engine_context_why} else {} end')
 _crew_append "$line"
+# A layout-2 crew is listed in this repo's index, the only way a repo finds the
+# crews that ran here. After the dispatch row: an index rebuild keys on rows
+# that carry a repo, which a claim row does not.
+[ "$crew_layout" != 2 ] || crew index add --crew "$crew_id" || true
 # A dispatcher on another host records the same row from this line.
 [ "${DISPATCH_EMIT_ROW:-}" != 1 ] || printf 'dispatch_row: %s\n' "$line"
 _claim_index_dispatch
@@ -6103,9 +6116,11 @@ stall_flags=()
 # must not retarget the renderer there while the crew's dispatcher is live;
 # only the registered dispatcher's pane may move it.
 rr_pane="${TMUX_PANE:-}"
-rr_pid="$(cat "$crew_dir/crews/$crew_id/pid" 2>/dev/null || true)"
-if _recorded_pid_live "$rr_pid" "$crew_dir/crews/$crew_id/pid" &&
-  [ "$rr_pane" != "$(cat "$crew_dir/crews/$crew_id/pane" 2>/dev/null || true)" ]; then
+rr_cdir="$crew_dir/crews/$crew_id"
+[ "$crew_layout" != 2 ] || rr_cdir="$crew_state"
+rr_pid="$(cat "$rr_cdir/pid" 2>/dev/null || true)"
+if _recorded_pid_live "$rr_pid" "$rr_cdir/pid" &&
+  [ "$rr_pane" != "$(cat "$rr_cdir/pane" 2>/dev/null || true)" ]; then
   rr_pane=""
 fi
 # A remote-mode worker's roster diagram belongs to its dispatcher's host.

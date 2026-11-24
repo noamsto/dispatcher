@@ -7101,6 +7101,18 @@ _roster_live_dispatcher() {
   wait_for_log 'roster-render --crew c1 --pane %3 --detach$'
 }
 
+@test "roster-render layout 2: dispatch with a live layout-2 dispatcher drops a TMUX_PANE that is not its pane" {
+  stub_launch_bins
+  _grid_tmux_stub
+  register_layout2
+  printf '%s\n' "$$" >"$XDG_STATE_HOME/crew/crews/c1/pid"
+  printf '%%3\n' >"$XDG_STATE_HOME/crew/crews/c1/pane"
+  TMUX_PANE=%5 DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  [ "$status" -eq 0 ]
+  wait_for_log 'roster-render --crew c1 --detach$'
+  run ! grep -E 'roster-render.*--pane' "$STUB_LOG"
+}
+
 # _reattach_fixture — a crew c1 with no registration, and a fake `claude`
 # engine whose process runs dispatch as its child (comm must stay `claude`, so
 # an absolute shebang and no exec).
@@ -8154,25 +8166,57 @@ EOF
   jq -e 'select(.kind == "claim")' "$TEST_REPO/.git/crew/events.jsonl" >/dev/null
 }
 
-@test "signal: a SIGTERM while the identity lock is held exits 143, writes no dispatch row and releases both locks" {
-  stub_launch_bins
-  lock="$(ident_lock_path)"
+# signal_mid_lock <signal> <lock> — dispatch c1 with a crew stub that sends
+# <signal> to the dispatch holding <lock> as it picks the codename.
+signal_mid_lock() {
   mv "$STUB_DIR/crew" "$STUB_DIR/crew-inner"
   cat >"$STUB_DIR/crew" <<EOF
 #!/usr/bin/env bash
 if [ "\${1:-}" = identity ] && [ "\${2#--}" = "\${2:-}" ]; then
-  kill -TERM "\$(readlink "$lock")"
+  kill -$1 "\$(readlink "$2")"
   exit 0
 fi
 exec "$STUB_DIR/crew-inner" "\$@"
 EOF
   chmod +x "$STUB_DIR/crew"
-
   DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
-  [ "$status" -eq 143 ]
+}
+
+# assert_signal_exit <signal> <status> — <signal> mid-lock exits <status>, writes
+# no dispatch row or window and releases both locks.
+assert_signal_exit() {
+  stub_launch_bins
+  lock="$(ident_lock_path)"
+  signal_mid_lock "$1" "$lock"
+  [ "$status" -eq "$2" ]
   [ ! -L "$lock" ]
   run ! compgen -G "$TEST_REPO/.git/crew/dispatch-*.lock"
   assert_no_bus_row dispatch
+  run ! grep -q 'new-window' "$STUB_LOG"
+}
+
+@test "signal: a SIGTERM while the identity lock is held exits 143, writes no dispatch row and releases both locks" {
+  assert_signal_exit TERM 143
+}
+
+@test "signal: a SIGINT while the identity lock is held exits 130, writes no dispatch row and releases both locks" {
+  assert_signal_exit INT 130
+}
+
+@test "signal: a SIGHUP while the identity lock is held exits 129, writes no dispatch row and releases both locks" {
+  assert_signal_exit HUP 129
+}
+
+@test "signal layout 2: a SIGTERM while the crew-state identity lock is held releases it and writes no dispatch row" {
+  stub_launch_bins
+  register_layout2
+  lock="$XDG_STATE_HOME/crew/crews/c1/identity.lock"
+  signal_mid_lock TERM "$lock"
+  [ "$status" -eq 143 ]
+  [ ! -L "$lock" ]
+  [ ! -L "$(ident_lock_path)" ]
+  run ! compgen -G "$TEST_REPO/.git/crew/dispatch-*.lock"
+  [ ! -f "$(l2_log)" ] || run ! jq -e 'select(.kind == "dispatch")' "$(l2_log)"
   run ! grep -q 'new-window' "$STUB_LOG"
 }
 
@@ -8464,6 +8508,39 @@ EOF
   chmod 600 "$other/worktrees/42-do-a-thing/HEAD"
   [ "$status" -eq 0 ]
   git -C "$TEST_REPO" show-ref --verify --quiet "refs/heads/$b"
+}
+
+@test "same-branch: a candidate worktree mid-rebase or mid-bisect on the branch confirms and refuses" {
+  b=feat/42-do-a-thing
+  fn="$BATS_TEST_TMPDIR/checked-out.sh"
+  sed -n '/^_repo_branch_checked_out() {/,/^}/p' "$DISPATCH" >"$fn"
+  # Each state in its own repo, its HEAD detached at a SHA as git leaves it.
+  for state in rebase-merge rebase-apply bisect; do
+    repo="$BATS_TEST_TMPDIR/$state/.git"
+    mkdir -p "$repo/worktrees/wt"
+    printf %040d 1 >"$repo/worktrees/wt/HEAD"
+    case $state in
+    bisect) printf '%s\n' "$b" >"$repo/worktrees/wt/BISECT_START" ;;
+    *)
+      mkdir -p "$repo/worktrees/wt/$state"
+      printf 'refs/heads/%s\n' "$b" >"$repo/worktrees/wt/$state/head-name"
+      ;;
+    esac
+    bash -c '. "$1"; _repo_branch_checked_out "$2" "$3"' _ "$fn" "$repo" "$b"
+    run bash -c '. "$1"; _repo_branch_checked_out "$2" "$3"' _ "$fn" "$repo" "$b-longer"
+    [ "$status" -eq 1 ]
+  done
+  other="$(other_repo)"
+  mkdir -p "$other/worktrees/wt/rebase-merge"
+  printf %040d 1 >"$other/worktrees/wt/HEAD"
+  printf 'refs/heads/%s\n' "$b" >"$other/worktrees/wt/rebase-merge/head-name"
+  stub_launch_bins
+  bus_row dispatch "$b" 100 "$other"
+
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"$b is already dispatched live into $other in crew c1"* ]]
+  run ! grep -q '^switch' "$STUB_LOG"
 }
 
 @test "same-branch: a human checkout of the branch in the candidate repo's main worktree confirms and refuses" {
@@ -8801,8 +8878,20 @@ EOF
 @test "layout: a layout-2 dispatch writes its rows to the crew's log and lists the crew in the repo index once" {
   stub_launch_bins
   register_layout2
+  probe="$BATS_TEST_TMPDIR/index-probe"
+  mv "$STUB_DIR/crew" "$STUB_DIR/crew-inner"
+  # Each index add records how many dispatch rows the crew's log held then.
+  cat >"$STUB_DIR/crew" <<EOF
+#!/usr/bin/env bash
+if [ "\${1:-}" = index ] && [ "\${2:-}" = add ]; then
+  jq -s '[.[] | select(.kind == "dispatch")] | length' "$(l2_log)" >>"$probe"
+fi
+exec "$STUB_DIR/crew-inner" "\$@"
+EOF
+  chmod +x "$STUB_DIR/crew"
   DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
   [ "$status" -eq 0 ]
+  [ "$(cat "$probe")" = 1 ]
   jq -e 'select(.kind == "dispatch" and .branch == "feat/42-do-a-thing")' "$(l2_log)" >/dev/null
   jq -e 'select(.kind == "claim")' "$(l2_log)" >/dev/null
   [ ! -e "$TEST_REPO/.git/crew/events.jsonl" ]
@@ -8819,14 +8908,20 @@ EOF
     crew() { printf "%s\n" "$*" >>"$calls"; case "$CASE" in
       empty) ;; fail) echo "crew: no such subcommand" >&2; return 1 ;;
       path) echo /state/crew/crews/c1/events.jsonl ;; relative) echo crews/c1/events.jsonl ;;
+      noted) echo /state/crew/crews/c1/events.jsonl; echo "crew: note" >&2 ;;
       refuse) echo "crew: crew c1 is archived" >&2; return 3 ;; esac; }
-    for CASE in empty fail path relative; do printf "%s=%s\n" "$CASE" "$(_crew_log /r/.git/crew c1)"; done
+    for CASE in empty fail path relative noted; do printf "%s=%s\n" "$CASE" "$(_crew_log /r/.git/crew c1 2>"$2/err-$CASE")"; done
     CASE=path; printf "noid=%s\n" "$(_crew_log /r/.git/crew "")"
     CASE=refuse; out="$(_crew_log /r/.git/crew c1 2>&1)" || printf "refuse rc=%s %s\n" "$?" "$out"
   ' _ "$BATS_TEST_DIRNAME/../adapters/core/launcher-common.sh" "$BATS_TEST_TMPDIR"
   [ "$status" -eq 0 ]
-  [ "$output" = "$(printf '%s\n' empty=/r/.git/crew/events.jsonl fail=/r/.git/crew/events.jsonl path=/state/crew/crews/c1/events.jsonl relative=/r/.git/crew/events.jsonl noid=/r/.git/crew/events.jsonl 'refuse rc=1 crew: crew c1 is archived')" ]
-  [ "$(grep -c . "$BATS_TEST_TMPDIR/calls")" -eq 5 ]
+  [ "$output" = "$(printf '%s\n' empty=/r/.git/crew/events.jsonl fail=/r/.git/crew/events.jsonl path=/state/crew/crews/c1/events.jsonl relative=/r/.git/crew/events.jsonl noted=/state/crew/crews/c1/events.jsonl noid=/r/.git/crew/events.jsonl 'refuse rc=1 crew: crew c1 is archived')" ]
+  [ "$(cat "$BATS_TEST_TMPDIR/err-empty")" = "crew where --log --crew c1 gave no log (rc 0) — using /r/.git/crew/events.jsonl" ]
+  [ "$(cat "$BATS_TEST_TMPDIR/err-fail")" = "crew where --log --crew c1 gave no log (rc 1) — using /r/.git/crew/events.jsonl" ]
+  [ "$(cat "$BATS_TEST_TMPDIR/err-relative")" = "crew where --log --crew c1 gave no log (rc 0) — using /r/.git/crew/events.jsonl" ]
+  [ ! -s "$BATS_TEST_TMPDIR/err-path" ]
+  [ ! -s "$BATS_TEST_TMPDIR/err-noted" ]
+  [ "$(grep -c . "$BATS_TEST_TMPDIR/calls")" -eq 6 ]
   [ "$(sort -u "$BATS_TEST_TMPDIR/calls")" = "where --log --crew c1" ]
 }
 

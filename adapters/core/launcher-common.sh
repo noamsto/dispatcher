@@ -28,18 +28,21 @@ _bus_append() {
 
 # _crew_log <crew_dir> <crew_id> — print the crew's log: `crew where --log` for
 # an id, "<crew_dir>/events.jsonl" for no id or when the call fails for a
-# non-refusal reason (an older crew binary, a test stub that prints nothing). A
-# refusal (rc 3: archived or index-only id) re-prints crew's line on stderr and
-# returns 1. On rc 3 crew prints nothing on stdout, so the combined capture is
-# its stderr line.
+# non-refusal reason (an older crew binary, a test stub that prints nothing),
+# with a stderr warning for an id. A refusal (rc 3: archived or index-only id)
+# re-prints crew's stderr and returns 1. Only stdout is the path, so a stderr
+# note on success does not cost a layout-2 crew its log.
 _crew_log() {
-  local out rc=0
+  local out err rc=0
   if [ -n "$2" ]; then
-    out="$(crew where --log --crew "$2" 2>&1)" || rc=$?
+    err="$(mktemp)"
+    out="$(crew where --log --crew "$2" 2>"$err")" || rc=$?
     if [ "$rc" -eq 3 ]; then
-      printf '%s\n' "$out" >&2
+      cat -- "$err" >&2
+      rm -f -- "$err"
       return 1
     fi
+    rm -f -- "$err"
     case "$rc:$out" in
     0:/*$'\n'*) ;;
     0:/*)
@@ -47,6 +50,7 @@ _crew_log() {
       return 0
       ;;
     esac
+    echo "crew where --log --crew $2 gave no log (rc $rc) — using $1/events.jsonl" >&2
   fi
   printf '%s\n' "$1/events.jsonl"
 }
