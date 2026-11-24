@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -358,11 +359,11 @@ func TestListShowsLastAutoSummary(t *testing.T) {
 
 func TestVerifyArchiveRefusesIncompleteArchives(t *testing.T) {
 	f := newFx(t)
-	f.dirty(true)
 	o := f.opts()
 	it := &Item{Branch: branch, Worktree: f.wt, paths: f.paths}
 	tip := runGit(t, f.wt, "rev-parse", "HEAD")
 	headTree := runGit(t, f.wt, "rev-parse", "HEAD^{tree}")
+	clean := f.cleanState(it)
 	for _, tc := range []struct {
 		name   string
 		files  map[string]string
@@ -373,7 +374,8 @@ func TestVerifyArchiveRefusesIncompleteArchives(t *testing.T) {
 		{"missing patch", map[string]string{infoName: `{"has_uncommitted":true}`}, headTree + "\n" + tip, false},
 		{"empty patch", map[string]string{infoName: `{"has_uncommitted":true}`, patchName: ""}, headTree + "\n" + tip, false},
 		{"dirty tree without a patch", map[string]string{infoName: `{}`}, "0000000000000000000000000000000000000000\n" + tip, false},
-		{"clean", map[string]string{infoName: `{}`}, headTree + "\n" + tip, true},
+		{"clean", map[string]string{infoName: `{}`}, clean, true},
+		{"commits without a bundle", map[string]string{infoName: `{"has_commits":true}`}, clean, false},
 		{"patch saved", map[string]string{infoName: `{"has_uncommitted":true}`, patchName: "diff"}, headTree + "\n" + tip, true},
 	} {
 		dir := t.TempDir()
@@ -384,6 +386,123 @@ func TestVerifyArchiveRefusesIncompleteArchives(t *testing.T) {
 		}
 		if err := o.verifyArchive(context.Background(), it, dir, tc.before, io.Discard); (err == nil) != tc.ok {
 			t.Errorf("%s: err=%v, want ok=%v", tc.name, err, tc.ok)
+		}
+	}
+}
+
+// cleanState is treeState's value for the item's untouched worktree.
+func (f *fx) cleanState(it *Item) string {
+	f.t.Helper()
+	admin, err := wtgit.AdminDir(f.paths.Common, f.wt)
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	st, err := f.opts().treeState(context.Background(), admin, it, io.Discard)
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	return st
+}
+
+// commitOnly leaves one unpushed commit and a clean tree.
+func (f *fx) commitOnly() {
+	f.t.Helper()
+	if err := os.WriteFile(filepath.Join(f.wt, "done.txt"), []byte("committed work\n"), 0o644); err != nil {
+		f.t.Fatal(err)
+	}
+	runGit(f.t, f.wt, "add", "done.txt")
+	runGit(f.t, f.wt, "commit", "-q", "-m", "work")
+}
+
+func TestRemovesCleanWorktreeWithUnpushedCommit(t *testing.T) {
+	for _, mode := range []string{"auto", "interactive"} {
+		t.Run(mode, func(t *testing.T) {
+			f := newFx(t)
+			f.bus(15 * day)
+			f.commitOnly()
+			var rc int
+			if mode == "auto" {
+				rc = f.auto(Request{}, nil, nil)
+			} else {
+				f.input = "r\n"
+				rc = f.run(Request{})
+			}
+			if rc != 0 {
+				t.Fatalf("rc=%d %s", rc, f.stderr.String())
+			}
+			if _, err := os.Stat(f.wt); !os.IsNotExist(err) {
+				t.Fatalf("worktree survived: %v\n%s%s", err, f.stdout.String(), f.stderr.String())
+			}
+			dirs := f.archiveDirs()
+			if len(dirs) != 1 {
+				t.Fatalf("archive dirs %v", dirs)
+			}
+			runGit(t, f.main, "bundle", "verify", filepath.Join(dirs[0], "commits.bundle"))
+		})
+	}
+}
+
+func TestAutoCountsErrorsPastTheArchiveAsFailures(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores directory modes")
+	}
+	f := newFx(t)
+	f.bus(15 * day)
+	f.dirty(false)
+	// git worktree remove cannot delete the worktree under a read-only parent.
+	if err := os.Chmod(f.root, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(f.root, 0o755) })
+	rc := f.auto(Request{}, nil, nil)
+	_ = os.Chmod(f.root, 0o755)
+	if rc != 1 {
+		t.Fatalf("rc=%d %s%s", rc, f.stdout.String(), f.stderr.String())
+	}
+	var errLine, sum bool
+	for _, e := range f.autoLog() {
+		errLine = errLine || e.Action == "error" && e.Branch == branch
+		sum = sum || e.Action == "summary" && e.Errors == 1 && e.Skipped == 0
+	}
+	if !errLine || !sum {
+		t.Fatalf("log %+v", f.autoLog())
+	}
+}
+
+func TestAutoSkipsAnItemClaimingAnUncheckableIssue(t *testing.T) {
+	f := newFx(t)
+	f.bus(15 * day)
+	f.dirty(false)
+	row := fmt.Sprintf(`{"ts":2,"crew_id":"c1","kind":"claim-issue","branch":"%s","issue":"https://github.com/other/repo/issues/9"}`, branch)
+	b, err := os.ReadFile(f.paths.Log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(f.paths.Log, append(b, row+"\n"...), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if rc := f.auto(Request{}, nil, nil); rc != 0 {
+		t.Fatalf("rc=%d %s", rc, f.stderr.String())
+	}
+	f.wantSkip("it claims an issue gh cannot check")
+}
+
+func TestAutoTrimsOldAutoLogLines(t *testing.T) {
+	f := newFx(t)
+	f.bus(3 * day)
+	if err := os.MkdirAll(f.archiveRoot(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	old := `{"ts":"2020-01-01T00:00:00Z","action":"skipped","branch":"old"}` + "\n"
+	if err := os.WriteFile(filepath.Join(f.archiveRoot(), "auto.log"), []byte(old), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if rc := f.auto(Request{}, nil, nil); rc != 0 {
+		t.Fatalf("rc=%d %s", rc, f.stderr.String())
+	}
+	for _, e := range f.autoLog() {
+		if e.Branch == "old" {
+			t.Fatalf("old line kept: %+v", f.autoLog())
 		}
 	}
 }

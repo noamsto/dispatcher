@@ -156,7 +156,7 @@ func (a *autoRun) handle(ctx context.Context, it *Item, grace time.Duration) {
 		a.removed++
 		e.Action, e.Reason = "removed", it.Reason
 		a.log(e)
-	case errors.Is(err, errBranchKept):
+	case dir != "" || errors.Is(err, errDrift):
 		a.fails++
 		e.Action, e.Reason = "error", err.Error()
 		a.log(e)
@@ -177,6 +177,9 @@ func ineligible(it *Item, grace time.Duration) string {
 		return "no status on the bus: its age is unknown"
 	case time.Duration(it.AgeS)*time.Second < grace:
 		return fmt.Sprintf("inside the grace period (%s old, needs %s)", age(it.AgeS), age(int64(grace/time.Second)))
+	}
+	if it.unverifiedClaims > 0 {
+		return "it claims an issue gh cannot check"
 	}
 	for _, i := range it.Issues {
 		if i.State != "CLOSED" {
@@ -200,6 +203,11 @@ func (a *autoRun) skip(e logEntry, reason string) {
 
 // prune removes the archives older than d and logs each.
 func (a *autoRun) prune(d time.Duration) {
+	if !a.dry {
+		if err := a.o.trimLog(a.o.now().Add(-d)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			say(a.stderr, "crew cleanup: auto log: %v\n", err)
+		}
+	}
 	dirs, failed, err := a.o.sweep(d, a.dry, a.stderr)
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		a.fails++
@@ -239,6 +247,34 @@ func (a *autoRun) write(v any) {
 	if err != nil {
 		say(a.stderr, "crew cleanup: auto log: %v\n", err)
 	}
+}
+
+// trimLog drops the auto log's lines stamped before cutoff; a line it cannot
+// parse is kept.
+func (o Options) trimLog(cutoff time.Time) error {
+	path := filepath.Join(o.archiveRoot(), autoLogName)
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	var kept bytes.Buffer
+	for line := range bytes.SplitSeq(b, []byte("\n")) {
+		if len(line) == 0 {
+			continue
+		}
+		var e logEntry
+		if json.Unmarshal(line, &e) == nil {
+			if t, err := time.Parse(time.RFC3339, e.TS); err == nil && t.Before(cutoff) {
+				continue
+			}
+		}
+		kept.Write(line)
+		kept.WriteByte('\n')
+	}
+	if kept.Len() == len(b) {
+		return nil
+	}
+	return os.WriteFile(path, kept.Bytes(), 0o600)
 }
 
 func appendLine(root string, line []byte) error {

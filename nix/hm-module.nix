@@ -1100,7 +1100,7 @@ in {
             TimeoutStartSec = "1h";
             ExecStart =
               if cleanupAuto
-              then ["-${pkgsFor.crew}/bin/crew reap --fleet --quiet --no-wait" "-${pkgsFor.crew}/bin/crew cleanup --auto --fleet"]
+              then ["-${pkgsFor.crew}/bin/crew reap --fleet --quiet --no-wait" "${pkgsFor.crew}/bin/crew cleanup --auto --fleet"]
               else ["${pkgsFor.crew}/bin/crew reap --fleet --quiet --no-wait"];
           };
         };

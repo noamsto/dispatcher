@@ -27,6 +27,9 @@ const (
 // errDrift is reap's own refusal text for a git config that left its baseline.
 var errDrift = errors.New("git config drift (run `crew git-baseline`)")
 
+// errTampered is the refusal when the worktree's .git changed mid-cleanup.
+var errTampered = errors.New("its .git changed during cleanup; possible tampering: tell the human")
+
 // errBranchKept marks a removal that took the worktree but not its branch.
 var errBranchKept = errors.New("worktree removed, but branch delete failed")
 
@@ -102,7 +105,7 @@ func (o Options) remove(ctx context.Context, it *Item, stderr io.Writer) (string
 		return dir, err
 	}
 	if !wtgit.GitlinkOK(admin, wt) {
-		return dir, errors.New("its .git changed during cleanup; possible tampering: tell the human")
+		return dir, errTampered
 	}
 	cmd, err := wtgit.CommonCommand(ctx, common, wtgit.Opts{Stderr: io.Discard}, "worktree", "remove", "--force", wt)
 	if err != nil {
@@ -138,7 +141,11 @@ func (o Options) verifyArchive(ctx context.Context, it *Item, dir, before string
 		return err
 	}
 	bundle := filepath.Join(dir, bundleName)
-	if _, err := os.Stat(bundle); err == nil {
+	_, statErr := os.Stat(bundle)
+	if meta.Commits && errors.Is(statErr, fs.ErrNotExist) {
+		return errors.New("the commit bundle is missing")
+	}
+	if statErr == nil {
 		cmd, err := wtgit.CommonCommand(ctx, it.paths.Common, wtgit.Opts{Stderr: stderr}, "bundle", "verify", bundle)
 		if err != nil {
 			return errDrift
@@ -146,8 +153,8 @@ func (o Options) verifyArchive(ctx context.Context, it *Item, dir, before string
 		if err := cmd.Run(); err != nil {
 			return fmt.Errorf("the commit bundle does not verify: %w", err)
 		}
-	} else if !errors.Is(err, fs.ErrNotExist) {
-		return err
+	} else if !errors.Is(statErr, fs.ErrNotExist) {
+		return statErr
 	}
 	if meta.Uncommit {
 		fi, err := os.Stat(filepath.Join(dir, patchName))
@@ -310,7 +317,7 @@ func (o Options) treeState(ctx context.Context, admin string, it *Item, stderr i
 	if err != nil {
 		return "", errors.New("could not read its uncommitted state")
 	}
-	return tree + "\n" + string(tip), nil
+	return tree + "\n" + strings.TrimSpace(string(tip)), nil
 }
 
 // inside reports whether dir is wt or below it, through symlinks.

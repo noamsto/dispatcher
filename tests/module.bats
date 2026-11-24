@@ -1055,7 +1055,7 @@ worktree_git_lib_crew_go_row() { # bin
   [ "$status" -eq 0 ]
   run jq -e '.full.systemdUser.services["dispatcher-reap"].Service.TimeoutStartSec == "1h"' "$EVAL"
   [ "$status" -eq 0 ]
-  run jq -e '.full.systemdUser.services["dispatcher-reap"].Service.ExecStart | length == 2 and (.[0] | test("^-/nix/store/[^/]+-crew/bin/crew reap --fleet --quiet --no-wait$")) and (.[1] | test("^-/nix/store/[^/]+-crew/bin/crew cleanup --auto --fleet$"))' "$EVAL"
+  run jq -e '.full.systemdUser.services["dispatcher-reap"].Service.ExecStart | length == 2 and (.[0] | test("^-/nix/store/[^/]+-crew/bin/crew reap --fleet --quiet --no-wait$")) and (.[1] | test("^/nix/store/[^/]+-crew/bin/crew cleanup --auto --fleet$"))' "$EVAL"
   [ "$status" -eq 0 ]
   run jq -e '.cleanupOff.systemdUser.services["dispatcher-reap"].Service.ExecStart | length == 1 and (.[0] | test("^/nix/store/[^/]+-crew/bin/crew reap --fleet --quiet --no-wait$"))' "$EVAL"
   [ "$status" -eq 0 ]
@@ -1104,6 +1104,13 @@ worktree_git_lib_crew_go_row() { # bin
   run jq -e '(.harnessOff.systemdUser.services["dispatcher-refresh-harness"] == null) and (.harnessOff.systemdUser.timers["dispatcher-refresh-harness"] == null) and (.harnessOff.systemdUser.services["dispatcher-refresh"] != null) and (.harnessOff.systemdUser.timers["dispatcher-reap"] != null)' "$EVAL"
   [ "$status" -eq 0 ]
   run jq -e '(.darwinHarnessOff["dispatcher-refresh-harness"] == null) and (.darwinHarnessOff["dispatcher-refresh"] != null) and (.darwinHarnessOff["dispatcher-reap"] != null)' "$EVAL"
+  [ "$status" -eq 0 ]
+}
+
+@test "cleanup.auto lands in the locked layer only when set" {
+  run jq -e '.cleanupOff.locked.cleanup == {"auto": false}' "$EVAL"
+  [ "$status" -eq 0 ]
+  run jq -e '.full.locked | has("cleanup") | not' "$EVAL"
   [ "$status" -eq 0 ]
 }
 

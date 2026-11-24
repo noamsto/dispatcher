@@ -46,6 +46,8 @@ type Item struct {
 	paths bus.Paths
 	cwd   string
 	tip   string
+	// unverifiedClaims counts issue claims gh cannot check.
+	unverifiedClaims int
 	// callerCwd is where the user ran the command; reap changes the process's.
 	callerCwd string
 }
@@ -84,7 +86,7 @@ func (o Options) item(ctx context.Context, p bus.Paths, cwd string, c reap.Candi
 	it := &Item{
 		tip:  o.branchTip(ctx, p, c.Branch),
 		Repo: p.Common, Branch: c.Branch, Codename: c.Codename, Reason: c.StaleReason,
-		Stale: c.Stale, Worktree: c.Worktree, State: c.State, paths: p, cwd: cwd,
+		Stale: c.Stale, Worktree: c.Worktree, State: c.State, paths: p, cwd: cwd, unverifiedClaims: c.UnverifiedClaims,
 	}
 	if !c.Stale && snooze.Active(p.Dir, c.Branch, it.snoozeKey(), o.now()) {
 		return nil
