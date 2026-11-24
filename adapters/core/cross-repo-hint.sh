@@ -7,13 +7,16 @@
 # $CROSS_REPO_HINT_LIB. Sourced, never executed — the shebang only keeps the
 # CI `shellcheck adapters/core/*.sh` glob happy.
 
-# cross_repo_hint <worker_common> <crew_id> — the crew bus is per repo, so a
-# dispatcher whose tmux pane sits in another checkout watches the wrong bus and
-# never sees this worker's pr_open/done. Print the exact lane command for the
+# cross_repo_hint <worker_common> <crew_id> — a layout-1 crew's bus is per repo,
+# so a dispatcher whose tmux pane sits in another checkout watches the wrong bus
+# and never sees this worker's pr_open/done. Print the exact lane command for the
 # worker's repo when the pane sits elsewhere and that bus is not already being
-# streamed. `crew stream --status` is the single source of truth for liveness
-# (rc 0 alive, 1 stale, 2 dead), so anything but alive means the dispatcher
-# cannot see this worker here. Read-only; must run from the worker repo.
+# streamed. A layout-2 crew has one log under the state root, readable from any
+# cwd, so the lane note is false for it: resolve its log and go silent unless
+# that log is this repo's bus. `crew stream --status` is the single source of
+# truth for liveness (rc 0 alive, 1 stale, 2 dead), so anything but alive means
+# the dispatcher cannot see this worker here. Read-only; must run from the worker
+# repo.
 cross_repo_hint() {
   local worker_common="$1" crew_id="$2" dpane_path dcommon worker_top
   [ -n "${TMUX_PANE:-}" ] || return 0
@@ -23,6 +26,12 @@ cross_repo_hint() {
     dcommon=$(git -C "$dpane_path" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)
   fi
   [ -n "$dcommon" ] && [ "$dcommon" != "$worker_common" ] || return 0
+  # A failed resolution keeps the hint: a launcher that cannot resolve the
+  # store registers the crew on this repo's bus, so the lane is real.
+  local crew_log
+  if crew_log=$(crew where --log --crew "$crew_id" 2>/dev/null); then
+    [ "$crew_log" = "$worker_common/crew/events.jsonl" ] || return 0
+  fi
   crew stream --status --crew "$crew_id" >/dev/null 2>&1 && return 0
   worker_top=$(git rev-parse --show-toplevel 2>/dev/null || true)
   # Inside the git common dir `--show-toplevel` fails while `crew` still

@@ -67,6 +67,13 @@ func runMine(t *testing.T, p bus.Paths, o Options) (string, string, int) {
 	return runWith(t, true, p, o)
 }
 
+func runLegacy(t *testing.T, p bus.Paths, o Options) (string, string, int) {
+	t.Helper()
+	var out, errB bytes.Buffer
+	code := RunLegacy(p, &out, &errB, o)
+	return out.String(), errB.String(), code
+}
+
 func runWith(t *testing.T, mine bool, p bus.Paths, o Options) (string, string, int) {
 	t.Helper()
 	var out, errB bytes.Buffer

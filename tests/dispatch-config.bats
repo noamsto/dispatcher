@@ -279,14 +279,18 @@ ROWS
   done
 }
 
-@test "crewLayout defaults to 1 and takes 1 or 2 from the user layer" {
+@test "crewLayout defaults to 2 and takes 1 or 2 from the user layer" {
   run --separate-stderr "$CONFIG"
   [ "$status" -eq 0 ]
-  jq -e '.crewLayout == 1' <<<"$output"
+  jq -e '.crewLayout == 2' <<<"$output"
   user_settings '{"crewLayout":2}'
   run --separate-stderr "$CONFIG"
   [ "$status" -eq 0 ]
   jq -e '.crewLayout == 2' <<<"$output"
+  user_settings '{"crewLayout":1}'
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 0 ]
+  jq -e '.crewLayout == 1' <<<"$output"
 }
 
 @test "crewLayout must be 1 or 2" {

@@ -102,6 +102,54 @@ func TestRegisterLayout1OutsideARepoIsNotARepo(t *testing.T) {
 	absent(t, p.State+"/crews")
 }
 
+// An unset CREW_LAYOUT is layout 2: the setting's default is 2.
+func TestRegisterDefaultIsLayout2(t *testing.T) {
+	p := statePaths(t)
+	w := newWorld("c1")
+	delete(w.env, "CREW_LAYOUT") // newWorld pins layout 1 for the corpus
+	if code, stderr := run("register", "888", p, w); code != 0 || stderr != "" {
+		t.Fatalf("code=%d stderr=%q", code, stderr)
+	}
+	if m := metaOf(t, p.State, "c1"); m["created_by"] != "register" {
+		t.Errorf("created_by = %v, want register", m["created_by"])
+	}
+	// Nothing under the repo bus: the default lands a layout-2 crew only.
+	absent(t, p.CrewDir("c1"))
+}
+
+// With the setting defaulting to 2, an unset CREW_LAYOUT and no state root is
+// refused exactly as an explicit CREW_LAYOUT=2 is.
+func TestRegisterDefaultRefusesWithoutStateRoot(t *testing.T) {
+	p := testPaths(t)
+	w := newWorld("c1")
+	delete(w.env, "CREW_LAYOUT") // newWorld pins layout 1 for the corpus
+	code, stderr := run("register", "888", p, w)
+	if code != 1 || stderr != "crew: register: CREW_LAYOUT=2 needs XDG_STATE_HOME or HOME\n" {
+		t.Fatalf("code=%d stderr=%q", code, stderr)
+	}
+	absent(t, p.Dir)
+}
+
+// A legacy crew stays layout 1 even with no state root: the missing-state-root
+// refusal fires only when a new layout-2 crew would actually be written.
+func TestRegisterDefaultKeepsALegacyCrewLayout1WithoutAStateRoot(t *testing.T) {
+	p := testPaths(t)
+	w := newWorld("c1")
+	delete(w.env, "CREW_LAYOUT") // newWorld pins layout 1 for the corpus
+	seed(t, p, "c1", "777")
+	if code, stderr := run("register", "888", p, w); code != 0 || stderr != "" {
+		t.Fatalf("code=%d stderr=%q", code, stderr)
+	}
+	bc, err := p.Crew("c1")
+	if err != nil || bc.Layout != 1 {
+		t.Fatalf("crew = %+v, %v; want layout 1", bc, err)
+	}
+	if got := readFile(t, p.CrewDir("c1")+"/pid"); got != "888\n" {
+		t.Errorf("legacy pid = %q", got)
+	}
+	absent(t, p.CrewDir("c1")+"/meta.json")
+}
+
 // An existing meta.json is reused whatever CREW_LAYOUT says, and never
 // rewritten.
 func TestRegisterLayout2PinIsSticky(t *testing.T) {

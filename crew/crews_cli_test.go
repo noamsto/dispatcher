@@ -71,6 +71,8 @@ func newCrewsCLI(t *testing.T) *crewsCLI {
 	h := newHoldCLI(t)
 	// reap would otherwise exec os.Executable, the test binary.
 	t.Setenv("CREW_RATE_AUTOSWEEP", "0")
+	// This CLI corpus is the layout-1 corpus until phase 6 deletes it.
+	t.Setenv("CREW_LAYOUT", "1")
 	unsetenv(t, "TMUX", "TMUX_PANE", "PR_OPEN_BRANCH", "TMUX_WINDOWS")
 	t.Setenv("XDG_DATA_HOME", t.TempDir())
 	t.Setenv("GIT_CONFIG_GLOBAL", "/dev/null")
@@ -431,6 +433,21 @@ func TestCrewsHome(t *testing.T) {
 		c := newCrewsCLI(t)
 		out, _ := c.expect(64, "crews", "--home", "--mine")
 		eq(t, "stdout", out, "")
+	})
+}
+
+func TestCrewsLegacy(t *testing.T) {
+	t.Run("prints the live layout-1 crew and nothing else", func(t *testing.T) {
+		c := newCrewsCLI(t)
+		c.registerAs("c-legacy", strconv.Itoa(os.Getppid()))
+		eq(t, "stdout", c.mustRun("crews", "--legacy"), "c-legacy\n")
+	})
+
+	t.Run("--legacy with --mine is a usage error", func(t *testing.T) {
+		c := newCrewsCLI(t)
+		out, errOut := c.expect(64, "crews", "--legacy", "--mine")
+		eq(t, "stdout", out, "")
+		eq(t, "stderr", errOut, "crew: crews: --mine and --legacy can't be used together\n")
 	})
 }
 

@@ -47,7 +47,7 @@
 # freshSeams (boolean, default false) arms dispatch's fresh lead relaunch at
 # the execute and review seams for eligible claude/pi standard/deep implement
 # workers; dispatch --fresh-seams/--no-fresh-seams override it per dispatch.
-# crewLayout (1 or 2, default 1) picks where a new crew keeps its state; CREW_LAYOUT
+# crewLayout (1 or 2, default 2) picks where a new crew keeps its state; CREW_LAYOUT
 # in the env wins for one launch.
 # dashTailscale (boolean, default false) lets crew dash read `tailscale status
 # --json` for host reachability; hosts.<name>.tailscale names the host's Tailscale

@@ -58,8 +58,9 @@ type resolveCmd struct {
 }
 
 type crewsCmd struct {
-	Mine bool `name:"mine" xor:"scope"`
-	Home bool `name:"home" xor:"scope"`
+	Mine   bool `name:"mine" xor:"scope"`
+	Home   bool `name:"home" xor:"scope"`
+	Legacy bool `name:"legacy" xor:"scope" help:"Live layout-1 crews of this repo — the phase 6 deletion gate."`
 }
 
 type registerCmd struct {

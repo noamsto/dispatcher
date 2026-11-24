@@ -66,6 +66,40 @@ func Run(ctx context.Context, mineOnly, homeOnly bool, paths bus.Paths, stdout, 
 	return table(ctx, homeOnly, paths, stdout, stderr, o)
 }
 
+// RunLegacy lists the live layout-1 crews of this repo — the phase 6 deletion
+// gate, "crew crews --legacy prints nothing". Layout 1 means "resolves to
+// layout 1 here": a repo dir beside a meta.json is layout 2 and is skipped.
+// It prints one id per line in crewDirs order, with no header. Outside a repo
+// it refuses with exit 1, so the gate can tell "nothing" from "could not
+// look"; otherwise it exits 0.
+func RunLegacy(paths bus.Paths, stdout, stderr io.Writer, o Options) int {
+	if paths.Common == "" {
+		say(stderr, "crew: crews --legacy: no repo here — layout-1 crews live one per repo; run this inside each repo\n")
+		return 1
+	}
+	now := o.Clock.Now()
+	for _, id := range crewDirs(paths) {
+		crew, err := paths.Crew(id)
+		if err != nil || crew.Layout == 2 {
+			continue
+		}
+		pidfile := crew.Dir + "/pid"
+		pid, ok := PidFileText(pidfile)
+		if !ok {
+			continue // no readable file reads as the empty pid
+		}
+		n, ok := validPid(pid)
+		if !ok {
+			continue
+		}
+		if !RecordedLive(o.Proc, now, n, pidfile) {
+			continue
+		}
+		say(stdout, "%s\n", id)
+	}
+	return 0
+}
+
 // mine is the arm's --mine branch: crews whose recorded dispatcher pid is a
 // live ancestor of this process. Only pid files count, and the log is never
 // read.

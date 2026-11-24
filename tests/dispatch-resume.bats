@@ -2977,6 +2977,9 @@ if [ "$1" = engine-cmd ]; then
   exit 1
 fi
 if [ "$1" = stream ]; then exec "$CREW_REAL" "$@"; fi
+# The hint resolves the crew's own log with `crew where --log`, so the layout
+# under test (the repo bus vs the state-root store) is resolved for real.
+if [ "$1" = where ]; then exec "$CREW_REAL" "$@"; fi
 exit 0
 EOF
   chmod +x "$STUB_DIR/crew"

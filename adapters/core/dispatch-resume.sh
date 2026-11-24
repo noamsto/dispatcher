@@ -1320,8 +1320,8 @@ protocol_note=" Protocol files (EVIDENCE_REVIEW.md, GRID_PROTOCOL.md, ...) live 
 # boots — its startup drain is unbounded, so a scoping note posted now still lands.
 echo "worker_id: $worker_id"
 
-# Cross-repo resume (#420, sharing #398's detection): the crew bus is per repo,
-# so print the worker-repo lane command when the dispatcher's pane sits
+# Cross-repo resume (#420, sharing #398's detection): a layout-1 crew's bus is
+# per repo, so print the worker-repo lane command when the dispatcher's pane sits
 # elsewhere and that bus is not being streamed. The detection is one sourced
 # helper whose store path flake.nix bakes, shared with dispatch.sh; a raw run
 # without the override skips it rather than aborting under set -e.
