@@ -3,6 +3,7 @@ package where
 import (
 	"bytes"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
@@ -93,6 +94,60 @@ func TestRunPathJSON(t *testing.T) {
 		{"no crew", PathRequest{JSON: true}, p, 1, "", "crew: no crew context — pass --crew <id>\n"},
 	} {
 		code, out, errB := runPath(tc.req, tc.paths, "")
+		if code != tc.code || out != tc.stdout || errB != tc.stderr {
+			t.Errorf("%s: code %d stdout %q stderr %q, want %d %q %q", tc.name, code, out, errB, tc.code, tc.stdout, tc.stderr)
+		}
+	}
+}
+
+func TestRunPathHome(t *testing.T) {
+	tr := setup(t)
+	state := t.TempDir()
+	p := tr.paths.WithState(state)
+	checkout, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	gitDir := filepath.Join(checkout, ".git")
+	if err := os.Mkdir(gitDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(gitDir, link); err != nil {
+		t.Fatal(err)
+	}
+	notGit := filepath.Join(checkout, "other")
+	if err := os.Mkdir(notGit, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rel := "rel/.git"
+	for _, m := range []bus.Meta{
+		{ID: "homed", HomeHost: "h", HomeRepo: &gitDir, CreatedBy: "register"},
+		{ID: "c2", HomeHost: "h", CreatedBy: "register"},
+		{ID: "visit", HomeHost: "h", HomeRepo: &gitDir, Visiting: true, CreatedBy: "register"},
+		{ID: "notgit", HomeHost: "h", HomeRepo: &notGit, CreatedBy: "register"},
+		{ID: "relative", HomeHost: "h", HomeRepo: &rel, CreatedBy: "register"},
+		{ID: "linked", HomeHost: "h", HomeRepo: &link, CreatedBy: "register"},
+	} {
+		if err := bus.CreateMeta(state, m); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, tc := range []struct {
+		name           string
+		crew           string
+		code           int
+		stdout, stderr string
+	}{
+		{"homed", "homed", 0, checkout + "\n", ""},
+		{"null home", "c2", 4, "", "crew: crew c2 has no home repo — it cannot be spawned into a repo\n"},
+		{"visiting", "visit", 1, "", "crew: crew visit is visiting this host — relaunch it on h\n"},
+		{"not a .git", "notgit", 1, "", "crew: crew notgit: home repo " + notGit + " is not a .git directory\n"},
+		{"relative", "relative", 1, "", "crew: crew relative: home repo rel/.git is not absolute\n"},
+		{"not its realpath", "linked", 1, "", "crew: crew linked: home repo " + link + " is not its own realpath\n"},
+		{"layout 1", "c1", 1, "", "crew: crew c1 is layout 1 — its home is the repo it runs in\n"},
+	} {
+		code, out, errB := runPath(PathRequest{Crew: tc.crew, Home: true}, p, "")
 		if code != tc.code || out != tc.stdout || errB != tc.stderr {
 			t.Errorf("%s: code %d stdout %q stderr %q, want %d %q %q", tc.name, code, out, errB, tc.code, tc.stdout, tc.stderr)
 		}

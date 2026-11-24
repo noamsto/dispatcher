@@ -15,6 +15,7 @@ import (
 	"strings"
 
 	"github.com/noamsto/dispatcher/crew/internal/ascii"
+	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/lock"
 	"github.com/noamsto/dispatcher/crew/internal/proc"
 )
@@ -141,6 +142,13 @@ func BusScratch(lane, common string) string {
 // steal that dispatcher's wakes. stateDir is ${XDG_STATE_HOME:-$HOME/.local/state}.
 func OverseerCursor(stateDir, common string) string {
 	return filepath.Join(BusScratch(filepath.Join(stateDir, "crew", "overseer"), common), "cursor")
+}
+
+// OverseerCrewCursor is the overseer's msg cursor for one layout-2 crew, in the
+// crew's own store. state is bus.StateRoot (already ending in /crew), unlike
+// OverseerCursor's stateDir.
+func OverseerCrewCursor(state, id string) string {
+	return bus.StoreDir(state, id) + "/overseer.cursor"
 }
 
 // OverseerHosts holds one OverseerHostDir per partner the overseer pulled.

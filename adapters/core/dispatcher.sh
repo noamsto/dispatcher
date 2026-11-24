@@ -517,13 +517,28 @@ if [ -n "$relaunch_id" ]; then
   }
   common=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || common=""
   _resolve_crew_dir "$common" || exit 1
-  if [ -z "$common" ]; then
-    # A layout-2 crew with no home repo has no main worktree to return to.
-    if [ "$crew_dir_v2" = 0 ]; then
-      echo "dispatcher: --relaunch: ${relaunch_repo:-.} is not a git repo" >&2
-      exit 1
+  if [ "$crew_dir_v2" = 1 ]; then
+    home_rc=0
+    home_wt=$(crew where --home --crew "$CREW_ID") || home_rc=$?
+    if [ -n "$relaunch_repo" ] || [ -n "$common" ]; then
+      [ "$home_rc" = 0 ] || exit 1
+      if [ -z "$common" ] || [ "$(realpath -e -- "$common" 2>/dev/null)" != "$home_wt/.git" ]; then
+        echo "dispatcher: --relaunch: crew $CREW_ID is homed in $home_wt, not ${relaunch_repo:-.}" >&2
+        exit 1
+      fi
+      wt=$home_wt
+    else
+      case $home_rc in
+      0) wt=$home_wt ;;
+      # A crew with no home repo has no main worktree to return to.
+      4) wt=$PWD ;;
+      *) exit 1 ;;
+      esac
     fi
-    wt=$PWD
+    cd -- "$wt" || exit 1
+  elif [ -z "$common" ]; then
+    echo "dispatcher: --relaunch: ${relaunch_repo:-.} is not a git repo" >&2
+    exit 1
   else
     if [[ $common != */.git ]]; then
       echo "dispatcher: --relaunch: the git common dir $common does not end in /.git, so there is no main worktree to relaunch in" >&2

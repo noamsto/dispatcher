@@ -19,7 +19,7 @@ import (
 // on origin, where the remote worker may already have pushed past it. It sets
 // mode, rel and label; false has noted why the branch is kept.
 func (r *run) migratedGate(ctx context.Context, c *candidate) bool {
-	evs, err := bus.ReadEvents(r.paths.Log)
+	evs, err := bus.ReadRepoEvents(r.paths)
 	if err != nil {
 		r.keep(c, "migrated, but could not read the bus")
 		return false

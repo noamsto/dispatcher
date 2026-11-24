@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"path/filepath"
 	"strings"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
@@ -34,8 +35,11 @@ const (
 	// exitRefused is a crew the resolver refuses (archived, index-only), so a
 	// caller can tell it from a failure it may fall back on.
 	exitRefused = 3
+	// exitNoHome is a layout-2 crew registered outside a repo, which a relaunch
+	// tells apart from a crew whose home is unusable.
+	exitNoHome = 4
 	// Usage is the arm's `crew where` signature, quoted in every refusal.
-	Usage = "usage: crew where <target> [--crew ID] | crew where --log|--dir [--crew ID] | crew where --json [--crew ID]"
+	Usage = "usage: crew where <target> [--crew ID] | crew where --log|--dir [--crew ID] | crew where --json [--crew ID] | crew where --home [--crew ID]"
 	// jump is the line's tail: what a human or a dispatcher pastes to get there.
 	jump = "   jump: ! tmux switch-client -t "
 )
@@ -87,13 +91,14 @@ type Request struct {
 	Crew, Target string
 }
 
-// PathRequest is `crew where --log|--dir|--json [--crew ID]`: Crew is the flag
+// PathRequest is `crew where --log|--dir|--json|--home [--crew ID]`: Crew is the flag
 // ("" for the task doc and env), Log picks the log over the dir, JSON prints
-// the whole answer instead.
+// the whole answer instead and Home prints the crew's home main checkout.
 type PathRequest struct {
 	Crew string
 	Log  bool
 	JSON bool
+	Home bool
 }
 
 // pathJSON is the `--json` answer; Meta is null for a layout-1 crew.
@@ -133,11 +138,51 @@ func RunPath(req PathRequest, paths bus.Paths, stdout, stderr io.Writer, crewID 
 	if req.JSON {
 		return printJSON(bc, paths, stdout, stderr)
 	}
+	if req.Home {
+		return printHome(bc, paths, stdout, stderr)
+	}
 	path := bc.Dir
 	if req.Log {
 		path = bc.Log
 	}
 	say(stdout, "%s\n", path)
+	return 0
+}
+
+// printHome prints the main checkout a layout-2 crew was registered in, once its
+// home_repo is shown to be a usable common dir on this host.
+func printHome(bc bus.Crew, paths bus.Paths, stdout, stderr io.Writer) int {
+	if bc.Layout != 2 {
+		say(stderr, "crew: crew %s is layout 1 — its home is the repo it runs in\n", bc.ID)
+		return exitFailure
+	}
+	m, err := bus.ReadMeta(paths.State, bc.ID)
+	if err != nil {
+		say(stderr, "crew: %v\n", err)
+		return exitFailure
+	}
+	if m.Visiting {
+		say(stderr, "crew: crew %s is visiting this host — relaunch it on %s\n", bc.ID, m.HomeHost)
+		return exitFailure
+	}
+	if m.HomeRepo == nil {
+		say(stderr, "crew: crew %s has no home repo — it cannot be spawned into a repo\n", bc.ID)
+		return exitNoHome
+	}
+	h := *m.HomeRepo
+	if !filepath.IsAbs(h) {
+		say(stderr, "crew: crew %s: home repo %s is not absolute\n", bc.ID, h)
+		return exitFailure
+	}
+	if tag, err := bus.RepoTag(h); err != nil || tag != h {
+		say(stderr, "crew: crew %s: home repo %s is not its own realpath\n", bc.ID, h)
+		return exitFailure
+	}
+	if filepath.Base(h) != ".git" {
+		say(stderr, "crew: crew %s: home repo %s is not a .git directory\n", bc.ID, h)
+		return exitFailure
+	}
+	say(stdout, "%s\n", filepath.Dir(h))
 	return 0
 }
 

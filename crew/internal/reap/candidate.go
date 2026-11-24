@@ -562,10 +562,12 @@ func (r *run) killIdle(ctx context.Context, c *candidate, idle []idleSample) boo
 		wins[i] = s.win
 	}
 	slices.Sort(wins)
-	for _, w := range slices.Compact(wins) {
-		if w == "" {
-			continue
-		}
+	wins = slices.DeleteFunc(slices.Compact(wins), func(w string) bool { return w == "" })
+	if why, ok := r.l2Windows(ctx, c.branch, wins); !ok {
+		r.keep(c, "layout-2 row not validated: "+why)
+		return false
+	}
+	for _, w := range wins {
 		if r.dry {
 			r.say("would kill window " + w + " (" + c.branch + " idle engine)")
 			continue
@@ -616,6 +618,10 @@ func (r *run) consider(ctx context.Context, row latestRow) (bool, int) {
 		return false, 0
 	}
 	c.wtpath = wt
+	if why, ok := r.l2Check(ctx, c.branch, wt, worktreeWindows(ctx, r.p.Tmux, wt)); !ok {
+		r.keep(c, "layout-2 row not validated: "+why)
+		return false, 0
+	}
 
 	if c.state == string(bus.StateMigrated) {
 		if !r.migratedGate(ctx, c) {

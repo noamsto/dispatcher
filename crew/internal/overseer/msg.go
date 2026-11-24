@@ -105,6 +105,12 @@ func RunMsg(ctx context.Context, req MsgRequest, stdout, stderr io.Writer, o Opt
 	if req.Host != "" && req.Host != self {
 		return relay(ctx, req, self, stdout, stderr, o)
 	}
+	if paths, reason, ok := layout2Target(ctx, req.Repo, req.Crew, o); ok {
+		if reason != "" {
+			return refuse(stderr, "%s", reason)
+		}
+		return status.RunOverseerMsg(ctx, status.OverseerMsgRequest{Self: self, Crew: req.Crew, Body: req.Body}, paths, stderr, status.Options{Clock: o.Clock, Sender: o.Sender})
+	}
 	found := repos.Discover(repos.Options{Registry: o.Registry, Getenv: o.Getenv, Stderr: stderr, Prefix: "crew: overseer msg"})
 	paths, reason := busFor(ctx, req.Repo, req.Crew, found, o)
 	if reason != "" {

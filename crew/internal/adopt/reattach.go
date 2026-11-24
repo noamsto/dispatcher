@@ -30,6 +30,11 @@ func reattach(ctx context.Context, req Request, paths bus.Paths, stderr io.Write
 	if err != nil {
 		return 0
 	}
+	if bc.Layout == 2 {
+		if m, err := bus.ReadMeta(paths.State, req.ID); err != nil || m.Visiting || !crews.HomedHere(paths, m) {
+			return 0
+		}
+	}
 	if !ascii.IsDigits(req.PID) {
 		return 0
 	}

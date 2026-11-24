@@ -3381,6 +3381,34 @@ STUB
   [[ $(cat "$C2/relaunch") =~ ^[0-9]+$ ]]
 }
 
+@test "1784: --relaunch of a null-home layout-2 crew with --repo refuses, crew's line shown" {
+  _relaunch_l2_setup outside
+  : >"$STUB_LOG"
+  run run_launcher --relaunch c2 --repo "$TEST_REPO"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"has no home repo — it cannot be spawned into a repo"* ]]
+  _no_new_window
+}
+
+@test "1784: --relaunch of a homed layout-2 crew from outside any repo opens the window in its home checkout" {
+  _relaunch_l2_setup
+  _outside_repo
+  run run_launcher --relaunch c2
+  [ "$status" -eq 0 ]
+  live_pid=$(cat "$STUB_DIR/dispatcher.pid")
+  grep -qxF "$TEST_REPO" "$STUB_DIR/new-window.argv"
+}
+
+@test "1784: --relaunch of a homed layout-2 crew with --repo naming another repo refuses" {
+  _relaunch_l2_setup
+  git init -q "$BATS_TEST_TMPDIR/other"
+  : >"$STUB_LOG"
+  run run_launcher --relaunch c2 --repo "$BATS_TEST_TMPDIR/other"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"crew c2 is homed in $TEST_REPO, not $BATS_TEST_TMPDIR/other"* ]]
+  _no_new_window
+}
+
 @test "1747: --relaunch of a legacy crew outside a repo still refuses" {
   _relaunch_setup
   _outside_repo

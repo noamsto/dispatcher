@@ -30,6 +30,13 @@ func WriteHome(paths bus.Paths, bc bus.Crew) error {
 	return os.WriteFile(HomePath(paths, bc.ID), []byte(paths.Common+"\n"), 0o644)
 }
 
+// HomedHere reports whether layout-2 crew m's dispatcher lives in the repo of
+// paths (see homedAt). An unresolvable repo tag counts as not home.
+func HomedHere(paths bus.Paths, m bus.Meta) bool {
+	tag, ok := homeTag(paths)
+	return ok && homedAt(m, tag)
+}
+
 // RepoVerdict is where a process's cwd sits relative to a bus.
 type RepoVerdict int
 

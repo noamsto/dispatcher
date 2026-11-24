@@ -135,6 +135,9 @@ func trustTarget(ctx context.Context, pane string, o Options) (trustPane, int, s
 // stamp (a worker or role pane), else the one crew whose dispatcher pane file
 // names it. Either way the crew must be on that repo's discovered bus.
 func trustBus(ctx context.Context, p trustPane, stderr io.Writer, o Options) (string, bus.Paths, string) {
+	if crew, paths, reason, ok := layout2Trust(p, o); ok {
+		return crew, paths, reason
+	}
 	// git with an empty dir would read the overseer's own cwd.
 	if !filepath.IsAbs(p.path) {
 		return "", bus.Paths{}, "pane " + p.id + " has no working directory"
@@ -156,6 +159,33 @@ func trustBus(ctx context.Context, p trustPane, stderr io.Writer, o Options) (st
 		return "", bus.Paths{}, reason
 	}
 	return crew, paths, ""
+}
+
+// layout2Trust resolves p's crew when it is layout 2, with no git call; ok is
+// false when today's repo path must decide.
+func layout2Trust(p trustPane, o Options) (string, bus.Paths, string, bool) {
+	if bus.ValidCrewID(p.crew) {
+		paths, _, reason, ok := layout2Crew(o, p.crew)
+		if !ok {
+			return "", bus.Paths{}, "", false
+		}
+		if reason != "" {
+			return "", bus.Paths{}, reason, true
+		}
+		return p.crew, paths, "", true
+	}
+	state := stateRoot(o)
+	if state == "" {
+		return "", bus.Paths{}, "", false
+	}
+	crew, reason := paneCrew2(state, p.id)
+	if reason != "" {
+		return "", bus.Paths{}, reason, true
+	}
+	if crew == "" {
+		return "", bus.Paths{}, "", false
+	}
+	return crew, bus.StatePaths(state), "", true
 }
 
 // paneCrew is the one crew of common whose crews/<id>/pane file names pane,

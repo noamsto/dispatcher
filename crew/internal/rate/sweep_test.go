@@ -858,3 +858,41 @@ func TestFoldStoreTornFileIsEmpty(t *testing.T) {
 		t.Errorf("last-wins fold kept %d rows, want the newest one", len(rows))
 	}
 }
+
+func TestSweepLayout2CrewRowsLandInTheStore(t *testing.T) {
+	f := newFixture(t)
+	f.seedSettings()
+	state := filepath.Join(t.TempDir(), "crew")
+	f.paths = f.paths.WithState(state)
+	tag, err := bus.RepoTag(f.paths.Common)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := bus.CreateMeta(state, bus.Meta{ID: "c1"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := bus.IndexAdd(state, tag, "", "c1", time.UnixMilli(1)); err != nil {
+		t.Fatal(err)
+	}
+	rows := []string{
+		fmt.Sprintf(`{"ts":1000,"crew_id":"c1","kind":"dispatch","branch":"feat/x","repo":%q,"engine":"claude","model":"sonnet","tier":"standard","effort":"medium","title":"t"}`, tag),
+		`{"ts":1500,"crew_id":"c1","from":"worker:feat/x#s1","to":"dispatcher:c1","kind":"status","body":{"state":"pr_open","pr_url":"https://github.com/acme/widgets/pull/1"}}`,
+		`{"ts":1600,"crew_id":"c1","from":"worker:feat/x#s1","to":"dispatcher:c1","kind":"status","body":{"state":"done"}}`,
+	}
+	if err := os.WriteFile(bus.StoreDir(state, "c1")+"/events.jsonl", []byte(strings.Join(rows, "\n")+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	f.gh = func(args string) (string, bool) {
+		if strings.HasPrefix(args, "pr view") {
+			return `{"state":"OPEN","closedAt":null,"mergedAt":null,"mergeCommit":null,"commits":[],"reviews":[]}`, true
+		}
+		return `{"workflow_runs":[]}`, true
+	}
+	if stderr, code := f.runQuiet(); code != 0 {
+		t.Fatalf("exit %d: %s", code, stderr)
+	}
+	got := f.rows()
+	if len(got) != 1 || got[0]["run_id"] != "acme/widgets:feat/x:1000" {
+		t.Fatalf("store rows = %v", got)
+	}
+}

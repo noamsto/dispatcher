@@ -157,6 +157,7 @@ func runOverseer(fr FleetRequest, rediscover int64, stdout, stderr io.Writer, o 
 		tick:       time.Duration(tick) * time.Second,
 		ticker:     &loop{c: tickCall, o: o.Options, cdir: lane},
 		buses:      map[string]*follower{},
+		crews:      map[string]*follower{},
 	}
 	v.loadDiffer()
 	rc := v.run(ctx, sigs)
@@ -222,6 +223,7 @@ type overseer struct {
 	tick       time.Duration
 	ticker     *loop
 	buses      map[string]*follower
+	crews      map[string]*follower
 
 	lastDiscover, lastDiff time.Time
 	discovered, diffed     bool
@@ -285,13 +287,16 @@ func (v *overseer) run(ctx context.Context, sigs chan os.Signal) int {
 			discoverBuses(v.o.Discover, v.notes, v.buses,
 				func(common string) { delete(v.buses, common) },
 				func(common string, _ []bus.Event) { v.join(common) })
+			v.discoverCrews()
 		}
-		for _, common := range slices.Sorted(maps.Keys(v.buses)) {
-			if pending(sigs) {
-				return v.shutdown()
-			}
-			if v.poll(v.buses[common]) {
-				return v.shutdown()
+		for _, group := range []map[string]*follower{v.buses, v.crews} {
+			for _, key := range slices.Sorted(maps.Keys(group)) {
+				if pending(sigs) {
+					return v.shutdown()
+				}
+				if v.poll(group[key]) {
+					return v.shutdown()
+				}
 			}
 		}
 		if pending(sigs) {
@@ -410,6 +415,60 @@ func (v *overseer) join(common string) {
 	v.buses[common] = &follower{
 		repo:       v.o.repoName(common),
 		log:        bus.PathsFor(common).Log,
+		cursorPath: path,
+		cursor:     cursor,
+	}
+}
+
+// discoverCrews follows each non-visiting layout-2 crew and drops the ones no
+// longer listed or now visiting. They live apart from buses: discoverBuses
+// leaves any joined key Discover does not list.
+func (v *overseer) discoverCrews() {
+	state := bus.StateRoot(v.o.Getenv)
+	if state == "" {
+		return
+	}
+	metas, _ := bus.ScanMetas(state)
+	live := map[string]bool{}
+	for _, m := range metas {
+		if m.Visiting {
+			continue
+		}
+		live[m.ID] = true
+		if v.crews[m.ID] == nil {
+			v.joinCrew(state, m)
+		}
+	}
+	for id := range v.crews {
+		if !live[id] {
+			delete(v.crews, id)
+		}
+	}
+}
+
+// joinCrew is join for a layout-2 crew, whose log and cursor live in its store.
+func (v *overseer) joinCrew(state string, m bus.Meta) {
+	c, err := bus.StatePaths(state).Crew(m.ID)
+	if err != nil {
+		v.notes.skip(m.ID, oneLine(err))
+		return
+	}
+	path := lanepkg.OverseerCrewCursor(state, m.ID)
+	cursor, ok := watch.ReadCursor(path)
+	if !ok {
+		if err := watch.WriteCursor(path, v.start); err != nil {
+			v.notes.skip(m.ID, oneLine(err))
+			return
+		}
+		cursor = v.start
+	}
+	repo := repos.NoRepoLabel
+	if m.HomeRepo != nil {
+		repo = v.o.repoName(*m.HomeRepo)
+	}
+	v.crews[m.ID] = &follower{
+		repo:       repo,
+		log:        c.Log,
 		cursorPath: path,
 		cursor:     cursor,
 	}
