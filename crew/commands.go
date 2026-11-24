@@ -39,6 +39,7 @@ type whereCmd struct {
 	Crew   *string `name:"crew"`
 	Log    bool    `name:"log"`
 	Dir    bool    `name:"dir"`
+	JSON   bool    `name:"json"`
 	Target string  `arg:"" optional:"" name:"target"`
 }
 
@@ -1019,6 +1020,15 @@ func validate(sub string, r *root) *refusal {
 		c := r.Where
 		if given(c.Crew) {
 			return fail("crew: where: --crew needs an id (" + where.Usage + ")")
+		}
+		if c.JSON {
+			if c.Log || c.Dir {
+				return fail("crew: where: --json excludes --log and --dir (" + where.Usage + ")")
+			}
+			if c.Target != "" {
+				return fail("crew: where: --json takes no target (" + where.Usage + ")")
+			}
+			return nil
 		}
 		if c.Log || c.Dir {
 			if c.Log && c.Dir || c.Target != "" {

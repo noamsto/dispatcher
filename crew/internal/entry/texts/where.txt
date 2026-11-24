@@ -1,4 +1,4 @@
-usage: crew where <target> [--crew ID] | crew where --log|--dir [--crew ID]
+usage: crew where <target> [--crew ID] | crew where --log|--dir [--crew ID] | crew where --json [--crew ID]
 
 A human-usable address for a worker's pane: codename, session:window.pane, window
 name, role and the jump command.
@@ -7,8 +7,19 @@ name, role and the jump command.
   --crew    Crew id; defaults to this repo's crew
   --log     Print the crew's bus log path instead (no target, no tmux)
   --dir     Print the crew's own directory instead (no target, no tmux)
+  --json    Print one JSON object instead (no target, no tmux; excludes --log, --dir)
 
---log and --dir resolve the crew from --crew, the task doc, then $CREW_ID.
+--json prints, in this key order:
+  {"crew_id","layout","dir","log","repo_dir","meta"}
+layout is 1 or 2; dir and log are the paths --dir and --log print; repo_dir is
+the repo's crew dir, or null for a layout-2 crew resolved outside a repo; meta
+is null for layout 1 and for layout 2 the crew's meta.json:
+  {"layout","id","created","home_host","home_repo","home_slug","visiting",
+   "created_by","dispatcher_session"}
+home_repo may be null; home_slug and dispatcher_session are omitted when empty.
+A refusal prints nothing on stdout.
+
+--log, --dir and --json resolve the crew from --crew, the task doc, then $CREW_ID.
 A layout-2 crew answers outside a repo too; a layout-1 crew needs its repo. An
 archived or index-only crew is refused with exit 3, any other failure exits 1.
 

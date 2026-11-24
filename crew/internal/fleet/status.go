@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -315,6 +316,7 @@ func collectStatus(ctx context.Context, req StatusRequest, stderr io.Writer, o S
 	}
 	overseer := o.Getenv("CREW_OVERSEER") != ""
 	stateDir := stateHome(o.Getenv)
+	stateRoot := bus.StateRoot(o.Getenv)
 
 	doc := StatusDoc{
 		TS:      nowMS,
@@ -342,7 +344,7 @@ func collectStatus(ctx context.Context, req StatusRequest, stderr io.Writer, o S
 		say(stderr, "crew: fleet status: machine: %s\n", oneLine(err))
 	} else {
 		lo := LoadOptions{Getenv: o.Getenv, Registry: o.Registry, Tmux: once, Git: o.Git, Clock: o.Clock, BudgetFile: o.BudgetFile, Cmd: o.Cmd, LocalModels: o.LocalModels, Stderr: stderr}
-		q := newQueue(ctx, QueueOptions{LoadOptions: lo, Proc: o.Proc}, scanFleet(o.Registry, o.Getenv, buses.read, nowMS), s, now)
+		q := newQueue(ctx, QueueOptions{LoadOptions: lo, Proc: o.Proc}, scanFleet(o.Registry, o.Getenv, buses.readLog, nowMS), s, now)
 		var rec map[holdKey]dueEntry
 		rec, due = q.advance(readRecord(duePath(o.Getenv)))
 		doc.Machine = &q.load
@@ -365,29 +367,69 @@ func collectStatus(ctx context.Context, req StatusRequest, stderr io.Writer, o S
 	homes := guestHomes(stamps, host)
 	// The bus reads, skips and stderr notes stay serial, in discovery order;
 	// the per-repo builds, which dominate the pass, run concurrently into
-	// index-addressed slots so the document order is the serial order.
+	// slots in that order so the document order is the serial order.
 	type slot struct {
 		build *repoBuild
 		skip  *Skipped
 		repo  RepoStatus
 	}
-	slots := make([]slot, len(found))
-	for i, r := range found {
-		if r.Status != repos.StatusOK {
-			slots[i].skip = &Skipped{Path: r.Common, Status: string(r.Status)}
-			continue
+	var slots []slot
+	// Layout-2 crews join the local pass only, each under its home repo.
+	var l2 []layout2Crew
+	if o.Served == nil {
+		l2 = readLayout2(stateRoot)
+	}
+	groups := groupLayout2(l2, knownCommons(found))
+	build := func(common string, events []bus.Event) {
+		dirs := map[string]string{}
+		for _, c := range groups[common] {
+			dirs[c.id] = c.dir
+			evs, torn, skip := buses.readLog(c.log)
+			switch {
+			case skip == string(repos.StatusNoBus):
+			case skip != "":
+				say(stderr, "crew: fleet status: %s: %s\n", c.log, skip)
+			case torn != "":
+				say(stderr, "crew: fleet status: %s: %s (rows from the readable prefix)\n", c.log, torn)
+				fallthrough
+			default:
+				events = append(events, evs...)
+			}
 		}
-		events, torn, skip := buses.read(r.Common)
-		if skip != "" {
-			slots[i].skip = &Skipped{Path: r.Common, Status: skip}
-			continue
-		}
-		if torn != "" {
-			say(stderr, "crew: fleet status: %s: %s (rows from the readable prefix)\n", r.Common, torn)
-		}
-		slots[i].build = &repoBuild{ctx: ctx, o: o, once: once, common: r.Common, events: events, docs: eventDocs(events),
+		slots = append(slots, slot{build: &repoBuild{ctx: ctx, o: o, once: once, common: common, events: events, docs: eventDocs(events),
 			idx: indexBus(events, busHost), now: now, nowMS: nowMS, nowSec: nowSec, overseer: overseer, host: host, stateDir: stateDir, due: due,
-			probe: probe, homes: homes}
+			probe: probe, homes: homes, crewDirs: dirs}})
+	}
+	grouped := map[string]bool{}
+	for _, r := range found {
+		hasCrews := len(groups[r.Common]) > 0
+		if r.Status != repos.StatusOK && (r.Status != repos.StatusNoBus || !hasCrews) {
+			slots = append(slots, slot{skip: &Skipped{Path: r.Common, Status: string(r.Status)}})
+			continue
+		}
+		grouped[r.Common] = true
+		var events []bus.Event
+		if r.Status == repos.StatusOK {
+			var torn, skip string
+			events, torn, skip = buses.read(r.Common)
+			if skip != "" {
+				slots = append(slots, slot{skip: &Skipped{Path: r.Common, Status: skip}})
+				if !hasCrews {
+					continue
+				}
+				events = nil
+			}
+			if torn != "" {
+				say(stderr, "crew: fleet status: %s: %s (rows from the readable prefix)\n", r.Common, torn)
+			}
+			events = withoutCrews(events, l2)
+		}
+		build(r.Common, events)
+	}
+	for _, common := range slices.Sorted(maps.Keys(groups)) {
+		if !grouped[common] {
+			build(common, nil)
+		}
 	}
 	buildSlot := func(s *slot) {
 		var err error
@@ -416,10 +458,9 @@ func collectStatus(ctx context.Context, req StatusRequest, stderr io.Writer, o S
 	wg.Wait()
 	var candidates []prCandidate
 	for _, s := range slots {
-		switch {
-		case s.skip != nil:
+		if s.skip != nil {
 			doc.Skipped = append(doc.Skipped, *s.skip)
-		case s.build != nil:
+		} else if s.build != nil {
 			candidates = append(candidates, s.build.candidates...)
 			doc.Repos = append(doc.Repos, s.repo)
 		}
@@ -456,6 +497,7 @@ type repoBuild struct {
 	due      *queued           // the fleet queue's due hold, nil for none
 	probe    *probeMemo        // the overseer's --host probes, nil for none
 	homes    map[string]string // crew id → home host of its guest windows
+	crewDirs map[string]string // layout-2 crew id → its dir
 
 	repoName   string
 	ghRepo     string // the raw owner/name, the PR-ownership check's identity
@@ -465,16 +507,22 @@ type repoBuild struct {
 
 func (b *repoBuild) build() (RepoStatus, error) {
 	ctx, o := b.ctx, b.o
-	origin, oerr := git.Origin(ctx, o.Git, b.common)
-	switch {
-	case oerr != nil:
-		b.ghErr = fmt.Errorf("origin could not be read: %s", firstLine(oerr.Error()))
-	case !onGitHub(origin):
-		b.ghErr = errors.New("pr_url is not a PR of this repo: origin is not on github.com")
+	worktrees := sync.OnceValues(func() (string, error) { return "", nil })
+	if b.common == "" {
+		b.ghErr = errors.New("pr_url is not a PR of this repo: the crew has no home repo")
+		b.repoName = noRepo
+	} else {
+		origin, oerr := git.Origin(ctx, o.Git, b.common)
+		switch {
+		case oerr != nil:
+			b.ghErr = fmt.Errorf("origin could not be read: %s", firstLine(oerr.Error()))
+		case !onGitHub(origin):
+			b.ghErr = errors.New("pr_url is not a PR of this repo: origin is not on github.com")
+		}
+		b.ghRepo = repos.Name(b.common, origin)
+		b.repoName = repos.Label(b.common, origin)
+		worktrees = sync.OnceValues(func() (string, error) { return git.Worktrees(ctx, o.Git, "", b.common) })
 	}
-	b.ghRepo = repos.Name(b.common, origin)
-	b.repoName = repos.Label(b.common, origin)
-	worktrees := sync.OnceValues(func() (string, error) { return git.Worktrees(ctx, o.Git, "", b.common) })
 	live := roster.Liveness{Windows: func() map[string]bool { return roster.Windows(ctx, b.once) }, Worktrees: worktrees}
 	rows, err := foldRepo(ctx, b.common, b.events, b.docs, "", b.nowSec,
 		roster.Probes{Tmux: b.once, Worktrees: worktrees, Live: true}, b.remote())
@@ -498,7 +546,7 @@ func (b *repoBuild) build() (RepoStatus, error) {
 		}
 		repo.Crews = append(repo.Crews, c)
 	}
-	if o.Served == nil {
+	if o.Served == nil && b.common != "" {
 		repo.Peers, repo.PeersError = peerStatusOf(b.common, o.PeerHosts, b.events, b.now)
 	}
 	return repo, nil
@@ -511,6 +559,8 @@ func (b *repoBuild) build() (RepoStatus, error) {
 // always are.
 func (b *repoBuild) remote() func(crew string) roster.Capture {
 	switch {
+	case b.common == "":
+		return nil
 	case b.probe != nil:
 		capture := b.o.OverseerProbe(filepath.Dir(b.common))
 		return func(crew string) roster.Capture { return b.probe.wrap(capture, crew) }
@@ -535,9 +585,11 @@ func (b *repoBuild) inboxCutoff() int64 {
 	if b.o.Served != nil {
 		return b.o.Served.Since
 	}
-	text, _ := crews.PidFileText(lane.OverseerCursor(b.stateDir, b.common))
-	if ts, err := strconv.ParseInt(strings.TrimSpace(text), 10, 64); err == nil && ts >= 0 {
-		return ts
+	if b.common != "" {
+		text, _ := crews.PidFileText(lane.OverseerCursor(b.stateDir, b.common))
+		if ts, err := strconv.ParseInt(strings.TrimSpace(text), 10, 64); err == nil && ts >= 0 {
+			return ts
+		}
 	}
 	return b.nowMS - inboxWindow.Milliseconds()
 }
@@ -553,10 +605,15 @@ func (b *repoBuild) crewIDs(byCrew map[string][]map[string]any) []string {
 	for id := range b.idx.holders {
 		ids[id] = true
 	}
-	entries, _ := os.ReadDir(bus.PathsFor(b.common).CrewsDir())
-	for _, e := range entries {
-		if e.IsDir() {
-			ids[e.Name()] = true
+	for id := range b.crewDirs {
+		ids[id] = true
+	}
+	if b.common != "" {
+		entries, _ := os.ReadDir(bus.PathsFor(b.common).CrewsDir())
+		for _, e := range entries {
+			if e.IsDir() {
+				ids[e.Name()] = true
+			}
 		}
 	}
 	for id := range ids {
@@ -580,7 +637,7 @@ func (b *repoBuild) crew(id string, rows []map[string]any, live roster.Liveness,
 	c := CrewStatus{CrewID: id, Workers: []map[string]any{}, Holds: holds, OverseerInbox: b.idx.inbox(id, cutoff)}
 	c.Dispatcher = b.dispatcher(id)
 	if b.o.Served == nil {
-		c.Relays = crewRelays(b.common, id, b.o.Proc)
+		c.Relays = crewRelays(b.crewDir(id), b.o.Proc)
 	}
 	for _, row := range rows {
 		row = jsonval.Clamp(row).(map[string]any)
@@ -681,10 +738,18 @@ func (s session) eligible() bool {
 	return s.state == "live" && (s.lane == nil || *s.lane != "dead" && *s.lane != "stale")
 }
 
+// crewDir is the crew's dir: its layout-2 store dir, else its repo bus's.
+func (b *repoBuild) crewDir(id string) string {
+	if dir, ok := b.crewDirs[id]; ok {
+		return dir
+	}
+	return bus.PathsFor(b.common).CrewDir(id)
+}
+
 // dispatcher reads the crew's registration: pid file, pane file and the lane
 // tick, with the state each says about the session.
 func (b *repoBuild) dispatcher(id string) Dispatcher {
-	dir := bus.PathsFor(b.common).CrewDir(id)
+	dir := b.crewDir(id)
 	s := readSession(dir, fleetLane(b.o.Getenv, id), b.o.Proc, b.now)
 	d := Dispatcher{State: s.state, PID: s.pid, Lane: s.lane}
 	// No registration here and a window another host's dispatcher launched:
@@ -729,7 +794,7 @@ func (b *repoBuild) holds(crew string) ([]HoldStatus, error) {
 		}
 		if wait["kind"] == "fleet" {
 			hs.Kind = "fleet"
-			hs.Due = b.due != nil && b.due.id == id && b.due.crew == crew && filepath.Clean(b.due.common) == filepath.Clean(b.common)
+			hs.Due = b.due != nil && b.due.id == id && b.due.crew == crew && (b.due.layout2 || filepath.Clean(b.due.common) == filepath.Clean(b.common))
 		} else if resets, ok := number(wait["resets_at"]); ok {
 			hs.Due = resets <= b.nowSec
 		}

@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/git"
 	"github.com/noamsto/dispatcher/crew/internal/lock"
 	"github.com/noamsto/dispatcher/crew/internal/repos"
@@ -148,9 +149,11 @@ func prioSender(ctx context.Context, o QueueOptions) string {
 	return reason
 }
 
-// registeredRepo is the one registry entry arg names, by its common dir, its
-// checkout, a directory in one of its worktrees or its repo name, as a clean
-// path; why says when none or several do.
+// registeredRepo is the one repo arg names, by its common dir, its checkout, a
+// directory in one of its worktrees or its repo name, as a clean path; why says
+// when none or several do. The repos are the registry's and the home repos of
+// live layout-2 crews, counted once by realpath, under the registry's path
+// when there is one.
 func registeredRepo(ctx context.Context, arg string, o QueueOptions) (common, name, why string) {
 	abs, _ := filepath.Abs(arg)
 	var gitCommon string
@@ -159,13 +162,30 @@ func registeredRepo(ctx context.Context, arg string, o QueueOptions) (common, na
 	}
 	labels := map[string]string{}
 	var matches []string
-	for _, r := range repos.Registered(o.Registry, o.Getenv) {
-		c := filepath.Clean(r.Common)
-		origin, _ := git.Origin(ctx, o.Git, r.Common)
-		label, raw := repos.Label(r.Common, origin), repos.Name(r.Common, origin)
-		if abs == c || abs == filepath.Dir(c) || gitCommon == c || arg == label || arg == raw {
+	seen := map[string]bool{}
+	consider := func(common string) {
+		c := filepath.Clean(common)
+		tag := c
+		if t, err := bus.RepoTag(c); err == nil {
+			tag = t
+		}
+		if seen[tag] {
+			return
+		}
+		seen[tag] = true
+		origin, _ := git.Origin(ctx, o.Git, common)
+		label, raw := repos.Label(common, origin), repos.Name(common, origin)
+		if abs == c || abs == filepath.Dir(c) || gitCommon == c || arg == label || arg == raw || abs == tag || abs == filepath.Dir(tag) || gitCommon == tag {
 			matches = append(matches, c)
 			labels[c] = label
+		}
+	}
+	for _, r := range repos.Registered(o.Registry, o.Getenv) {
+		consider(r.Common)
+	}
+	for _, c := range readLayout2(bus.StateRoot(o.Getenv)) {
+		if c.home != "" {
+			consider(c.home)
 		}
 	}
 	switch len(matches) {
