@@ -583,12 +583,11 @@ func BranchLayout(rows []bus.Event, branch, crew string) int {
 //
 // An id is unique within one tmux server's lifetime, not across restarts: after
 // one, a window can be handed the id a row recorded before it. So server is the
-// identity (pid:start_time) of the live tmux server the window came from, and a
-// row binds by its id only within that server's lifetime: a row that recorded a
-// tmux_server other than server binds nothing, even when the id is equal. A row
-// without tmux_server (an older writer wrote it) keeps the id-only binding; a
-// row without a window_id key keeps the dir binding, which no identity says
-// anything about.
+// identity (pid:start_time) of the live tmux server the window came from: a row
+// that recorded a tmux_server other than server binds nothing, even when the id
+// is equal. A row without tmux_server (an older writer wrote it) keeps the
+// id-only binding; a row without a window_id key keeps the dir binding, which no
+// server identity says anything about.
 func WindowBound(rows []bus.Event, branch, crew, windowID, windowDir, server string) bool {
 	for i := len(rows) - 1; i >= 0; i-- {
 		e := rows[i]

@@ -158,8 +158,7 @@ func TestLayout2ConsumersVisitingCrewWhereAndNudgeOutsideRepo(t *testing.T) {
 	}
 
 	// The dispatch row has no status row: reaching that refusal proves the
-	// dispatch-row-bound window match resolved the lead pane. nudge reads the
-	// same window rows where does.
+	// dispatch-row-bound window match resolved the lead pane.
 	_, errOut = c.expectIn(c.outside, 2, "nudge", "--crew", "c1", "--", "feat/x")
 	if !strings.Contains(errOut, "lead has not posted its first status yet") {
 		t.Fatalf("nudge stderr %q, want the session refusal", errOut)

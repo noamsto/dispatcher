@@ -515,15 +515,10 @@ func TestVisitingCrewWindowIsBoundToItsDispatchRow(t *testing.T) {
 	panes := paneLine("@624", "%204", "lead", "1") + "\n" + paneLine("@700", "%300", "lead", "1")
 	want := `nova — sess:3.1 "win-name" (lead pane)   jump: ! tmux switch-client -t %204` + "\n"
 	real := winLine(clone+"/crew", "@624", "feat/x", "c1", "nova", "sess", "3", "win-name")
-	// tmux expands an option value raw, so a tab in @bridge_crew_id can put the
-	// row's recorded identity where the parser reads the live one: the forged
-	// window carries twelve fields, the recorded identity at index 10 and the
-	// real live identity one field later (a tab-shifted identity).
+	// shiftRow records the identity the attacker injects into @bridge_crew_id
+	// below, for the window id the forged row carries.
 	shiftRow := fmt.Sprintf(`{"ts":2,"crew_id":"c1","kind":"window","branch":"feat/x","repo":%q,"window_id":"@700","tmux_server":%q}`, clone, tmuxServer)
 	shifted := strings.Join([]string{"@700", "feat/x", clone + "/crew", "c1", "evil", "sess", "4", "w", "", "evil", tmuxServer, "999:888"}, "\t")
-	// nlRow records the stale identity the attacker read from the log; the forged
-	// window list below carries it and then the real live identity on a second line.
-	nlRow := shiftRow
 	nl := strings.Join([]string{"@700", "feat/x", clone + "/crew", "c1", "evil", "sess", "4", "w", "", "evil", tmuxServer}, "\t") + "\n\t999:888"
 	for _, tc := range []struct {
 		name string
@@ -553,16 +548,13 @@ func TestVisitingCrewWindowIsBoundToItsDispatchRow(t *testing.T) {
 		// recorded: after a restart the same id can name another branch's window.
 		{"a row of another tmux server binds nothing", []string{row, strings.Replace(winRow, tmuxServer, "999:888", 1)}, real, "", false, "no live pane"},
 		{"a row of another tmux server beside the live window", []string{row, strings.Replace(winRow, tmuxServer, "999:888", 1)}, real + "\n" + copied, "", false, "no live pane"},
-		// A tab in an attacker-settable stamp shifts the row's recorded identity
-		// into the position the parser used to read the live identity from, so the
-		// real live identity lands one field later.
+		// tmux expands an option value raw, so a tab in a stamp can carry the row's
+		// recorded identity into a later field of the same line.
 		{"a tab-shifted identity", []string{row, shiftRow}, shifted, "999:888", false, ""},
-		// A newline in the option value ends the forged row exactly where the
-		// attacker wants: after the stale identity and at the field count the
-		// parser expects, with the real live identity on a short continuation
-		// line. The identity read is its own display-message call, so the stale
-		// one the row records cannot be shifted into it.
-		{"a newline-forged identity", []string{row, nlRow}, nl, "999:888", false, ""},
+		// A newline ends the forged row where the attacker wants it: the row text
+		// carries the stale identity, and the live one lands on a short continuation
+		// line no window row ever is.
+		{"a newline-forged identity", []string{row, shiftRow}, nl, "999:888", false, ""},
 		// The rows after a torn line could move the branch to another clone.
 		{"torn log line before a newer row", []string{row, "{\"ts\":", strings.ReplaceAll(row, clone, "/moved")}, real, "", false, "cannot read the crew log"},
 		// Every stamp copied: both windows pass, so neither is guessed.

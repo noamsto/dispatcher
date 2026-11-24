@@ -173,6 +173,11 @@ func Run(ctx context.Context, r Request, paths bus.Paths, stdout, stderr io.Writ
 	// that recorded one) the identity of this tmux server, which the row's id is
 	// unique within (remote.WindowBound). The identity comes from its own
 	// `display-message` read, which no window option can shift.
+	//
+	// What it does not buy: an option value is expanded into this output raw, so
+	// a process that sets window options can still print a row of its own, id and
+	// stamps included, that reads exactly like a real one. The identity closes the
+	// quieter case: a restart handing a surviving row's id to another window.
 	var events []bus.Event
 	server := ""
 	if paths.Dir == "" {

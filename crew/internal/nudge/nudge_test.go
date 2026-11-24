@@ -77,7 +77,7 @@ func (f *fakePane) run(args []string) (string, error) {
 		if f.failWindows {
 			return "", tmuxtest.ErrNoServer
 		}
-		// The bats stub answers per query: the arm asks for six columns including
+		// The bats stub answers per query: the arm asks for five columns including
 		// @crew_dir, the pane's own anchor gate for three. One fixture, projected.
 		if !strings.Contains(args[len(args)-1], "@crew_dir") {
 			return project(f.windows), nil

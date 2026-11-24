@@ -6983,8 +6983,7 @@ EOF
   stub_launch_bins
   # Distinct window and pane ids: the row must carry the window's, not the pane's.
   sed -i "s/'%1' '%1'/'@5' '%6'/" "$STUB_DIR/tmux"
-  # The identity read returns nothing: the writer must omit the key entirely,
-  # not write an empty (or partial) value the reader would compare against.
+  # The identity read returns nothing: the row must omit the key entirely.
   export STUB_TMUX_SERVER=
   DISPATCH_SESSION_ID=s7-7 DISPATCH_PROFILE=personal run run_dispatch \
     standard sonnet --effort medium 42 --crew-id c1 "Do a thing"
