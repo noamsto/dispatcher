@@ -573,6 +573,13 @@ func (v liveView) budgetLines(w int) []string {
 	for _, name := range names {
 		segs = append(segs, engineSegment(name, b.Report.Engines[name]))
 	}
+	if c := b.Report.AnthropicCredit; c != nil {
+		pct := c.UsedPct
+		if c.Exhausted() {
+			pct = 100
+		}
+		segs = append(segs, budgetSeg{text: fmt.Sprintf("pi anthropic %.0f%%", c.UsedPct), color: gaugeColor(pct)})
+	}
 	return flowSegments(segs, w, 2)
 }
 
@@ -591,7 +598,7 @@ func engineSegment(name string, e *data.EngineBudget) budgetSeg {
 			top = win
 		}
 	}
-	text := fmt.Sprintf("%s %s %.0f%%", name, cleanText(top.Key), top.UsedPct)
+	text := fmt.Sprintf("%s %.0f%%", cleanText(data.WindowLabel(name, top.Key)), top.UsedPct)
 	pct := top.UsedPct
 	if _, limited := e.LimitReachedReason(); limited {
 		text += " LIMIT"

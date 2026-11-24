@@ -206,6 +206,9 @@ func budgetPane(snap data.Snapshot) []line {
 	for _, e := range engineOrder {
 		out = append(out, engineLines(e, b.Report.Engines[e])...)
 	}
+	if c := b.Report.AnthropicCredit; c != nil {
+		out = append(out, line{style: "h", text: "pi anthropic (prepaid credit)"}, line{style: "n", text: "  " + c.Detail()})
+	}
 	return out
 }
 
@@ -224,7 +227,7 @@ func engineLines(e string, v *data.EngineBudget) []line {
 	} else {
 		table := [][]string{{"window", "used", "pace", "resets in", "verdict"}}
 		for _, w := range v.Windows {
-			table = append(table, windowRowCells(w))
+			table = append(table, windowRowCells(e, w))
 		}
 		widths := tableWidths(table)
 		left := []bool{true, false, false, true, true}
@@ -253,7 +256,7 @@ func engineLines(e string, v *data.EngineBudget) []line {
 	return out
 }
 
-func windowRowCells(w data.Window) []string {
+func windowRowCells(engine string, w data.Window) []string {
 	ahead := "—"
 	if w.AheadPts != nil {
 		if *w.AheadPts > 0 {
@@ -270,7 +273,7 @@ func windowRowCells(w data.Window) []string {
 	if w.Verdict != nil {
 		verdict = cleanText(*w.Verdict)
 	}
-	return []string{cleanText(w.Key), formatNumber(w.UsedPct) + "%", ahead, resets, verdict}
+	return []string{cleanText(data.WindowName(engine, w.Key)), formatNumber(w.UsedPct) + "%", ahead, resets, verdict}
 }
 
 func f64(p *float64) float64 {

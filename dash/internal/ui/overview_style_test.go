@@ -196,3 +196,15 @@ func TestPhaseTrack(t *testing.T) {
 		}
 	}
 }
+
+func TestBudgetBarDollarTextTruncatesBeforePercent(t *testing.T) {
+	row := vm.BudgetRow{Label: "pi anthropic", UsedPct: 60, Text: "$20.00 left expired", Critical: true}
+	wide := ansi.Strip(budgetBar(row, newSpans(60, nil), 60))
+	if !strings.Contains(wide, "pi anthropic") || !strings.Contains(wide, "60%") || !strings.Contains(wide, "$20.00 left expired") {
+		t.Errorf("wide row = %q", wide)
+	}
+	narrow := ansi.Strip(budgetBar(row, newSpans(30, nil), 30))
+	if !strings.Contains(narrow, "60%") || strings.Contains(narrow, "expired") {
+		t.Errorf("narrow row = %q, want the percent kept and the text cut", narrow)
+	}
+}

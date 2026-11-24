@@ -60,11 +60,12 @@ type BudgetSection struct {
 // engine-specific shape — codex's absolute-limit signals vs cursor's
 // {reason,resets_at} vs pi's {reason} — round-trips a Go re-marshal unchanged.
 // Fields no renderer reads (target_source, limit_reset, pi's key_limit_* and
-// starts_at/resets_at) are intentionally unmodeled and are dropped on
+// starts_at/resets_at, the credit's elapsed_pct/starts_at/summary) are intentionally unmodeled and are dropped on
 // re-marshal.
 type BudgetReport struct {
-	FetchedEpoch int64                    `json:"fetched_epoch"`
-	Engines      map[string]*EngineBudget `json:"engines"`
+	FetchedEpoch    int64                    `json:"fetched_epoch"`
+	Engines         map[string]*EngineBudget `json:"engines"`
+	AnthropicCredit *AnthropicCredit         `json:"anthropic_credit,omitempty"`
 }
 
 type EngineBudget struct {

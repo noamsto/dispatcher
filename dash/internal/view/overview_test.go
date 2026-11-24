@@ -496,3 +496,46 @@ func TestOverviewScopeErrorOnlyWhenProbeFailed(t *testing.T) {
 		t.Errorf("scope lacks the probe error: %s", b)
 	}
 }
+
+func TestBudgetRowsLabelPiBudgets(t *testing.T) {
+	spend, target := 34.59, 30.0
+	credit := &data.AnthropicCredit{BalanceUSD: 50, RemainingUSD: 20, UsedPct: 60}
+	in := viewtest.Inputs()
+	in.Snap.Budget.Report = &data.BudgetReport{
+		Engines: map[string]*data.EngineBudget{
+			"claude": {Windows: []data.Window{{Key: "7d", UsedPct: 62}}},
+			"pi":     {SpendUSD: &spend, TargetUSD: &target, Windows: []data.Window{{Key: "month", UsedPct: 115.3}}},
+		},
+		AnthropicCredit: credit,
+	}
+	rows := map[string]view.BudgetRow{}
+	for _, b := range view.BuildOverview(in).Monitors.Budgets {
+		rows[b.Label] = b
+	}
+	if len(rows) != 3 {
+		t.Fatalf("rows = %v, want claude 7d, pi openrouter, pi anthropic", rows)
+	}
+	if got := rows["pi openrouter"].Text; got != "$34.59/$30" {
+		t.Errorf("pi openrouter text = %q", got)
+	}
+	if got := rows["pi anthropic"]; got.Text != "$20.00 left" || got.UsedPct != 60 || got.Critical {
+		t.Errorf("pi anthropic = %+v", got)
+	}
+	if got := rows["claude 7d"]; got.Text != "" || got.Critical {
+		t.Errorf("claude 7d = %+v, want unchanged", got)
+	}
+
+	credit.Expired = true
+	for _, b := range view.BuildOverview(in).Monitors.Budgets {
+		if b.Label == "pi anthropic" && (!b.Critical || b.Text != "$20.00 left expired") {
+			t.Errorf("expired row = %+v, want critical with expired text", b)
+		}
+	}
+
+	in.Snap.Budget.Report.AnthropicCredit = nil
+	for _, b := range view.BuildOverview(in).Monitors.Budgets {
+		if b.Label == "pi anthropic" {
+			t.Errorf("anthropic row without a credit: %+v", b)
+		}
+	}
+}

@@ -162,7 +162,7 @@ func TestBudgetStaleFlag(t *testing.T) {
 
 func TestBudgetGaugeMinWidth(t *testing.T) {
 	v := newTestBudgetView(t)
-	line := v.windowLine(data.Window{Key: "5h", UsedPct: 10}, false, 10)
+	line := v.windowLine("claude", data.Window{Key: "5h", UsedPct: 10}, false, 10)
 	if ansi.StringWidth(line) > 10 {
 		t.Fatalf("window line at width 10 overflows: %d: %q", ansi.StringWidth(line), line)
 	}

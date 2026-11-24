@@ -157,6 +157,10 @@ func (v budgetView) tableView(w int) string {
 	for _, e := range budgetEngineOrder {
 		lines = append(lines, v.engineLines(e, v.report.Engines[e], w)...)
 	}
+	if c := v.report.AnthropicCredit; c != nil {
+		lines = append(lines, truncateLine(headerStyle.Render("pi anthropic (prepaid credit)"), w),
+			truncateLine("  "+c.Detail(), w))
+	}
 	return strings.Join(lines, "\n")
 }
 
@@ -179,7 +183,7 @@ func (v budgetView) engineLines(e string, eb *data.EngineBudget, w int) []string
 		}
 		for i, win := range eb.Windows {
 			selected := hasCur && curRef.engine == e && curRef.idx == i
-			out = append(out, v.windowLine(win, selected, w))
+			out = append(out, v.windowLine(e, win, selected, w))
 		}
 	}
 	if eb.Source == "openrouter_key" {
@@ -204,8 +208,8 @@ func (v budgetView) engineLines(e string, eb *data.EngineBudget, w int) []string
 // windowLine lays out one window row: name, gauge, used%, pace, resets-in,
 // verdict (truncated); the gauge takes what's left after the fixed columns,
 // floored at 10.
-func (v budgetView) windowLine(win data.Window, selected bool, w int) string {
-	const nameW, usedW, paceW, resetsW = 6, 5, 4, 8
+func (v budgetView) windowLine(engine string, win data.Window, selected bool, w int) string {
+	const nameW, usedW, paceW, resetsW = 13, 5, 4, 8
 	prefix := "  "
 	if selected {
 		prefix = cursorStyle.Render("›") + " "
@@ -215,7 +219,7 @@ func (v budgetView) windowLine(win data.Window, selected bool, w int) string {
 	gaugeW := clamp(remaining/3, 10, max0(remaining))
 	verdictW := max0(remaining - gaugeW)
 
-	name := padRight(truncateLine(cleanText(win.Key), nameW), nameW)
+	name := padRight(truncateLine(cleanText(data.WindowName(engine, win.Key)), nameW), nameW)
 	pct := win.UsedPct
 	if pct < 0 {
 		pct = 0
