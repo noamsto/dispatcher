@@ -54,3 +54,47 @@ func TestRunPath(t *testing.T) {
 		}
 	}
 }
+
+func TestRunPathJSON(t *testing.T) {
+	tr := setup(t)
+	state := t.TempDir()
+	p := tr.paths.WithState(state)
+	repo := "gh/o/r"
+	if err := bus.CreateMeta(state, bus.Meta{ID: "full", Created: 7, HomeHost: "h", HomeRepo: &repo, HomeSlug: "slug",
+		Visiting: true, CreatedBy: "remote-dispatch", DispatcherSession: "sess"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := bus.CreateMeta(state, bus.Meta{ID: "bare", Created: 8, HomeHost: "h", CreatedBy: "register"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(bus.ArchiveDir(state, "c-arch"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(bus.ArchiveDir(state, "c-arch")+"/meta.json", []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	fullStore, bareStore := bus.StoreDir(state, "full"), bus.StoreDir(state, "bare")
+	for _, tc := range []struct {
+		name           string
+		req            PathRequest
+		paths          bus.Paths
+		code           int
+		stdout, stderr string
+	}{
+		{"layout 2 all meta", PathRequest{Crew: "full", JSON: true}, p, 0,
+			`{"crew_id":"full","layout":2,"dir":"` + fullStore + `","log":"` + fullStore + `/events.jsonl","repo_dir":"` + tr.paths.Dir +
+				`","meta":{"layout":2,"id":"full","created":7,"home_host":"h","home_repo":"gh/o/r","home_slug":"slug","visiting":true,"created_by":"remote-dispatch","dispatcher_session":"sess"}}` + "\n", ""},
+		{"layout 2 optional omitted", PathRequest{Crew: "bare", JSON: true}, bus.StatePaths(state), 0,
+			`{"crew_id":"bare","layout":2,"dir":"` + bareStore + `","log":"` + bareStore + `/events.jsonl","repo_dir":null,` +
+				`"meta":{"layout":2,"id":"bare","created":8,"home_host":"h","home_repo":null,"visiting":false,"created_by":"register"}}` + "\n", ""},
+		{"layout 1 meta null", PathRequest{Crew: "c1", JSON: true}, p, 0,
+			`{"crew_id":"c1","layout":1,"dir":"` + tr.paths.CrewDir("c1") + `","log":"` + tr.paths.Log + `","repo_dir":"` + tr.paths.Dir + `","meta":null}` + "\n", ""},
+		{"archived", PathRequest{Crew: "c-arch", JSON: true}, p, 3, "", "crew: crew c-arch is archived\n"},
+		{"no crew", PathRequest{JSON: true}, p, 1, "", "crew: no crew context — pass --crew <id>\n"},
+	} {
+		code, out, errB := runPath(tc.req, tc.paths, "")
+		if code != tc.code || out != tc.stdout || errB != tc.stderr {
+			t.Errorf("%s: code %d stdout %q stderr %q, want %d %q %q", tc.name, code, out, errB, tc.code, tc.stdout, tc.stderr)
+		}
+	}
+}

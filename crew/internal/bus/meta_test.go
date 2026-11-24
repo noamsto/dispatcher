@@ -127,6 +127,27 @@ func TestReadMetaRejects(t *testing.T) {
 	}
 }
 
+func TestScanMetasFollowsSymlinkedCrewDir(t *testing.T) {
+	root := t.TempDir()
+	state := filepath.Join(root, "crew")
+	writeStateFile(t, filepath.Join(root, "elsewhere", "meta.json"), `{"layout":2,"id":"linked"}`)
+	if err := os.MkdirAll(filepath.Join(state, "crews"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(root, "elsewhere"), filepath.Join(state, "crews", "linked")); err != nil {
+		t.Fatal(err)
+	}
+	writeStateFile(t, filepath.Join(state, "crews", "plainfile"), "not a dir")
+
+	metas, bad := ScanMetas(state)
+	if len(metas) != 1 || metas[0].ID != "linked" {
+		t.Errorf("metas = %+v, want the symlinked crew", metas)
+	}
+	if len(bad) != 0 {
+		t.Errorf("bad = %+v, want none: a symlinked dir is a crew and a plain file is no meta", bad)
+	}
+}
+
 func TestLiveMetas(t *testing.T) {
 	state := filepath.Join(t.TempDir(), "crew")
 	if got := LiveMetas(state); got != nil {

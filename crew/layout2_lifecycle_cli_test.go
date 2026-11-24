@@ -211,6 +211,49 @@ func TestWhereLogDirCLI(t *testing.T) {
 	eq(t, "dir from CREW_ID", out, c.store("c2")+"\n")
 }
 
+func TestWhereJSONCLI(t *testing.T) {
+	c := newLifecycleCLI(t)
+	t.Setenv("CREW_LAYOUT", "2")
+	c.as("c2")
+	c.mustRun("register", "4242")
+	c.as("")
+	c.archive("c-arch")
+
+	out, _ := c.expectIn(c.outside, 0, "where", "--json", "--crew", "c2")
+	var got struct {
+		CrewID  string         `json:"crew_id"`
+		Layout  int            `json:"layout"`
+		Dir     string         `json:"dir"`
+		Log     string         `json:"log"`
+		RepoDir *string        `json:"repo_dir"`
+		Meta    map[string]any `json:"meta"`
+	}
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("stdout %q: %v", out, err)
+	}
+	if got.CrewID != "c2" || got.Layout != 2 || got.Dir != c.store("c2") || got.Log != c.store("c2")+"/events.jsonl" ||
+		got.RepoDir != nil || got.Meta["id"] != "c2" {
+		t.Errorf("json outside a repo = %+v", got)
+	}
+
+	for _, tc := range []struct {
+		name   string
+		args   []string
+		code   int
+		stderr string
+	}{
+		{"archived", []string{"where", "--json", "--crew", "c-arch"}, 3, "crew: crew c-arch is archived\n"},
+		{"with a target", []string{"where", "--json", "nova"}, 1, "crew: where: --json takes no target (" + whereUsage + ")\n"},
+		{"with --log", []string{"where", "--json", "--log"}, 1, "crew: where: --json excludes --log and --dir (" + whereUsage + ")\n"},
+		{"with --dir", []string{"where", "--json", "--dir"}, 1, "crew: where: --json excludes --log and --dir (" + whereUsage + ")\n"},
+	} {
+		out, errOut, code := c.runIn(c.outside, tc.args...)
+		if code != tc.code || out != "" || errOut != tc.stderr {
+			t.Errorf("%s: code %d stdout %q stderr %q, want %d \"\" %q", tc.name, code, out, errOut, tc.code, tc.stderr)
+		}
+	}
+}
+
 func TestIndexCLI(t *testing.T) {
 	c := newLifecycleCLI(t)
 	t.Setenv("CREW_LAYOUT", "2")

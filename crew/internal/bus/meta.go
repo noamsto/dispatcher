@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"syscall"
 )
 
 // Meta is a layout-2 crew's meta.json, the pin that makes it layout 2.
@@ -97,18 +98,41 @@ func readMeta(path, id string) (Meta, error) {
 	return m, nil
 }
 
-// LiveMetas is every crews/*/meta.json that ReadMeta accepts, byte-sorted by id.
-func LiveMetas(state string) []Meta {
+// MetaError is a crew dir whose meta.json is there but fails ReadMeta.
+type MetaError struct {
+	ID  string
+	Err error
+}
+
+// ScanMetas is every crews/*/meta.json that ReadMeta accepts, byte-sorted by id,
+// and a MetaError for each crew whose meta.json is present but unreadable.
+func ScanMetas(state string) ([]Meta, []MetaError) {
 	entries, err := os.ReadDir(state + "/crews")
 	if err != nil {
-		return nil
+		return nil, nil
 	}
 	var metas []Meta
+	var bad []MetaError
 	for _, e := range entries {
-		if m, err := ReadMeta(state, e.Name()); err == nil {
+		if !ValidCrewID(e.Name()) {
+			continue
+		}
+		m, err := ReadMeta(state, e.Name())
+		switch {
+		case err == nil:
 			metas = append(metas, m)
+		case errors.Is(err, fs.ErrNotExist), errors.Is(err, syscall.ENOTDIR):
+			// No meta: a dir without one, a dangling symlink, or a plain file.
+		default:
+			bad = append(bad, MetaError{ID: e.Name(), Err: err})
 		}
 	}
+	return metas, bad
+}
+
+// LiveMetas is every crews/*/meta.json that ReadMeta accepts, byte-sorted by id.
+func LiveMetas(state string) []Meta {
+	metas, _ := ScanMetas(state)
 	return metas
 }
 
