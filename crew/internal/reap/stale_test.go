@@ -413,3 +413,34 @@ func TestGhostLiveWorktreeNotRetired(t *testing.T) {
 		})
 	}
 }
+
+func tipPastFx(t *testing.T, ageSec int64) *fx {
+	t.Helper()
+	f := newFx(t)
+	f.portBCommit("later.txt", "x\n")
+	f.bus(statusFor(rb, "s1-1", "done", prURL, ageSec+10), statusFor(rb, "s2-2", "failed", "", ageSec))
+	f.portBMerged("", gitOut(t, f.main, "rev-parse", "refs/heads/"+rb+"~1"))
+	return f
+}
+
+func TestStaleTipPast(t *testing.T) {
+	f := tipPastFx(t, threeDays)
+	f.portBOK(Request{})
+	const why = "its tip has commits past " + prURL
+	f.wantOut("crew reap: keeping feat/r — "+why,
+		"crew reap:   stale: needs human cleanup — "+why+"; older than 72h",
+		"crew reap:   inspect: "+f.inspectCmd(),
+		"crew reap:   remove:  "+f.removeCmd(),
+		"crew reap: nothing reclaimed")
+	f.portBWantPresent(f.wt)
+	if rows := f.staleRows(); len(rows) != 1 || rows[0]["stale"] != true {
+		t.Fatalf("stale rows %v", f.appended)
+	}
+
+	y := tipPastFx(t, 10)
+	y.portBOK(Request{})
+	y.wantOut("crew reap: keeping feat/r — its tip has commits past "+prURL, "crew reap: nothing reclaimed")
+	if len(y.staleRows()) != 0 {
+		t.Fatalf("young went stale: %v", y.appended)
+	}
+}

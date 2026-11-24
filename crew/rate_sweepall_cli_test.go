@@ -243,7 +243,7 @@ func TestSweepAllCLIFindsARepoOutsideRootThroughTheRegistryOnceSwept(t *testing.
 	wantContains(t, "stdout", out, "acme/outside: swept, 1 runs in store")
 }
 
-func TestSweepAllCLIRegisteredRepoThatNoLongerExistsIsSkippedAsGone(t *testing.T) {
+func TestSweepAllCLIRegisteredRepoThatNoLongerExistsIsPruned(t *testing.T) {
 	c := newSweepAllCLI(t)
 	if err := os.MkdirAll(filepath.Join(c.data, "crew"), 0o755); err != nil {
 		t.Fatal(err)
@@ -254,7 +254,13 @@ func TestSweepAllCLIRegisteredRepoThatNoLongerExistsIsSkippedAsGone(t *testing.T
 	}
 
 	out, _ := requireSweepAll(t, c, 0, "--root", c.root)
-	wantContains(t, "stdout", out, "vanished/.git: skipped (gone)")
+	if strings.Contains(out, "vanished") {
+		t.Errorf("stdout lists the vanished repo: %q", out)
+	}
+	registry, err := os.ReadFile(filepath.Join(c.data, "crew", "repos"))
+	if err != nil || strings.Contains(string(registry), "vanished") {
+		t.Errorf("registry %q (err %v) still lists the vanished entry", registry, err)
+	}
 }
 
 func TestSweepAllCLIFailingRepoIsReportedTheRestStillSweepAndExitIsOne(t *testing.T) {

@@ -1449,7 +1449,11 @@ func maximalFar(t *testing.T) map[string]any {
 	far.crewFile("c1", "stream.tick", fmt.Sprintf(`{"pid":100,"ts":%d,"park":300}`, ago(10)))
 	far.windows("feat/w", "feat/b", "g/1")
 	far.tmux.Out[stampFormat] = "c2\x1fhalo\n"
-	gone := filepath.Join(far.root, "gone", ".git")
+	// A gone entry would be pruned before it is skipped.
+	gone := filepath.Join(far.root, "bare", ".git")
+	if err := os.MkdirAll(gone, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(far.opts.Registry, []byte(far.common+"\n"+gone+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}

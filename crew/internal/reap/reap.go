@@ -127,6 +127,7 @@ func Run(ctx context.Context, req Request, paths bus.Paths, cwd string, stdout, 
 	if code := r.orphans(ctx); code != 0 {
 		return code
 	}
+	r.gonePane(ctx)
 	rows, err := r.latest("")
 	if err != nil {
 		return r.foldFailed(err)

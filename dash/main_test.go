@@ -936,3 +936,41 @@ func TestOneShotCollectorStartsNoKeepsProbe(t *testing.T) {
 		}
 	}
 }
+
+func TestSweepMapPNGs(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Now()
+	old := now.Add(-25 * time.Hour)
+	write := func(name string, mtime time.Time) {
+		t.Helper()
+		p := filepath.Join(dir, name)
+		if err := os.WriteFile(p, []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(p, mtime, mtime); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("crew-dash-map-old.png", old)
+	write("crew-dash-map-fresh.png", now.Add(-time.Hour))
+	write("other-old.png", old)
+	write("crew-dash-map-old.txt", old)
+	if err := os.Mkdir(filepath.Join(dir, "crew-dash-map-dir.png"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	sweepMapPNGs(dir, now)
+
+	gone := []string{"crew-dash-map-old.png"}
+	kept := []string{"crew-dash-map-fresh.png", "other-old.png", "crew-dash-map-old.txt", "crew-dash-map-dir.png"}
+	for _, n := range gone {
+		if _, err := os.Lstat(filepath.Join(dir, n)); !os.IsNotExist(err) {
+			t.Errorf("%s should be removed (err=%v)", n, err)
+		}
+	}
+	for _, n := range kept {
+		if _, err := os.Lstat(filepath.Join(dir, n)); err != nil {
+			t.Errorf("%s should be kept: %v", n, err)
+		}
+	}
+}
