@@ -8188,10 +8188,8 @@ EOF
   # CI backgrounds bats with `&`, and a non-interactive shell starts background
   # jobs with SIGINT ignored; bash cannot trap a signal that was ignored at
   # entry. A foreground Ctrl-C reaches dispatch with SIGINT at its default, so
-  # restore that before exec.
-  DISPATCH_PROFILE=personal run python3 -c 'import os, signal, sys
-signal.signal(signal.SIGINT, signal.SIG_DFL)
-os.execvp(sys.argv[1], sys.argv[1:])' bash -euo pipefail "$DISPATCH" standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  # restore that (and only that) before exec, keeping dispatch's pid.
+  DISPATCH_PROFILE=personal run env --default-signal=INT bash -euo pipefail "$DISPATCH" standard sonnet --effort medium --crew-id c1 42 "Do a thing"
 }
 
 # assert_signal_exit <signal> <status> — <signal> mid-lock exits <status>, writes
