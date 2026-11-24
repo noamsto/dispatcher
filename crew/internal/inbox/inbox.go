@@ -68,14 +68,18 @@ func Run(q Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int {
 	if crew == "" {
 		crew = o.CrewID()
 	}
-	log := paths.Log
+	log, state := paths.Log, paths.Dir
 	if crew != "" {
 		c, err := paths.Crew(crew)
+		if bus.IsRefusal(err) {
+			say(stderr, "crew: %v\n", err)
+			return 1
+		}
 		if err != nil {
 			say(stderr, "crew: inbox: invalid crew id %s\n", crew)
 			return 1
 		}
-		log = c.Log
+		log, state = c.Log, c.State
 	}
 	events, err := readEvents(log)
 	if errors.Is(err, bus.ErrNoLog) {
@@ -95,13 +99,13 @@ func Run(q Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int {
 
 	var held any
 	if q.Undelivered {
-		unlock, err := marks.Lock(paths.Dir, crew, me)
+		unlock, err := marks.Lock(state, crew, me)
 		if err != nil {
 			say(stderr, "crew: inbox: cannot lock delivered marks: %v\n", err)
 			return 1
 		}
 		defer unlock()
-		held = marks.Read(paths.Dir, crew, me)
+		held = marks.Read(state, crew, me)
 	}
 
 	// `.crew_id` is jq's index: an object either carries the msg or does not,
@@ -113,7 +117,7 @@ func Run(q Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int {
 	rowSince := since
 	if rescue {
 		rowSince = ""
-		held = marks.Read(paths.Dir, crew, me)
+		held = marks.Read(state, crew, me)
 	}
 	var selected []map[string]any
 	for _, ev := range events {
@@ -176,9 +180,9 @@ func Run(q Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int {
 			recorded[i] = v
 		}
 		if q.Undelivered {
-			marks.RecordHeld(paths.Dir, crew, me, recorded)
+			marks.RecordHeld(state, crew, me, recorded)
 		} else {
-			marks.Record(paths.Dir, crew, me, recorded)
+			marks.Record(state, crew, me, recorded)
 		}
 	}
 	if failed {

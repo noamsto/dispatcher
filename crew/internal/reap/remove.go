@@ -32,7 +32,7 @@ func (r *run) remove(ctx context.Context, c *candidate) (removed bool, code int)
 	// computed while the directory still exists (#556).
 	anchor, _ := wtgit.AnchorPath(c.wtpath)
 	// The row's crew id comes from sources the kills and removal below destroy.
-	c.crewID = rowCrewID(ctx, r.p.Tmux, worktreeWindows(ctx, r.p.Tmux, c.wtpath), c.wtpath, c.branch, r.busDocs)
+	c.crewID = rowCrewID(ctx, r.p.Tmux, worktreeWindows(ctx, r.p.Tmux, c.wtpath), c.wtpath, c.branch, r.busDocs, indexCrewDocs(r.paths))
 
 	// Leftover processes reparented out of the pane but still rooted in this
 	// worktree (the #187 class). Before the --dry-run return so dry runs
@@ -131,7 +131,7 @@ func (r *run) remove(ctx context.Context, c *candidate) (removed bool, code int)
 		_, _ = fmt.Fprintf(r.stderr, "crew reap: could not record the reap row for %s: %v\n", c.branch, err)
 	}
 	r.postReaped(c)
-	r.forget(c.branch)
+	r.forget(c.branch, c.crewID)
 	r.deleteBranch(ctx, c)
 	r.deleteOriginBranch(ctx, c)
 	r.releaseLabels(ctx, c)

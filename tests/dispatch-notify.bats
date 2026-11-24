@@ -411,3 +411,66 @@ EOF
 
   tail -1 "$LOG" | jq -e '.from == "worker:feat/x#s1-1" and .body.state == "exited"'
 }
+
+# layout2_crew — a layout-2 crew c1 registered in this repo.
+layout2_crew() {
+  CREW_ID=c1 CREW_LAYOUT=2 "$CREW" register "$$"
+}
+
+@test "notify: the legacy log is where crew where --log resolves a layout-1 crew" {
+  task_doc
+  seed_status working
+  [ "$("$CREW" where --log --crew c1)" = "$LOG" ]
+
+  CREW_WORKER_ID='worker:feat/x#s1-1' run run_notify
+  [ "$status" -eq 0 ]
+  tail -1 "$LOG" | jq -e '.body.state == "exited"'
+}
+
+@test "notify: a layout-2 crew's exited row lands in the log crew where --log names" {
+  layout2_crew
+  task_doc
+  l2="$("$CREW" where --log --crew c1)"
+  [ "$l2" = "$XDG_STATE_HOME/crew/crews/c1/events.jsonl" ]
+
+  CREW_WORKER_ID='worker:feat/x#s1-1' run run_notify
+  [ "$status" -eq 0 ]
+  tail -1 "$l2" | jq -e '.from == "worker:feat/x#s1-1" and .body.state == "exited"'
+  [ ! -e "$LOG" ]
+}
+
+@test "notify: HOME/.local/state is the state root when XDG_STATE_HOME is unset or relative" {
+  home="$BATS_TEST_TMPDIR/home"
+  mkdir -p "$home"
+  task_doc
+  for xdg in '' relative/state; do
+    HOME="$home" XDG_STATE_HOME="$xdg" CREW_ID=c1 CREW_LAYOUT=2 "$CREW" register "$$"
+    l2="$(HOME="$home" XDG_STATE_HOME="$xdg" "$CREW" where --log --crew c1)"
+    [ "$l2" = "$home/.local/state/crew/crews/c1/events.jsonl" ]
+
+    HOME="$home" XDG_STATE_HOME="$xdg" CREW_WORKER_ID='worker:feat/x#s1-1' run run_notify
+    [ "$status" -eq 0 ]
+    tail -1 "$l2" | jq -e '.body.state == "exited"'
+    rm -rf -- "$home/.local"
+  done
+}
+
+@test "notify: an archived crew is left alone: no row, no log, no dir" {
+  mkdir -p "$XDG_STATE_HOME/crew/archive/c1"
+  printf '{}\n' >"$XDG_STATE_HOME/crew/archive/c1/meta.json"
+  task_doc
+  CREW_WORKER_ID='worker:feat/x#s1-1' run run_notify
+  [ "$status" -eq 0 ]
+  [ ! -e "$LOG" ]
+  [ ! -e "$(dirname "$LOG")" ]
+  [ ! -e "$XDG_STATE_HOME/crew/crews" ]
+  [ ! -e "$XDG_STATE_HOME/crew/archive/c1/events.jsonl" ]
+}
+
+@test "notify: a crew id outside the charset never reaches the state root" {
+  mkdir -p "$XDG_STATE_HOME/crew/crews/.."
+  printf 'crew_id: ../c1\n' >WORKER_TASK.md
+  CREW_WORKER_ID='worker:feat/x#s1-1' run run_notify
+  [ "$status" -eq 0 ]
+  [ ! -e "$XDG_STATE_HOME/crew/events.jsonl" ]
+}

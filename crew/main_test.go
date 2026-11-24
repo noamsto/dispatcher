@@ -588,14 +588,17 @@ func TestRunRateSweepAllOutsideRepo(t *testing.T) {
 
 // Every subcommand that reads the bus refuses outside a git repo with one
 // line, whatever its arguments: the check that crew.sh's preamble used to make.
+// The repo-optional lifecycle commands (crews, register, deregister) are the
+// exception: they run against the state root, so their argv is judged as in a
+// repo.
 func TestRunBusSubsRefuseOutsideRepo(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("GIT_CEILING_DIRECTORIES", dir)
 	e := env{getwd: func() (string, error) { return dir, nil }}
 	for _, sub := range []string{
-		"crews", "log", "report", "sessions", "roster", "identity", "inbox", "hold", "await", "watch",
+		"log", "report", "sessions", "roster", "identity", "inbox", "hold", "await", "watch",
 		"retro", "reply", "resolve-target", "pr-watch", "merge", "where", "stream", "roster-render", "adopt",
-		"status", "msg", "register", "deregister", "rate", "git-baseline", "reap", "stack", "nudge", "stall-watch",
+		"status", "msg", "rate", "git-baseline", "reap", "stack", "nudge", "stall-watch",
 		"remote-run", "dispatch-row", "peer-sync", "peer-claims", "decide", "decisions", "spec-lint", "followups", "policy",
 	} {
 		var stdout, stderr bytes.Buffer
@@ -608,6 +611,12 @@ func TestRunBusSubsRefuseOutsideRepo(t *testing.T) {
 	for _, tc := range refusalRows {
 		var stdout, stderr bytes.Buffer
 		code := run(context.Background(), tc.args, &stdout, &stderr, e)
+		if slices.Contains([]string{"crews", "register", "deregister"}, tc.args[0]) {
+			if code != tc.code || stdout.Len() != 0 || stderr.String() != tc.msg+"\n" {
+				t.Errorf("%s: code %d stdout %q stderr %q, want its own refusal", tc.name, code, stdout.String(), stderr.String())
+			}
+			continue
+		}
 		if code != exitFailure || stdout.Len() != 0 || stderr.String() != "crew: not in a git repo\n" {
 			t.Errorf("%s: code %d stdout %q stderr %q", tc.name, code, stdout.String(), stderr.String())
 		}
@@ -1385,13 +1394,13 @@ func TestAdmittedSubcommands(t *testing.T) {
 		"git-baseline", "occupants", "reap", "reap-autosweep", "stack", "help",
 		"id", "new", "engine-cmd", "dash", "pi-agent-dir", "relay",
 		"remote-run", "remote-exec", "dispatch-row", "spec-lint",
-		"merge", "followups", "peer-sync", "peer-claims", "decide", "decisions", "class", "overseer", "completion", "role-watch", "queue", "policy", "migrate", "cleanup", // added after that revision
+		"merge", "followups", "peer-sync", "peer-claims", "decide", "decisions", "class", "overseer", "completion", "role-watch", "queue", "policy", "migrate", "cleanup", "index", // added after that revision
 	}
 	for _, name := range []string{"engine-cmd", "id", "new", "occupants",
 		"where", "identity", "resolve-target", "crews", "register", "deregister", "log", "sessions", "inbox",
 		"roster", "report", "retro", "rate", "fleet", "stack", "roster-render", "pi-agent-dir",
 		"status", "msg", "reply", "hold", "nudge", "await", "watch", "relay", "stream", "git-guard", "git-baseline", "reap", "reap-autosweep", "adopt", "merge", "pr-watch", "role-watch", "stall-watch", "help",
-		"remote-run", "remote-exec", "dispatch-row", "peer-sync", "peer-claims", "decide", "decisions", "spec-lint", "followups", "class", "overseer", "completion", "queue", "policy", "migrate", "cleanup"} {
+		"remote-run", "remote-exec", "dispatch-row", "peer-sync", "peer-claims", "decide", "decisions", "spec-lint", "followups", "class", "overseer", "completion", "queue", "policy", "migrate", "cleanup", "index"} {
 		if !typedSubcommands[name] {
 			t.Errorf("%s types no argv", name)
 		}
@@ -1966,7 +1975,7 @@ const (
 	fleetReapEvery       = "crew: fleet stream: --reap-every is not supported — the fleet lane does not reap (each repo's own stream or dispatch does)"
 	stackUsage           = "usage: crew stack cut [--record] <child-branch|PR#> [<oid>]\n       crew stack align <top-PR#|branch>"
 	rateRootNeedsDir     = "crew: rate --root needs a directory"
-	whereUsage           = "usage: crew where <codename|branch|%id> [--crew ID]"
+	whereUsage           = "usage: crew where <target> [--crew ID] | crew where --log|--dir [--crew ID]"
 	reapUsage            = "crew: reap takes --quiet, --dry-run, --no-wait, --fleet, --json, --idle S, --stale-after S and --discard BRANCH "
 	baselineUsage        = "usage: crew git-baseline [--accept]"
 	wantRemoteRunUsage   = "usage: crew remote-run --host H [--env K=V]... [--spec-file F] [--migrate-dir D] -- <argv>..."

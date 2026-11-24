@@ -228,18 +228,20 @@ func ReadEventsTolerant(path string) ([]Event, error) {
 
 // Paths is where a repo keeps its crew bus.
 type Paths struct {
-	Common string // absolute git common dir, identical from a checkout and its worktrees
+	Common string // absolute git common dir, identical from a checkout and its worktrees; "" outside a repo
 	Dir    string // Common + "/crew"
 	Log    string // Dir + "/events.jsonl"
+	State  string // StateRoot, or "" to resolve layout-1 crews only
 }
 
-// Locate resolves the bus of the repo containing cwd, as crew.sh's preamble does.
+// Locate resolves the bus of the repo containing cwd, as crew.sh's preamble
+// does, with the state root from the environment.
 func Locate(ctx context.Context, cwd string) (Paths, error) {
 	common := gitOutput(ctx, cwd, "rev-parse", "--path-format=absolute", "--git-common-dir")
 	if common == "" {
 		return Paths{}, ErrNotRepo
 	}
-	return PathsFor(common), nil
+	return PathsFor(common).WithState(StateRoot(os.Getenv)), nil
 }
 
 // gitOutput is `$(git -C cwd args... 2>/dev/null || true)`: stderr dropped,

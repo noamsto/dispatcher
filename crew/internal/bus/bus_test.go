@@ -454,6 +454,8 @@ func TestLocate(t *testing.T) {
 		t.Fatal(err)
 	}
 	wantCommon := filepath.Join(main, ".git")
+	state := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", state)
 
 	for name, cwd := range map[string]string{"main root": main, "main subdir": sub, "linked worktree": linked} {
 		t.Run(name, func(t *testing.T) {
@@ -464,7 +466,7 @@ func TestLocate(t *testing.T) {
 			if p.Common != wantCommon {
 				t.Fatalf("Common = %q, want %q", p.Common, wantCommon)
 			}
-			if p.Dir != wantCommon+"/crew" || p.Log != wantCommon+"/crew/events.jsonl" {
+			if p.Dir != wantCommon+"/crew" || p.Log != wantCommon+"/crew/events.jsonl" || p.State != state+"/crew" {
 				t.Fatalf("%+v", p)
 			}
 		})

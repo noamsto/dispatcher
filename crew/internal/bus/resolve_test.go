@@ -3,9 +3,11 @@ package bus
 import (
 	"context"
 	"errors"
+	"maps"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/noamsto/dispatcher/crew/internal/tmux/tmuxtest"
 )
@@ -26,7 +28,7 @@ func TestPathsFor(t *testing.T) {
 func TestPathsCrew(t *testing.T) {
 	p := PathsFor("/r/.git")
 	got, err := p.Crew("c1")
-	want := Crew{ID: "c1", Log: p.Log, Dir: "/r/.git/crew/crews/c1", RepoDir: "/r/.git/crew"}
+	want := Crew{ID: "c1", Log: p.Log, Dir: "/r/.git/crew/crews/c1", RepoDir: "/r/.git/crew", State: "/r/.git/crew", Layout: 1}
 	if err != nil || got != want {
 		t.Fatalf("Crew = %+v, %v; want %+v", got, err, want)
 	}
@@ -39,6 +41,146 @@ func TestPathsCrew(t *testing.T) {
 		if want := `invalid crew id "` + id + `"`; err.Error() != want {
 			t.Fatalf("Error() = %q, want %q", err.Error(), want)
 		}
+	}
+}
+
+func TestWithStateAndStatePaths(t *testing.T) {
+	p := PathsFor("/r/.git").WithState("/s/crew")
+	if p.State != "/s/crew" || p.Common != "/r/.git" || p.Log != "/r/.git/crew/events.jsonl" {
+		t.Fatalf("WithState = %+v", p)
+	}
+	if PathsFor("/r/.git").State != "" {
+		t.Fatal("PathsFor must leave State empty")
+	}
+	if got := StatePaths("/s/crew"); got != (Paths{State: "/s/crew"}) {
+		t.Fatalf("StatePaths = %+v", got)
+	}
+}
+
+// classifyFixture is a state root holding a layout-2 crew l2, an archived crew
+// arch, an id gone that only an index lists, and an id both that has a live
+// and an archived meta; legacy ids have nothing under it.
+func classifyFixture(t *testing.T) string {
+	t.Helper()
+	state := filepath.Join(t.TempDir(), "crew")
+	for _, id := range []string{"l2", "both"} {
+		if err := CreateMeta(state, Meta{ID: id, HomeHost: "h", CreatedBy: "register"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, id := range []string{"arch", "both", "archidx"} {
+		writeStateFile(t, filepath.Join(ArchiveDir(state, id), "meta.json"), `{"layout":2,"id":"`+id+`"}`+"\n")
+	}
+	for _, id := range []string{"gone", "archidx", "l2"} {
+		if _, err := IndexAdd(state, "/r/.git", "o/r", id, time.UnixMilli(1)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return state
+}
+
+// tree lists every path under root with its size, to prove a call wrote nothing.
+func tree(t *testing.T, root string) map[string]int64 {
+	t.Helper()
+	got := map[string]int64{}
+	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		got[path] = info.Size()
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return got
+}
+
+func TestPathsCrewClassification(t *testing.T) {
+	state := classifyFixture(t)
+	repo := PathsFor("/r/.git").WithState(state)
+	legacy := func(p Paths, id string) Crew {
+		return Crew{ID: id, Log: p.Log, Dir: p.CrewDir(id), RepoDir: p.Dir, State: p.Dir, Layout: 1}
+	}
+	layout2 := func(p Paths, id string) Crew {
+		dir := StoreDir(state, id)
+		return Crew{ID: id, Log: dir + "/events.jsonl", Dir: dir, RepoDir: p.Dir, State: dir, Layout: 2}
+	}
+	before := tree(t, state)
+
+	cases := []struct {
+		name     string
+		p        Paths
+		id       string
+		want     Crew
+		wantErr  string
+		refusal  bool
+		notRepo  bool
+		archived bool
+	}{
+		{name: "layout 2", p: repo, id: "l2", want: layout2(repo, "l2")},
+		{name: "crews meta beats archive", p: repo, id: "both", want: layout2(repo, "both")},
+		{name: "crews meta beats index", p: repo, id: "l2", want: layout2(repo, "l2")},
+		{name: "archived", p: repo, id: "arch", wantErr: "crew arch is archived", refusal: true, archived: true},
+		{name: "archive beats index", p: repo, id: "archidx", wantErr: "crew archidx is archived", refusal: true, archived: true},
+		{name: "index only", p: repo, id: "gone", refusal: true,
+			wantErr: "crew gone is listed in the repo index but has no crew dir — run 'crew index rebuild'; live crews: both, l2"},
+		{name: "legacy", p: repo, id: "c1", want: legacy(repo, "c1")},
+		{name: "no state root is legacy", p: PathsFor("/r/.git"), id: "l2", want: legacy(PathsFor("/r/.git"), "l2")},
+		{name: "no state root skips archive", p: PathsFor("/r/.git"), id: "arch", want: legacy(PathsFor("/r/.git"), "arch")},
+		{name: "no state root skips index", p: PathsFor("/r/.git"), id: "gone", want: legacy(PathsFor("/r/.git"), "gone")},
+		{name: "layout 2 outside a repo", p: StatePaths(state), id: "l2", want: layout2(StatePaths(state), "l2")},
+		{name: "legacy outside a repo", p: StatePaths(state), id: "c1", notRepo: true},
+		{name: "refusal outside a repo", p: StatePaths(state), id: "arch", wantErr: "crew arch is archived", refusal: true, archived: true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, err := c.p.Crew(c.id)
+			switch {
+			case c.notRepo:
+				if !errors.Is(err, ErrNotRepo) || IsRefusal(err) {
+					t.Fatalf("err = %v, want ErrNotRepo", err)
+				}
+			case c.wantErr != "":
+				if err == nil || err.Error() != c.wantErr || IsRefusal(err) != c.refusal {
+					t.Fatalf("err = %v, want %q (refusal %v)", err, c.wantErr, c.refusal)
+				}
+				var a *ArchivedError
+				if errors.As(err, &a) != c.archived || (c.archived && a.ID != c.id) {
+					t.Fatalf("ArchivedError = %v, want %v", err, c.archived)
+				}
+			case err != nil || got != c.want:
+				t.Fatalf("Crew = %+v, %v; want %+v", got, err, c.want)
+			}
+		})
+	}
+	if _, err := repo.Crew("a/b"); !errors.As(err, new(*InvalidCrewIDError)) {
+		t.Fatalf("invalid id: err = %v", err)
+	}
+	if after := tree(t, state); !maps.Equal(after, before) {
+		t.Fatalf("classification wrote under the state root:\nbefore %v\nafter  %v", before, after)
+	}
+}
+
+func TestPathsCrewMetaMustBeAFile(t *testing.T) {
+	state := filepath.Join(t.TempDir(), "crew")
+	if err := os.MkdirAll(filepath.Join(StoreDir(state, "c1"), "meta.json"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	p := PathsFor("/r/.git").WithState(state)
+	if got, err := p.Crew("c1"); err != nil || got.Layout != 1 {
+		t.Fatalf("meta.json dir: Crew = %+v, %v; want layout 1", got, err)
+	}
+}
+
+func TestIndexOnlyErrorNoLiveCrews(t *testing.T) {
+	err := &IndexOnlyError{ID: "x"}
+	if want := "crew x is listed in the repo index but has no crew dir — run 'crew index rebuild'; live crews: none"; err.Error() != want {
+		t.Fatalf("Error() = %q", err.Error())
 	}
 }
 

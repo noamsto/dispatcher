@@ -301,6 +301,31 @@ _require_plain_crew_id() {
   exit 1
 }
 
+# _resolve_crew_dir [<common>] — set crew_dir to crew $CREW_ID's per-crew dir
+# and crew_dir_v2 to 1 when it is a layout-2 dir: `crew where --dir`, else the
+# legacy "<common>/crew/crews/$CREW_ID" (empty without <common>) when the call
+# fails for a reason other than a refusal. Returns 1 when crew refuses the id
+# (rc 3), having printed its reason.
+_resolve_crew_dir() {
+  local out rc=0 legacy=""
+  [ -z "${1:-}" ] || legacy="$1/crew/crews/$CREW_ID"
+  out="$(crew where --dir --crew "$CREW_ID")" || rc=$?
+  [ "$rc" -ne 3 ] || return 1
+  crew_dir=$legacy
+  crew_dir_v2=0
+  case "$rc:$out" in
+  0:/*$'\n'*) ;;
+  0:/*)
+    if [ "$out" != "$legacy" ]; then
+      crew_dir=$out
+      crew_dir_v2=1
+    fi
+    ;;
+  0:*) ;;
+  *) echo "dispatcher: crew where --dir failed for crew $CREW_ID (exit $rc); using the legacy crew dir" >&2 ;;
+  esac
+}
+
 # _require_dead_crew <sole> <doing> <live-hint> — exit unless crew $CREW_ID is
 # homed in this repo (`crew crews --home`) and not alive. <sole> 1 also refuses
 # while any other crew there is alive: two dispatchers in one repo split the
@@ -463,6 +488,8 @@ _start_in_window() {
   }
   for _ in $(seq 20); do
     sleep 0.5
+    # A spawned crew's dir exists only once its launcher registers.
+    [ "${spawning:-0}" = 0 ] || _resolve_crew_dir "$common" 2>/dev/null || true
     new_pid=$(cat -- "$crew_dir/pid" 2>/dev/null) || new_pid=""
     if [[ $new_pid =~ ^[1-9][0-9]*$ ]] && [ "$new_pid" != "$old_pid" ] && kill -0 "$new_pid" 2>/dev/null; then
       tmux set-option -p -t "$pane" remain-on-exit off
@@ -488,19 +515,25 @@ if [ -n "$relaunch_id" ]; then
     echo "dispatcher: --relaunch: cannot enter --repo ${relaunch_repo@Q}" >&2
     exit 1
   }
-  common=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || {
-    echo "dispatcher: --relaunch: ${relaunch_repo:-.} is not a git repo" >&2
-    exit 1
-  }
-  if [[ $common != */.git ]]; then
-    echo "dispatcher: --relaunch: the git common dir $common does not end in /.git, so there is no main worktree to relaunch in" >&2
-    exit 1
+  common=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || common=""
+  _resolve_crew_dir "$common" || exit 1
+  if [ -z "$common" ]; then
+    # A layout-2 crew with no home repo has no main worktree to return to.
+    if [ "$crew_dir_v2" = 0 ]; then
+      echo "dispatcher: --relaunch: ${relaunch_repo:-.} is not a git repo" >&2
+      exit 1
+    fi
+    wt=$PWD
+  else
+    if [[ $common != */.git ]]; then
+      echo "dispatcher: --relaunch: the git common dir $common does not end in /.git, so there is no main worktree to relaunch in" >&2
+      exit 1
+    fi
+    wt=${common%/.git}
+    cd -- "$wt" || exit 1
   fi
-  wt=${common%/.git}
-  cd -- "$wt" || exit 1
   _require_dead_crew 1 relaunching "nothing to relaunch"
 
-  crew_dir="$common/crew/crews/$CREW_ID"
   # A pid file overwritten with a dead pid must not hide an engine still
   # running in the crew's pane.
   if [ -e "$crew_dir/pane" ]; then
@@ -697,7 +730,8 @@ if [ -n "$spawn_repo" ]; then
   date +%s >"$marker_tmp"
   mv -f -- "$marker_tmp" "$marker"
 
-  crew_dir="$common/crew/crews/$CREW_ID"
+  _resolve_crew_dir "$common" || exit 1
+  spawning=1
   # The new dispatcher must not inherit the overseer's or a worker's identity.
   _start_in_window --spawn "" env -u CREW_OVERSEER -u CREW_WORKER_ID -u CREW_ROLE_ID dispatcher
   echo "dispatcher: spawned crew $CREW_ID in pane $pane"
@@ -726,6 +760,12 @@ fi
 dispatch_config_default="@dispatchConfig@"
 settings="$("${DISPATCH_CONFIG_BIN:-$dispatch_config_default}")"
 [ -n "${DISPATCH_ENGINES:-}" ] || DISPATCH_ENGINES="$(jq -r '.engines // [] | join(" ")' <<<"$settings")"
+
+# Crew layout: the env wins for one launch, else the settings key. Go reads only
+# CREW_LAYOUT, so `crew register` gets it exported.
+crew_layout=${CREW_LAYOUT:-}
+[ -n "$crew_layout" ] || crew_layout="$(jq -r '.crewLayout // 1 | tostring' <<<"$settings")"
+export CREW_LAYOUT=$crew_layout
 
 # First launch is never gated, and never prompts (overseer launches are
 # unattended): one stderr line, then carry on.
@@ -791,7 +831,12 @@ ac="${autocompact:-$(orch_default autoCompact)}"
 # already be gone. Never adopts or mints: a handoff names its crew.
 handoff_dir=""
 if [ "$fresh" = 1 ]; then
-  if ! git rev-parse --git-common-dir >/dev/null 2>&1; then
+  common=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || common=""
+  crew_dir_v2=0
+  if [ -n "${CREW_ID:-}" ] && _plain_crew_id; then
+    _resolve_crew_dir "$common" || exit 1
+  fi
+  if [ -z "$common" ] && [ "$crew_dir_v2" = 0 ]; then
     echo "dispatcher: --fresh needs a git repo (the crew's bus and handoff note live in it)" >&2
     exit 1
   fi
@@ -801,7 +846,11 @@ if [ "$fresh" = 1 ]; then
   fi
   _require_plain_crew_id
   _require_dead_crew 0 "handing off" "hand off from inside it, or quit it first"
-  handoff_dir="$(git rev-parse --path-format=absolute --git-common-dir)/crew/handoff"
+  if [ "$crew_dir_v2" = 1 ]; then
+    handoff_dir="$crew_dir/handoff"
+  else
+    handoff_dir="$common/crew/handoff"
+  fi
   if [ -n "$note_src" ]; then
     _store_note "$handoff_dir" "$CREW_ID" "$note_src"
   elif [ "$no_note" = 0 ] && [ ! -s "$handoff_dir/$CREW_ID.md" ]; then
@@ -975,10 +1024,11 @@ if [ "$overseer" = 1 ]; then
 fi
 
 # An exported CREW_ID already means "this crew", and a mint outside a git repo
-# has no per-repo crew table to consult (same guard `crew register` uses).
+# has no per-repo crew table to consult (same guard `crew register` uses); at
+# layout 2 no repo is needed.
 adopted_live=0
 if [ "$overseer" = 0 ] && [ -z "${CREW_ID:-}" ] && [ "$new_crew" = 0 ] &&
-  git rev-parse --git-common-dir >/dev/null 2>&1; then
+  { [ "$crew_layout" = 2 ] || git rev-parse --git-common-dir >/dev/null 2>&1; }; then
   _reattach_or_switch
 fi
 
@@ -1033,8 +1083,14 @@ if [ "$overseer" = 0 ]; then
   echo "crew id: $CREW_ID"
 fi
 
+# Outside a repo only a non-overseer layout-2 crew registers.
+registers=0
+if { [ "$overseer" = 0 ] && [ "$crew_layout" = 2 ]; } || git rev-parse --git-common-dir >/dev/null 2>&1; then
+  registers=1
+fi
+
 registered=0
-if git rev-parse --git-common-dir >/dev/null 2>&1; then
+if [ "$registers" = 1 ]; then
   registered=1
   if [ "$adopted_live" = 1 ]; then
     crew register $$ || {
@@ -1053,8 +1109,11 @@ if git rev-parse --git-common-dir >/dev/null 2>&1; then
 
   # The launch record `dispatcher --relaunch` restarts a crashed crew from; a
   # deregister removes it with the crew dir.
+  crew_dir_v2=0
+  if _plain_crew_id; then
+    _resolve_crew_dir "${common_dir:-}" || exit 1
+  fi
   if [ "$registered" = 1 ] && _plain_crew_id; then
-    crew_dir="$common_dir/crew/crews/$CREW_ID"
     mkdir -p -- "$crew_dir"
     record_tmp=$(mktemp "$crew_dir/.launch.XXXXXX")
     jq -n --arg agent "$agent" --arg model "${model:-$(orch_default model)}" \
@@ -1066,7 +1125,11 @@ if git rev-parse --git-common-dir >/dev/null 2>&1; then
   # The engine's own `dispatcher --fresh` finds this launcher through these.
   # codex and cursor never relaunch, so an inherited pair must not reach them.
   if { [ "$agent" = claude ] || [ "$agent" = pi ]; } && _plain_crew_id; then
-    handoff_dir="$(git rev-parse --path-format=absolute --git-common-dir)/crew/handoff"
+    if [ "$crew_dir_v2" = 1 ]; then
+      handoff_dir="$crew_dir/handoff"
+    else
+      handoff_dir="$common_dir/crew/handoff"
+    fi
     export DISPATCHER_LAUNCHER_PID=$$
     export DISPATCHER_HANDOFF_DIR="$handoff_dir"
     export DISPATCHER_HANDOFF_CREW="$CREW_ID"
@@ -1429,7 +1492,7 @@ done
 # accumulate stale entries. An engine that died by a signal crashed: keeping
 # the registration and launch record lets the crew read dead and relaunch.
 # 130 is excluded because it is also a Ctrl-C quit's exit status.
-if git rev-parse --git-common-dir >/dev/null 2>&1; then
+if [ "$registers" = 1 ]; then
   if [ "$rc" -ge 128 ] && [ "$rc" != 130 ]; then
     echo "dispatcher: the engine died by a signal (exit $rc); crew $CREW_ID stays registered and reads dead — 'dispatcher --relaunch $CREW_ID' restarts it" >&2
     remux_keep=1

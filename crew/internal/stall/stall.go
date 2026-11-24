@@ -87,6 +87,10 @@ func Run(ctx context.Context, req Request, paths bus.Paths, stderr io.Writer, o 
 		return 1
 	}
 	bc, err := paths.Crew(cfg.crew)
+	if bus.IsRefusal(err) {
+		_, _ = fmt.Fprintf(stderr, "crew: %v\n", err)
+		return 1
+	}
 	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "crew: stall-watch: invalid crew id %s\n", cfg.crew)
 		return 1
@@ -109,7 +113,7 @@ func Run(ctx context.Context, req Request, paths bus.Paths, stderr io.Writer, o 
 	if w.o.Unread == nil {
 		w.o.Unread = func(ctx context.Context, mode unread.Mode) string {
 			return unread.Scan(unread.Request{
-				Dir: paths.Dir, Log: bc.Log, Crew: cfg.crew, Branch: cfg.branch,
+				Dir: bc.State, Log: bc.Log, Crew: cfg.crew, Branch: cfg.branch,
 				Me: cfg.me, FromID: cfg.fromID, T0: cfg.runStartMS,
 			}, mode)
 		}

@@ -18,12 +18,16 @@ func HomePath(paths bus.Paths, id string) string { return paths.Dir + "/homes/" 
 
 // WriteHome records this repo as crew id's home. Only a dispatcher acting in
 // its own repo calls it: a cross-repo dispatch re-attaches through
-// `adopt --reattach`, which writes it only after proving the cwd.
-func WriteHome(paths bus.Paths, id string) error {
+// `adopt --reattach`, which writes it only after proving the cwd. A layout-2
+// crew's home is its meta.json home_repo, so nothing is written for one.
+func WriteHome(paths bus.Paths, bc bus.Crew) error {
+	if bc.Layout == 2 {
+		return nil
+	}
 	if err := os.MkdirAll(paths.Dir+"/homes", 0o755); err != nil {
 		return err
 	}
-	return os.WriteFile(HomePath(paths, id), []byte(paths.Common+"\n"), 0o644)
+	return os.WriteFile(HomePath(paths, bc.ID), []byte(paths.Common+"\n"), 0o644)
 }
 
 // RepoVerdict is where a process's cwd sits relative to a bus.
@@ -97,6 +101,8 @@ type Homes struct {
 	paths   bus.Paths
 	o       Options
 	common  string
+	tag     string // homeTag of paths
+	tagOK   bool
 	cwds    cwdIndex
 	logRead bool
 	logged  map[string]bool
@@ -104,7 +110,8 @@ type Homes struct {
 
 // NewHomes is the predicate for paths' repo.
 func NewHomes(ctx context.Context, paths bus.Paths, o Options) *Homes {
-	return &Homes{ctx: ctx, paths: paths, o: o, common: realpath(paths.Common),
+	tag, tagOK := homeTag(paths)
+	return &Homes{ctx: ctx, paths: paths, o: o, common: realpath(paths.Common), tag: tag, tagOK: tagOK,
 		cwds: cwdIndex{ctx: ctx, tbl: o.Proc}}
 }
 
@@ -120,7 +127,14 @@ func NewHomes(ctx context.Context, paths bus.Paths, o Options) *Homes {
 // when its recorded pid is live and that process's cwd resolves to this repo.
 // Anything else is foreign. Where Cwds is unavailable (macOS) the cwd test
 // never matches, so nothing is wrongly claimed.
+//
+// A layout-2 crew answers from its meta.json alone (homedAt).
 func (h *Homes) IsHome(id string) bool {
+	bc, err := h.paths.Crew(id)
+	if err == nil && bc.Layout == 2 {
+		m, err := bus.ReadMeta(h.paths.State, id)
+		return err == nil && h.tagOK && homedAt(m, h.tag)
+	}
 	if data, err := os.ReadFile(HomePath(h.paths, id)); err == nil {
 		if realpath(strings.TrimRight(string(data), "\n")) == h.common {
 			return true
@@ -129,7 +143,6 @@ func (h *Homes) IsHome(id string) bool {
 	if h.loggedHome(id) {
 		return true
 	}
-	bc, err := h.paths.Crew(id)
 	if err != nil {
 		return false
 	}

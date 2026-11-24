@@ -27,7 +27,25 @@ func TestMain(m *testing.M) {
 	}
 	// Hold tests register t.TempDir repos, which Register refuses otherwise.
 	_ = os.Setenv("CREW_REGISTRY_ALLOW_TMP", "1")
-	testscript.Main(repostest.Guard(m), map[string]func(){"crew": crewMain, "tmux": fakeTmux})
+	testscript.Main(isolatedState{repostest.Guard(m)}, map[string]func(){"crew": crewMain, "tmux": fakeTmux})
+}
+
+// isolatedState runs the tests with XDG_STATE_HOME at a fresh temp dir, since
+// bus.Locate reads the state root: no CLI test sees ~/.local/state/crew.
+type isolatedState struct{ m repostest.Runner }
+
+func (s isolatedState) Run() int {
+	dir, err := os.MkdirTemp("", "crew-state-")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	defer func() { _ = os.RemoveAll(dir) }()
+	if err := os.Setenv("XDG_STATE_HOME", dir); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	return s.m.Run()
 }
 
 // pkgDir is the package directory, captured before any test changes cwd

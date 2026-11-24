@@ -488,6 +488,12 @@ effort="${effort_flag:-$(_hdr effort)}"
 mcp_profile="${mcp_flag_val:-$(_hdr mcp)}"
 tier="$(_hdr tier)"
 crew_id="$(_hdr crew_id)"
+# The header crew id picks the log, so it must match the anchor's; anchors
+# written before crew ids were recorded have four lines and only ever named a
+# layout-1 crew, so they cannot select a layout-2 log.
+[ -z "${_anchor_lines[4]:-}" ] || [ "${_anchor_lines[4]}" = "$crew_id" ] || _anchor_mismatch "crew id" "$crew_id" "${_anchor_lines[4]}"
+crew_log="$(_crew_log "$crew_dir" "$crew_id")" || exit 1
+[ -n "${_anchor_lines[4]:-}" ] || [ "$crew_log" = "$crew_dir/events.jsonl" ] || _anchor_mismatch "crew id" "$crew_id" "a layout-1 crew"
 # Stamped at dispatch only when the owning dispatcher is on another host.
 dispatcher_host="$(_hdr dispatcher_host)"
 [[ -z $dispatcher_host || $dispatcher_host =~ ^[A-Za-z0-9][A-Za-z0-9_-]*$ ]] || dispatcher_host=""
@@ -500,9 +506,9 @@ grid_roles="$(_hdr roles)"
 code_mode=""
 code_mode_dropped=""
 code_mode_prev=false
-if [ -e "$crew_dir/events.jsonl" ]; then
-  code_mode_prev="$(jq -nrR --arg b "$branch" '[inputs | fromjson? | objects | select(.kind == "dispatch" and .branch == $b)] | (.[-1].code_mode // false)' "$crew_dir/events.jsonl")" || {
-    echo "dispatch resume: could not read $crew_dir/events.jsonl — treating --code-mode as off" >&2
+if [ -e "$crew_log" ]; then
+  code_mode_prev="$(jq -nrR --arg b "$branch" '[inputs | fromjson? | objects | select(.kind == "dispatch" and .branch == $b)] | (.[-1].code_mode // false)' "$crew_log")" || {
+    echo "dispatch resume: could not read $crew_log — treating --code-mode as off" >&2
     code_mode_prev=false
   }
 fi
@@ -655,10 +661,10 @@ else
   orig_model="$(sed -n 's/^model: //p' "$wt_path/WORKER_TASK.md" | head -1)"
   if [ -n "$orig_model" ] && [ "$orig_model" != "$model" ]; then
     # The header is worker-writable, so the bus must agree it is what failed.
-    bus_failed_model="$(_prior_failed_model "$branch" "$crew_dir" "$tier")"
+    bus_failed_model="$(_prior_failed_model "$branch" "$crew_log" "$tier")"
     escalation_baseline=""
     [ "$bus_failed_model" = "$orig_model" ] && escalation_baseline="$(_escalation_hop "$agent" "$tier" "$orig_model" "$model" outOfRow)"
-    if [ -n "$escalation_baseline" ] && _prior_failed_escalation_available "$branch" "$crew_dir"; then
+    if [ -n "$escalation_baseline" ] && _prior_failed_escalation_available "$branch" "$crew_log"; then
       precheck+=(--ignore-map)
       escalated_from="$escalation_baseline"
     fi
@@ -1108,6 +1114,7 @@ mkdir -p "$crew_dir"
 dispatcher_live=""
 dispatcher_pane_new=""
 cdir="$crew_dir/crews/$crew_id"
+[ "$crew_log" = "$crew_dir/events.jsonl" ] || cdir="${crew_log%/events.jsonl}"
 if [ -d "$cdir" ]; then
   epid="$(cat "$cdir/pid" 2>/dev/null || true)"
   case "$epid" in
@@ -1198,19 +1205,20 @@ escalated_from_event="${escalated_from:-}"
 line=$(jq -nc --arg crew "$crew_id" --arg branch "$branch" \
   --arg worker "$worker_id" --arg prev "$prev_worker_id" \
   --arg engine "$agent" --arg model "$model" --arg session "$session" \
+  --arg repo "$(_crew_repo)" \
   --argjson continued "$([ -n "$fresh" ] && echo false || echo true)" \
   --arg engine_session "${lead_sid:-${lead_session#-}}" \
   --arg escalated_from "$escalated_from_event" \
   --argjson chrome "$([ -n "$chrome" ] && echo true || echo false)" \
   --argjson code_mode "$([ -n "$code_mode" ] && echo true || echo false)" \
-  '{ts:(now*1000|floor), crew_id:$crew, kind:"resume", branch:$branch,
+  '{ts:(now*1000|floor), crew_id:$crew, kind:"resume", branch:$branch, repo:$repo,
      worker_id:$worker, prev_worker_id:$prev, engine:$engine, model:$model,
      session:$session, continued:$continued,
      engine_session:(if $engine_session == "" then null else $engine_session end)}
    + if $escalated_from != "" then {escalated_from:$escalated_from} else {} end
    + if $chrome then {chrome:true} else {} end
    + if $code_mode then {code_mode:true} else {} end')
-_bus_append "$crew_dir/events.jsonl" "$line"
+_bus_append "$crew_log" "$line"
 
 # Clears a stale exited/failed/done roster row so the crew reads as live again.
 CREW_ID="$crew_id" crew status "$worker_id" working resumed || true

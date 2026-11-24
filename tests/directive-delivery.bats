@@ -411,3 +411,33 @@ cursor_file() { printf '%s\n' "$CURDIR"/*; }
   [ -z "$output" ]
   [ -z "$stderr" ]
 }
+
+@test "delivery: the legacy log is where crew where --log resolves a layout-1 crew" {
+  [ "$(crew where --log --crew c1)" = "$LOG" ]
+}
+
+@test "delivery: a directive in a layout-2 crew's log is delivered, cursor stays in the crew dir" {
+  CREW_LAYOUT=2 crew register "$$"
+  l2=$(crew where --log --crew c1)
+  [ "$l2" = "$XDG_STATE_HOME/crew/crews/c1/events.jsonl" ]
+
+  CREW_WORKER_ID= CREW_ROLE_ID= crew msg dispatcher:c1 "$ID" 'layout two'
+  [ -f "$l2" ]
+  [ ! -e "$LOG" ]
+  deliver
+  [ "$status" -eq 0 ]
+  [ "$(grep -cF '"body":"layout two"' <<<"$(ctx)")" -eq 1 ]
+  [ -f "$CURDIR/${ID//[!A-Za-z0-9._-]/_}" ]
+}
+
+@test "delivery: an archived crew is silent and writes nothing" {
+  CREW_WORKER_ID= CREW_ROLE_ID= crew msg dispatcher:c1 "$ID" 'legacy'
+  mkdir -p "$XDG_STATE_HOME/crew/archive/c1"
+  printf '{}\n' >"$XDG_STATE_HOME/crew/archive/c1/meta.json"
+  before=$(cksum <"$LOG")
+  deliver
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+  [ "$(cksum <"$LOG")" = "$before" ]
+  [ ! -e "$CURDIR" ]
+}

@@ -279,6 +279,34 @@ ROWS
   done
 }
 
+@test "crewLayout defaults to 1 and takes 1 or 2 from the user layer" {
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 0 ]
+  jq -e '.crewLayout == 1' <<<"$output"
+  user_settings '{"crewLayout":2}'
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 0 ]
+  jq -e '.crewLayout == 2' <<<"$output"
+}
+
+@test "crewLayout must be 1 or 2" {
+  for bad in '3' '"2"' 'true' '2.0' '1.0'; do
+    user_settings "{\"crewLayout\":$bad}"
+    run --separate-stderr "$CONFIG"
+    [ "$status" -eq 1 ]
+    [[ "$stderr" == *"crewLayout must be 1 or 2"* ]]
+  done
+}
+
+@test "crewLayout accepts 1 and 2" {
+  for good in 1 2; do
+    user_settings "{\"crewLayout\":$good}"
+    run --separate-stderr "$CONFIG"
+    [ "$status" -eq 0 ]
+    jq -e ".crewLayout == $good" <<<"$output"
+  done
+}
+
 @test "dashTailscale defaults to false and takes a boolean from the user layer" {
   run --separate-stderr "$CONFIG"
   [ "$status" -eq 0 ]

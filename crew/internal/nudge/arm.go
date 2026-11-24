@@ -126,6 +126,10 @@ func Run(ctx context.Context, r Request, paths bus.Paths, stdout, stderr io.Writ
 		return fail(stderr, "CREW_ID not set and no WORKER_TASK.md crew_id — pass --crew <id>")
 	}
 	bc, err := paths.Crew(a.crew)
+	if bus.IsRefusal(err) {
+		say(stderr, "crew: %v\n", err)
+		return exitFailure
+	}
 	if err != nil {
 		return fail(stderr, "invalid crew id "+a.crew)
 	}
@@ -396,7 +400,7 @@ func (a *arm) wait(ctx context.Context, wait string) int {
 	start := a.o.Deps.Clock.Seconds()
 	startMS := a.o.Deps.Clock.NowMS()
 
-	dir := filepath.Join(a.paths.Dir, "nudge-wait")
+	dir := filepath.Join(a.bc.State, "nudge-wait")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fail(a.stderr, err.Error())
 	}

@@ -450,11 +450,11 @@ func add(ctx context.Context, req Request, paths bus.Paths, stdout, stderr io.Wr
 
 	specpath := ""
 	if fl.Spec != "" {
-		if err := os.MkdirAll(filepath.Join(paths.Dir, "holds"), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Join(c.State, "holds"), 0o755); err != nil {
 			say(stderr, "crew: hold add: %v\n", err)
 			return exitFailure
 		}
-		specpath = filepath.Join(paths.Dir, "holds", id+".md")
+		specpath = filepath.Join(c.State, "holds", id+".md")
 		data, err := os.ReadFile(fl.Spec)
 		if err != nil {
 			say(stderr, "crew: hold add: cannot copy --spec %s: %v\n", fl.Spec, err)
@@ -673,6 +673,10 @@ func resolveCrew(raw string, paths bus.Paths, stderr io.Writer, o Options) (bus.
 		return bus.Crew{}, false
 	}
 	c, err := paths.Crew(crew)
+	if bus.IsRefusal(err) {
+		say(stderr, "crew: %v\n", err)
+		return bus.Crew{}, false
+	}
 	if err != nil {
 		say(stderr, "crew: invalid crew id — expected only letters, digits, '.', '_' and '-'\n")
 		return bus.Crew{}, false

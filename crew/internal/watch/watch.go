@@ -95,6 +95,9 @@ type call struct {
 // bind resolves the call's crew, "" or the refusal check gives a bad id.
 func (c *call) bind(paths bus.Paths) string {
 	bc, err := paths.Crew(c.crew)
+	if bus.IsRefusal(err) {
+		return fmt.Sprintf("crew: %v", err)
+	}
 	if err != nil {
 		return badCrewMsg
 	}

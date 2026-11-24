@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 
 	"github.com/noamsto/dispatcher/crew/internal/ascii"
+	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/wtgit"
 )
 
@@ -119,6 +120,9 @@ func (s *stackCmd) recordRow(ctx context.Context, child, parent, tip string) err
 		return s.refuse("crew: stack: %v\n", err)
 	}
 	c, err := s.paths.Crew(s.crew)
+	if bus.IsRefusal(err) {
+		return s.refuse("crew: %v\n", err)
+	}
 	if err != nil {
 		return s.refuse("crew: stack: %v\n", err)
 	}

@@ -410,10 +410,10 @@ _branch_finished() {
 # newest status row, `exited` and `source "watchdog"` rows aside, crew migrate's
 # `migrated` mark. Those two are skipped because killing the window fires the
 # SessionEnd backstop and an orphaned stall-watch can still post; neither is the
-# worker's word. Reads <dir>/crew's bus, else $crew_dir's.
+# worker's word. Reads <dir>/crew's bus, else $crew_log.
 # Fail-closed: an unreadable bus or a jq failure is "not released" (return 1).
 _branch_release_host() {
-  local branch="$1" events="$crew_dir/events.jsonl" host
+  local branch="$1" events="$crew_log" host
   [ "${2:-}" != --git-dir ] || events="$3/crew/events.jsonl"
   [ -r "$events" ] || return 1
   host="$(jq -nrR --arg b "$branch" '[inputs | fromjson? | objects] as $all
@@ -472,7 +472,7 @@ _push_new_branch() {
 # is itself evidence — an unreachable origin or unreadable bus reads as live.
 # Local branches are the caller's business, not checked here.
 _claim_evidence() {
-  local issue="$1" out rc events="$crew_dir/events.jsonl" bound outf
+  local issue="$1" out rc events="$crew_log" bound outf
   local -a lsr
   # Bound the remote probe by wall clock (#321). Stock macOS ships no coreutils
   # `timeout`, so the old `timeout 20` guard simply vanished there and a stalled
@@ -821,7 +821,7 @@ _also_closes_token() {
 # the key does not shadow an older bundle. Claim rows are no record: a
 # rolled-back run leaves them too.
 _bundle_recorded() {
-  local events="$crew_dir/events.jsonl"
+  local events="$crew_log"
   [ -f "$events" ] || return 0
   jq -nrR --arg b "$1" '
     [inputs | fromjson? | objects | select(.branch == $b and .kind == "dispatch")
@@ -835,7 +835,7 @@ _bundle_recorded() {
 # its bundle rather than a rolled-back attempt's is not knowable. Returns 1 when
 # the bus cannot be read.
 _bundle_orphans() {
-  local events="$crew_dir/events.jsonl"
+  local events="$crew_log"
   [ -f "$events" ] || return 0
   jq -nrR --arg b "$1" --arg p "$2" '
     [inputs | fromjson? | objects | select(.branch == $b)] as $rows
@@ -1009,14 +1009,25 @@ _registry_add() {
     echo "dispatch: could not register $1 in $store/repos — crew fleet and crew rate --sweep-all may miss this repo" >&2
 }
 
-# _crew_append <line> — append to this repo's bus, registering the repo first
+# _crew_log_init — set crew_log, crew_layout and crew_state from $crew_dir and
+# $crew_id. A layout-2 crew's state dir holds its log; at layout 1 the state dir
+# is $crew_dir. Returns 1 on a refusal, which _crew_log already printed.
+_crew_log_init() {
+  crew_log="$(_crew_log "$crew_dir" "$crew_id")" || return 1
+  crew_layout=1 crew_state="$crew_dir"
+  if [ "$crew_log" != "$crew_dir/events.jsonl" ]; then
+    crew_layout=2 crew_state="${crew_log%/events.jsonl}"
+  fi
+}
+
+# _crew_append <line> — append to the crew's log, registering the repo first
 # so it is discoverable from the moment its bus exists.
 _crew_append() {
   if [ -z "${crew_registered:-}" ]; then
     _registry_add "${crew_dir%/crew}"
     crew_registered=1
   fi
-  _bus_append "$crew_dir/events.jsonl" "$1"
+  _bus_append "$crew_log" "$1"
 }
 
 # Anchored wrappers over worktree-git.sh, which documents the fetch contract.
@@ -1960,10 +1971,6 @@ split_role_pane() {
   printf '%s' "$pane"
 }
 
-# _crew_repo — the repo (git common dir) whose bus $crew_dir is, tagged on the rows
-# that name a branch so a shared bus can tell repos apart.
-_crew_repo() { realpath -e -- "${crew_dir%/crew}"; }
-
 # _branch_live_repos <log> <repo> [<only>] — print each repo <log> shows with a
 # live dispatch of $branch in crew $crew_id, one per line (only <only>, when
 # given). An untagged row belongs to <repo>, the repo whose log it is. A dispatch
@@ -1976,7 +1983,7 @@ _branch_live_repos() {
       .n += 1
       | if $row.branch != $b then . else
           (($row.repo // $r) | tostring) as $repo | [(($row.ts | numbers) // 0), .n] as $at
-          | if $row.kind == "dispatch" and $row.crew_id == $c then
+          | if ($row.kind == "dispatch" or $row.kind == "resume") and $row.crew_id == $c then
               .live[$repo] = ([.live[$repo], $at] | max)
             elif $row.kind == "reap" or $row.kind == "release" then
               .ended[$repo] = ([.ended[$repo], $at] | max)
@@ -1986,30 +1993,48 @@ _branch_live_repos() {
     | select($only == "" or . == $only)' "$1"
 }
 
+# _repo_branch_checked_out <common> <branch> — 0 when a worktree of the repo
+# whose git common dir is <common> has <branch> checked out, read from its HEAD
+# files alone: no git command runs in a repo a log row named. Mid-rebase or
+# mid-bisect HEAD holds a SHA, so the rebase's head-name or BISECT_START names
+# the branch instead. A symlinked or non-regular file (a FIFO would hang the
+# read) does not count.
+_repo_branch_checked_out() {
+  local head f line
+  for head in "$1/HEAD" "$1"/worktrees/*/HEAD; do
+    for f in "$head" "${head%/HEAD}/rebase-merge/head-name" "${head%/HEAD}/rebase-apply/head-name" "${head%/HEAD}/BISECT_START"; do
+      [ -f "$f" ] && [ ! -L "$f" ] || continue
+      line=""
+      { IFS= read -r line <"$f"; } 2>/dev/null || true
+      case $f in
+      */HEAD) [ "$line" != "ref: refs/heads/$2" ] || return 0 ;;
+      */BISECT_START) [ "$line" != "$2" ] || return 0 ;;
+      *) [ "$line" != "refs/heads/$2" ] || return 0 ;;
+      esac
+    done
+  done
+  return 1
+}
+
 # _branch_live_elsewhere — print the repo of a live dispatch of $branch in crew
 # $crew_id from another repo, or nothing: worker ids, reply and the stamp rule
 # key on the branch alone, so a crew holds one worker per branch name. A row's
 # repo is its writer's word and nothing here can end a planted or stale one, so
-# this log only names candidates: one counts when its own log confirms the live
-# dispatch by the same rule. That log must not be this one, or an alias of this
-# repo would confirm the row with itself. A missing log here is no conflict; one
-# jq cannot read returns 1. A candidate log that is missing, unreadable or not a
-# regular file (a FIFO would hang jq) cannot confirm, so that candidate is ignored.
+# the crew's log only names candidates: one counts when a worktree of it has the
+# branch checked out. A candidate that is this repo (an alias included) is
+# skipped. A missing log here is no conflict; one jq cannot read returns 1.
 _branch_live_elsewhere() {
-  local events="$crew_dir/events.jsonl" here live repo
-  [ -e "$events" ] || [ -L "$events" ] || return 0
+  local here live repo
+  [ -e "$crew_log" ] || [ -L "$crew_log" ] || return 0
   here="$(_crew_repo)"
-  live="$(_branch_live_repos "$events" "$here")" || {
-    echo "dispatch: cannot read $events to check $branch for a live dispatch from another repo — refusing" >&2
+  live="$(_branch_live_repos "$crew_log" "$here")" || {
+    echo "dispatch: cannot read $crew_log to check $branch for a live dispatch from another repo — refusing" >&2
     return 1
   }
   while IFS= read -r repo; do
-    [ -n "$repo" ] && [ "$repo" != "$here" ] || continue
-    # A candidate repo's own bus holds its dispatch rows only while each repo
-    # keeps its own log; once a crew's repos share one log, confirming needs a
-    # fact the candidate repo holds in every layout (e.g. its worktrees' HEADs).
-    [ -f "$repo/crew/events.jsonl" ] && [ ! "$repo/crew/events.jsonl" -ef "$events" ] || continue
-    [ -n "$(_branch_live_repos "$repo/crew/events.jsonl" "$repo" "$repo" 2>/dev/null)" ] || continue
+    [ -n "$repo" ] || continue
+    [ ! "$repo" -ef "$here" ] || continue
+    _repo_branch_checked_out "$repo" "$branch" || continue
     printf '%s\n' "$repo"
     return 0
   done <<<"$live"
@@ -2465,7 +2490,9 @@ if [ "${1:-}" = "--role-exited" ]; then
   role_id="role:$exited_branch:$role"
   tmux set-option -p -t "$exited_pane" @crew_exited 1 2>/dev/null || true
   tmux set-option -p -t "$exited_pane" @crew_state exited 2>/dev/null || true
-  log="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)/crew/events.jsonl"
+  exited_crew="${CREW_ID:-$(sed -n 's/^crew_id: //p' WORKER_TASK.md 2>/dev/null | head -1 || true)}"
+  # A refused crew has no log to read; crew status below reports the refusal.
+  log="$(_crew_log "$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)/crew" "$exited_crew" 2>/dev/null)" || log=""
   if [ -f "$log" ] && jq -e --arg me "$role_id" --argjson since "$exited_since" \
     'select(.kind=="msg" and .to==$me and .ts>=$since and ((.body | fromjson? // {} | objects | .final) == true))' "$log" >/dev/null 2>&1; then
     exit 0
@@ -2768,6 +2795,7 @@ _remote_recover_row() {
 _remote_finish() {
   mkdir -p "$crew_dir"
   _crew_append "$(jq -c --arg h "$remote_host" --arg repo "$(_crew_repo)" '. + {ts:(now*1000|floor), host:$h, remote:true, repo:$repo}' <<<"$1")"
+  [ "$crew_layout" != 2 ] || crew index add --crew "$crew_id" || true
   branch="$(jq -r .branch <<<"$1")"
   mapfile -t also_closes < <(jq -r '.also_closes // [] | .[] | tostring' <<<"$1")
   num=""
@@ -2785,10 +2813,10 @@ _remote_finish() {
 _remote_recover() {
   local row rc=0 rec_branch=""
   remote_session="$(_remote_target_session "$crew_id")" || exit 1
-  if [ -f "$crew_dir/events.jsonl" ]; then
+  if [ -f "$crew_log" ]; then
     rec_branch="$(jq -rnR --arg s "$session" --arg h "$remote_host" '
       [inputs | fromjson? | objects | select(.kind == "dispatch" and .remote == true and .session == $s and .host == $h)] | last | .branch // empty' \
-      "$crew_dir/events.jsonl")"
+      "$crew_log")"
   fi
   if [ -n "$rec_branch" ]; then
     remote_session="$(_remote_worker_session "$remote_host" "$crew_id" "$rec_branch" "$remote_session")"
@@ -2818,12 +2846,12 @@ _remote_recover() {
 _remote_dup_holder() {
   local target="$2" fresh_ms branch host remote ts clone index rel
   fresh_ms=$(($(date +%s) * 1000 - _CLAIM_STALE_MS))
-  if [ -f "$crew_dir/events.jsonl" ]; then
+  if [ -f "$crew_log" ]; then
     while IFS=$'\t' read -r branch host remote ts; do
       if [ "$remote" = true ]; then
         [ "$host" != "$target" ] && [ "$ts" -ge "$fresh_ms" ] || continue
       else
-        ! _branch_finished "$crew_dir/events.jsonl" "$branch" || continue
+        ! _branch_finished "$crew_log" "$branch" || continue
         if rel="$(_branch_release_host "$branch")"; then
           [ "$rel" != "$target" ] || continue
           host="$host (migrating to $rel)"
@@ -2836,7 +2864,7 @@ _remote_dup_holder() {
         and ((.branch | test("(^|/)" + $n + "-")) or any((.also_closes // []) | if type == "array" then .[] else empty end; tostring == $n)))]
       | group_by(.branch) | map(max_by(.ts))[]
       | [.branch, ((.host // "") | tostring | if . == "" then "?" else . end), (.remote == true | tostring), ((.ts | numbers) // 0 | floor | tostring)] | @tsv' \
-      "$crew_dir/events.jsonl")
+      "$crew_log")
   fi
   index="$(_claim_index_file)"
   [ -n "$index" ] && [ -f "$index" ] || return 0
@@ -2941,6 +2969,7 @@ _dispatch_remote() {
     fi
   fi
   _wt_trusted_cwd "${crew_dir%/crew}" || exit 1
+  _crew_log_init || exit 1
   # The worker runs on the remote host, so its tools are not checked here.
   _spec_lint --no-host-checks
 
@@ -3118,6 +3147,7 @@ if [ "${1:-}" = --host ] && [ "${3:-}" = --recover ]; then
   }
   crew_dir="$(git rev-parse --path-format=absolute --git-common-dir)/crew"
   _wt_trusted_cwd "${crew_dir%/crew}" || exit 1
+  _crew_log_init || exit 1
   _settings_load
   _remote_recover
   exit 0
@@ -3810,17 +3840,20 @@ model_gate() {
 
 model_gate
 
-# Pre-compute the branch and crew_dir for escalation checks (normally
+# Pre-compute the branch and crew log for escalation checks (normally
 # computed after this gate). At this point $* is the title.
 # A Linear id overrides the issue-derived branch at the identity step below, so
 # it has no failed history under the issue's branch name — no escalation.
+# The log resolves from the trusted checkout in a subshell, never from a
+# worker's worktree; a refused crew or untrusted cwd reads no history here.
 if [ -n "$gh_issue" ] && [ -z "$linear_id" ]; then
   _escalation_slug="$(printf '%s' "$*" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g' | cut -c1-40 | sed -E 's/^-+//; s/-+$//')"
   _escalation_branch="feat/$gh_issue-$_escalation_slug"
   _escalation_crew_dir="$(git rev-parse --path-format=absolute --git-common-dir)/crew"
+  _escalation_crew_log="$(_wt_trusted_cwd "${_escalation_crew_dir%/crew}" >/dev/null 2>&1 && _crew_log "$_escalation_crew_dir" "$crew_id" 2>/dev/null)" || _escalation_crew_log=""
 else
   _escalation_branch=""
-  _escalation_crew_dir=""
+  _escalation_crew_log=""
 fi
 
 # Tier↔model gate (#89). Enforces tier-appropriateness on top of
@@ -3855,10 +3888,10 @@ elif [ -z "$ignore_map" ]; then
     # Escalation: if the model is not in the tier's row but IS the one-rung-up
     # target from the failed model, AND a prior worker ended failed, allow it.
     if [ -n "${_escalation_branch:-}" ]; then
-      failed_model="$(_prior_failed_model "$_escalation_branch" "$_escalation_crew_dir" "$tier")"
+      failed_model="$(_prior_failed_model "$_escalation_branch" "$_escalation_crew_log" "$tier")"
       if [ -n "$failed_model" ]; then
         escalation_baseline="$(_escalation_hop "$agent" "$tier" "$failed_model" "$model" outOfRow)"
-        if [ -n "$escalation_baseline" ] && _prior_failed_escalation_available "$_escalation_branch" "$_escalation_crew_dir"; then
+        if [ -n "$escalation_baseline" ] && _prior_failed_escalation_available "$_escalation_branch" "$_escalation_crew_log"; then
           tier_ok=1
           escalated_from="$escalation_baseline"
           pace_escalation=1
@@ -3885,13 +3918,13 @@ fi
 # Record-only escalation: model already in tier's row but one rung up from failed.
 # Stamp WORKER_TASK.md only (dispatch event skips it — the gate already passed).
 if [ -z "$local_entry" ] && [ "${escalated_from:-}" = "" ] && [ -z "$ignore_map" ] && [ "$tier_ok" = 1 ] && [ -n "${_escalation_branch:-}" ]; then
-  failed_model="$(_prior_failed_model "$_escalation_branch" "$_escalation_crew_dir" "$tier")"
+  failed_model="$(_prior_failed_model "$_escalation_branch" "$_escalation_crew_log" "$tier")"
   if [ -n "$failed_model" ]; then
     record_from="$(_escalation_hop "$agent" "$tier" "$failed_model" "$model" inRow)"
     if [ -n "$record_from" ]; then
       escalated_from="$record_from (record only)"
       # The pace exemption also needs the one-shot and anti-spoof check.
-      _prior_failed_escalation_available "$_escalation_branch" "$_escalation_crew_dir" && pace_escalation=1
+      _prior_failed_escalation_available "$_escalation_branch" "$_escalation_crew_log" && pace_escalation=1
     fi
   fi
 fi
@@ -4271,6 +4304,7 @@ if [ -n "${DISPATCH_SPEC:-}" ] && [[ $DISPATCH_SPEC != /* ]]; then
   DISPATCH_SPEC="$caller_pwd/$DISPATCH_SPEC"
 fi
 _wt_trusted_cwd "${crew_dir%/crew}" || exit 1
+_crew_log_init || exit 1
 # The remote half of a --host dispatch was already linted on the caller.
 [ -n "${DISPATCH_EMIT_ROW:-}" ] || _spec_lint
 # A dispatch started over ssh on macOS cannot read the login keychain where gh
@@ -4433,13 +4467,13 @@ if [ -n "$gh_issue$linear_id" ] && [ -z "$migrate_dir" ]; then
   else
     guard_branch="$branch"
   fi
-  if git show-ref --verify --quiet "refs/heads/$guard_branch" && [ -r "$crew_dir/events.jsonl" ]; then
+  if git show-ref --verify --quiet "refs/heads/$guard_branch" && [ -r "$crew_log" ]; then
     if migrated_to="$(_branch_release_host "$guard_branch")"; then
       echo "dispatch: $guard_branch was migrated to host $migrated_to — dispatch --host $migrated_to … to resume it there, or dispatch resume $guard_branch here to abandon an unfinished migration" >&2
       exit 1
     fi
     runs_on="$(jq -nrR --arg b "$guard_branch" --argjson fresh "$(($(date +%s) * 1000 - _CLAIM_STALE_MS))" '[inputs | fromjson? | objects | select(.kind=="dispatch" and (.branch // "") == $b)] | last
-      | select(.remote == true and ((.ts | numbers) // 0) >= $fresh) | .host | strings' "$crew_dir/events.jsonl")"
+      | select(.remote == true and ((.ts | numbers) // 0) >= $fresh) | .host | strings' "$crew_log")"
     if [ -n "$runs_on" ]; then
       echo "dispatch: $guard_branch runs on host $runs_on — dispatch --host $runs_on … to resume it there" >&2
       exit 1
@@ -4715,7 +4749,7 @@ fi
 # a pid-less directory its holder keeps for seconds and stops waiting on after
 # 10 s, so one seen for 100 consecutive tries is a SIGKILLed leftover; it is
 # rmdir'd, which only succeeds while it is empty.
-ident_lock="$crew_dir/identity.lock"
+ident_lock="$crew_state/identity.lock"
 ident_break="$ident_lock.break"
 ident_locked="" ident_break_held=""
 claude_json_lock=""
@@ -4798,8 +4832,8 @@ _ident_lock_acquire() {
 }
 
 # _ident_lock_release — drop the codename lock and break mutex this process
-# holds. Each flag clears before its link goes: the signal trap runs this too,
-# and resumes the script afterwards, so a set flag must never outlive the link.
+# holds. Each flag clears before its link goes, so a repeat call finds nothing
+# left to remove.
 _ident_lock_release() {
   if [ -n "$ident_break_held" ]; then
     ident_break_held=""
@@ -4810,7 +4844,14 @@ _ident_lock_release() {
     rm -f "$ident_lock"
   fi
 }
-trap 'rm -f "$dispatch_lock" "${claude_json_lock:-}"; _ident_lock_release' EXIT INT TERM HUP
+_dispatch_cleanup() {
+  rm -f "$dispatch_lock" "${claude_json_lock:-}"
+  _ident_lock_release
+}
+trap _dispatch_cleanup EXIT
+trap '_dispatch_cleanup; exit 130' INT
+trap '_dispatch_cleanup; exit 143' TERM
+trap '_dispatch_cleanup; exit 129' HUP
 
 # Same-branch pre-check, lock-free: runs before the reclaim and the switch below,
 # so the common refusal leaves no window killed and no branch or worktree made.
@@ -4973,7 +5014,7 @@ create)
       '($sibs | split("\n")) as $b
        | [.[] | select(.kind == "dispatch" and (.branch | IN($b[])))]
        | max_by(.ts) | [(.branch // ""), ((.title // "") | gsub("[[:cntrl:]]"; ""))] | @tsv' \
-      "$crew_dir/events.jsonl" 2>/dev/null || true)"
+      "$crew_log" 2>/dev/null || true)"
     IFS=$'\t' read -r sibling_branch sibling_title <<<"$sibling_recovered"
     {
       echo "dispatch: branch(es) for this id already exist:"
@@ -5277,6 +5318,10 @@ line=$(jq -nc --arg crew "$crew_id" --arg branch "$branch" --arg session "$sessi
    + if $migrated_from != "" then {migrated_from:$migrated_from, engine_context:$engine_context} else {} end
    + if $engine_context_why != "" then {engine_context_why:$engine_context_why} else {} end')
 _crew_append "$line"
+# The repo index is the only way a repo finds a layout-2 crew that ran here. It
+# follows the dispatch row because a rebuild keys on rows that carry a repo,
+# which a claim row does not.
+[ "$crew_layout" != 2 ] || crew index add --crew "$crew_id" || true
 # A dispatcher on another host records the same row from this line.
 [ "${DISPATCH_EMIT_ROW:-}" != 1 ] || printf 'dispatch_row: %s\n' "$line"
 _claim_index_dispatch
@@ -6065,9 +6110,11 @@ stall_flags=()
 # must not retarget the renderer there while the crew's dispatcher is live;
 # only the registered dispatcher's pane may move it.
 rr_pane="${TMUX_PANE:-}"
-rr_pid="$(cat "$crew_dir/crews/$crew_id/pid" 2>/dev/null || true)"
-if _recorded_pid_live "$rr_pid" "$crew_dir/crews/$crew_id/pid" &&
-  [ "$rr_pane" != "$(cat "$crew_dir/crews/$crew_id/pane" 2>/dev/null || true)" ]; then
+rr_cdir="$crew_dir/crews/$crew_id"
+[ "$crew_layout" != 2 ] || rr_cdir="$crew_state"
+rr_pid="$(cat "$rr_cdir/pid" 2>/dev/null || true)"
+if _recorded_pid_live "$rr_pid" "$rr_cdir/pid" &&
+  [ "$rr_pane" != "$(cat "$rr_cdir/pane" 2>/dev/null || true)" ]; then
   rr_pane=""
 fi
 # A remote-mode worker's roster diagram belongs to its dispatcher's host.

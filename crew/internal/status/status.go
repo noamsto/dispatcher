@@ -112,6 +112,10 @@ func begin(sub string, paths bus.Paths, stderr io.Writer, o Options) (bus.Crew, 
 		return bus.Crew{}, false
 	}
 	c, err := paths.Crew(id)
+	if bus.IsRefusal(err) {
+		say(stderr, "crew: %v\n", err)
+		return bus.Crew{}, false
+	}
 	if err != nil {
 		say(stderr, "crew: %s: invalid crew id %s\n", sub, id)
 		return bus.Crew{}, false

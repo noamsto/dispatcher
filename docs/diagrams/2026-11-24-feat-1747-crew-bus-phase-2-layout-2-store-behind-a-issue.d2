@@ -1,0 +1,27 @@
+direction: right
+
+classes: {
+  store: { shape: cylinder; style: { stroke: "#2E7D32"; stroke-width: 2 } }
+  sh: { style: { stroke: "#E65100"; stroke-width: 2; stroke-dash: 3 } }
+}
+
+writers: "Go writers\nstatus, msg, hold, reap"
+dispatch: "dispatch.sh\n_crew_append" { class: sh }
+resolver: "bus.Paths.Crew(id)\nresolve.go" { class: accent }
+repolog: "<repoA>/crew/events.jsonl" { class: store }
+repologB: "<repoB>/crew/events.jsonl" { class: store }
+state: "marks, holds, nudge-wait\nhomes, pidfile.log\nfrom paths.Dir" { class: warn }
+identlock: "<repo>/crew/identity.lock\nrepo-scoped" { class: warn }
+samebranch: "_branch_live_elsewhere\nconfirms in \$R/crew/events.jsonl" { class: warn }
+live: "_branch_live_repos\nignores resume rows" { class: warn }
+trap: "trap EXIT INT TERM HUP\nno exit" { class: warn }
+
+writers -> resolver: "crew id" {style.animated: true}
+resolver -> repolog: "Log (always layout 1)" {style.animated: true}
+dispatch -> repolog: "\$crew_dir/events.jsonl"
+writers -> state: "paths.Dir, not crew"
+dispatch -> identlock: "per repo, not per crew"
+dispatch -> samebranch
+samebranch -> repologB: "breaks once repos\nshare one crew log"
+samebranch -> live
+dispatch -> trap: "SIGTERM resumes\nunlocked"

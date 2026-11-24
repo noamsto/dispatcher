@@ -42,13 +42,15 @@ func (w *world) procs() *proctest.Table {
 
 func (w *world) options() Options {
 	return Options{
-		CrewID: func() string { return w.id },
-		Proc:   w.procs(),
-		Clock:  clock.Clock{Now: func() time.Time { return time.Date(2026, 10, 10, 1, 2, 3, 0, time.UTC) }},
-		PID:    4242,
-		PPID:   4241,
-		Pwd:    "/repo",
-		Getenv: func(k string) string { return w.env[k] },
+		CrewID:   func() string { return w.id },
+		Proc:     w.procs(),
+		Clock:    clock.Clock{Now: func() time.Time { return time.Date(2026, 10, 10, 1, 2, 3, 0, time.UTC) }},
+		PID:      4242,
+		PPID:     4241,
+		Pwd:      "/repo",
+		Getenv:   func(k string) string { return w.env[k] },
+		Hostname: func() (string, error) { return "box.example.com", nil },
+		Slug:     func(string) string { return "acme/widgets" },
 	}
 }
 

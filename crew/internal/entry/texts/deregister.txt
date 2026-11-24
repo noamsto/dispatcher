@@ -2,4 +2,7 @@ usage: crew deregister
 
 Drop this crew's registration from the repo bus. Its events stay in the log.
 
+A layout-2 crew keeps its dir and log; only pid, pid.start, pane, launch and
+relaunch are dropped.
+
   crew deregister

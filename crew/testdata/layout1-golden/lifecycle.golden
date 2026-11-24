@@ -1,0 +1,41 @@
+##### before deregister
+--- <common>/crew
+== await.lock/gold1-worker_feat_x_s1-1.<TS>
+== await/gold1-worker_feat_x_s1-1.<TS>
+{"dispatcher:gold1":<TS>}
+== crews/gold1/pid
+<PID>
+== crews/gold1/pid.start
+<PID> <START>
+== events.jsonl
+== homes/gold1
+<REPO>/.git
+== pidfile.log
+<ISO> register ok crew=gold1 old=- new=<PID> pid=<PID> ppid=<PID> cwd=<REPO> by=<BY>
+<ISO> adopt ok crew=gold1 old=<PID> new=<PID> pid=<PID> ppid=<PID> cwd=<REPO> by=<BY>
+--- $XDG_STATE_HOME
+--- events.jsonl rows
+{"body":{"state":"working"},"crew_id":"gold1","from":"worker:feat/x#s1-1","kind":"status","to":"dispatcher:gold1","ts":<TS>}
+{"body":"hello","crew_id":"gold1","from":"worker:feat/x#s1-1","kind":"msg","to":"dispatcher:gold1","ts":<TS>}
+{"body":"{\"id\":\"<TS>-<PID>\",\"wait\":{\"engine\":\"claude\",\"window\":\"5h\",\"resets_at\":<TS>},\"task\":{\"ref\":\"r1\",\"branch\":\"b1\",\"tier\":\"standard\",\"engine\":\"codex\",\"model\":\"sonnet\",\"effort\":\"medium\",\"plan\":null,\"mcp\":null,\"draft\":false,\"shape\":null,\"title\":\"gold hold\",\"spec\":null}}","crew_id":"gold1","from":"dispatcher:gold1","kind":"msg","to":"hold:gold1","ts":<TS>}
+{"body":"go","crew_id":"gold1","from":"dispatcher:gold1","kind":"msg","to":"worker:feat/x#s1-1","ts":<TS>}
+{"branch":"feat/x","crew_id":"gold1","kind":"resume","repo":"<REPO>","session":"s1","ts":<TS>,"worker_id":"worker:feat/x#s1-1"}
+##### after deregister
+--- <common>/crew
+== await.lock/gold1-worker_feat_x_s1-1.<TS>
+== await/gold1-worker_feat_x_s1-1.<TS>
+{"dispatcher:gold1":<TS>}
+== events.jsonl
+== homes/gold1
+<REPO>/.git
+== pidfile.log
+<ISO> register ok crew=gold1 old=- new=<PID> pid=<PID> ppid=<PID> cwd=<REPO> by=<BY>
+<ISO> adopt ok crew=gold1 old=<PID> new=<PID> pid=<PID> ppid=<PID> cwd=<REPO> by=<BY>
+<ISO> deregister removed crew=gold1 old=<PID> new=- pid=<PID> ppid=<PID> cwd=<REPO> by=<BY>
+--- $XDG_STATE_HOME
+--- events.jsonl rows
+{"body":{"state":"working"},"crew_id":"gold1","from":"worker:feat/x#s1-1","kind":"status","to":"dispatcher:gold1","ts":<TS>}
+{"body":"hello","crew_id":"gold1","from":"worker:feat/x#s1-1","kind":"msg","to":"dispatcher:gold1","ts":<TS>}
+{"body":"{\"id\":\"<TS>-<PID>\",\"wait\":{\"engine\":\"claude\",\"window\":\"5h\",\"resets_at\":<TS>},\"task\":{\"ref\":\"r1\",\"branch\":\"b1\",\"tier\":\"standard\",\"engine\":\"codex\",\"model\":\"sonnet\",\"effort\":\"medium\",\"plan\":null,\"mcp\":null,\"draft\":false,\"shape\":null,\"title\":\"gold hold\",\"spec\":null}}","crew_id":"gold1","from":"dispatcher:gold1","kind":"msg","to":"hold:gold1","ts":<TS>}
+{"body":"go","crew_id":"gold1","from":"dispatcher:gold1","kind":"msg","to":"worker:feat/x#s1-1","ts":<TS>}
+{"branch":"feat/x","crew_id":"gold1","kind":"resume","repo":"<REPO>","session":"s1","ts":<TS>,"worker_id":"worker:feat/x#s1-1"}

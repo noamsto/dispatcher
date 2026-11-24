@@ -572,3 +572,20 @@ func TestRunRefusesForeignSender(t *testing.T) {
 		t.Errorf("bus log stat err = %v, want not-exist", err)
 	}
 }
+
+func TestRunPrintsTheArchivedRefusal(t *testing.T) {
+	f := newFake()
+	h := newHarness(t, f)
+	state := t.TempDir()
+	if err := os.MkdirAll(bus.ArchiveDir(state, h.crew), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(bus.ArchiveDir(state, h.crew)+"/meta.json", []byte("{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	h.paths = h.paths.WithState(state)
+	code, stderr := h.run(Request{Target: "worker:feat/x#s1-1", Pane: ptr("%1")})
+	if want := "crew: crew " + h.crew + " is archived\n"; code != 1 || stderr != want {
+		t.Errorf("got %d %q, want 1 %q", code, stderr, want)
+	}
+}

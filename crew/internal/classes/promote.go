@@ -572,6 +572,10 @@ func command(engine, class string, env Env, stderr io.Writer, mutate func(*txn) 
 		return 1
 	}
 	if err := apply(engine, class, env, stderr, "crew: class: ", mutate); err != nil {
+		if bus.IsRefusal(err) {
+			say(stderr, "crew: %v\n", err)
+			return 1
+		}
 		say(stderr, "crew: class: %v\n", err)
 		return 1
 	}
@@ -607,6 +611,9 @@ func apply(engine, class string, env Env, stderr io.Writer, prefix string, mutat
 		return errNoCrew
 	}
 	c, err := env.Paths.Crew(env.CrewID)
+	if bus.IsRefusal(err) {
+		return err
+	}
 	if err != nil {
 		return fmt.Errorf("%w %s", errBadCrew, env.CrewID)
 	}

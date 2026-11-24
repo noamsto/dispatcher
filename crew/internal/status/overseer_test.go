@@ -198,3 +198,22 @@ func TestOverseerMsgInvalidCrewID(t *testing.T) {
 	}
 	f.wantNoRow()
 }
+
+func TestOverseerMsgArchivedCrew(t *testing.T) {
+	f := newFixture(t)
+	f.overseer("h1")
+	f.log()
+	state := t.TempDir()
+	if err := os.MkdirAll(bus.ArchiveDir(state, "c1"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(bus.ArchiveDir(state, "c1")+"/meta.json", []byte("{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	f.paths = f.paths.WithState(state)
+	code, stderr := f.overseerMsg("h1", "c1", "hi")
+	if code != 1 || stderr != "crew: crew c1 is archived\n" {
+		t.Errorf("got %d %q", code, stderr)
+	}
+	f.wantNoRow()
+}

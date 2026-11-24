@@ -37,6 +37,8 @@ import (
 
 type whereCmd struct {
 	Crew   *string `name:"crew"`
+	Log    bool    `name:"log"`
+	Dir    bool    `name:"dir"`
 	Target string  `arg:"" optional:"" name:"target"`
 }
 
@@ -63,6 +65,17 @@ type registerCmd struct {
 }
 
 type deregisterCmd struct{}
+
+type indexAddCmd struct {
+	Crew *string `name:"crew"`
+}
+
+type indexRebuildCmd struct{}
+
+type indexCmd struct {
+	Add     indexAddCmd     `cmd:"" name:"add"`
+	Rebuild indexRebuildCmd `cmd:"" name:"rebuild"`
+}
 
 type logCmd struct {
 	Crew string `arg:"" optional:"" name:"crew"`
@@ -663,6 +676,7 @@ const (
 	classUsage        = "usage: crew class revert <engine> <class> | crew class promote <engine> <class> <id>"
 	migrateUsage      = "usage: crew migrate stop [--crew C] <branch> [--timeout S] | crew migrate snapshot [--crew C] <branch> | crew migrate mark [--crew C] <branch> --to-host H --mode coop|now --tip T --tree S --dir D [--patch P]"
 	specLintUsage     = "usage: crew spec-lint <file> [--issue N]... [--no-host-checks]"
+	indexUsage        = "usage: crew index add --crew <id> | crew index rebuild"
 )
 
 // wording is how one subcommand phrases the two grammar failures kong reports
@@ -778,6 +792,9 @@ var wordings = map[string]wording{
 	"overseer deliver": {all: overseer.DeliverUsage, code: exitFailure},
 	"overseer trust":   {all: overseer.TrustUsage, code: exitFailure},
 	"migrate":          {all: migrateUsage, code: exitFailure},
+	"index":            {all: indexUsage, code: exitFailure},
+	"index add":        {all: indexUsage, code: exitFailure},
+	"index rebuild":    {all: indexUsage, code: exitFailure},
 	"migrate stop":     {all: migrateUsage, code: exitFailure},
 	"migrate snapshot": {all: migrateUsage, code: exitFailure},
 	"migrate mark":     {all: migrateUsage, code: exitFailure},
@@ -1002,6 +1019,12 @@ func validate(sub string, r *root) *refusal {
 		c := r.Where
 		if given(c.Crew) {
 			return fail("crew: where: --crew needs an id (" + where.Usage + ")")
+		}
+		if c.Log || c.Dir {
+			if c.Log && c.Dir || c.Target != "" {
+				return fail("crew: where: --log and --dir take no target (" + where.Usage + ")")
+			}
+			return nil
 		}
 		if c.Target == "" {
 			return fail("crew: where: " + where.Usage)
@@ -1329,6 +1352,10 @@ func validate(sub string, r *root) *refusal {
 	case "overseer trust":
 		if r.Overseer.Trust.Pane == "" {
 			return fail(overseer.TrustUsage)
+		}
+	case "index add":
+		if c := r.Index.Add; c.Crew == nil || *c.Crew == "" {
+			return fail("crew: index: --crew needs an id (" + indexUsage + ")")
 		}
 	case "migrate stop":
 		if c := r.Migrate.Stop; given(c.Crew) || c.Timeout < 0 {

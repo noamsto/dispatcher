@@ -183,7 +183,11 @@ func (f *armFixture) ticks(interval string) int {
 }
 
 func (f *armFixture) lockDir() string {
-	return filepath.Join(f.paths.Dir, "nudge-wait", lockName(idleReq))
+	c, err := f.paths.Crew(f.crewID)
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	return filepath.Join(c.State, "nudge-wait", lockName(idleReq))
 }
 
 func (f *armFixture) out() string { return f.stdout.String() }

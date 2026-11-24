@@ -2,7 +2,9 @@ usage: crew crews [--mine | --home]
 
 List every crew with traffic on this repo's bus: id, last and first event, worker
 count, dispatcher pid and whether that pid is alive. Both sources count — a crew
-dir alone (watch creates one) and an id seen only in the log.
+dir alone (watch creates one) and an id seen only in the log. Layout-2 crews
+homed in this repo are listed too; run outside a repo, it lists the layout-2
+crews with no home repo.
 
   --mine  Print only the crews this caller owns — one id per line, no header —
           meaning the crews whose recorded dispatcher pid is a live ancestor of

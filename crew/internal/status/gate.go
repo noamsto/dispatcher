@@ -233,7 +233,7 @@ func undeliveredGate(paths bus.Paths, crew, from, state string, stderr io.Writer
 		say(stderr, "crew: status: invalid crew id %s\n", crew)
 		return true
 	}
-	unlock, err := marks.Lock(paths.Dir, crew, from)
+	unlock, err := marks.Lock(c.State, crew, from)
 	if err != nil {
 		say(stderr, "crew: refusing %s for %s — cannot lock delivered marks: %v\n", state, from, err)
 		return true
@@ -249,7 +249,7 @@ func undeliveredGate(paths bus.Paths, crew, from, state string, stderr io.Writer
 		return false
 	}
 	events := bus.EventsFromLines(log.lines)
-	rows, err := unread.Directives(events, crew, from, marks.Read(paths.Dir, crew, from))
+	rows, err := unread.Directives(events, crew, from, marks.Read(c.State, crew, from))
 	if err != nil {
 		say(stderr, "crew: refusing %s for %s — unread check failed: %v\n", state, from, err)
 		return true
@@ -269,7 +269,7 @@ func undeliveredGate(paths bus.Paths, crew, from, state string, stderr io.Writer
 	}
 	// A row that did not reach the wire stays undelivered for the retry.
 	if wrote {
-		marks.RecordHeld(paths.Dir, crew, from, recorded)
+		marks.RecordHeld(c.State, crew, from, recorded)
 	}
 	return true
 }

@@ -34,6 +34,46 @@ teardown() {
   [ -z "$offenders" ]
 }
 
+@test "no repo-bus events.jsonl literal in adapters/ outside the legacy-fallback allowlist" {
+  # A layout-2 crew's log is not at <repo>/crew/events.jsonl, so a literal join
+  # reads the wrong bus. Each allowed site is a file suffix plus a fixed
+  # substring of its line; the reason is the comment above it.
+  allow=(
+    # _crew_log's legacy (layout-1) answer
+    'core/launcher-common.sh|printf '\''%s\n'\'' "$1/events.jsonl"'
+    # _crew_log's fallback warning names the legacy path it falls back to
+    'core/launcher-common.sh|gave no log (rc $rc) — using $1/events.jsonl'
+    # dispatch-resume's layout test compares against the legacy path
+    'core/dispatch-resume.sh|[ "$crew_log" = "$crew_dir/events.jsonl" ]'
+    # each hook's legacy derivation (layout 1, no crew id, or no meta.json)
+    'dispatch-notify.sh|log="$common/crew/events.jsonl"'
+    'directive-delivery.sh|log=$crew_dir/events.jsonl'
+    # phase-status reads the repo bus (phase 3)
+    'phase-status.sh|$common/crew/events.jsonl'
+    # --git-dir reads of a repo bus the worker's crew cannot name
+    'core/dispatch.sh|events="$3/crew/events.jsonl"'
+    # other-clone reads: a clone's own repo bus
+    'core/dispatch.sh|"$clone/.git/crew/events.jsonl"'
+    # _crew_log_init tells layout 1 from layout 2 by comparing to the legacy path
+    'core/dispatch.sh|[ "$crew_log" != "$crew_dir/events.jsonl" ]'
+    # _chrome_holders reads window @crew_dir logs (mixed-period limitation)
+    'core/dispatch.sh|"$ldir/events.jsonl"'
+  )
+  offenders=""
+  while IFS= read -r hit; do
+    file="${hit%%:*}"
+    text="${hit#*:*:}"
+    ok=""
+    for entry in "${allow[@]}"; do
+      case "$file" in *"${entry%%|*}") ;; *) continue ;; esac
+      case "$text" in *"${entry#*|}"*) ok=1 ;; esac
+    done
+    [ -n "$ok" ] || offenders+="$hit"$'\n'
+  done < <(grep -rnE '[/.]crew/events\.jsonl|crew_dir\}?"?/events\.jsonl|ldir\}?"?/events\.jsonl|\$1"?/events\.jsonl' "$ROOT/adapters" |
+    grep -vE '^[^:]+:[0-9]+:[[:space:]]*#' || true)
+  [ -z "$offenders" ] || { printf '%s' "$offenders" >&2; return 1; }
+}
+
 @test "every wall-clock test is tagged for the serial timing step" {
   # CI's parallel step filters out `# bats test_tags=timing` tests and runs
   # them alone in a later serial step, since their wall-clock bounds assume
@@ -90,7 +130,7 @@ teardown() {
 # the single-definition guarantee the byte-compares used to supply: a stray
 # copy in any launcher would fork a fix again.
 @test "the shared launcher helpers are defined only in launcher-common.sh" {
-  for fn in _bus_append engine_path _pid_alive _file_mtime_s _ps_elapsed_s _proc_start _pid_recycled _recorded_pid_live _pane_client _remote_session_ok _remote_target_session _remote_worker_session _remote_window _uuid _lead_record_safe _record_lead_session _github_ssh_host _tracker_slug_from_path _origin_slug _resolve_dir engine_cli engine_enabled _settings_load _glob_match _exact_match _model_class _class_item _escalation_hop _class_sigil _worker_protocol_files _require_protocol_files _check_protocol_rev theme_colour state_glyph grid_lead_format _ensure_roster_render shell_quote write_launch_script _artifacts_dir_bad _protocol_dirs_record_bad _settings_env_names _settings_env_json _record_protocol_dirs claude_lean_env claude_subagent_effort_env _claude_pretrust launch_dir_args pi_skill_args _prior_failed_model _prior_failed_escalation_available _child_on_chain; do
+  for fn in _bus_append engine_path _pid_alive _file_mtime_s _ps_elapsed_s _proc_start _pid_recycled _recorded_pid_live _pane_client _remote_session_ok _remote_target_session _remote_worker_session _remote_window _uuid _lead_record_safe _record_lead_session _github_ssh_host _tracker_slug_from_path _origin_slug _resolve_dir engine_cli engine_enabled _settings_load _glob_match _exact_match _model_class _class_item _escalation_hop _class_sigil _worker_protocol_files _require_protocol_files _check_protocol_rev theme_colour state_glyph grid_lead_format _ensure_roster_render shell_quote write_launch_script _artifacts_dir_bad _protocol_dirs_record_bad _settings_env_names _settings_env_json _record_protocol_dirs claude_lean_env claude_subagent_effort_env _claude_pretrust launch_dir_args pi_skill_args _prior_failed_model _prior_failed_escalation_available _child_on_chain _crew_log; do
     run grep -q "^${fn}() [{(]" "$ROOT/adapters/core/launcher-common.sh"
     [ "$status" -eq 0 ]
     for f in dispatch dispatch-resume dispatcher lead-launcher; do

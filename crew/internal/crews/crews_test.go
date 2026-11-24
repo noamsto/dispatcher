@@ -448,6 +448,8 @@ func gitRepo(t *testing.T) bus.Paths {
 	if out, err := exec.Command("git", "-C", dir, "init", "-q").CombinedOutput(); err != nil {
 		t.Fatalf("git init: %v: %s", err, out)
 	}
+	// Locate reads the state root, and IsHome resolves ids under it.
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	p, err := bus.Locate(t.Context(), dir)
 	if err != nil {
 		t.Fatal(err)
@@ -482,7 +484,7 @@ func TestHomeFilter(t *testing.T) {
 	here, other := gitRepo(t), gitRepo(t)
 	pidLog := func(t *testing.T, action, outcome, id string) {
 		t.Helper()
-		PidfileLog(here, Caller{Now: fakeNow(), PID: 1, PPID: 1, Pwd: "/x", By: "b"}, action, outcome, id, "", "9")
+		PidfileLog(here.Dir, Caller{Now: fakeNow(), PID: 1, PPID: 1, Pwd: "/x", By: "b"}, action, outcome, id, "", "9")
 	}
 	tbl := func(pid int, cwd string) *proctestTable {
 		return newProcs(map[int]string{pid: cwd})

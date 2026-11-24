@@ -20,6 +20,9 @@ if [ "$1" = pi-agent-dir ]; then exec "$CREW_REAL" pi-agent-dir; fi
 if [ "$1" = resolve-target ]; then exec "$CREW_REAL" "$@"; fi
 [ "$1" != role-watch ] || printf 'CREW_ID=%s\n' "$CREW_ID" >>"$STUB_LOG"
 if [ "$1" = where ]; then
+  # The crew's log resolves for real (the suite's temp XDG_STATE_HOME): the
+  # legacy path unless a test registers a layout-2 crew.
+  case "${2:-}" in --log | --dir) exec "$CREW_REAL" "$@" ;; esac
   [ -z "${STUB_WHERE_LIVE:-}" ] || { echo "iris — main:3.1 (lead pane)   jump: ! tmux switch-client -t %9"; exit 0; }
   exit 1
 fi
@@ -381,6 +384,29 @@ EOF
   setup_worker_wt
   printf 'c1\n' >>"$(anchor_path_for "$WT")"
   [ "$(wc -l <"$(anchor_path_for "$WT")")" -eq 5 ]
+  stub_tmux_with_pane_at_wt '@4' '%8' '' fish
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 0 ]
+  grep -q 'send-keys' "$STUB_LOG"
+}
+
+@test "refuses resume when the header crew id does not match the anchor's fifth line" {
+  setup_worker_wt
+  printf 'c1\n' >>"$(anchor_path_for "$WT")"
+  sed -i 's/^crew_id: c1$/crew_id: forged/' "$WT/WORKER_TASK.md"
+  stub_tmux_with_pane_at_wt '@4' '%8' '' fish
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"crew id (forged) does not match the dispatcher's record (c1)"* ]]
+  run ! grep -q 'send-keys' "$STUB_LOG"
+}
+
+@test "resume accepts a layout-1 header crew id against a four-line anchor" {
+  setup_worker_wt
+  [ "$(wc -l <"$(anchor_path_for "$WT")")" -eq 4 ]
+  sed -i 's/^crew_id: c1$/crew_id: c2/' "$WT/WORKER_TASK.md"
   stub_tmux_with_pane_at_wt '@4' '%8' '' fish
   cd "$WT"
   run run_resume
@@ -1265,6 +1291,15 @@ _lead_pane() { sed -n 's/^set-option -p -t \([^ ]*\) @crew_model .*/\1/p' "$STUB
   [ -n "$pane" ]
   grep -qxF -- "set-option -p -u -t $pane @crew_chrome" "$STUB_LOG"
   run ! grep -qF '@crew_chrome 1' "$STUB_LOG"
+}
+
+@test "claude resume row carries the repo, the realpath of the common dir" {
+  setup_worker_wt
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 0 ]
+  [ "$(jq -r 'select(.kind == "resume") | .repo' "$TEST_REPO/.git/crew/events.jsonl" | tail -1)" = "$(realpath "$TEST_REPO/.git")" ]
 }
 
 @test "claude resume ignores a header-only chrome: true and rewrites it" {
@@ -4249,4 +4284,119 @@ STUB
   [ "$status" -eq 0 ]
   [ "$(grep -c '^tmux-crew-dash ' "$STUB_LOG")" -eq 1 ]
   grep -qx 'tmux-crew-dash --side --detached %5' "$STUB_LOG"
+}
+
+# Layout 2: a crew registered with CREW_LAYOUT=2 keeps its log under the suite's
+# temp state root; resume reads and writes it there.
+
+# _l2_register [four-line] — register c1 at layout 2 with the real crew, from the
+# test repo, and record c1 as the worktree's anchor crew id unless "four-line".
+_l2_register() {
+  assert_isolated_xdg_state_home
+  [ "${1:-}" = four-line ] || printf 'c1\n' >>"$(anchor_path_for "$WT")"
+  (cd "$TEST_REPO" && CREW_ID=c1 CREW_LAYOUT=2 "$CREW_REAL" register "$$")
+  [ -f "$XDG_STATE_HOME/crew/crews/c1/meta.json" ]
+}
+
+_l2_log() { printf '%s/crew/crews/c1/events.jsonl' "$XDG_STATE_HOME"; }
+
+@test "layout: a four-line anchor refuses a header crew id naming a layout-2 crew" {
+  setup_worker_wt
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  _l2_register four-line
+  [ "$(wc -l <"$(anchor_path_for "$WT")")" -eq 4 ]
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"crew id (c1) does not match the dispatcher's record (a layout-1 crew)"* ]]
+  run ! grep -q 'send-keys' "$STUB_LOG"
+  [ ! -e "$(_l2_log)" ] || run ! jq -e 'select(.kind == "resume")' "$(_l2_log)"
+  [ ! -e "$TEST_REPO/.git/crew/events.jsonl" ] || run ! jq -e 'select(.kind == "resume")' "$TEST_REPO/.git/crew/events.jsonl"
+}
+
+@test "layout: a layout-2 crew's resume row lands in its own log, not the repo log" {
+  setup_worker_wt
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  _l2_register
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 0 ]
+  [ "$(jq -r 'select(.kind == "resume") | .repo' "$(_l2_log)" | tail -1)" = "$(realpath "$TEST_REPO/.git")" ]
+  [ ! -e "$TEST_REPO/.git/crew/events.jsonl" ] || run ! jq -e 'select(.kind == "resume")' "$TEST_REPO/.git/crew/events.jsonl"
+}
+
+@test "resume escalation layout 2: a failure in the crew's own log unlocks --model gpt-5.6-sol" {
+  setup_worker_wt
+  sed -i -e 's/^engine: claude/engine: codex/' -e 's/^model: sonnet/model: gpt-5.6-terra/' "$WT/WORKER_TASK.md"
+  _l2_register
+  _resume_esc_seed s1-99 200 codex gpt-5.6-terra standard
+  mv "$crew_dir/events.jsonl" "$(_l2_log)"
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  cd "$WT"
+  DISPATCH_PROFILE=work DISPATCH_ENGINES="claude codex cursor pi" run run_resume --model gpt-5.6-sol
+  [ "$status" -eq 0 ]
+  _precheck_ignores_map
+  [ "$(jq -r 'select(.kind == "resume") | .escalated_from' "$(_l2_log)")" = terra ]
+}
+
+@test "resume escalation layout 2: a failure only in the repo log does not unlock --model gpt-5.6-sol" {
+  setup_worker_wt
+  sed -i -e 's/^engine: claude/engine: codex/' -e 's/^model: sonnet/model: gpt-5.6-terra/' "$WT/WORKER_TASK.md"
+  _l2_register
+  _resume_esc_seed s1-99 200 codex gpt-5.6-terra standard
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  cd "$WT"
+  DISPATCH_PROFILE=work DISPATCH_ENGINES="claude codex cursor pi" run run_resume --model gpt-5.6-sol
+  run _precheck_ignores_map
+  [ "$status" -ne 0 ]
+}
+
+@test "code-mode layout 2: Code Mode is carried from the crew's own log" {
+  setup_worker_wt
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  _cm_config
+  _l2_register
+  _cm_dispatch_row true
+  mv "$TEST_REPO/.git/crew/events.jsonl" "$(_l2_log)"
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 0 ]
+  grep -qx 'code_mode: true' "$WT/WORKER_TASK.md"
+  [ "$(jq -r 'select(.kind == "resume") | .code_mode' "$(_l2_log)" | tail -1)" = true ]
+  _cm_wait_post
+  sleep 1
+}
+
+@test "crew_log: a resume whose crew where refuses exits 1 with crew's line and writes no resume row" {
+  setup_worker_wt
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  mv "$STUB_DIR/crew" "$STUB_DIR/crew-inner"
+  cat >"$STUB_DIR/crew" <<EOF
+#!/usr/bin/env bash
+if [ "\${1:-}" = where ] && [ "\${2:-}" = --log ]; then
+  echo "crew: crew c1 is archived" >&2
+  exit 3
+fi
+exec "$STUB_DIR/crew-inner" "\$@"
+EOF
+  chmod +x "$STUB_DIR/crew"
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"crew: crew c1 is archived"* ]]
+  [ ! -e "$TEST_REPO/.git/crew/events.jsonl" ] || run ! jq -e 'select(.kind == "resume")' "$TEST_REPO/.git/crew/events.jsonl"
+}
+
+@test "layout: resume reattaches to a live layout-2 dispatcher: retargets the pane and messages it" {
+  setup_worker_wt
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  _l2_register
+  printf '%s\n' "$$" >"$XDG_STATE_HOME/crew/crews/c1/pid"
+  printf '%%77\n' >"$XDG_STATE_HOME/crew/crews/c1/pane"
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"reattached"* ]]
+  grep -qx 'dispatcher_pane: %77' "$WT/WORKER_TASK.md"
+  grep -q 'msg .* dispatcher:c1 .*do not re-dispatch it' "$STUB_LOG"
 }

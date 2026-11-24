@@ -495,6 +495,10 @@ func resolveCrew(raw string, paths bus.Paths, stderr io.Writer, o Options) (bus.
 		return bus.Crew{}, false
 	}
 	c, err := paths.Crew(crew)
+	if bus.IsRefusal(err) {
+		say(stderr, "crew: %v\n", err)
+		return bus.Crew{}, false
+	}
 	if err != nil {
 		say(stderr, "crew: invalid crew id — expected only letters, digits, '.', '_' and '-'\n")
 		return bus.Crew{}, false
