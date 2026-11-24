@@ -1,7 +1,9 @@
 package cleanup
 
 import (
+	"errors"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -12,21 +14,38 @@ import (
 // stampRe is the archive dir's trailing UTC stamp.
 var stampRe = regexp.MustCompile(`-(\d{8}T\d{6}Z)$`)
 
-// prune deletes the archives older than age: the <repo>/<branch>-<ts> dirs
-// under the archive root, judged by their stamp (mtime when it has none).
+// prune is `--prune-archive`: sweep, then report.
 func (o Options) prune(age time.Duration, stdout, stderr io.Writer) int {
-	root := o.archiveRoot()
-	repos, err := os.ReadDir(root)
+	pruned, failed, err := o.sweep(age, false, stderr)
+	if errors.Is(err, fs.ErrNotExist) {
+		say(stdout, "crew cleanup: no archive to prune\n")
+		return 0
+	}
 	if err != nil {
-		if os.IsNotExist(err) {
-			say(stdout, "crew cleanup: no archive to prune\n")
-			return 0
-		}
 		say(stderr, "crew cleanup: %v\n", err)
 		return 1
 	}
+	for _, dir := range pruned {
+		say(stdout, "pruned %s\n", dir)
+	}
+	say(stdout, "crew cleanup: pruned %d archive(s) older than %s\n", len(pruned), age)
+	if failed > 0 {
+		return 1
+	}
+	return 0
+}
+
+// sweep deletes the archives older than age: the <repo>/<branch>-<ts> dirs
+// under the archive root, judged by their stamp (mtime when it has none). It
+// returns the dirs it pruned (would prune, when dry) and how many it failed
+// on; err is an unreadable archive root.
+func (o Options) sweep(age time.Duration, dry bool, stderr io.Writer) (pruned []string, failed int, err error) {
+	root := o.archiveRoot()
+	repos, err := os.ReadDir(root)
+	if err != nil {
+		return nil, 0, err
+	}
 	cutoff := o.now().Add(-age)
-	pruned, failed := 0, 0
 	for _, repo := range repos {
 		repoDir := filepath.Join(root, repo.Name())
 		if !repo.IsDir() {
@@ -34,7 +53,7 @@ func (o Options) prune(age time.Duration, stdout, stderr io.Writer) int {
 		}
 		// A scratch dir a killed cleanup left behind; a fresh one is in use.
 		if strings.HasPrefix(repo.Name(), ".tmp-") {
-			if fi, err := os.Stat(repoDir); err == nil && fi.ModTime().Before(o.now().Add(-time.Hour)) {
+			if fi, err := os.Stat(repoDir); err == nil && !dry && fi.ModTime().Before(o.now().Add(-time.Hour)) {
 				_ = os.RemoveAll(repoDir)
 			}
 			continue
@@ -51,21 +70,20 @@ func (o Options) prune(age time.Duration, stdout, stderr io.Writer) int {
 			if !e.Type().IsDir() || !archivedBefore(dir, e.Name(), cutoff) {
 				continue
 			}
-			if err := os.RemoveAll(dir); err != nil {
-				say(stderr, "crew cleanup: %v\n", err)
-				failed++
-				continue
+			if !dry {
+				if err := os.RemoveAll(dir); err != nil {
+					say(stderr, "crew cleanup: %v\n", err)
+					failed++
+					continue
+				}
 			}
-			pruned++
-			say(stdout, "pruned %s\n", dir)
+			pruned = append(pruned, dir)
 		}
-		_ = os.Remove(repoDir) // only succeeds once empty
+		if !dry {
+			_ = os.Remove(repoDir) // only succeeds once empty
+		}
 	}
-	say(stdout, "crew cleanup: pruned %d archive(s) older than %s\n", pruned, age)
-	if failed > 0 {
-		return 1
-	}
-	return 0
+	return pruned, failed, nil
 }
 
 func archivedBefore(dir, name string, cutoff time.Time) bool {

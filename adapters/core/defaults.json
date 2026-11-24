@@ -484,6 +484,7 @@
   "fleetBudget": 8,
   "fleetBackfillAfter": 1200,
   "fleetHeadTimeout": 900,
+  "cleanup": {"auto": true, "autoAfterDays": 14, "archiveDays": 365},
   "overseer": {"autoRelaunch": false, "autoStart": false, "acceptTrust": false, "digestEvery": 14400},
   "taskProfiles": {
     "ui": {"tier": "standard", "engine": "claude", "effort": "medium"},

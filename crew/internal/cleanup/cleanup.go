@@ -26,7 +26,7 @@ import (
 )
 
 // Usage is the one-line usage the refusals quote.
-const Usage = "usage: crew cleanup [--fleet] [--repo DIR] [--list] [--json] | --prune-archive [--older-than AGE]"
+const Usage = "usage: crew cleanup [--fleet] [--repo DIR] [--list] [--json] | --prune-archive [--older-than AGE] | --auto [--fleet] [--older-than AGE] [--dry-run]"
 
 // DefaultOlderThan is --prune-archive's default age.
 const DefaultOlderThan = "30d"
@@ -34,6 +34,7 @@ const DefaultOlderThan = "30d"
 // Request is `crew cleanup`'s parsed flags.
 type Request struct {
 	Fleet, List, JSON, PruneArchive bool
+	Auto, DryRun                    bool
 	Repo, OlderThan                 string
 }
 
@@ -48,6 +49,8 @@ type Options struct {
 	Interactive func() bool
 	// Pager shows text in $PAGER; nil runs the real one.
 	Pager func(ctx context.Context, text string) error
+	// Settings reads the cleanup.* settings for --auto; nil means the defaults.
+	Settings func(ctx context.Context) (Settings, error)
 }
 
 func (o Options) now() time.Time {
@@ -60,7 +63,8 @@ func (o Options) now() time.Time {
 func say(w io.Writer, format string, a ...any) { _, _ = fmt.Fprintf(w, format, a...) }
 
 // refusal is why this call may not run, "" when it may. Only the read-only
-// --list/--json are open to workers, roles and pipes.
+// --list/--json are open to workers, roles and pipes; --auto runs unattended
+// but never from a worker or role.
 func (o Options) refusal(req Request) string {
 	if req.List || req.JSON {
 		return ""
@@ -70,7 +74,7 @@ func (o Options) refusal(req Request) string {
 			return "crew cleanup: refusing — " + v + " is set; this session is a worker or role pane, and cleanup is human-only (--list and --json are read-only and allowed)"
 		}
 	}
-	if o.Interactive == nil || !o.Interactive() {
+	if !req.Auto && (o.Interactive == nil || !o.Interactive()) {
 		return "crew cleanup: refusing — stdin and stdout must both be a terminal; cleanup is interactive and human-only (--list and --json are read-only and allowed)"
 	}
 	return ""
@@ -81,6 +85,9 @@ func Run(ctx context.Context, req Request, cwd string, stdout, stderr io.Writer,
 	if why := o.refusal(req); why != "" {
 		say(stderr, "%s\n", why)
 		return 1
+	}
+	if req.Auto {
+		return o.runAuto(ctx, req, cwd, stdout, stderr)
 	}
 	if req.PruneArchive {
 		age, err := ParseAge(cmp.Or(req.OlderThan, DefaultOlderThan))
@@ -118,6 +125,9 @@ func Run(ctx context.Context, req Request, cwd string, stdout, stderr io.Writer,
 			it.render(stdout)
 		}
 		say(stdout, "crew cleanup: %d worktree(s) to review\n", len(items))
+		if sum, ok := o.lastAutoSummary(); ok {
+			say(stdout, "last auto run %s: removed %d, skipped %d, errors %d, pruned %d\n", sum.TS, sum.Removed, sum.Skipped, sum.Errors, sum.Pruned)
+		}
 		return 0
 	}
 	return o.review(ctx, items, stdout, stderr)

@@ -9,6 +9,8 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"time"
 )
 
@@ -91,4 +93,23 @@ func Set(busDir, branch string, key Key, now, until time.Time) error {
 		return err
 	}
 	return nil
+}
+
+// Held is one active snooze.
+type Held struct {
+	Branch string
+	Until  time.Time
+	Key    Key
+}
+
+// Snoozed lists the snoozes still running at now, by branch.
+func Snoozed(busDir string, now time.Time) []Held {
+	var out []Held
+	for b, e := range read(busDir) {
+		if e.Until > now.UnixMilli() {
+			out = append(out, Held{Branch: b, Until: time.UnixMilli(e.Until), Key: Key{Tip: e.Tip, Worktree: e.WT}})
+		}
+	}
+	slices.SortFunc(out, func(a, b Held) int { return strings.Compare(a.Branch, b.Branch) })
+	return out
 }

@@ -1,5 +1,6 @@
 usage: crew cleanup [--fleet | --repo DIR] [--list] [--json]
        crew cleanup --prune-archive [--older-than AGE]
+       crew cleanup --auto [--fleet] [--older-than AGE] [--dry-run]
 
 Review, one worktree at a time, the finished worker worktrees `crew reap`
 keeps and flags "stale: needs human cleanup" (kept for uncommitted changes,
@@ -42,12 +43,39 @@ at its admin dir, or it holds an embedded git repository.
   --list            Print the items and exit; read-only, no keys
   --json            Print one {"items":[...]} document and exit; read-only
   --prune-archive   Delete archives older than --older-than; human-only
-  --older-than AGE  With --prune-archive: a number and h, d or w (default 30d)
+  --older-than AGE  With --prune-archive: a number and h, d or w (default 30d).
+                    With --auto: the grace period (default cleanup.autoAfterDays, 14d)
+  --auto            Archive and remove the settled stale worktrees unattended
+  --dry-run         With --auto: print what it would do; change and log nothing
 
-Human-only. It refuses when CREW_WORKER_ID or CREW_ROLE_ID is set, or when
-stdin or stdout is not a terminal. --list and --json only read, so workers and
-dispatchers may run them.
+--auto is what the reap timer runs after `crew reap --fleet`. It takes an item
+only when all of these hold; every other item is left alone and logged with its
+reason:
+
+  - it is stale (the same classification the review lists)
+  - its last status is older than the grace period
+  - every issue it claims is closed, or its PR is merged or closed; an open
+    issue or PR, or a state gh could not read, blocks it
+  - it is not snoozed, and no session is live in it
+  - the repo passes reap's git-config and worktree-record checks
+
+It then archives the work exactly as `r` does and verifies it (`git bundle
+verify`, a non-empty patch when there were uncommitted changes); with no
+verified archive nothing is removed. At the end it deletes archives older than
+cleanup.archiveDays (default 365; 0 keeps them forever). One JSON line per
+action goes to ${XDG_DATA_HOME:-~/.local/share}/crew/cleanup-archive/auto.log,
+and --list shows the last run's summary. A repo that fails is logged and the
+rest still run; the exit is 1 if any did. cleanup.auto=false turns --auto off.
+
+To restore: `git fetch <archive>/commits.bundle refs/heads/<branch>:refs/heads/<branch>`,
+`git switch <branch>`, then `git apply <archive>/uncommitted.patch`.
+
+Review mode is human-only. It refuses when CREW_WORKER_ID or CREW_ROLE_ID is
+set, or when stdin or stdout is not a terminal. --auto refuses in a worker or
+role session too but runs without a terminal. --list and --json only read, so
+workers and dispatchers may run them.
 
   crew cleanup --list --json
   crew cleanup --fleet
   crew cleanup --prune-archive --older-than 60d
+  crew cleanup --auto --fleet --dry-run

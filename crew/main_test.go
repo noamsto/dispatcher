@@ -1894,6 +1894,13 @@ var preLocateRefusalRows = []struct {
 	{"cleanup fleet with repo", []string{"cleanup", "--fleet", "--repo", "x"}, wantCleanupUsage, 1},
 	{"cleanup repo missing value", []string{"cleanup", "--repo"}, wantCleanupUsage, 1},
 	{"cleanup older-than without prune", []string{"cleanup", "--older-than", "7d"}, wantCleanupUsage, 1},
+	{"cleanup dry-run without auto", []string{"cleanup", "--dry-run"}, wantCleanupUsage, 1},
+	{"cleanup dry-run with prune", []string{"cleanup", "--prune-archive", "--dry-run"}, wantCleanupUsage, 1},
+	{"cleanup auto with list", []string{"cleanup", "--auto", "--list"}, wantCleanupUsage, 1},
+	{"cleanup auto with json", []string{"cleanup", "--auto", "--json"}, wantCleanupUsage, 1},
+	{"cleanup auto with prune", []string{"cleanup", "--auto", "--prune-archive"}, wantCleanupUsage, 1},
+	{"cleanup auto with repo", []string{"cleanup", "--auto", "--repo", "x"}, wantCleanupUsage, 1},
+	{"cleanup auto bad age", []string{"cleanup", "--auto", "--older-than", "soon"}, "crew: cleanup: --older-than \"soon\": want a number and h, d or w (30d)", 1},
 	{"cleanup prune with list", []string{"cleanup", "--prune-archive", "--list"}, wantCleanupUsage, 1},
 	{"cleanup prune with fleet", []string{"cleanup", "--prune-archive", "--fleet"}, wantCleanupUsage, 1},
 	{"cleanup bad age", []string{"cleanup", "--prune-archive", "--older-than", "soon"}, "crew: cleanup: --older-than \"soon\": want a number and h, d or w (30d)", 1},
@@ -1977,7 +1984,7 @@ const (
 	wantDecideUsage      = `usage: crew decide "<text>"`
 	wantDecisionsUsage   = "usage: crew decisions [--json] [--since <ms|duration> | --all]"
 	wantSpecLintUsage    = "usage: crew spec-lint <file> [--issue N]... [--no-host-checks]"
-	wantCleanupUsage     = "usage: crew cleanup [--fleet] [--repo DIR] [--list] [--json] | --prune-archive [--older-than AGE]"
+	wantCleanupUsage     = "usage: crew cleanup [--fleet] [--repo DIR] [--list] [--json] | --prune-archive [--older-than AGE] | --auto [--fleet] [--older-than AGE] [--dry-run]"
 	wantFollowupsUsage   = "usage: crew followups <PR> (--entries FILE [--apply] [--tracker github|linear] | --draft [--crew ID])"
 	guardUsage           = "crew-go: git-guard: usage: crew-go git-guard check|check-cwd|init|commondir|pairs|union|show-url|show-key|show-pair|canon …"
 )
@@ -2749,5 +2756,9 @@ func TestCleanupHumanOnly(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	if code := run(context.Background(), []string{"cleanup"}, &stdout, &stderr, e); code != exitFailure || !strings.Contains(stderr.String(), "CREW_WORKER_ID is set") {
 		t.Errorf("worker: code %d stderr %q", code, stderr.String())
+	}
+	stderr.Reset()
+	if code := run(context.Background(), []string{"cleanup", "--auto"}, &stdout, &stderr, e); code != exitFailure || !strings.Contains(stderr.String(), "CREW_WORKER_ID is set") {
+		t.Errorf("worker --auto: code %d stderr %q", code, stderr.String())
 	}
 }
