@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"time"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
@@ -320,9 +321,9 @@ func (o Options) lastAutoSummary() (summary, bool) {
 		return summary{}, false
 	}
 	lines := bytes.Split(buf, []byte("\n"))
-	for i := len(lines) - 1; i >= 0; i-- {
+	for _, line := range slices.Backward(lines) {
 		var s summary
-		if json.Unmarshal(lines[i], &s) == nil && s.Action == "summary" {
+		if json.Unmarshal(line, &s) == nil && s.Action == "summary" {
 			return s, true
 		}
 	}
