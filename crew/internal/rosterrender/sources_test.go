@@ -938,3 +938,36 @@ func TestSelectRepoRingsOnlyThatLanesWorker(t *testing.T) {
 		}
 	}
 }
+
+func TestALayout2CrewDrawsOnlyItsOwnBus(t *testing.T) {
+	state := t.TempDir()
+	if err := bus.CreateMeta(state, bus.Meta{ID: "c1", HomeHost: "h", CreatedBy: "register"}); err != nil {
+		t.Fatal(err)
+	}
+	other := repoAt(t, "alpha", workerEvents("feat/9-z")...)
+	stub := &discoverStub{found: okRepos(other)}
+	l := newLoop(t)
+	l.paths = l.paths.WithState(state)
+	l.opts.Discover = stub.discover
+	l.opts.disc = &discovery{}
+
+	srcs := l.opts.sources(t.Context(), l.paths, "c1")
+	if len(srcs) != 1 || srcs[0].paths.Common != l.paths.Common {
+		t.Fatalf("sources = %v, want the local one only", srcs)
+	}
+	if stub.calls != 0 {
+		t.Errorf("Discover ran %d times for a layout-2 crew", stub.calls)
+	}
+}
+
+func TestALayout1CrewStillJoinsOtherRepos(t *testing.T) {
+	other := repoAt(t, "alpha", workerEvents("feat/9-z")...)
+	stub := &discoverStub{found: okRepos(other)}
+	l := newLoop(t)
+	l.paths = l.paths.WithState(t.TempDir())
+	l.opts.Discover = stub.discover
+
+	if srcs := l.opts.sources(t.Context(), l.paths, "c1"); len(srcs) != 2 || stub.calls != 1 {
+		t.Errorf("%d sources after %d discoveries, want 2 and 1", len(srcs), stub.calls)
+	}
+}

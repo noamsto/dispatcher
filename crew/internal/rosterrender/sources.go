@@ -107,6 +107,12 @@ func (d *discovery) recall(common string) (sourceResult, bool) {
 // event for the crew. With a discovery record the list is reused for
 // rediscoverEvery, so the 2 s tick never re-walks the sweep roots.
 func (o Options) sources(ctx context.Context, local bus.Paths, crew string) []source {
+	if bc, err := local.Crew(crew); err == nil && bc.Layout == 2 {
+		// A layout-2 crew has one bus, so no other repo can hold rows for it.
+		srcs := []source{o.sourceOf(ctx, local)}
+		nameLanes(srcs)
+		return srcs
+	}
 	now := o.Clock.Now()
 	if d := o.disc; d != nil && d.srcs != nil && now.Sub(d.at) < rediscoverEvery {
 		return d.srcs
@@ -171,7 +177,7 @@ func nameLanes(srcs []source) {
 
 func (o Options) sourceOf(ctx context.Context, p bus.Paths) source {
 	origin := ""
-	if o.Git != nil {
+	if o.Git != nil && p.Common != "" {
 		origin, _ = git.Origin(ctx, o.Git, p.Common)
 	}
 	s := source{paths: p, label: repos.Label(p.Common, origin)}

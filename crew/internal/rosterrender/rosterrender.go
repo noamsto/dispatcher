@@ -119,8 +119,14 @@ func Run(ctx context.Context, req Request, paths bus.Paths, o Options) int {
 		o.StartPath = o.Path
 	}
 	// Resolved before the cd, exactly as the arm resolved `_rr_self` before its
-	// own: `_rr_target` and every child resolve the bus from here on.
-	if err := os.Chdir(paths.Common); err != nil {
+	// own: `_rr_target` and every child resolve the bus from here on. A layout-2
+	// crew can resolve outside any repo, where there is no common dir to enter;
+	// its own dir is durable and always exists.
+	dir := paths.Common
+	if bc.Layout == 2 {
+		dir = cdir
+	}
+	if err := os.Chdir(dir); err != nil {
 		say(o.Stderr, "crew: roster-render: %v\n", err)
 		return exitFailure
 	}
