@@ -91,7 +91,10 @@ fi
 # ValidCrewID); an archived crew is left alone. The repo index is never scanned.
 log=''
 S=${XDG_STATE_HOME:-}
-[[ $S == /* ]] || { S=''; [[ ${HOME:-} != /* ]] || S=$HOME/.local/state; }
+[[ $S == /* ]] || {
+  S=''
+  [[ ${HOME:-} != /* ]] || S=$HOME/.local/state
+}
 if [[ -n $S && $crew =~ ^[A-Za-z0-9._-]+$ && $crew != -* && $crew != . && $crew != .. ]]; then
   if [[ -f $S/crew/crews/$crew/meta.json ]]; then
     log=$S/crew/crews/$crew/events.jsonl

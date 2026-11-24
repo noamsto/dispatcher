@@ -162,7 +162,10 @@ if [[ -n $crew_id ]]; then
   # A layout-2 crew's log lives under the state root (crew's StateRoot and
   # ValidCrewID); an archived crew is left alone. The repo index is never scanned.
   S=${XDG_STATE_HOME:-}
-  [[ $S == /* ]] || { S=''; [[ ${HOME:-} != /* ]] || S=$HOME/.local/state; }
+  [[ $S == /* ]] || {
+    S=''
+    [[ ${HOME:-} != /* ]] || S=$HOME/.local/state
+  }
   if [[ -n $S && $crew_id =~ ^[A-Za-z0-9._-]+$ && $crew_id != -* && $crew_id != . && $crew_id != .. ]]; then
     if [[ -f $S/crew/crews/$crew_id/meta.json ]]; then
       log="$S/crew/crews/$crew_id/events.jsonl"
