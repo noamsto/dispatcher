@@ -1056,11 +1056,10 @@ func TestReplyWithNoNudgeStarterPrintsNothing(t *testing.T) {
 	tr.wantRow(t, row("c1", "worker:feat/x#s1-1", "go"))
 }
 
-// Two replies in a row to the same lead must address the same wait lock. Reply
-// does not dedupe on its own — the one-wait-per-lead truth is nudge's own
-// arm.wait lock loop, already covered by nudge's tests — so this pins that
-// reply names the same lead and lock dir both times, and that a second Acquire
-// on that lock joins rather than takes it.
+// Two replies in a row to the same lead must address the same wait lock: reply
+// names the same lead and the same lock dir both times, and a second Acquire on
+// that lock joins rather than takes it. The dedupe itself is nudge's arm.wait
+// loop, tested there.
 func TestReplyTwoRepliesJoinOneWaitLock(t *testing.T) {
 	tr := setup(t)
 	claudeWorker(t, tr)
@@ -1071,9 +1070,8 @@ func TestReplyTwoRepliesJoinOneWaitLock(t *testing.T) {
 	)
 	o := Options{Nudge: func(argv []string, logPath string) error {
 		sid := argv[len(argv)-1]
-		// The lock must sit where the wait's crew dir is, not merely where this
-		// reply's log happens to be: the reply's log path must not be the source
-		// of the lock dir.
+		// the lock is the wait's, under the bus dir — never derived from the
+		// reply's own log path
 		if got := filepath.Dir(logPath); got != tr.paths.Dir {
 			t.Errorf("wait log dir = %q, want the crew dir %q", got, tr.paths.Dir)
 		}

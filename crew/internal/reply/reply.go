@@ -113,8 +113,8 @@ func Run(ctx context.Context, req Request, paths bus.Paths, stderr io.Writer, o 
 		return exitFailure
 	}
 	if host != "" {
-		// A reply routed to a remote host never starts a local process; the
-		// skip line still names why, so the caller sees the same contract.
+		// A reply routed to a remote host starts no local process: the host's own
+		// reply decides there.
 		if o.Nudge != nil {
 			reason := "remote host: its own reply decides"
 			if req.NoNudge {
@@ -123,8 +123,7 @@ func Run(ctx context.Context, req Request, paths bus.Paths, stderr io.Writer, o 
 			say(stderr, "reply: no nudge (%s)\n", reason)
 		}
 		// --no-nudge crosses the hop so the host's own reply starts no wait
-		// either, and it goes before the `--`, which still ends the flags
-		// before the body.
+		// either; it goes before the `--`, which still ends the flags.
 		argv := []string{"crew", "reply", "--crew", as}
 		if req.NoNudge {
 			argv = append(argv, "--no-nudge")
@@ -174,7 +173,7 @@ func Run(ctx context.Context, req Request, paths bus.Paths, stderr io.Writer, o 
 // nudgeAfter owns the whole "does this reply start a wait" decision and prints
 // exactly one stderr line about it. It runs only after the row landed, so a
 // refusal to start never costs the directive. dir is the bus directory the wait
-// loop's nudge-wait/ lock sits in; log is the crew log the engine is read from.
+// loop's nudge-wait/ lock sits in, not the per-crew directory.
 func nudgeAfter(stderr io.Writer, req Request, o Options, crew, dir, log, to string) {
 	if o.Nudge == nil {
 		return
@@ -219,8 +218,7 @@ func nudgeAfter(stderr io.Writer, req Request, o Options, crew, dir, log, to str
 
 // branchOf is the branch a recipient names: `worker:<branch>#s…` loses the
 // `worker:` prefix and everything from the last `#`; anything else prints as it
-// came. The wait line names the branch, not the session, so a reader can match
-// it to a dispatch.
+// came.
 func branchOf(to string) string {
 	branch, ok := strings.CutPrefix(to, "worker:")
 	if !ok {

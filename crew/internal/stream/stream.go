@@ -116,10 +116,7 @@ func (o Options) withDefaults() Options {
 	return o
 }
 
-// crewScript is the entrypoint the loop re-enters, entry.CrewEntry's shared rule:
-// the path the delegation arm exported as its own `$0`, and failing that the
-// `crew` on PATH — the same script, for a Go binary run directly rather than
-// through it.
+// crewScript is the entrypoint the loop re-enters; entry.CrewEntry is the shared rule.
 func crewScript() string {
 	return entry.CrewEntry(os.Getenv, exec.LookPath)
 }
