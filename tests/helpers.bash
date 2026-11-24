@@ -4,6 +4,8 @@
 # even for tests that do not need a throwaway repository.
 export XDG_DATA_HOME="$BATS_TEST_TMPDIR/data"
 export XDG_STATE_HOME="$BATS_TEST_TMPDIR/state"
+# Tests register mktemp repos in that store, which Register refuses otherwise.
+export CREW_REGISTRY_ALLOW_TMP=1
 
 # Real `crew reap` invocations across the suite would each fork a ratings
 # sweep; the fork would outlive the test and race teardown_repo's rm -rf.
@@ -72,6 +74,7 @@ setup_repo() {
   # the shell running bats.
   export XDG_DATA_HOME="$BATS_TEST_TMPDIR/data"
   export XDG_STATE_HOME="$BATS_TEST_TMPDIR/state"
+  export CREW_REGISTRY_ALLOW_TMP=1
   assert_isolated_xdg_data_home || return 1
   assert_isolated_xdg_state_home || return 1
   # Overriding $HOME is not enough: $XDG_CONFIG_HOME survives it, so git still

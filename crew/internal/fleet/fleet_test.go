@@ -156,7 +156,7 @@ func TestDefaultTableListsLiveRowsAcrossRepos(t *testing.T) {
 	if strings.Contains(out, "feat/b") {
 		t.Errorf("done row shown without --all:\n%s", out)
 	}
-	if !strings.Contains(errs, "skipped (gone)") || !strings.Contains(errs, "skipped (no bus)") {
+	if !strings.Contains(errs, "skipped (no bus)") || strings.Contains(errs, "skipped (gone)") {
 		t.Errorf("stderr lacks skip notes: %q", errs)
 	}
 }

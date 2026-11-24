@@ -3,6 +3,7 @@
 package repos
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -10,9 +11,13 @@ import (
 	"regexp"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
+	"github.com/noamsto/dispatcher/crew/internal/lock"
 )
 
 // Status says whether a discovered candidate can be read as a bus.
@@ -63,13 +68,34 @@ func RegistryPath(lookup func(string) string) string {
 	return filepath.Join(base, "crew", "repos")
 }
 
-// Register adds common to the registry the way dispatch's `_registry_add` does.
+// ErrTempRegistry refuses a repo under the system temp dir: such a registry
+// entry is test residue.
+var ErrTempRegistry = errors.New("repo is under the system temp dir (set CREW_REGISTRY_ALLOW_TMP=1 to register it anyway)")
+
+// Register adds common to the registry the way dispatch's `_registry_add` does,
+// waiting up to about a second for the registry lock so it does not race Prune,
+// then appending anyway. Paths under the system temp dir are refused unless
+// $CREW_REGISTRY_ALLOW_TMP is set.
 func Register(registry, common string) error {
+	if os.Getenv("CREW_REGISTRY_ALLOW_TMP") == "" && underTemp(common) {
+		return ErrTempRegistry
+	}
 	if slices.Contains(registryLines(registry), common) {
 		return nil
 	}
 	if err := os.MkdirAll(filepath.Dir(registry), 0o755); err != nil {
 		return err
+	}
+	dir, owner := registry+".lock.d", strconv.Itoa(os.Getpid())
+	for range 50 {
+		if lock.Acquire(dir, owner) {
+			defer lock.Release(dir)
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if slices.Contains(registryLines(registry), common) {
+		return nil
 	}
 	f, err := os.OpenFile(registry, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
@@ -80,6 +106,73 @@ func Register(registry, common string) error {
 		return err
 	}
 	return f.Close()
+}
+
+func underTemp(path string) bool {
+	path = filepath.Clean(path)
+	for _, base := range []string{os.TempDir(), "/tmp"} {
+		if rel, err := filepath.Rel(filepath.Clean(base), path); err == nil && rel != ".." && !strings.HasPrefix(rel, "../") {
+			return true
+		}
+	}
+	return false
+}
+
+// pruned records the registries this process has already pruned.
+var pruned sync.Map
+
+// pruneOnce prunes registry the first time this process reads it.
+func pruneOnce(registry string) []string {
+	if _, done := pruned.LoadOrStore(registry, true); done {
+		return nil
+	}
+	return Prune(registry)
+}
+
+// Prune drops registry entries whose git dir no longer exists, rewriting the
+// file atomically under the registry lock. An entry that cannot be stat'ed for
+// any other reason is kept, and a held lock skips the prune. It returns the
+// entries it dropped.
+func Prune(registry string) []string {
+	if _, err := os.Stat(registry); err != nil {
+		return nil
+	}
+	dir := registry + ".lock.d"
+	if !lock.Acquire(dir, strconv.Itoa(os.Getpid())) {
+		return nil
+	}
+	defer lock.Release(dir)
+	lines := registryLines(registry)
+	kept := lines[:0:0]
+	var dropped []string
+	for _, c := range lines {
+		if _, err := os.Stat(c); errors.Is(err, os.ErrNotExist) {
+			dropped = append(dropped, c)
+			continue
+		}
+		kept = append(kept, c)
+	}
+	if len(kept) == len(lines) {
+		return nil
+	}
+	info, err := os.Stat(registry)
+	if err != nil {
+		return nil
+	}
+	tmp := registry + ".tmp" + strconv.Itoa(os.Getpid())
+	body := strings.Join(kept, "\n")
+	if body != "" {
+		body += "\n"
+	}
+	if err := os.WriteFile(tmp, []byte(body), info.Mode().Perm()); err != nil {
+		_ = os.Remove(tmp)
+		return nil
+	}
+	if err := os.Chmod(tmp, info.Mode().Perm()); err != nil || os.Rename(tmp, registry) != nil {
+		_ = os.Remove(tmp)
+		return nil
+	}
+	return dropped
 }
 
 // Discover returns every registry or walk candidate, byte-sorted and
@@ -96,6 +189,9 @@ func Discover(o Options) []Repo {
 	registry := o.Registry
 	if registry == "" {
 		registry = RegistryPath(lookup)
+	}
+	for _, c := range pruneOnce(registry) {
+		say(stderr, "%s: pruned %s (git dir gone)\n", o.Prefix, c)
 	}
 
 	roots := strings.Join(o.Roots, "\n")
@@ -147,6 +243,7 @@ func Registered(registry string, getenv func(string) string) []Repo {
 	if registry == "" {
 		registry = RegistryPath(getenv)
 	}
+	_ = pruneOnce(registry)
 	commons := registryLines(registry)
 	slices.Sort(commons)
 	commons = slices.Compact(commons)

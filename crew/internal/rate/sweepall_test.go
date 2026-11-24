@@ -160,7 +160,6 @@ func TestSweepAllLinesAndExitStatus(t *testing.T) {
 		"acme/alpha: swept, 2 runs in store",
 		"acme/broken: failed (rc=5)",
 		filepath.Join(f.root, "noremote") + ": skipped (no origin remote)",
-		filepath.Join(f.root, "vanished", ".git") + ": skipped (gone)",
 	}, "\n") + "\n"
 	if code != 1 {
 		t.Errorf("exit %d, want 1 (one repo failed)", code)
@@ -168,8 +167,12 @@ func TestSweepAllLinesAndExitStatus(t *testing.T) {
 	if out != want {
 		t.Errorf("stdout =\n%s\nwant\n%s", out, want)
 	}
-	if errb != "" {
-		t.Errorf("stderr = %q, want clean", errb)
+	vanished := filepath.Join(f.root, "vanished", ".git")
+	if want := "crew: rate --sweep-all: pruned " + vanished + " (git dir gone)\n"; errb != want {
+		t.Errorf("stderr = %q, want %q", errb, want)
+	}
+	if reg, err := os.ReadFile(filepath.Join(f.data, "crew", "repos")); err != nil || strings.Contains(string(reg), vanished) {
+		t.Errorf("registry %q (err %v) still lists the vanished entry", reg, err)
 	}
 	if len(f.swept) != 2 {
 		t.Errorf("swept %v, want the two repos with an origin", f.swept)

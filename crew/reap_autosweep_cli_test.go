@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/noamsto/dispatcher/crew/internal/repos/repostest"
 	"github.com/rogpeppe/go-internal/testscript"
 )
 
@@ -24,12 +25,14 @@ func TestMain(m *testing.M) {
 	if len(os.Args) > 1 && os.Args[1] == "reap-autosweep" {
 		os.Exit(run(context.Background(), os.Args[1:], os.Stdout, os.Stderr, env{getwd: os.Getwd}))
 	}
-	testscript.Main(isolatedState{m}, map[string]func(){"crew": crewMain, "tmux": fakeTmux})
+	// Hold tests register t.TempDir repos, which Register refuses otherwise.
+	_ = os.Setenv("CREW_REGISTRY_ALLOW_TMP", "1")
+	testscript.Main(isolatedState{repostest.Guard(m)}, map[string]func(){"crew": crewMain, "tmux": fakeTmux})
 }
 
 // isolatedState runs the tests with XDG_STATE_HOME at a fresh temp dir, since
 // bus.Locate reads the state root: no CLI test sees ~/.local/state/crew.
-type isolatedState struct{ m *testing.M }
+type isolatedState struct{ m repostest.Runner }
 
 func (s isolatedState) Run() int {
 	dir, err := os.MkdirTemp("", "crew-state-")

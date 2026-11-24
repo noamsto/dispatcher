@@ -122,6 +122,7 @@ func run() int {
 // owns the terminal because the capability probe shells out to tmux and the
 // cell-size query reads the terminal's reply from the tty.
 func resolveMap(runner data.Runner) (ui.MapDeps, func()) {
+	sweepMapPNGs(os.TempDir(), time.Now())
 	notCapable := func(why string) ui.MapDeps {
 		return ui.MapDeps{Capable: func() (bool, string) { return false, why }}
 	}
@@ -165,6 +166,19 @@ func resolveMap(runner data.Runner) (ui.MapDeps, func()) {
 			_ = tty.Close()
 			_ = os.Remove(png.Name())
 		}
+}
+
+// sweepMapPNGs removes map images a killed dash left behind: regular files
+// named crew-dash-map-*.png in dir untouched for over a day.
+func sweepMapPNGs(dir string, now time.Time) {
+	matches, _ := filepath.Glob(filepath.Join(dir, "crew-dash-map-*.png"))
+	for _, p := range matches {
+		info, err := os.Lstat(p)
+		if err != nil || !info.Mode().IsRegular() || now.Sub(info.ModTime()) <= 24*time.Hour {
+			continue
+		}
+		_ = os.Remove(p)
+	}
 }
 
 // runView prints one view: indented once, or one compact line per change

@@ -644,7 +644,7 @@ func TestStatusSkippedReposAndNonGitCwd(t *testing.T) {
 	for _, s := range doc.Skipped {
 		skipped[s.Path] = s.Status
 	}
-	if skipped[gone] != "gone" || skipped[nobus] != "no bus" || len(skipped) != 2 {
+	if skipped[nobus] != "no bus" || len(skipped) != 1 {
 		t.Errorf("skipped = %v", skipped)
 	}
 }
