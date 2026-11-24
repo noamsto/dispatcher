@@ -160,3 +160,42 @@ func TestCrewsTableStatsALayout2CrewFromItsOwnLog(t *testing.T) {
 		t.Errorf("got:\n%s\nwant:\n%s", out, want)
 	}
 }
+
+// TestCrewsLegacyListsLiveLayout1Crews is the phase 6 gate: --legacy names the
+// layout-1 crews of this repo whose recorded pid is still live. The ended
+// layout-1 crew, the pid-less fixture crew and every layout-2 crew are omitted.
+func TestCrewsLegacyListsLiveLayout1Crews(t *testing.T) {
+	p := layout2Fixture(t)
+	crewDir(t, p, "c-l1-live", "4321\n")
+	crewDir(t, p, "c-l1-dead", "8888\n")
+	out, errB, code := runLegacy(t, p, opts(map[int]bool{4321: true}, nil))
+	if code != 0 || errB != "" {
+		t.Fatalf("code %d, stderr %q", code, errB)
+	}
+	if want := "c-l1-live\n"; out != want {
+		t.Errorf("legacy: got %q, want %q", out, want)
+	}
+}
+
+// TestCrewsLegacyOmitsALayout2CrewWithALegacyDir: a repo dir beside a
+// meta.json is still layout 2, so --legacy must not report it.
+func TestCrewsLegacyOmitsALayout2CrewWithALegacyDir(t *testing.T) {
+	p := layout2Fixture(t)
+	crewDir(t, p, "c-live", "4321\n")
+	out, errB, code := runLegacy(t, p, opts(map[int]bool{4321: true}, nil))
+	if code != 0 || errB != "" {
+		t.Fatalf("code %d, stderr %q", code, errB)
+	}
+	if out != "" {
+		t.Errorf("legacy printed a layout-2 crew: %q", out)
+	}
+}
+
+// TestCrewsLegacyOutsideARepoIsSilent: no repo means no layout-1 dirs to glob.
+func TestCrewsLegacyOutsideARepoIsSilent(t *testing.T) {
+	p := bus.StatePaths(layout2Fixture(t).State)
+	out, errB, code := runLegacy(t, p, opts(map[int]bool{4321: true}, nil))
+	if code != 0 || errB != "" || out != "" {
+		t.Errorf("legacy outside a repo: code %d, stdout %q, stderr %q", code, out, errB)
+	}
+}

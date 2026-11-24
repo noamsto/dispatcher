@@ -71,6 +71,8 @@ func newCrewsCLI(t *testing.T) *crewsCLI {
 	h := newHoldCLI(t)
 	// reap would otherwise exec os.Executable, the test binary.
 	t.Setenv("CREW_RATE_AUTOSWEEP", "0")
+	// This CLI corpus is the layout-1 corpus until phase 6 deletes it.
+	t.Setenv("CREW_LAYOUT", "1")
 	unsetenv(t, "TMUX", "TMUX_PANE", "PR_OPEN_BRANCH", "TMUX_WINDOWS")
 	t.Setenv("XDG_DATA_HOME", t.TempDir())
 	t.Setenv("GIT_CONFIG_GLOBAL", "/dev/null")

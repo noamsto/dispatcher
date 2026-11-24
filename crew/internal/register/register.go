@@ -168,14 +168,15 @@ func Run(sub, pid string, paths bus.Paths, stderr io.Writer, o Options) int {
 	return 0
 }
 
-// registerCrew resolves crew for register under CREW_LAYOUT. Under 2 it creates
-// the layout-2 crew unless the id already resolves to one, is refused, or has a
-// legacy trace in this repo, which keeps it layout 1.
+// registerCrew resolves crew for register under CREW_LAYOUT. The default is
+// layout 2: an unset CREW_LAYOUT creates the layout-2 crew unless the id
+// already resolves to one, is refused, or has a legacy trace in this repo,
+// which keeps it layout 1. CREW_LAYOUT=1 opts out to the per-repo bus.
 func registerCrew(paths bus.Paths, crew string, o Options) (bus.Crew, error) {
 	switch v := o.Getenv("CREW_LAYOUT"); v {
-	case "", "1":
+	case "1":
 		return paths.Crew(crew)
-	case "2":
+	case "", "2":
 	default:
 		return bus.Crew{}, &errCreate{fmt.Errorf("CREW_LAYOUT must be 1 or 2 (got '%s')", v)}
 	}

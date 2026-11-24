@@ -25,7 +25,8 @@ func newLifecycleCLI(t *testing.T) *lifecycleCLI {
 	c := newCrewsCLI(t)
 	xdg := t.TempDir()
 	t.Setenv("XDG_STATE_HOME", xdg)
-	unsetenv(t, "CREW_LAYOUT")
+	// Layout-1 by default here; subtests that want layout 2 set it themselves.
+	t.Setenv("CREW_LAYOUT", "1")
 	outside, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
 		t.Fatal(err)

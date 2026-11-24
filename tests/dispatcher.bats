@@ -250,6 +250,10 @@ second line"
 }
 
 @test "a bare launch outside a git repo still names the session" {
+  # The real crew binary, because at layout 2 (the default) a launch outside a
+  # repo registers under the state root and the launch record needs `crew where
+  # --dir` to resolve it; the plain crew stub answers that with nothing.
+  _real_crew_logged
   cd "$BATS_TEST_TMPDIR"
   CREW_ID=c1 run run_launcher
   [ "$status" -eq 0 ]
@@ -1429,6 +1433,7 @@ _pidfile_log_path() {
   printf '#!/usr/bin/env bash\nexec "$CREW" "$@"\n' >"$STUB_DIR/crew"
   chmod +x "$STUB_DIR/crew"
   export CREW LAUNCHER
+  export CREW_LAYOUT=1 # pin the legacy layout the repo path below reads (phase 6 deletes it)
   run bash -c '
     echo $$ >"$BATS_TEST_TMPDIR/outer.pid"
     export CREW_ID=c-live
@@ -1449,6 +1454,7 @@ _pidfile_log_path() {
   printf '#!/usr/bin/env bash\nexec "$CREW" "$@"\n' >"$STUB_DIR/crew"
   chmod +x "$STUB_DIR/crew"
   export CREW
+  export CREW_LAYOUT=1 # pin the legacy layout the repo path below reads (phase 6 deletes it)
   run run_launcher
   [ "$status" -eq 0 ]
   id="$(sed -n 's/^crew id: //p' <<<"$output")"
@@ -1914,6 +1920,17 @@ EOF
   chmod +x "$STUB_DIR/$1"
 }
 
+# _launch_record_l2_stub <bin> — an engine that copies its layout-2 crew's
+# launch record, which lives in the crew's own dir under the state root.
+_launch_record_l2_stub() {
+  cat >"$STUB_DIR/$1" <<'EOF'
+#!/usr/bin/env bash
+dir="$("$CREW" where --dir --crew "$CREW_ID")"
+cp -- "$dir/launch" "$STUB_DIR/launch.json"
+EOF
+  chmod +x "$STUB_DIR/$1"
+}
+
 _launch_record_row() { # want-json launcher-args...
   local want=$1
   shift
@@ -1925,6 +1942,7 @@ _launch_record_row() { # want-json launcher-args...
 
 @test "1420: the launcher records its resolved launch, and a normal exit removes it" {
   _real_crew_logged
+  export CREW_LAYOUT=1 # pin the legacy layout the repo path below reads (phase 6 deletes it)
   _launch_record_stub claude
   _launch_record_stub cursor-agent
   begin_rows
@@ -1937,6 +1955,7 @@ _launch_record_row() { # want-json launcher-args...
 
 @test "1420: an engine killed by a signal leaves the crew registered for a relaunch" {
   _real_crew_logged
+  export CREW_LAYOUT=1 # pin the legacy layout the repo path below reads (phase 6 deletes it)
   _engine_stub claude 'kill -KILL $$'
   CREW_ID=c1 run --separate-stderr run_launcher
   [ "$status" -eq 137 ]
@@ -1949,11 +1968,21 @@ _launch_record_row() { # want-json launcher-args...
 
 @test "1420: an engine exiting 130 (a Ctrl-C quit) deregisters like a normal exit" {
   _real_crew_logged
+  export CREW_LAYOUT=1 # pin the legacy layout the repo path below reads (phase 6 deletes it)
   _engine_stub claude 'exit 130'
   CREW_ID=c1 run run_launcher
   [ "$status" -eq 130 ]
   grep -qx deregister "$STUB_LOG"
   [ ! -e "$(_crew_dir c1)" ]
+}
+
+@test "1747: the launcher records its launch in the layout-2 crew dir" {
+  _real_crew_logged
+  _launch_record_l2_stub claude
+  CREW_ID=c-l2rec run_launcher
+  [ "$(jq -rS '.agent, .model' "$STUB_DIR/launch.json")" = "$(printf 'claude\nopus')" ]
+  [ -d "$XDG_STATE_HOME/crew/crews/c-l2rec" ]
+  [ ! -e "$(_crew_dir c-l2rec)" ]
 }
 
 _wait_for() { # path
@@ -3317,11 +3346,23 @@ _l2_dir() { "$CREW" where --dir --crew "$1"; }
   [ ! -e "$XDG_STATE_HOME/crew/crews/c-env" ]
 }
 
-@test "1747: crewLayout defaults to layout 1" {
+@test "1747: crewLayout defaults to layout 2" {
   _real_crew_logged
+  _engine_stub claude 'printf "%s" "$CREW_LAYOUT" >"$STUB_DIR/layout"'
   CREW_ID=c-def run run_launcher
   [ "$status" -eq 0 ]
-  [ ! -e "$XDG_STATE_HOME/crew/crews/c-def" ]
+  [ "$(cat "$STUB_DIR/layout")" = 2 ]
+  [ -d "$XDG_STATE_HOME/crew/crews/c-def" ]
+}
+
+@test "1747: crewLayout: 1 in the settings keeps a new crew at layout 1" {
+  _real_crew_logged
+  _engine_stub claude 'printf "%s" "$CREW_LAYOUT" >"$STUB_DIR/layout"'
+  echo '{"crewLayout":1}' >"$XDG_CONFIG_HOME/dispatcher/settings.json"
+  CREW_ID=c-s1 run run_launcher
+  [ "$status" -eq 0 ]
+  [ "$(cat "$STUB_DIR/layout")" = 1 ]
+  [ ! -e "$XDG_STATE_HOME/crew/crews/c-s1" ]
 }
 
 # A dead layout-2 crew c2 (home repo $TEST_REPO, or none when outside) with a

@@ -102,6 +102,34 @@ func TestRegisterLayout1OutsideARepoIsNotARepo(t *testing.T) {
 	absent(t, p.State+"/crews")
 }
 
+// An unset CREW_LAYOUT is layout 2: the setting's default is 2.
+func TestRegisterDefaultIsLayout2(t *testing.T) {
+	p := statePaths(t)
+	w := newWorld("c1")
+	delete(w.env, "CREW_LAYOUT") // newWorld pins layout 1 for the corpus; this test wants it unset.
+	if code, stderr := run("register", "888", p, w); code != 0 || stderr != "" {
+		t.Fatalf("code=%d stderr=%q", code, stderr)
+	}
+	if m := metaOf(t, p.State, "c1"); m["created_by"] != "register" {
+		t.Errorf("created_by = %v, want register", m["created_by"])
+	}
+	// Nothing under the repo bus: the default lands a layout-2 crew only.
+	absent(t, p.CrewDir("c1"))
+}
+
+// With the setting defaulting to 2, an unset CREW_LAYOUT and no state root is
+// refused exactly as an explicit CREW_LAYOUT=2 is.
+func TestRegisterDefaultRefusesWithoutStateRoot(t *testing.T) {
+	p := testPaths(t)
+	w := newWorld("c1")
+	delete(w.env, "CREW_LAYOUT") // newWorld pins layout 1 for the corpus; this test wants it unset.
+	code, stderr := run("register", "888", p, w)
+	if code != 1 || stderr != "crew: register: CREW_LAYOUT=2 needs XDG_STATE_HOME or HOME\n" {
+		t.Fatalf("code=%d stderr=%q", code, stderr)
+	}
+	absent(t, p.Dir)
+}
+
 // An existing meta.json is reused whatever CREW_LAYOUT says, and never
 // rewritten.
 func TestRegisterLayout2PinIsSticky(t *testing.T) {

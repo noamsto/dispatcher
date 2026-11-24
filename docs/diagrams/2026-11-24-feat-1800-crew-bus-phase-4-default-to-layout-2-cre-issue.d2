@@ -1,0 +1,24 @@
+direction: right
+
+base: "adapters/core/defaults.json:474\n\"crewLayout\": 1"
+launcher: "dispatcher.sh:781-783\nCREW_LAYOUT=env // settings"
+register: "register.go:175 registerCrew\nswitch CREW_LAYOUT { \"\", \"1\" -> layout 1 }"
+legacy: "register.go:208 legacy()\nlegacy dir / homes / log rows"
+resolve: "resolve.go:57 Paths.Crew\nstate meta -> 2, else 1"
+
+l1: "layout-1 store\n<common>/crew/crews/<id>/" {shape: cylinder}
+l2: "layout-2 store\n$S/crew/crews/<id>/\nmeta.json + events.jsonl" {shape: cylinder}
+
+gate: "crew crews --legacy\n(phase 6 gate)" {style.stroke-dash: 4}
+proto: "DISPATCHER_PROTOCOL.md:167\n\"The bus is per repo.\"\ncommands/dispatcher.md:29 .git/crew/crews/" {style.stroke-dash: 4}
+
+base -> launcher: settings layer
+launcher -> register: CREW_LAYOUT
+legacy -> register: keeps a legacy crew at 1
+resolve -> l1: classifies
+resolve -> l2: classifies
+
+base -> register: new crews land at layout 1 {style.stroke-dash: 4; style.stroke: red}
+register -> l1: default today {style.stroke-dash: 4; style.stroke: red}
+gate -> resolve: nothing lists live layout-1 crews {style.stroke-dash: 4; style.stroke: red}
+proto -> l1: text still says per repo {style.stroke-dash: 4; style.stroke: red}

@@ -1,0 +1,25 @@
+direction: right
+
+base: "defaults.json:474\n\"crewLayout\": 2" {style.stroke: blue}
+launcher: "dispatcher.sh:782\nCREW_LAYOUT=env // 2" {style.stroke: blue}
+register: "register.go:175\n\"1\" -> 1; \"\", \"2\" -> 2" {style.stroke: blue}
+legacy: "register.go:208 legacy()\nlegacy dir / homes / log rows"
+resolve: "resolve.go:57 Paths.Crew\nstate meta -> 2, else 1"
+
+l1: "layout-1 store\n<common>/crew/crews/<id>/" {shape: cylinder}
+l2: "layout-2 store\n$S/crew/crews/<id>/\nmeta.json + events.jsonl" {shape: cylinder}
+
+gate: "crews.RunLegacy\ncrew crews --legacy\ncrewDirs + RecordedLive" {style.stroke: blue}
+proto: "DISPATCHER_PROTOCOL.md\n\"The bus is per crew.\"\n+ one legacy sentence\ndispatcher.md crew dir" {style.stroke: blue}
+corpus: "test corpus pins\nCREW_LAYOUT=1\n(new default tests unset)" {style.stroke: blue}
+
+base -> launcher: settings layer
+launcher -> register: CREW_LAYOUT
+legacy -> register: keeps a legacy crew at 1
+resolve -> l1: existing crews
+resolve -> l2: new crews by default
+register -> l2: default now
+gate -> l1: live layout-1 crews only
+gate -> resolve: Layout == 1 filter
+corpus -> register: layout 1 stays covered
+proto -> l2: text matches the per-crew log

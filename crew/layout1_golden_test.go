@@ -42,6 +42,8 @@ func TestGoldenStartTokenNormalization(t *testing.T) {
 // byte-identical. Regenerate only with UPDATE_GOLDEN=1.
 func TestLayout1Golden(t *testing.T) {
 	const crew = "gold1"
+	// The golden records layout-1 bytes.
+	t.Setenv("CREW_LAYOUT", "1")
 	// newCrewsCLI moves the cwd into the temp repo.
 	goldenDir, err := filepath.Abs(filepath.Join("testdata", "layout1-golden"))
 	if err != nil {

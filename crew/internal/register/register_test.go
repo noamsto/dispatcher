@@ -55,7 +55,9 @@ func (w *world) options() Options {
 }
 
 func newWorld(id string) *world {
-	return &world{id: id, alive: map[int]bool{}, parent: map[int]int{}, comm: map[int]string{}, env: map[string]string{}}
+	// This corpus pins layout 1; the unset default (layout 2) is covered in
+	// layout2_test.go.
+	return &world{id: id, alive: map[int]bool{}, parent: map[int]int{}, comm: map[int]string{}, env: map[string]string{"CREW_LAYOUT": "1"}}
 }
 
 func testPaths(t *testing.T) bus.Paths {

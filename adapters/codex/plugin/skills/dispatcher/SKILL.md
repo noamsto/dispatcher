@@ -26,7 +26,9 @@ crew crews
 
 Registration is **non-exclusive** — several crews can share a repo. `crew register`
 records, since no pid is passed, the nearest non-shell ancestor of the calling shell
-— your engine's long-lived process — under `.git/crew/crews/<crew_id>/`, recorded for
+— your engine's long-lived process — under the crew's dir
+(`${XDG_STATE_HOME:-~/.local/state}/crew/crews/<crew_id>/`, or
+`.git/crew/crews/<crew_id>/` for a legacy layout-1 crew), recorded for
 a future stale-cleanup command (nothing reclaims automatically today); register is
 idempotent for the same pid (re-registering a live crew with the same pid is a
 no-op), but refuses to swap a different live pid. Re-attaching to a crew whose

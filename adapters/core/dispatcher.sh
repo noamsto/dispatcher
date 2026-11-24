@@ -776,10 +776,10 @@ dispatch_config_default="@dispatchConfig@"
 settings="$("${DISPATCH_CONFIG_BIN:-$dispatch_config_default}")"
 [ -n "${DISPATCH_ENGINES:-}" ] || DISPATCH_ENGINES="$(jq -r '.engines // [] | join(" ")' <<<"$settings")"
 
-# Crew layout: the env wins for one launch, else the settings key. Go reads only
-# CREW_LAYOUT, so `crew register` gets it exported.
+# Crew layout: the env wins for one launch, else the settings key (default 2).
+# Go reads only CREW_LAYOUT, so `crew register` gets it exported.
 crew_layout=${CREW_LAYOUT:-}
-[ -n "$crew_layout" ] || crew_layout="$(jq -r '.crewLayout // 1 | tostring' <<<"$settings")"
+[ -n "$crew_layout" ] || crew_layout="$(jq -r '.crewLayout // 2 | tostring' <<<"$settings")"
 export CREW_LAYOUT=$crew_layout
 
 # First launch is never gated, and never prompts (overseer launches are
