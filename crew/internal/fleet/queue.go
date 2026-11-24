@@ -955,18 +955,22 @@ func queueTable(rows []queueRow) []byte {
 
 // report is the queue as fleet status shows it: the head and its wait, the
 // demoted holds with their clocks, and every parked hold with its reason.
-func (q *queue) report(rec map[holdKey]dueEntry, names func(string) string) QueueStatus {
+func (q *queue) report(rec map[holdKey]dueEntry, names func(string) string, scope func(common string) bool) QueueStatus {
 	out := QueueStatus{Demoted: []QueueDemote{}, Parked: []QueueParked{}}
 	fresh, demoted := q.split(rec)
-	if len(fresh) > 0 {
+	shown := func(h *queued) bool { return scope == nil || scope(h.common) }
+	if len(fresh) > 0 && shown(fresh[0]) {
 		h := fresh[0]
 		out.Head = &QueueHead{Repo: names(h.common), CrewID: h.crew, ID: h.id, WaitedS: q.waitedS(h)}
 	}
 	for _, h := range demoted {
+		if !shown(h) {
+			continue
+		}
 		out.Demoted = append(out.Demoted, QueueDemote{Repo: names(h.common), CrewID: h.crew, ID: h.id, FirstDue: rec[h.key()].FirstDue, DemotedAt: rec[h.key()].Demoted})
 	}
 	for _, h := range q.holds {
-		if reason := q.parked(h, rec); reason != "" {
+		if reason := q.parked(h, rec); reason != "" && shown(h) {
 			out.Parked = append(out.Parked, QueueParked{Repo: names(h.common), CrewID: h.crew, ID: h.id, Reason: reason})
 		}
 	}

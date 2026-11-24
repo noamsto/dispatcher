@@ -93,6 +93,21 @@ func servedGroups(groups map[string][]layout2Crew, served []repos.Repo) map[stri
 	return out
 }
 
+// servedScope accepts the commons that are, by realpath, one of the served
+// repos; a crew with no home repo has common "" and is never served.
+func servedScope(served []repos.Repo) func(string) bool {
+	tags := map[string]bool{}
+	for _, r := range served {
+		if tag, err := bus.RepoTag(r.Common); err == nil {
+			tags[tag] = true
+		}
+	}
+	return func(common string) bool {
+		tag, err := bus.RepoTag(common)
+		return common != "" && err == nil && tags[tag]
+	}
+}
+
 // withoutCrews is events minus the rows of the given layout-2 crews: a crew
 // pinned to layout 2 has no live state in a repo bus.
 func withoutCrews(events []bus.Event, crews []layout2Crew) []bus.Event {
