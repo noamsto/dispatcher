@@ -1140,6 +1140,9 @@ over the non-test code:
 | `<bus dir>/nudge-wait/<sid>.<cksum>.d`     | none | `nudge --wait`               |
 | `<budget file>.refresh.d`                  | none | `stall-watch` budget refresh |
 
+`<crew dir>/nudge-wait.log` matches that grep and is not a lock: it is where
+`crew reply`'s detached `nudge --wait` sends its own output.
+
 No lock is taken by bash any more, so neither a `crew lock` helper nor `flock(1)` (absent on
 macOS by default) is needed. The sharing that remains is across builds, not languages: old-build
 processes still running after a switch (an old `stream` re-entering its old
