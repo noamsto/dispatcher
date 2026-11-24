@@ -336,20 +336,28 @@ func (a *arm) checkSession(want string, stderr io.Writer) int {
 // checkEngine is the arm's dispatch/resume lookup. The row is read tolerantly: a torn
 // tail line is skipped, exactly as the arm's `jq -Rr 'inputs | fromjson?'` skips it.
 func (a *arm) checkEngine(stderr io.Writer) int {
-	rows, ok := a.o.Rows(0)
-	if ok {
-		for _, r := range rows {
-			kind := rowText(r, "kind")
-			if rowText(r, "crew_id") == a.crew && (kind == "dispatch" || kind == "resume") &&
-				rowText(r, "worker_id") == a.sid {
-				a.engine = rowText(r, "engine")
-			}
-		}
+	if rows, ok := a.o.Rows(0); ok {
+		a.engine = EngineOf(rows, a.crew, a.sid)
 	}
 	if a.engine == "" {
 		return refuse(stderr, "no dispatch or resume row records "+a.sid+"'s engine")
 	}
 	return 0
+}
+
+// EngineOf is the engine the newest dispatch or resume row records for crew and sid:
+// the last matching row wins, so a resume that switched engines is what the reader
+// gets, and "" means no row records one at all.
+func EngineOf(docs []any, crew, sid string) string {
+	engine := ""
+	for _, r := range docs {
+		kind := rowText(r, "kind")
+		if rowText(r, "crew_id") == crew && (kind == "dispatch" || kind == "resume") &&
+			rowText(r, "worker_id") == sid {
+			engine = rowText(r, "engine")
+		}
+	}
+	return engine
 }
 
 // checkUnread is the arm's unread scan: it accepts a dispatcher directive or an
@@ -392,7 +400,7 @@ func (a *arm) wait(ctx context.Context, wait string) int {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fail(a.stderr, err.Error())
 	}
-	lockDir := filepath.Join(dir, lockName(a.sid))
+	lockDir := WaitLockDir(a.paths.Dir, a.sid)
 	owner := strconv.Itoa(a.o.PID)
 	joining := false
 	for !lock.Acquire(lockDir, owner) {
@@ -551,6 +559,12 @@ func fail(w io.Writer, msg string) int {
 func refuse(w io.Writer, msg string) int {
 	say(w, "crew: nudge: %s\n", msg)
 	return exitRefused
+}
+
+// WaitLockDir is the directory the --wait loop holds for one lead: the crew's
+// nudge-wait dir and the lock name of its session id.
+func WaitLockDir(crewDir, sid string) string {
+	return filepath.Join(crewDir, "nudge-wait", lockName(sid))
 }
 
 // lockName is the arm's lock dir: the session id with every character `tr -c

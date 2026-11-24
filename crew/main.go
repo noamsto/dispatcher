@@ -1083,7 +1083,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 	if sub == "reply" {
 		c := parsed.typed.Reply
 		crewID := func() string { return e.crewID(ctx, cwd, "", false) }
-		return reply.Run(ctx, reply.Request{Crew: str(c.Crew), To: c.To, Body: c.Body}, paths, stderr, reply.Options{
+		return reply.Run(ctx, reply.Request{Crew: str(c.Crew), To: c.To, Body: c.Body, NoNudge: c.NoNudge}, paths, stderr, reply.Options{
 			CrewID: crewID,
 			Clock:  clock.FromEnv(),
 			Proc:   e.proc,
@@ -1091,6 +1091,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 			Remote: func(host, crew string, argv []string) int {
 				return remoteAs(ctx, e, cwd, crew)(host, argv, stdout, stderr)
 			},
+			Nudge: reply.DetachedNudge(),
 		})
 	}
 

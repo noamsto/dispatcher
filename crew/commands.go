@@ -252,9 +252,10 @@ type statusCmd struct {
 }
 
 type replyCmd struct {
-	Crew *string `name:"crew"`
-	To   string  `arg:"" optional:"" name:"to"`
-	Body string  `arg:"" optional:"" name:"body"`
+	Crew    *string `name:"crew"`
+	NoNudge bool    `name:"no-nudge"`
+	To      string  `arg:"" optional:"" name:"to"`
+	Body    string  `arg:"" optional:"" name:"body"`
 }
 
 type holdReadCmd struct {
