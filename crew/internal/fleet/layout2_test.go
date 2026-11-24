@@ -429,3 +429,34 @@ func TestLayout2DueRecordSurvivesTheHomeBeingRegistered(t *testing.T) {
 		t.Errorf("record %v, want h2's one entry carried over and demoted", got)
 	}
 }
+
+func TestAnUnreadableLayout2CrewLogKeepsItsClocks(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads a mode 000 file")
+	}
+	f := newQueueFix(t, "alpha")
+	f.add("alpha", "c1", "h1", 1, 100)
+	dir := f.layout2("l2", f.tag("alpha"), fleetAddRow(f.ms(100), "l2", "h2", "feat/h2", "normal", 2))
+	f.write(filepath.Join(dir, "pid"), livePID+"\n")
+	log := filepath.Join(dir, "events.jsonl")
+	k := holdKey{"", "l2", "h2"}
+
+	f.due("alpha", "l2", true)
+	if got := f.record(); got[k].FirstDue == 0 {
+		t.Fatalf("record %v, want h2's clock running", got)
+	}
+	if err := os.Chmod(log, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(log, 0o644) })
+	if _, err := os.ReadFile(log); err == nil {
+		t.Skip("permissions are not enforced")
+	}
+
+	f.advance(headTimeout)
+	f.due("alpha", "l2", true)
+	got, ok := f.record()[k]
+	if !ok || got.Accrued <= 0 || got.FirstDue != 0 {
+		t.Errorf("record %v, want h2's entry kept with its due stretch banked", f.record())
+	}
+}
