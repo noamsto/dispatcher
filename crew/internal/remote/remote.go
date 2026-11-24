@@ -568,22 +568,31 @@ func BranchLayout(rows []bus.Event, branch, crew string) int {
 	return 1
 }
 
-// WindowBound reports whether a tmux window stamped with windowDir is where
-// branch's newest dispatch or resume row in crew says its work runs: that row's
-// repo, plus /crew. Window stamps are set by whoever holds the tmux server, a
-// worker included, so a state-only caller (no checkout to compare against)
-// trusts a window only when the dispatcher's own row backs its dir.
+// WindowBound reports whether a tmux window is the one branch's work runs in
+// per the newest dispatch, resume or window row for it in crew. Window options
+// are set by whoever holds the tmux server, a worker included, so a state-only
+// caller (no checkout to compare against) trusts a window only when the
+// dispatcher's own row backs it: by the window id that row recorded, else, for a
+// row an older binary wrote without one, by its repo plus /crew matching
+// windowDir.
 //
-// The dir is readable by that same worker, so a stamp copying it is caught only
-// while the real window lives (callers refuse two windows for one branch);
-// closing that needs the dispatcher to record the window id in its rows.
-func WindowBound(rows []bus.Event, branch, crew, windowDir string) bool {
+// A dir is readable by the worker, so the legacy binding is caught only while
+// the real window lives (callers refuse two windows for one branch); a recorded
+// id closes that, since a window the tmux server never issued the id to cannot
+// carry it.
+func WindowBound(rows []bus.Event, branch, crew, windowID, windowDir string) bool {
 	for i := len(rows) - 1; i >= 0; i-- {
 		e := rows[i]
-		if e.CrewID != crew || e.Branch != branch || e.Kind != bus.KindDispatch && e.Kind != bus.KindResume {
+		if e.CrewID != crew || e.Branch != branch {
+			continue
+		}
+		if e.Kind != bus.KindDispatch && e.Kind != bus.KindResume && e.Kind != bus.KindWindow {
 			continue
 		}
 		doc, _ := e.Doc.(map[string]any)
+		if id, _ := doc["window_id"].(string); id != "" {
+			return windowID == id
+		}
 		repo, _ := doc["repo"].(string)
 		return repo != "" && sameDir(repo+"/crew", windowDir)
 	}

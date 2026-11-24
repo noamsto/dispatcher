@@ -81,6 +81,7 @@ const (
 	KindMsg       Kind = "msg"
 	KindDispatch  Kind = "dispatch"
 	KindResume    Kind = "resume"
+	KindWindow    Kind = "window"
 	KindNudge     Kind = "nudge"
 	KindNudgeWait Kind = "nudge_wait"
 	KindReap      Kind = "reap"

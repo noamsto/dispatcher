@@ -493,10 +493,14 @@ func TestRemoteWorkerRoutesAsCrewScopeByLayout(t *testing.T) {
 
 // A visiting crew's call is state-only (Dir ""): there is no checkout to compare a
 // window's dir with, and any process on the tmux server can stamp @crew_id, so a
-// window counts only when the crew's own dispatch row for its branch names its dir.
+// window counts only when the crew's own dispatch, resume or window row for its
+// branch names its tmux window id (else, for a row without one, its dir).
 func TestVisitingCrewWindowIsBoundToItsDispatchRow(t *testing.T) {
 	const clone = "/some/clone"
 	row := fmt.Sprintf(`{"ts":1,"crew_id":"c1","kind":"dispatch","branch":"feat/x","name":"nova","host":"h1","repo":%q}`, clone)
+	winRow := fmt.Sprintf(`{"ts":2,"crew_id":"c1","kind":"window","branch":"feat/x","repo":%q,"window_id":"@624"}`, clone)
+	resumeRow := fmt.Sprintf(`{"ts":3,"crew_id":"c1","kind":"resume","branch":"feat/x","repo":%q,"window_id":"@625"}`, clone)
+	copied := winLine(clone+"/crew", "@700", "feat/x", "c1", "evil", "sess", "4", "w")
 	panes := paneLine("@624", "%204", "lead", "1") + "\n" + paneLine("@700", "%300", "lead", "1")
 	want := `nova — sess:3.1 "win-name" (lead pane)   jump: ! tmux switch-client -t %204` + "\n"
 	real := winLine(clone+"/crew", "@624", "feat/x", "c1", "nova", "sess", "3", "win-name")
@@ -515,11 +519,17 @@ func TestVisitingCrewWindowIsBoundToItsDispatchRow(t *testing.T) {
 		{"forged id, no dispatch row", nil, real, false, ""},
 		{"forged id, row of another crew", []string{strings.ReplaceAll(row, `"c1"`, `"c2"`)}, real, false, ""},
 		{"forged id, row of another branch", []string{strings.ReplaceAll(row, "feat/x", "feat/y")}, real, false, ""},
+		// The real window closed and a worker copied every stamp of it, dir included.
+		{"recorded window id", []string{row, winRow}, real, true, ""},
+		{"copied stamps after the real window closed", []string{row, winRow}, copied, false, ""},
+		{"copied stamps beside the real window, recorded id", []string{row, winRow}, real + "\n" + copied, true, ""},
+		{"a resume row's id replaces the window row's", []string{row, winRow, resumeRow}, real, false, ""},
+		{"a legacy resume row keeps the dir binding", []string{row, winRow, strings.Replace(resumeRow, `,"window_id":"@625"`, "", 1)}, real, true, ""},
 		// The rows after a torn line could move the branch to another clone.
 		{"torn log line before a newer row", []string{row, "{\"ts\":", strings.ReplaceAll(row, clone, "/moved")}, real, false, "cannot read the crew log"},
 		// Every stamp copied: both windows pass, so neither is guessed.
 		{"copied stamps beside the real window", []string{row},
-			real + "\n" + winLine(clone+"/crew", "@700", "feat/x", "c1", "evil", "sess", "4", "w"), false, "ambiguous branch"},
+			real + "\n" + copied, false, "ambiguous branch"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			tr := setup(t)

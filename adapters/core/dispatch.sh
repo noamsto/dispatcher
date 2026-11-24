@@ -5829,6 +5829,14 @@ if [ -n "$client_width" ]; then
   fi
 fi
 
+# The dispatch row above predates the window, so its id rides in a row of its
+# own: a state-only `crew nudge`/`crew where` binds a window to this id, since
+# the window options it would otherwise trust are settable by any process on the
+# tmux server.
+_crew_append "$(jq -nc --arg crew "$crew_id" --arg branch "$branch" --arg session "$session" \
+  --arg worker "$worker_id" --arg repo "$(_crew_repo)" --arg window_id "$win" \
+  '{ts:(now*1000|floor), crew_id:$crew, kind:"window", repo:$repo, branch:$branch, session:$session, worker_id:$worker, window_id:$window_id}')"
+
 # Printed so the dispatcher can address this session in the gap before the worker
 # boots — its startup drain is unbounded, so a scoping note posted now still lands.
 echo "worker_id: $worker_id"

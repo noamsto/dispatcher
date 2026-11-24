@@ -6957,6 +6957,19 @@ EOF
   [ "$output" = "s7-7" ]
 }
 
+@test "window: a dispatch leaves a window row, after its dispatch row, carrying the new window's id" {
+  stub_launch_bins
+  DISPATCH_SESSION_ID=s7-7 DISPATCH_PROFILE=personal run_dispatch \
+    standard sonnet --effort medium 42 --crew-id c1 "Do a thing"
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  run jq -rs '[.[] | select(.kind == "dispatch" or .kind == "window") | .kind] | join(",")' "$log"
+  [ "$output" = "dispatch,window" ]
+  run jq -rs '(map(select(.kind == "dispatch"))[0]) as $d
+    | map(select(.kind == "window"))[0]
+    | [.crew_id == "c1", .branch == $d.branch, .session == "s7-7", .repo == $d.repo, .window_id] | join(",")' "$log"
+  [ "$output" = "true,true,true,true,%1" ]
+}
+
 @test "dispatch: registers the repo in the crew registry once" {
   stub_launch_bins
   export XDG_DATA_HOME="$TEST_REPO/xdg"
