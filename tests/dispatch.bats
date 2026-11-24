@@ -125,6 +125,9 @@ printf '%s\n' "$*" >>"$STUB_LOG"
 if [ "$1" = new-window ]; then
   printf '%s %s\n' '%1' '%1'
 fi
+case "$*" in
+*'#{pid}:#{start_time}'*) printf '%s\n' "${STUB_TMUX_SERVER-4321:8765}" ;;
+esac
 exit 0
 EOF
   chmod +x "$STUB_DIR/tmux"
@@ -6968,12 +6971,26 @@ EOF
   [ "$output" = "dispatch,window" ]
   run jq -rs '(map(select(.kind == "dispatch"))[0]) as $d
     | map(select(.kind == "window"))[0]
-    | [.crew_id == "c1", .branch == $d.branch, .session == "s7-7", .repo == $d.repo, .window_id] | join(",")' "$log"
-  [ "$output" = "true,true,true,true,@5" ]
+    | [.crew_id == "c1", .branch == $d.branch, .session == "s7-7", .repo == $d.repo, .window_id, .tmux_server] | join(",")' "$log"
+  [ "$output" = "true,true,true,true,@5,4321:8765" ]
   # The dispatch row marks itself as window-bound with a null id: until the window
   # row lands it binds no window, instead of falling back to the copyable dir.
   run jq -rs 'map(select(.kind == "dispatch"))[0] | has("window_id") and .window_id == null' "$log"
   [ "$output" = "true" ]
+}
+
+@test "window: a dispatch whose tmux server identity cannot be read writes a row without the key" {
+  stub_launch_bins
+  # Distinct window and pane ids: the row must carry the window's, not the pane's.
+  sed -i "s/'%1' '%1'/'@5' '%6'/" "$STUB_DIR/tmux"
+  # The identity read returns nothing: the row must omit the key entirely.
+  export STUB_TMUX_SERVER=
+  DISPATCH_SESSION_ID=s7-7 DISPATCH_PROFILE=personal run run_dispatch \
+    standard sonnet --effort medium 42 --crew-id c1 "Do a thing"
+  [ "$status" -eq 0 ]
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  run jq -rs 'map(select(.kind == "window"))[0] | [.window_id == "@5", has("tmux_server")] | join(",")' "$log"
+  [ "$output" = "true,false" ]
 }
 
 @test "dispatch: registers the repo in the crew registry once" {

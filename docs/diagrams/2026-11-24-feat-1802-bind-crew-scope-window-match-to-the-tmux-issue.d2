@@ -1,0 +1,20 @@
+direction: right
+
+dispatch: "adapters/core/dispatch.sh: kind=window row carries window_id"
+resume: "adapters/core/dispatch-resume.sh: kind=resume row carries window_id"
+log: "crew/events.jsonl: the row a visiting crew reads"
+arm: "crew/internal/nudge/arm.go: list-windows -a"
+where: "crew/internal/where/where.go: readWindows"
+bound: "crew/internal/remote.WindowBound: window_id == live window_id"
+server: "live tmux server: window ids restart at @0 after a restart"
+call: "crew nudge / crew where on a visiting crew"
+
+dispatch -> log
+resume -> log
+arm -> bound
+where -> bound
+log -> bound
+server -> arm
+server -> where
+bound -> call
+server -> log: "a stale row's @7 now names an unrelated window"

@@ -232,7 +232,13 @@ func Run(ctx context.Context, req Request, paths bus.Paths, stdout, stderr io.Wr
 		return die(stderr, "cannot read tmux panes (is a tmux server running?)")
 	}
 	panes := readPanes(panesRaw)
-	wins, err := readWindows(winsRaw, paths, crew)
+	server := ""
+	if paths.Dir == "" {
+		if server, err = o.Tmux.Run(ctx, "display-message", "-p", "#{pid}:#{start_time}"); err != nil {
+			return die(stderr, "cannot read the tmux server identity (is a tmux server running?)")
+		}
+	}
+	wins, err := readWindows(winsRaw, paths, crew, server)
 	if err != nil {
 		return die(stderr, "cannot read the crew log: %v", err)
 	}
@@ -356,15 +362,17 @@ func mirrorWindow(raw, branch, crew string) (window, bool) {
 	return window{}, false
 }
 
-// readWindows is the arm's crew filter over `list-windows`: the eight format
+// readWindows is the arm's crew filter over `list-windows`: the ten format
 // fields, a non-empty branch, this repo's crew dir, and this crew's id when the
 // window carries one. An empty caller crew (no CREW_ID, no WORKER_TASK.md)
 // filters nothing at all. A state-only call (dir "") has no checkout, so a
 // window is this crew's only when its id says so and the crew's own dispatch,
-// resume or window row for its branch names its tmux window id: any process on
-// the tmux server can stamp a window with a crew's id, so the stamp alone binds
-// nothing (remote.WindowBound).
-func readWindows(raw string, paths bus.Paths, crew string) ([]window, error) {
+// resume or window row for its branch names its tmux window id, and (a row that
+// recorded one) the identity of this tmux server, which the row's id is unique
+// within: any process on the tmux server can stamp a window with a crew's id, so
+// the stamp alone binds nothing (remote.WindowBound). The identity is `server`,
+// read once from its own `display-message`, which no window option can shift.
+func readWindows(raw string, paths bus.Paths, crew string, server string) ([]window, error) {
 	dir := paths.Dir
 	var events []bus.Event
 	if dir == "" && crew != "" {
@@ -380,7 +388,7 @@ func readWindows(raw string, paths bus.Paths, crew string) ([]window, error) {
 			continue
 		}
 		if dir == "" {
-			if crew == "" || f[3] != crew || !remote.WindowBound(events, f[1], crew, f[0], f[2]) {
+			if crew == "" || f[3] != crew || !remote.WindowBound(events, f[1], crew, f[0], f[2], server) {
 				continue
 			}
 		} else if f[2] != dir {

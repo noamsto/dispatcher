@@ -41,10 +41,12 @@ type fakePane struct {
 	tmux     []string
 	// windows/panes answer the anchor gate's two reads; fail* is that read dying.
 	windows, panes string
-	failWindows    bool
-	failPanes      bool
-	enterFails     bool
-	keysFail       bool
+	// server is the identity (pid:start_time) the arm's display-message read answers.
+	server      string
+	failWindows bool
+	failPanes   bool
+	enterFails  bool
+	keysFail    bool
 }
 
 func (f *fakePane) frameAt(i int) string {
@@ -86,6 +88,8 @@ func (f *fakePane) run(args []string) (string, error) {
 			return "", tmuxtest.ErrNoServer
 		}
 		return f.panes, nil
+	case "display-message":
+		return f.server, nil
 	case "send-keys":
 		enter := len(args) > 3 && args[3] == "Enter"
 		if enter && f.enterFails || !enter && f.keysFail {

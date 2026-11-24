@@ -169,9 +169,21 @@ func Run(ctx context.Context, r Request, paths bus.Paths, stdout, stderr io.Writ
 	// window is somebody's shell, never a worker's. A state-only call (no Dir) has no
 	// checkout to compare a window's dir with, and any process on the tmux server can
 	// stamp a window with a crew's id: so a window counts only when this crew's own
-	// dispatch, resume or window row for its branch names its window id (remote.WindowBound).
+	// dispatch, resume or window row for its branch names its window id, and (a row
+	// that recorded one) the identity of this tmux server, which the row's id is
+	// unique within (remote.WindowBound). The identity comes from its own
+	// `display-message` read, which no window option can shift.
+	//
+	// What it does not buy: an option value is expanded into this output raw, so
+	// a process that sets window options can still print a row of its own, id and
+	// stamps included, that reads exactly like a real one. The identity closes the
+	// quieter case: a restart handing a surviving row's id to another window.
 	var events []bus.Event
+	server := ""
 	if paths.Dir == "" {
+		if server, err = o.Deps.Tmux.Run(ctx, "display-message", "-p", "#{pid}:#{start_time}"); err != nil {
+			return fail(stderr, "cannot read the tmux server identity (is a tmux server running?)")
+		}
 		if events, err = remote.BoundRows(a.bc.Log); err != nil {
 			return fail(stderr, "cannot read the crew log: "+err.Error())
 		}
@@ -181,7 +193,7 @@ func Run(ctx context.Context, r Request, paths bus.Paths, stdout, stderr io.Writ
 		if len(r) < 5 || r[1] == "" || r[3] != a.crew {
 			continue
 		}
-		if paths.Dir == "" && !remote.WindowBound(events, r[1], a.crew, r[0], r[2]) || paths.Dir != "" && r[2] != paths.Dir {
+		if paths.Dir == "" && !remote.WindowBound(events, r[1], a.crew, r[0], r[2], server) || paths.Dir != "" && r[2] != paths.Dir {
 			continue
 		}
 		cwins = append(cwins, r)

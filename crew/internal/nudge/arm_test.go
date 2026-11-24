@@ -68,6 +68,10 @@ const (
 	leadID = "%9"
 )
 
+// tmuxServer is the identity (pid:start_time) the fake tmux server reports to
+// the arm's display-message read and the bus rows here record.
+const tmuxServer = "111:222"
+
 func newArm(t *testing.T) *armFixture {
 	t.Helper()
 	common := t.TempDir()
@@ -77,7 +81,7 @@ func newArm(t *testing.T) *armFixture {
 			Common: common, Dir: common + "/crew", Log: common + "/crew/events.jsonl",
 		},
 		stdout: &bytes.Buffer{}, stderr: &bytes.Buffer{},
-		pane:   &fakePane{frames: acceptedFrames(t)},
+		pane:   &fakePane{frames: acceptedFrames(t), server: tmuxServer},
 		bus:    &fakeBus{},
 		now:    time.Now().UnixMilli(),
 		crewID: "c1",

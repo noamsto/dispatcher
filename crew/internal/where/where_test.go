@@ -71,14 +71,25 @@ func request(args []string) Request {
 }
 
 func okTmux(wins, panes string) *tmuxtest.Fake {
-	return &tmuxtest.Fake{Out: map[string]string{"list-windows": wins, "list-panes": panes}}
+	return okTmuxServer(wins, panes, tmuxServer)
 }
 
-// win is one `list-windows` line, in the arm's eight-field format: window id,
-// branch, crew dir, crew id, codename, session, window index, window name.
-func winLine(dir, id, branch, crew, name, session, index, winName string) string {
-	return strings.Join([]string{id, branch, dir, crew, name, session, index, winName}, "\t")
+// okTmuxServer is okTmux with the identity the fake server answers to the arm's
+// own display-message read.
+func okTmuxServer(wins, panes, server string) *tmuxtest.Fake {
+	return &tmuxtest.Fake{Out: map[string]string{"list-windows": wins, "list-panes": panes, "display-message -p": server}}
 }
+
+// win is one `list-windows` line, in the arm's format: window id, branch, crew
+// dir, crew id, codename, session, window index, window name, then the mirror
+// window's @bridge_crew_branch and @bridge_crew_id.
+func winLine(dir, id, branch, crew, name, session, index, winName string) string {
+	return strings.Join([]string{id, branch, dir, crew, name, session, index, winName, "", ""}, "\t")
+}
+
+// tmuxServer is the identity (pid:start_time) the fake tmux server answers to
+// the arm's display-message read.
+const tmuxServer = "111:222"
 
 // pane is one `list-panes` line: window id, pane id, role, pane index.
 func paneLine(winID, paneID, role, index string) string {
@@ -498,45 +509,67 @@ func TestRemoteWorkerRoutesAsCrewScopeByLayout(t *testing.T) {
 func TestVisitingCrewWindowIsBoundToItsDispatchRow(t *testing.T) {
 	const clone = "/some/clone"
 	row := fmt.Sprintf(`{"ts":1,"crew_id":"c1","kind":"dispatch","branch":"feat/x","name":"nova","host":"h1","repo":%q}`, clone)
-	winRow := fmt.Sprintf(`{"ts":2,"crew_id":"c1","kind":"window","branch":"feat/x","repo":%q,"window_id":"@624"}`, clone)
-	resumeRow := fmt.Sprintf(`{"ts":3,"crew_id":"c1","kind":"resume","branch":"feat/x","repo":%q,"window_id":"@625"}`, clone)
+	winRow := fmt.Sprintf(`{"ts":2,"crew_id":"c1","kind":"window","branch":"feat/x","repo":%q,"window_id":"@624","tmux_server":%q}`, clone, tmuxServer)
+	resumeRow := fmt.Sprintf(`{"ts":3,"crew_id":"c1","kind":"resume","branch":"feat/x","repo":%q,"window_id":"@625","tmux_server":%q}`, clone, tmuxServer)
 	copied := winLine(clone+"/crew", "@700", "feat/x", "c1", "evil", "sess", "4", "w")
 	panes := paneLine("@624", "%204", "lead", "1") + "\n" + paneLine("@700", "%300", "lead", "1")
 	want := `nova — sess:3.1 "win-name" (lead pane)   jump: ! tmux switch-client -t %204` + "\n"
 	real := winLine(clone+"/crew", "@624", "feat/x", "c1", "nova", "sess", "3", "win-name")
+	// shiftRow records the identity the attacker injects into @bridge_crew_id
+	// below, for the window id the forged row carries.
+	shiftRow := fmt.Sprintf(`{"ts":2,"crew_id":"c1","kind":"window","branch":"feat/x","repo":%q,"window_id":"@700","tmux_server":%q}`, clone, tmuxServer)
+	shifted := strings.Join([]string{"@700", "feat/x", clone + "/crew", "c1", "evil", "sess", "4", "w", "", "evil", tmuxServer, "999:888"}, "\t")
+	nl := strings.Join([]string{"@700", "feat/x", clone + "/crew", "c1", "evil", "sess", "4", "w", "", "evil", tmuxServer}, "\t") + "\n\t999:888"
 	for _, tc := range []struct {
-		name  string
-		rows  []string
-		wins  string
-		found bool
-		err   string
+		name string
+		rows []string
+		wins string
+		// server is display-message's answer; "" is the live identity tmuxServer.
+		server string
+		found  bool
+		err    string
 	}{
-		{"id and row dir match", []string{row}, real, true, ""},
-		{"other crew id", []string{row}, winLine(clone+"/crew", "@624", "feat/x", "c2", "nova", "sess", "3", "win-name"), false, ""},
-		{"no crew id", []string{row}, winLine(clone+"/crew", "@624", "feat/x", "", "nova", "sess", "3", "win-name"), false, ""},
+		{"id and row dir match", []string{row}, real, "", true, ""},
+		{"other crew id", []string{row}, winLine(clone+"/crew", "@624", "feat/x", "c2", "nova", "sess", "3", "win-name"), "", false, ""},
+		{"no crew id", []string{row}, winLine(clone+"/crew", "@624", "feat/x", "", "nova", "sess", "3", "win-name"), "", false, ""},
 		// A worker of another crew stamps its own window with this crew's id and branch.
-		{"forged id, its own dir", []string{row}, winLine("/other/clone/crew", "@700", "feat/x", "c1", "evil", "sess", "4", "w"), false, ""},
-		{"forged id, no dispatch row", nil, real, false, ""},
-		{"forged id, row of another crew", []string{strings.ReplaceAll(row, `"c1"`, `"c2"`)}, real, false, ""},
-		{"forged id, row of another branch", []string{strings.ReplaceAll(row, "feat/x", "feat/y")}, real, false, ""},
+		{"forged id, its own dir", []string{row}, winLine("/other/clone/crew", "@700", "feat/x", "c1", "evil", "sess", "4", "w"), "", false, ""},
+		{"forged id, no dispatch row", nil, real, "", false, ""},
+		{"forged id, row of another crew", []string{strings.ReplaceAll(row, `"c1"`, `"c2"`)}, real, "", false, ""},
+		{"forged id, row of another branch", []string{strings.ReplaceAll(row, "feat/x", "feat/y")}, real, "", false, ""},
 		// The real window closed and a worker copied every stamp of it, dir included.
-		{"recorded window id", []string{row, winRow}, real, true, ""},
-		{"copied stamps after the real window closed", []string{row, winRow}, copied, false, ""},
-		{"copied stamps beside the real window, recorded id", []string{row, winRow}, real + "\n" + copied, true, ""},
-		{"a dispatch row whose window is not open yet binds no window", []string{strings.Replace(row, `"kind":"dispatch"`, `"kind":"dispatch","window_id":null`, 1)}, copied, false, ""},
-		{"a resume row's id replaces the window row's", []string{row, winRow, resumeRow}, real, false, ""},
-		{"a legacy resume row keeps the dir binding", []string{row, winRow, strings.Replace(resumeRow, `,"window_id":"@625"`, "", 1)}, real, true, ""},
+		{"recorded window id", []string{row, winRow}, real, "", true, ""},
+		{"copied stamps after the real window closed", []string{row, winRow}, copied, "", false, ""},
+		{"copied stamps beside the real window, recorded id", []string{row, winRow}, real + "\n" + copied, "", true, ""},
+		{"a dispatch row whose window is not open yet binds no window", []string{strings.Replace(row, `"kind":"dispatch"`, `"kind":"dispatch","window_id":null`, 1)}, copied, "", false, ""},
+		{"a resume row's id replaces the window row's", []string{row, winRow, resumeRow}, real, "", false, ""},
+		{"a legacy resume row keeps the dir binding", []string{row, winRow, strings.Replace(resumeRow, `,"window_id":"@625"`, "", 1)}, real, "", true, ""},
+		// The id a row recorded is unique only within the lifetime of the server it
+		// recorded: after a restart the same id can name another branch's window.
+		{"a row of another tmux server binds nothing", []string{row, strings.Replace(winRow, tmuxServer, "999:888", 1)}, real, "", false, "no live pane"},
+		{"a row of another tmux server beside the live window", []string{row, strings.Replace(winRow, tmuxServer, "999:888", 1)}, real + "\n" + copied, "", false, "no live pane"},
+		// tmux expands an option value raw, so a tab in a stamp can carry the row's
+		// recorded identity into a later field of the same line.
+		{"a tab-shifted identity", []string{row, shiftRow}, shifted, "999:888", false, ""},
+		// A newline ends the forged row where the attacker wants it: the row text
+		// carries the stale identity, and the live one lands on a short continuation
+		// line no window row ever is.
+		{"a newline-forged identity", []string{row, shiftRow}, nl, "999:888", false, ""},
 		// The rows after a torn line could move the branch to another clone.
-		{"torn log line before a newer row", []string{row, "{\"ts\":", strings.ReplaceAll(row, clone, "/moved")}, real, false, "cannot read the crew log"},
+		{"torn log line before a newer row", []string{row, "{\"ts\":", strings.ReplaceAll(row, clone, "/moved")}, real, "", false, "cannot read the crew log"},
 		// Every stamp copied: both windows pass, so neither is guessed.
 		{"copied stamps beside the real window", []string{row},
-			real + "\n" + copied, false, "ambiguous branch"},
+			real + "\n" + copied, "", false, "ambiguous branch"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			tr := setup(t)
 			tr.write(t, tc.rows...)
 			tr.paths.Dir = ""
-			out, errOut, code := tr.run(t, tc.wins, panes, crewIs("c1"), "feat/x")
+			srv := tc.server
+			if srv == "" {
+				srv = tmuxServer
+			}
+			out, errOut, code := tr.runTmux(t, okTmuxServer(tc.wins, panes, srv), crewIs("c1"), "feat/x")
 			if tc.found && (code != 0 || out != want) {
 				t.Errorf("code %d, out %q, err %q; want %q", code, out, errOut, want)
 			}

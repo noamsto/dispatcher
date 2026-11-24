@@ -125,7 +125,8 @@ func TestLayout2ConsumersNudgeResolvesWindowOutsideRepo(t *testing.T) {
 }
 
 // visitingTmux stubs tmux ahead of the PATH one with a window and pane list,
-// like a remote host whose tmux holds the visiting crew's window.
+// like a remote host whose tmux holds the visiting crew's window. It also
+// answers the arm's own display-message read with the server identity.
 func visitingTmux(t *testing.T, windows, panes string) {
 	t.Helper()
 	stubs := t.TempDir()
@@ -133,12 +134,14 @@ func visitingTmux(t *testing.T, windows, panes string) {
 case "$1 $2" in
 "list-windows -a") printf '%s\n' "$TMUX_WINDOWS" ;;
 "list-panes -a") printf '%s\n' "$TMUX_PANES" ;;
+"display-message -p") printf '%s\n' "$TMUX_SERVER" ;;
 esac
 exit 0
 `)
 	t.Setenv("PATH", stubs+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("TMUX_WINDOWS", windows)
 	t.Setenv("TMUX_PANES", panes)
+	t.Setenv("TMUX_SERVER", tmuxServerIdentity)
 }
 
 func TestLayout2ConsumersVisitingCrewWhereAndNudgeOutsideRepo(t *testing.T) {
@@ -146,7 +149,7 @@ func TestLayout2ConsumersVisitingCrewWhereAndNudgeOutsideRepo(t *testing.T) {
 	c := homeCrewCLI(t, false)
 	appendTo(t, c.store("c1")+"/events.jsonl", visitingBranchRow)
 	visitingTmux(t,
-		"@1\tfeat/x\t"+foreign+"\tc1\tsage\tsess\t3\twin\n@2\tfeat/x\t"+foreign+"\tother\tmuse\tsess\t4\twin2",
+		"@1\tfeat/x\t"+foreign+"\tc1\tsage\tsess\t3\twin\t\t\n@2\tfeat/x\t"+foreign+"\tother\tmuse\tsess\t4\twin2\t\t",
 		"@1\t%9\tlead\t1\n@2\t%8\tlead\t1")
 
 	out, errOut := c.expectIn(c.outside, 0, "where", "--crew", "c1", "--", "feat/x")

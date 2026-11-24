@@ -1209,6 +1209,11 @@ if [ -n "${escalated_from:-}" ]; then
   _hdr_set escalated_from "$escalated_from"
 fi
 
+# A window id is unique only within one tmux server's lifetime: a restart hands
+# them out again from @0, so the row names the server the id came from — the
+# window it names may have been the previous session's, on a server since gone.
+tmux_server="$(tmux display-message -p -t "$win" '#{pid}:#{start_time}' 2>/dev/null || true)"
+
 # The resume row. New kind: without it a worker resumed four times reports as
 # one run, and the ratings rollup attributes the whole cost and latency to a
 # single session. prev_worker_id is what chains the sessions back together.
@@ -1217,6 +1222,7 @@ line=$(jq -nc --arg crew "$crew_id" --arg branch "$branch" \
   --arg worker "$worker_id" --arg prev "$prev_worker_id" \
   --arg engine "$agent" --arg model "$model" --arg session "$session" \
   --arg repo "$(_crew_repo)" --arg window_id "$win" \
+  --arg tmux_server "$tmux_server" \
   --argjson continued "$([ -n "$fresh" ] && echo false || echo true)" \
   --arg engine_session "${lead_sid:-${lead_session#-}}" \
   --arg escalated_from "$escalated_from_event" \
@@ -1227,6 +1233,7 @@ line=$(jq -nc --arg crew "$crew_id" --arg branch "$branch" \
      session:$session, continued:$continued, window_id:$window_id,
      engine_session:(if $engine_session == "" then null else $engine_session end)}
    + if $escalated_from != "" then {escalated_from:$escalated_from} else {} end
+   + (if $tmux_server == "" then {} else {tmux_server:$tmux_server} end)
    + if $chrome then {chrome:true} else {} end
    + if $code_mode then {code_mode:true} else {} end')
 _bus_append "$crew_log" "$line"
