@@ -31,7 +31,8 @@ ancestors() {
 
 # promoted_crew — wait for `crew register` to record this engine, then print its crew.
 # `crew crews --mine` lists the crews whose recorded live pid is an ancestor; with
-# several, the one registered by the nearest ancestor wins.
+# several, the one registered by the nearest ancestor wins, and none an ancestor of
+# this session means no crew (never another dispatcher's bus).
 promoted_crew() {
   local deadline=$((SECONDS + ${CREW_BUS_MONITOR_PROMOTE_WAIT:-300})) mine rows anc cid pid first
   while :; do
@@ -42,7 +43,11 @@ promoted_crew() {
       return 0
     fi
     if [[ -n $first ]]; then
-      rows=$(crew crews 2>/dev/null)
+      rows=$(crew crews 2>/dev/null) || {
+        ((SECONDS < deadline)) || return 1
+        sleep "${CREW_BUS_MONITOR_PROMOTE_STEP:-5}"
+        continue
+      }
       while read -r anc; do
         while IFS=$'\t' read -r cid _ _ _ pid _; do
           if [[ $pid == "$anc" ]] && grep -qxF -- "$cid" <<<"$mine"; then
@@ -51,8 +56,7 @@ promoted_crew() {
           fi
         done < <(tail -n +2 <<<"$rows")
       done < <(ancestors)
-      printf '%s\n' "$first"
-      return 0
+      return 1
     fi
     ((SECONDS < deadline)) || return 1
     sleep "${CREW_BUS_MONITOR_PROMOTE_STEP:-5}"
