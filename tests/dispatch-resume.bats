@@ -1118,6 +1118,8 @@ EOF
   run run_resume
   [ "$status" -eq 0 ]
   grep -q 'set-window-option -t %99 @crew_name iris' "$STUB_LOG"
+  grep -q '^new-window' "$STUB_LOG"
+  run ! grep -F 'XDG_STATE_HOME' <(grep '^new-window' "$STUB_LOG")
 }
 
 @test "reusing a pane does not open a window" {
@@ -4323,6 +4325,15 @@ _l2_log() { printf '%s/crew/crews/c1/events.jsonl' "$XDG_STATE_HOME"; }
   [ "$status" -eq 0 ]
   [ "$(jq -r 'select(.kind == "resume") | .repo' "$(_l2_log)" | tail -1)" = "$(realpath "$TEST_REPO/.git")" ]
   [ ! -e "$TEST_REPO/.git/crew/events.jsonl" ] || run ! jq -e 'select(.kind == "resume")' "$TEST_REPO/.git/crew/events.jsonl"
+}
+
+@test "layout: a layout-2 crew's resume window is created with the state root pinned" {
+  setup_worker_wt
+  _l2_register
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 0 ]
+  grep '^new-window' "$STUB_LOG" | grep -qF -- " -e XDG_STATE_HOME=$XDG_STATE_HOME "
 }
 
 @test "resume escalation layout 2: a failure in the crew's own log unlocks --model gpt-5.6-sol" {
