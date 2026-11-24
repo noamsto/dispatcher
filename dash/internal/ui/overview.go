@@ -419,7 +419,7 @@ func (v *overviewView) move(d int) {
 			}
 			return
 		}
-		v.st.evOff, v.st.evCursor = r.evOff+d, c
+		v.st.evOff, v.st.evCursor = r.evOff, c
 		v.st.evOff = v.layout().evOff
 		return
 	}

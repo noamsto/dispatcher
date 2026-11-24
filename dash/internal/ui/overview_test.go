@@ -1493,6 +1493,39 @@ func ovEventsAt(v overviewView, i int) overviewView {
 	return v
 }
 
+func TestOverviewEventsWindowHoldsUntilEdge(t *testing.T) {
+	v, _ := ovFixture(t, 150, 60, false, nil)
+	for len(v.model.Events) < 60 {
+		v.model.Events = append(v.model.Events, vm.EventRow{TS: v.model.GeneratedAt, Text: "extra"})
+	}
+	rows := len(v.layout().panels[panelEvents].items)
+	v = ovEventsAt(v, 0)
+	for i := 1; i < rows; i++ {
+		v, _ = ovKeys(v, "j")
+		if r := v.layout(); r.evCursor != i || r.evOff != 0 {
+			t.Fatalf("j to row %d: cursor=%d off=%d, want the window still at 0", i, r.evCursor, r.evOff)
+		}
+	}
+	v, _ = ovKeys(v, "j")
+	if r := v.layout(); r.evCursor != rows || r.evOff != 1 {
+		t.Fatalf("j past the bottom edge: cursor=%d off=%d, want %d and 1", r.evCursor, r.evOff, rows)
+	}
+	for i := rows - 1; i > 1; i-- {
+		v, _ = ovKeys(v, "k")
+		if r := v.layout(); r.evCursor != i || r.evOff != 1 {
+			t.Fatalf("k to row %d: cursor=%d off=%d, want the window still at 1", i, r.evCursor, r.evOff)
+		}
+	}
+	v, _ = ovKeys(v, "k")
+	if r := v.layout(); r.evCursor != 1 || r.evOff != 1 {
+		t.Fatalf("k to the top row of the window: cursor=%d off=%d, want 1 and 1", r.evCursor, r.evOff)
+	}
+	v, _ = ovKeys(v, "k")
+	if r := v.layout(); r.evCursor != 0 || r.evOff != 0 {
+		t.Fatalf("k past the top edge: cursor=%d off=%d, want 0 and 0", r.evCursor, r.evOff)
+	}
+}
+
 func TestOverviewHjklEventsWide(t *testing.T) {
 	v, _ := ovFixture(t, 150, 60, false, nil)
 	if len(v.model.Events) < 3 || !v.layout().panels[panelEvents].shown {
