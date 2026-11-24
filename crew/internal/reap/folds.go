@@ -55,11 +55,21 @@ func readRaws(log string) ([]any, error) {
 // repoRaws is readRaws over the repo's rows: its log (missing reads as none)
 // merged with its layout-2 crews' rows.
 func (r *run) repoRaws() ([]any, error) {
-	events, err := bus.ReadRepoEvents(r.paths)
+	events, err := r.repoEvents()
 	if err != nil {
 		return nil, err
 	}
 	return eventRaws(events), nil
+}
+
+// repoEvents is bus.ReadRepoEvents, noting the layout-2 owners it saw.
+func (r *run) repoEvents() ([]bus.Event, error) {
+	rows, err := bus.ReadRepoRows(r.paths)
+	if err != nil {
+		return nil, err
+	}
+	r.noteSeen(rows.Crews)
+	return rows.Events, nil
 }
 
 func eventRaws(events []bus.Event) []any {

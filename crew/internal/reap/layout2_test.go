@@ -200,12 +200,17 @@ func TestLayout2MergedIsReaped(t *testing.T) {
 // (b)
 func TestLayout2UncommittedKept(t *testing.T) {
 	l := newL2(t)
+	l.window("c2")
 	if err := os.WriteFile(filepath.Join(l.wt, "src.go"), []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	l.reap(Request{})
 	l.wantStdout("crew reap: keeping " + rb + " — uncommitted changes")
 	wantDir(t, l.wt, true)
+	l.noKill()
+	if rows := l.rowsOf("reap", rb); len(rows) != 0 {
+		t.Fatalf("reap rows %q", rows)
+	}
 }
 
 // (c)
@@ -504,5 +509,77 @@ func TestLayout2FleetReapsIndexOnlyRepo(t *testing.T) {
 	wantDir(t, l.wt, false)
 	if rows := l.rowsOf("reap", rb); len(rows) != 1 || rows[0][0] != l.crewLog {
 		t.Fatalf("reap rows %q, want one on %s", rows, l.crewLog)
+	}
+}
+
+// A status row whose worker From names another branch than its branch field
+// is not admitted: the folds would file it under the From's branch.
+func TestLayout2MisfiledStatusIgnored(t *testing.T) {
+	l := newL2(t)
+	const xb = "feat/x"
+	l.crewRows(repoDispatchRow(xb, "c2", l.tag, int(nowUnix-100)*1000),
+		fmt.Sprintf(`{"ts":%d,"crew_id":"c2","branch":%q,"from":"worker:%s#s1","to":"dispatcher:c2","kind":"status","body":{"state":"done","pr_url":%q}}`,
+			nowUnix*1000, xb, rb, prURL))
+	l.window("c2")
+	if rc := l.reap(Request{}); rc != 0 {
+		t.Fatalf("rc=%d stderr=%q", rc, l.stderr.String())
+	}
+	wantDir(t, l.wt, true)
+	l.noKill()
+	if rows := l.rowsOf("reap", rb); len(rows) != 0 {
+		t.Fatalf("reap rows %q", rows)
+	}
+}
+
+// A torn crew log fails the fold the way a torn repo log does.
+func TestLayout2TornCrewLogFailsFold(t *testing.T) {
+	l := newL2(t)
+	l.window("c2")
+	l.crewRows(repoDispatchRow(rb, "c2", l.tag, int(nowUnix-100)*1000), l2Status(rb, "s1", "done", prURL, 0), "torn{")
+	if rc := l.reap(Request{}); rc != 5 {
+		t.Fatalf("rc=%d, want 5; stdout=%q stderr=%q", rc, l.stdout.String(), l.stderr.String())
+	}
+	wantDir(t, l.wt, true)
+	l.noKill()
+	if len(l.rows) != 0 {
+		t.Fatalf("rows %q", l.rows)
+	}
+}
+
+// A layout-2 claim that vanishes, or changes crew, between the fold and the
+// gate keeps the branch: it is not reaped as layout 1.
+func TestLayout2ClaimChangedBeforeGate(t *testing.T) {
+	for name, change := range map[string]func(l *l2fx){
+		"claim vanished": func(l *l2fx) {
+			if err := os.RemoveAll(filepath.Dir(bus.IndexPath(l.paths.State, l.tag))); err != nil {
+				l.t.Fatal(err)
+			}
+		},
+		"owner changed": func(l *l2fx) {
+			if err := bus.CreateMeta(l.paths.State, bus.Meta{ID: "c3", CreatedBy: "register", HomeRepo: &l.tag}); err != nil {
+				l.t.Fatal(err)
+			}
+			l.index("c3")
+			c, err := l.paths.Crew("c3")
+			if err != nil {
+				l.t.Fatal(err)
+			}
+			writeLog(l.t, c.Log, repoDispatchRow(rb, "c3", l.tag, int(nowUnix-10)*1000))
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			l := newL2(t)
+			l.window("c2")
+			changed := false
+			l.tmuxHook = func(key string) {
+				if key == l2Live && !changed {
+					changed = true
+					change(l)
+				}
+			}
+			l.reap(Request{})
+			l.keptUnvalidated()
+			l.wantStdout("layout-2 row not validated: layout-2 " + name)
+		})
 	}
 }

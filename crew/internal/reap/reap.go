@@ -63,6 +63,9 @@ type run struct {
 	docs      []map[string]any
 	staleRecs map[string]staleRec
 	staleNow  map[string]bool
+	// l2Seen is each branch's first layout-2 owner any read this run saw; the
+	// gate refuses a branch whose claim has since vanished or changed crew.
+	l2Seen map[string]string
 }
 
 // Run is crew.sh's `reap)` arm: reclaim the window and worktree of workers
@@ -97,7 +100,10 @@ func Run(ctx context.Context, req Request, paths bus.Paths, cwd string, stdout, 
 	r.trusted = dir
 	// Resolved once, after the cwd is trusted: bus pr_urls are checked against it.
 	r.repo = originGitHubRepo(ctx, r.p.Git)
-	if st, err := os.Stat(paths.Log); (err != nil || !st.Mode().IsRegular()) && len(bus.RepoCrewRows(paths).Events) == 0 {
+	crews, crewErr := bus.RepoCrewRows(paths)
+	r.noteSeen(crews.Crews)
+	// An unreadable crew log counts as rows, so the fold reports it.
+	if st, err := os.Stat(paths.Log); (err != nil || !st.Mode().IsRegular()) && crewErr == nil && len(crews.Events) == 0 {
 		if r.discard != "" {
 			return r.refuse("latest status is none")
 		}

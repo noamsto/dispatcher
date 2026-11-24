@@ -13,7 +13,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/claimindex"
 	"github.com/noamsto/dispatcher/crew/internal/filekind"
 	"github.com/noamsto/dispatcher/crew/internal/gitguard"
@@ -49,7 +48,11 @@ func (r *run) remove(ctx context.Context, c *candidate) (removed bool, code int)
 	// A layout-2 branch's windows are checked on the very list killed below,
 	// before anything is moved.
 	var wins []string
-	crew, l2 := bus.RepoCrewRows(r.paths).Crews[c.branch]
+	crew, l2, why := r.l2Owner(c.branch)
+	if why != "" {
+		r.keep(c, "layout-2 row not validated: "+why)
+		return false, 0
+	}
 	if l2 {
 		wins = worktreeWindows(ctx, r.p.Tmux, c.wtpath)
 		if why, ok := stampedCrew(ctx, r.p.Tmux, wins, crew); !ok {

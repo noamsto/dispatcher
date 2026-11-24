@@ -421,15 +421,20 @@ func (v *overseer) join(common string) {
 }
 
 // discoverCrews follows each non-visiting layout-2 crew and drops the ones no
-// longer listed or now visiting. They live apart from buses: discoverBuses
+// longer listed or now visiting. A crew whose meta.json is unreadable is noted
+// and keeps an already joined follower. They live apart from buses: discoverBuses
 // leaves any joined key Discover does not list.
 func (v *overseer) discoverCrews() {
 	state := bus.StateRoot(v.o.Getenv)
 	if state == "" {
 		return
 	}
-	metas, _ := bus.ScanMetas(state)
+	metas, bad := bus.ScanMetas(state)
 	live := map[string]bool{}
+	for _, b := range bad {
+		live[b.ID] = true
+		v.notes.skip(b.ID, oneLine(b.Err))
+	}
 	for _, m := range metas {
 		if m.Visiting {
 			continue

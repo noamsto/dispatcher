@@ -42,14 +42,53 @@ func indexCrewDocs(paths bus.Paths) func() []map[string]any {
 	}
 }
 
+// l2Owner is the crew that owns branch now, and whether one does. A branch an
+// earlier read this run saw a layout-2 crew own counts as layout 2 even when
+// the claim has vanished or moved to another crew since: why is then the
+// refusal, as it is when the crews' rows cannot be read.
+func (r *run) l2Owner(branch string) (crew string, l2 bool, why string) {
+	rows, err := bus.RepoCrewRows(r.paths)
+	if err != nil {
+		return "", true, "layout-2 rows unreadable: " + err.Error()
+	}
+	seen, was := r.l2Seen[branch]
+	r.noteSeen(rows.Crews)
+	crew, l2 = rows.Crews[branch]
+	switch {
+	case !l2 && was:
+		return "", true, "layout-2 claim vanished"
+	case l2 && was && crew != seen:
+		return "", true, "layout-2 owner changed"
+	}
+	return crew, l2, ""
+}
+
+// noteSeen records each branch's first layout-2 owner seen this run.
+func (r *run) noteSeen(crews map[string]string) {
+	if len(crews) == 0 {
+		return
+	}
+	if r.l2Seen == nil {
+		r.l2Seen = map[string]string{}
+	}
+	for b, id := range crews {
+		if _, ok := r.l2Seen[b]; !ok {
+			r.l2Seen[b] = id
+		}
+	}
+}
+
 // l2Check is the layout-2 validation gate: a branch a layout-2 crew owns is
 // touched only when its worktree record names this repo and that crew, and
 // every window in windows is stamped with that crew. Provenance is recomputed
 // on every call, so a row appended after the run started is still validated.
 // It returns why the branch is kept, and false.
 func (r *run) l2Check(ctx context.Context, branch, wt string, windows []string) (string, bool) {
-	crew, ok := bus.RepoCrewRows(r.paths).Crews[branch]
-	if !ok {
+	crew, l2, why := r.l2Owner(branch)
+	if why != "" {
+		return why, false
+	}
+	if !l2 {
 		return "", true
 	}
 	if why := r.l2Record(wt, crew); why != "" {
@@ -60,8 +99,11 @@ func (r *run) l2Check(ctx context.Context, branch, wt string, windows []string) 
 
 // l2Windows is l2Check's window part alone, for the windows about to be killed.
 func (r *run) l2Windows(ctx context.Context, branch string, windows []string) (string, bool) {
-	crew, ok := bus.RepoCrewRows(r.paths).Crews[branch]
-	if !ok {
+	crew, l2, why := r.l2Owner(branch)
+	if why != "" {
+		return why, false
+	}
+	if !l2 {
 		return "", true
 	}
 	return stampedCrew(ctx, r.p.Tmux, windows, crew)

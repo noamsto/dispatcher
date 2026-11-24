@@ -5,7 +5,6 @@ import (
 	"io"
 	"os"
 
-	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/gitguard"
 	"github.com/noamsto/dispatcher/crew/internal/migrate/release"
 	"github.com/noamsto/dispatcher/crew/internal/remote"
@@ -19,7 +18,7 @@ import (
 // on origin, where the remote worker may already have pushed past it. It sets
 // mode, rel and label; false has noted why the branch is kept.
 func (r *run) migratedGate(ctx context.Context, c *candidate) bool {
-	evs, err := bus.ReadRepoEvents(r.paths)
+	evs, err := r.repoEvents()
 	if err != nil {
 		r.keep(c, "migrated, but could not read the bus")
 		return false

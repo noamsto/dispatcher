@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -61,18 +62,20 @@ type RepoRows struct {
 
 // RepoCrewRows is the rows of the indexed live layout-2 crews, kept for each
 // branch the crew dispatched in p's repo. A RepoTag error means no rows; a crew
-// whose log cannot be read is skipped. When two crews claim a branch, the crew
-// with the newest dispatch row wins and the loser's rows of it are dropped.
-func RepoCrewRows(p Paths) RepoRows {
+// log that exists but cannot be read is an error naming the crew. When two
+// crews claim a branch, the crew with the newest dispatch row wins and the
+// loser's rows of it are dropped. A non-dispatch row whose repo field names
+// another repo is dropped.
+func RepoCrewRows(p Paths) (RepoRows, error) {
 	if p.State == "" || p.Common == "" {
-		return RepoRows{}
+		return RepoRows{}, nil
 	}
 	tag, err := RepoTag(p.Common)
 	if err != nil {
-		return RepoRows{}
+		return RepoRows{}, nil
 	}
 	if hdr, ok := readIndexHeader(IndexPath(p.State, tag)); !ok || hdr.Common != tag {
-		return RepoRows{}
+		return RepoRows{}, nil
 	}
 	type claim struct {
 		id string
@@ -91,8 +94,11 @@ func RepoCrewRows(p Paths) RepoRows {
 			continue
 		}
 		evs, err := ReadEvents(c.Log)
-		if err != nil {
+		if errors.Is(err, ErrNoLog) {
 			continue
+		}
+		if err != nil {
+			return RepoRows{}, fmt.Errorf("crew %s: %w", id, err)
 		}
 		cr := crewRows{id: id}
 		mine := map[string]float64{}
@@ -101,9 +107,14 @@ func RepoCrewRows(p Paths) RepoRows {
 			if b == "" {
 				continue
 			}
+			obj, _ := ev.Doc.(map[string]any)
+			repo, hasRepo := obj["repo"]
+			if ev.Kind != KindDispatch && hasRepo && repo != tag {
+				continue
+			}
 			cr.rows = append(cr.rows, ev)
 			cr.bs = append(cr.bs, b)
-			if obj, _ := ev.Doc.(map[string]any); ev.Kind == KindDispatch && ev.CrewID == id && stringField(obj, "repo") == tag {
+			if ev.Kind == KindDispatch && ev.CrewID == id && stringField(obj, "repo") == tag {
 				ts := rowTS(ev)
 				if old, ok := mine[b]; !ok || ts > old {
 					mine[b] = ts
@@ -128,19 +139,47 @@ func RepoCrewRows(p Paths) RepoRows {
 			}
 		}
 	}
-	return out
+	return out, nil
 }
 
-// ReadRepoEvents is the repo log (a missing one reads as none) followed by
-// RepoCrewRows, stable by ts so a tie keeps the repo log row first.
-func ReadRepoEvents(p Paths) ([]Event, error) {
+// ReadRepoRows is the repo log (a missing one reads as none) in file order
+// with RepoCrewRows merged in by ts, a tie keeping the repo log row first, and
+// the crews' branches. Without crew rows the repo log comes back as read.
+func ReadRepoRows(p Paths) (RepoRows, error) {
 	evs, err := ReadEvents(p.Log)
 	if err != nil && !errors.Is(err, ErrNoLog) {
-		return nil, err
+		return RepoRows{}, err
 	}
-	evs = append(evs, RepoCrewRows(p).Events...)
-	sort.SliceStable(evs, func(i, j int) bool { return rowTS(evs[i]) < rowTS(evs[j]) })
-	return evs, nil
+	rows, err := RepoCrewRows(p)
+	if err != nil {
+		return RepoRows{}, err
+	}
+	if len(rows.Events) == 0 {
+		rows.Events = evs
+		return rows, nil
+	}
+	crew := rows.Events
+	sort.SliceStable(crew, func(i, j int) bool { return rowTS(crew[i]) < rowTS(crew[j]) })
+	merged := make([]Event, 0, len(evs)+len(crew))
+	i, j := 0, 0
+	for i < len(evs) && j < len(crew) {
+		if rowTS(crew[j]) < rowTS(evs[i]) {
+			merged = append(merged, crew[j])
+			j++
+			continue
+		}
+		merged = append(merged, evs[i])
+		i++
+	}
+	merged = append(merged, evs[i:]...)
+	rows.Events = append(merged, crew[j:]...)
+	return rows, nil
+}
+
+// ReadRepoEvents is ReadRepoRows' events.
+func ReadRepoEvents(p Paths) ([]Event, error) {
+	rows, err := ReadRepoRows(p)
+	return rows.Events, err
 }
 
 func rowTS(ev Event) float64 {
@@ -150,8 +189,18 @@ func rowTS(ev Event) float64 {
 	return ts
 }
 
-// rowBranch is the event's branch, else the one its From or To names.
+// rowBranch is the branch the reap folds file the event under: a worker From's
+// (as their wid_branch derives it), else the event's branch, else the one a
+// role From or the To names. A worker From that disagrees with the event's
+// branch is "", so the row is dropped.
 func rowBranch(ev Event) string {
+	if rest, ok := strings.CutPrefix(ev.From, "worker:"); ok {
+		b := workerBranch(rest)
+		if ev.Branch != "" && ev.Branch != b {
+			return ""
+		}
+		return b
+	}
 	if ev.Branch != "" {
 		return ev.Branch
 	}
@@ -161,14 +210,19 @@ func rowBranch(ev Event) string {
 	return addrBranch(ev.To)
 }
 
-// addrBranch parses `worker:<b>` (optionally `#s<sid>`) and `role:<b>:<role>`;
-// a branch may hold `/` and role names hold no `:`.
+// workerBranch is jq's `sub("#[^#]*$";"")` over a worker address's rest.
+func workerBranch(rest string) string {
+	if i := strings.LastIndex(rest, "#"); i >= 0 {
+		return rest[:i]
+	}
+	return rest
+}
+
+// addrBranch parses `worker:<b>` (optionally `#<session>`) and
+// `role:<b>:<role>`; a branch may hold `/` and role names hold no `:`.
 func addrBranch(addr string) string {
 	if rest, ok := strings.CutPrefix(addr, "worker:"); ok {
-		if i := strings.LastIndex(rest, "#s"); i >= 0 {
-			rest = rest[:i]
-		}
-		return rest
+		return workerBranch(rest)
 	}
 	if rest, ok := strings.CutPrefix(addr, "role:"); ok {
 		if i := strings.LastIndex(rest, ":"); i >= 0 {

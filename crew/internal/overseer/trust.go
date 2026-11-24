@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
@@ -135,7 +136,7 @@ func trustTarget(ctx context.Context, pane string, o Options) (trustPane, int, s
 // stamp (a worker or role pane), else the one crew whose dispatcher pane file
 // names it. Either way the crew must be on that repo's discovered bus.
 func trustBus(ctx context.Context, p trustPane, stderr io.Writer, o Options) (string, bus.Paths, string) {
-	if crew, paths, reason, ok := layout2Trust(p, o); ok {
+	if crew, paths, reason, ok := layout2Trust(ctx, p, o); ok {
 		return crew, paths, reason
 	}
 	// git with an empty dir would read the overseer's own cwd.
@@ -161,31 +162,65 @@ func trustBus(ctx context.Context, p trustPane, stderr io.Writer, o Options) (st
 	return crew, paths, ""
 }
 
-// layout2Trust resolves p's crew when it is layout 2, with no git call; ok is
-// false when today's repo path must decide.
-func layout2Trust(p trustPane, o Options) (string, bus.Paths, string, bool) {
-	if bus.ValidCrewID(p.crew) {
-		paths, _, reason, ok := layout2Crew(o, p.crew)
-		if !ok {
+// layout2Trust resolves p's crew when it is layout 2 and checks where the pane
+// sits; ok is false when today's repo path must decide.
+func layout2Trust(ctx context.Context, p trustPane, o Options) (string, bus.Paths, string, bool) {
+	state := stateRoot(o)
+	crew := p.crew
+	var paths bus.Paths
+	var m bus.Meta
+	if bus.ValidCrewID(crew) {
+		var reason string
+		var ok bool
+		if paths, m, reason, ok = layout2Crew(o, crew); !ok {
 			return "", bus.Paths{}, "", false
 		}
 		if reason != "" {
 			return "", bus.Paths{}, reason, true
 		}
-		return p.crew, paths, "", true
+	} else {
+		if state == "" {
+			return "", bus.Paths{}, "", false
+		}
+		var reason string
+		if crew, reason = paneCrew2(state, p.id); reason != "" {
+			return "", bus.Paths{}, reason, true
+		}
+		if crew == "" {
+			return "", bus.Paths{}, "", false
+		}
+		var err error
+		if m, err = bus.ReadMeta(state, crew); err != nil {
+			return "", bus.Paths{}, err.Error(), true
+		}
+		paths = bus.StatePaths(state)
 	}
-	state := stateRoot(o)
-	if state == "" {
-		return "", bus.Paths{}, "", false
-	}
-	crew, reason := paneCrew2(state, p.id)
-	if reason != "" {
+	if reason := paneLocation2(ctx, p, crew, m, state, o); reason != "" {
 		return "", bus.Paths{}, reason, true
 	}
-	if crew == "" {
-		return "", bus.Paths{}, "", false
+	return crew, paths, "", true
+}
+
+// paneLocation2 is why p may not speak for the layout-2 crew, "" when its
+// directory is the crew's home repo or a repo it dispatched to. A pane outside
+// any repo counts only as the dispatcher pane of a crew with no home repo.
+func paneLocation2(ctx context.Context, p trustPane, crew string, m bus.Meta, state string, o Options) string {
+	var common string
+	if filepath.IsAbs(p.path) {
+		common = git.Output(ctx, o.Git, p.path, "rev-parse", "--path-format=absolute", "--git-common-dir")
 	}
-	return crew, bus.StatePaths(state), "", true
+	if common == "" {
+		data, err := os.ReadFile(bus.StoreDir(state, crew) + "/pane")
+		if m.HomeRepo == nil && err == nil && strings.TrimSpace(string(data)) == p.id {
+			return ""
+		}
+		return fmt.Sprintf("pane %s's directory %q is not in a git repo, and pane %s is not the dispatcher pane of crew %s with no home repo", p.id, p.path, p.id, crew)
+	}
+	tag, err := bus.RepoTag(common)
+	if err == nil && ((m.HomeRepo != nil && tag == *m.HomeRepo) || slices.Contains(bus.IndexCrews(state, tag), crew)) {
+		return ""
+	}
+	return fmt.Sprintf("pane %s's directory %s is not in crew %s's home repo or a repo it dispatched to", p.id, p.path, crew)
 }
 
 // paneCrew is the one crew of common whose crews/<id>/pane file names pane,

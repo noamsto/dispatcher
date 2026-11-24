@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -136,5 +137,32 @@ func TestOverseerLayout2NilGetenvFollowsFromXDGStateHome(t *testing.T) {
 
 	if d := l.delivered()["alpha"]; d[ovStart+1000] != 1 {
 		t.Errorf("delivered = %v, want the crew's msg", l.delivered())
+	}
+}
+
+func TestOverseerLayout2CorruptMetaKeepsFollowerAndNotesOnce(t *testing.T) {
+	alpha := gitRepo(t, "alpha")
+	r := newOvRig(t)
+	log := r.crewMeta("c2", &alpha, false)
+	l := r.start(okRepos(alpha))
+
+	appendCrewRow(t, log, ovMsg(ovStart+1000, "c2", "dispatcher:c2", ovMe, "first"))
+	l.kick()
+	if err := os.WriteFile(filepath.Join(r.state, "crew", "crews", "c2", "meta.json"), []byte("{"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r.clock.advance(6 * time.Minute)
+	l.kick()
+	r.clock.advance(6 * time.Minute)
+	l.kick()
+	appendCrewRow(t, log, ovMsg(ovStart+1000+13*minute, "c2", "dispatcher:c2", ovMe, "second"))
+	l.kick()
+	l.stop()
+
+	if got := l.delivered()["alpha"]; !reflect.DeepEqual(got, map[int64]int{ovStart + 1000: 1, ovStart + 1000 + 13*minute: 1}) {
+		t.Errorf("delivered %v, want both msgs: the corrupt meta must not drop the follower", got)
+	}
+	if n := strings.Count(l.errb.str(), "c2: skipped ("); n != 1 {
+		t.Errorf("%d skip notes for c2, want 1; stderr %q", n, l.errb.str())
 	}
 }

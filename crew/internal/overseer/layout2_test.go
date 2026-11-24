@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/repos"
@@ -198,19 +199,93 @@ func (tc *trustCase) runL2() (int, string, string) {
 	return code, stdout.String(), stderr.String()
 }
 
-func TestLayout2TrustStampedPaneNeedsNoRepo(t *testing.T) {
+func (tc *trustCase) writePane(id, pane string) {
+	tc.t.Helper()
+	if err := os.WriteFile(filepath.Join(bus.StoreDir(tc.crewState(), id), "pane"), []byte(pane+"\n"), 0o644); err != nil {
+		tc.t.Fatal(err)
+	}
+}
+
+func (tc *trustCase) wantAccepted(crew string) {
+	tc.t.Helper()
+	code, stdout, stderr := tc.runL2()
+	if code != 0 || stderr != "" || stdout != "accepted the workspace-trust dialog in pane %7\n" {
+		tc.t.Fatalf("exit %d %q %q", code, stdout, stderr)
+	}
+	if got, want := tc.crewLog(crew), `"body":"{\"kind\":\"notice\",\"detail\":\"accepted the workspace-trust dialog in pane %7\"}"`; !strings.Contains(got, want) || !strings.Contains(got, `"crew_id":"`+crew+`"`) {
+		tc.t.Fatalf("crew log %q", got)
+	}
+}
+
+func (tc *trustCase) wantRefused(want string) {
+	tc.t.Helper()
+	code, _, stderr := tc.runL2()
+	if code != 1 || stderr != trustPrefix+want+"\n" {
+		tc.t.Fatalf("exit %d %q, want %q", code, stderr, want)
+	}
+	if len(tc.typed()) != 0 {
+		tc.t.Errorf("typed %q", tc.typed())
+	}
+}
+
+func TestLayout2TrustNullHomeOwnPaneNeedsNoRepo(t *testing.T) {
 	tc := newTrustCase(t)
 	tc.l2crew("c2", nil, false)
 	tc.crew = "c2"
 	tc.path = "/not/a/repo"
 	tc.notRepo = true
-	code, stdout, stderr := tc.runL2()
-	if code != 0 || stderr != "" || stdout != "accepted the workspace-trust dialog in pane %7\n" {
-		t.Fatalf("exit %d %q %q", code, stdout, stderr)
+	tc.writePane("c2", "%7")
+	tc.wantAccepted("c2")
+}
+
+func TestLayout2TrustStampedPaneInHomeRepo(t *testing.T) {
+	tc := newTrustCase(t)
+	tc.l2crew("c2", &tc.common, false)
+	tc.crew = "c2"
+	tc.wantAccepted("c2")
+}
+
+func TestLayout2TrustStampedPaneInIndexedRepo(t *testing.T) {
+	tc := newTrustCase(t)
+	home := tc.repo("home", "")
+	tc.l2crew("c2", &home, false)
+	if _, err := bus.IndexAdd(tc.crewState(), tc.common, "r", "c2", time.Now()); err != nil {
+		t.Fatal(err)
 	}
-	if got, want := tc.crewLog("c2"), `"body":"{\"kind\":\"notice\",\"detail\":\"accepted the workspace-trust dialog in pane %7\"}"`; !strings.Contains(got, want) || !strings.Contains(got, `"crew_id":"c2"`) {
-		t.Fatalf("crew log %q", got)
+	tc.crew = "c2"
+	tc.wantAccepted("c2")
+}
+
+func TestLayout2TrustStampedPaneInUnrelatedRepoRefused(t *testing.T) {
+	tc := newTrustCase(t)
+	home := tc.repo("home", "")
+	tc.l2crew("c2", &home, false)
+	tc.crew = "c2"
+	tc.wantRefused("pane %7's directory " + panePath + " is not in crew c2's home repo or a repo it dispatched to")
+	if got := tc.crewLog("c2"); got != "" {
+		t.Errorf("crew log %q", got)
 	}
+}
+
+func TestLayout2TrustStampedPaneNonRepoHomedCrewRefused(t *testing.T) {
+	tc := newTrustCase(t)
+	home := tc.repo("home", "")
+	tc.l2crew("c2", &home, false)
+	tc.crew = "c2"
+	tc.path = "/not/a/repo"
+	tc.notRepo = true
+	tc.writePane("c2", "%7")
+	tc.wantRefused(`pane %7's directory "/not/a/repo" is not in a git repo, and pane %7 is not the dispatcher pane of crew c2 with no home repo`)
+}
+
+func TestLayout2TrustStampedPaneNonRepoOtherPaneRefused(t *testing.T) {
+	tc := newTrustCase(t)
+	tc.l2crew("c2", nil, false)
+	tc.crew = "c2"
+	tc.path = "/not/a/repo"
+	tc.notRepo = true
+	tc.writePane("c2", "%9")
+	tc.wantRefused(`pane %7's directory "/not/a/repo" is not in a git repo, and pane %7 is not the dispatcher pane of crew c2 with no home repo`)
 }
 
 func TestLayout2TrustUnstampedPaneFile(t *testing.T) {

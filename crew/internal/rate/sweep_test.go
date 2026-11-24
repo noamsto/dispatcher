@@ -896,3 +896,42 @@ func TestSweepLayout2CrewRowsLandInTheStore(t *testing.T) {
 		t.Fatalf("store rows = %v", got)
 	}
 }
+
+// A torn layout-2 crew log fails the sweep the way a torn repo log does.
+func TestSweepTornCrewLogFailsLikeTornRepoLog(t *testing.T) {
+	f := newFixture(t)
+	f.seedSettings()
+	if err := os.WriteFile(f.paths.Log, []byte("torn{\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, want := f.runQuiet()
+	if want == 0 {
+		t.Fatal("torn repo log exited 0")
+	}
+	if err := os.Remove(f.paths.Log); err != nil {
+		t.Fatal(err)
+	}
+
+	state := filepath.Join(t.TempDir(), "crew")
+	f.paths = f.paths.WithState(state)
+	tag, err := bus.RepoTag(f.paths.Common)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := bus.CreateMeta(state, bus.Meta{ID: "c1"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := bus.IndexAdd(state, tag, "", "c1", time.UnixMilli(1)); err != nil {
+		t.Fatal(err)
+	}
+	row := fmt.Sprintf(`{"ts":1000,"crew_id":"c1","kind":"dispatch","branch":"feat/x","repo":%q}`, tag)
+	if err := os.WriteFile(bus.StoreDir(state, "c1")+"/events.jsonl", []byte(row+"\ntorn{\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if stderr, code := f.runQuiet(); code != want {
+		t.Fatalf("exit %d (%s), want %d", code, stderr, want)
+	}
+	if got := f.rows(); len(got) != 0 {
+		t.Fatalf("store rows = %v", got)
+	}
+}
