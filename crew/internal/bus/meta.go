@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"syscall"
 )
 
 // Meta is a layout-2 crew's meta.json, the pin that makes it layout 2.
@@ -113,14 +114,16 @@ func ScanMetas(state string) ([]Meta, []MetaError) {
 	var metas []Meta
 	var bad []MetaError
 	for _, e := range entries {
-		if !e.IsDir() || !ValidCrewID(e.Name()) {
+		if !ValidCrewID(e.Name()) {
 			continue
 		}
 		m, err := ReadMeta(state, e.Name())
 		switch {
 		case err == nil:
 			metas = append(metas, m)
-		case !errors.Is(err, fs.ErrNotExist):
+		case errors.Is(err, fs.ErrNotExist), errors.Is(err, syscall.ENOTDIR):
+			// No meta: a dir without one, a dangling symlink, or a plain file.
+		default:
 			bad = append(bad, MetaError{ID: e.Name(), Err: err})
 		}
 	}

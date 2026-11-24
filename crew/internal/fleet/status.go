@@ -344,8 +344,13 @@ func collectStatus(ctx context.Context, req StatusRequest, stderr io.Writer, o S
 		say(stderr, "crew: fleet status: machine: %s\n", oneLine(err))
 	} else {
 		lo := LoadOptions{Getenv: o.Getenv, Registry: o.Registry, Tmux: once, Git: o.Git, Clock: o.Clock, BudgetFile: o.BudgetFile, Cmd: o.Cmd, LocalModels: o.LocalModels, Stderr: stderr}
-		// The layout-2 read above has already noted any unreadable meta.json.
-		q := newQueue(ctx, QueueOptions{LoadOptions: lo, Proc: o.Proc}, scanFleet(o.Registry, o.Getenv, buses.readLog, nowMS, io.Discard), s, now)
+		// The local pass's readLayout2 below notes an unreadable meta.json, so this
+		// scan stays quiet there; served mode never runs that pass, so it notes.
+		metaNotes := io.Discard
+		if o.Served != nil {
+			metaNotes = stderr
+		}
+		q := newQueue(ctx, QueueOptions{LoadOptions: lo, Proc: o.Proc}, scanFleet(o.Registry, o.Getenv, buses.readLog, nowMS, metaNotes), s, now)
 		var rec map[holdKey]dueEntry
 		rec, due = q.advance(readRecord(duePath(o.Getenv)))
 		doc.Machine = &q.load
