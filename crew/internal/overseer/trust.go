@@ -183,7 +183,7 @@ func layout2Trust(ctx context.Context, p trustPane, o Options) (string, bus.Path
 			return "", bus.Paths{}, "", false
 		}
 		var reason string
-		if crew, reason = paneCrew2(state, p.id); reason != "" {
+		if crew, reason = layout2PaneCrew(state, p.id); reason != "" {
 			return "", bus.Paths{}, reason, true
 		}
 		if crew == "" {

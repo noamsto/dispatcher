@@ -84,9 +84,9 @@ func homeMatches(ctx context.Context, repo string, m bus.Meta, o Options) bool {
 	return repos.Label(*m.HomeRepo, origin) == repo
 }
 
-// paneCrew2 is the one non-visiting layout-2 crew whose crews/<id>/pane file
+// layout2PaneCrew is the one non-visiting layout-2 crew whose crews/<id>/pane file
 // names pane, else the ambiguity reason; both are "" when none does.
-func paneCrew2(state, pane string) (string, string) {
+func layout2PaneCrew(state, pane string) (string, string) {
 	var named []string
 	for _, m := range bus.LiveMetas(state) {
 		if m.Visiting {

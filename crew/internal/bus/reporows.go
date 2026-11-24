@@ -64,8 +64,8 @@ type RepoRows struct {
 // branch the crew dispatched in p's repo. A RepoTag error means no rows; a crew
 // log that exists but cannot be read is an error naming the crew. When two
 // crews claim a branch, the crew with the newest dispatch row wins and the
-// loser's rows of it are dropped. A row whose repo field names
-// another repo is dropped.
+// loser's rows of it are dropped. A row whose repo field names another repo is
+// dropped.
 func RepoCrewRows(p Paths) (RepoRows, error) {
 	if p.State == "" || p.Common == "" {
 		return RepoRows{}, nil
