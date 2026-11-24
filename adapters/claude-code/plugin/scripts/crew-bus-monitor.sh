@@ -43,7 +43,11 @@ promoted_crew() {
       return 0
     fi
     if [[ -n $first ]]; then
-      rows=$(crew crews 2>/dev/null)
+      rows=$(crew crews 2>/dev/null) || {
+        ((SECONDS < deadline)) || return 1
+        sleep "${CREW_BUS_MONITOR_PROMOTE_STEP:-5}"
+        continue
+      }
       while read -r anc; do
         while IFS=$'\t' read -r cid _ _ _ pid _; do
           if [[ $pid == "$anc" ]] && grep -qxF -- "$cid" <<<"$mine"; then
