@@ -168,6 +168,9 @@ func RunFleet(r FleetRequest, stdout, stderr io.Writer, opts FleetOptions) int {
 	if state := bus.StateRoot(o.Getenv); state != "" {
 		if bc, err := bus.StatePaths(state).Crew(c.crew); err == nil && bc.Layout == 2 {
 			say(stderr, "crew: fleet stream: crew %s is layout 2 — skipped; run crew stream --crew %s\n", c.crew, c.crew)
+			if c.statusMode {
+				return 2 // `--status` exit for dead: no lane exists, never alive (0)
+			}
 			return 0
 		}
 	}

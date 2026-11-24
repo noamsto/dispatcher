@@ -1847,9 +1847,9 @@ the same hazard as phase 2, with the same remedy: end those crews first.
 
 - A layout-2 crew's lane lock (`stream.lock.d`, `watch.lock.d`), `cursor` and `stream.tick` live only in its crew dir. A layout-1 cursor is never read for a layout-2 crew. Layout-1 paths are unchanged.
 - `reply`, `merge`, `watch`, `stream`, `nudge` and `hold due` run from any cwd when `--crew` names a layout-2 crew. `merge`, `nudge` and `hold due` take the crew's home repo from `meta.json` `home_repo` (`merge` also changes into it so `gh` has a repo; a null `home_repo` refuses `merge` and `nudge`, and `hold due` falls back to the state-only paths).
-- `crew fleet stream --crew <id>` skips a layout-2 crew with one stderr line and exit 0 (one lane per crew: `crew stream`). `--status` skips too.
+- `crew fleet stream --crew <id>` skips a layout-2 crew with one stderr line and exit 0 (one lane per crew: `crew stream`). `--status` exits 2 (dead), never 0 (alive).
 - roster-render joins no other repo for a layout-2 crew: its one source is the crew log. Running it outside a repo is not covered here.
-- A layout-2 `crew stream` outside a repo skips the reap cadence (including the relays' remote reap): reap belongs to phase 3b.
+- A layout-2 `crew stream` outside a repo skips the reap cadence (with one stderr note; this includes the relays' remote reap) and the peer link: reap belongs to phase 3b. `reply` from outside a repo to a crew with no home repo starts no nudge wait and says so.
 - Known limits: `merge` and `nudge` with `--crew <layout-2>` run inside an unrelated repo use that repo's `gh` context and window stamp (pre-existing); a remote `reply` from outside a repo is routed from the crew's dispatch row but the remote hop still needs a clone cwd (the home repo is passed when known), and the crew-scope allowlist rejects `reply`.
 
 ### 4.6 Phase 3p: dropped (peer sync is removed)

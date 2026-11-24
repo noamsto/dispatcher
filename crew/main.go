@@ -588,6 +588,18 @@ func homePaths(state, crew string) (bus.Paths, error) {
 	return bus.PathsFor(*m.HomeRepo).WithState(state), nil
 }
 
+// replyNudge is reply's nudge starter. Outside a repo with no home repo the
+// detached `crew nudge` could not resolve the lead's window, so reply says so
+// instead of reporting a wait that dies at once.
+func replyNudge(located bool, home bus.Paths, start func([]string, string) error) func([]string, string) error {
+	if located || home.Common != "" {
+		return start
+	}
+	return func([]string, string) error {
+		return errors.New("layout-2 crew with no home repo, outside a repo")
+	}
+}
+
 // runIndexAdd is `crew index add --crew <id>`: it lists a layout-2 crew in this
 // repo's index. A layout-1 crew is never indexed, so it is a silent no-op.
 func runIndexAdd(ctx context.Context, id string, paths bus.Paths, stderr io.Writer) int {
@@ -1262,7 +1274,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 			Remote: func(host, crew string, argv []string) int {
 				return remoteAs(ctx, e, cmp.Or(home.Common, cwd), crew)(host, argv, stdout, stderr)
 			},
-			Nudge: reply.DetachedNudge(),
+			Nudge: replyNudge(located, home, reply.DetachedNudge()),
 		})
 	}
 

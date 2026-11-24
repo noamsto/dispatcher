@@ -160,7 +160,11 @@ func Run(r Request, paths bus.Paths, stdout, stderr io.Writer, opts Options) int
 		say(stderr, "%s\n", badCrewMsg)
 		return exitUsage
 	}
+	// No repo to reap from; the peer link needs one too (below).
 	if paths.Common == "" {
+		if c.reapEvery > 0 && !c.statusMode {
+			say(stderr, "crew: stream: reap disabled outside a repo (layout-2 crew)\n")
+		}
 		c.reapEvery = 0
 	}
 	cdir := bc.Dir
@@ -201,7 +205,9 @@ func Run(r Request, paths bus.Paths, stdout, stderr io.Writer, opts Options) int
 		reaperr: filepath.Join(cdir, "stream.reap.err"),
 	}
 	l.relays = newRelays(l, bc.Log, cdir)
-	l.peers = newPeerLink(l, paths)
+	if paths.Common != "" {
+		l.peers = newPeerLink(l, paths)
+	}
 	return l.run(sigs)
 }
 

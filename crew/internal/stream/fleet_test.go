@@ -950,8 +950,12 @@ func TestFleetSkipsALayout2CrewBeforeAnyLane(t *testing.T) {
 			},
 		})
 		want := "crew: fleet stream: crew c1 is layout 2 — skipped; run crew stream --crew c1\n"
-		if rc != 0 || errb.String() != want || out.Len() != 0 {
-			t.Errorf("status=%v: rc %d stderr %q stdout %q, want 0 and %q", status, rc, errb.String(), out.String(), want)
+		wantRC := 0
+		if status {
+			wantRC = 2 // dead, never alive
+		}
+		if rc != wantRC || errb.String() != want || out.Len() != 0 {
+			t.Errorf("status=%v: rc %d stderr %q stdout %q, want %d and %q", status, rc, errb.String(), out.String(), wantRC, want)
 		}
 		if _, err := os.Stat(root); err == nil {
 			t.Errorf("status=%v: the lane root was created", status)

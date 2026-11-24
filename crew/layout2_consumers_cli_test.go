@@ -176,3 +176,14 @@ func TestLayout2ConsumersLayout1WatchCursorPathUnchanged(t *testing.T) {
 		t.Fatalf("layout-1 cursor: %v", err)
 	}
 }
+
+func TestLayout2ConsumersReplyNudgeWithoutHomeRepoSaysSo(t *testing.T) {
+	c := homeCrewCLI(t, false)
+	appendTo(t, c.store("c1")+"/events.jsonl",
+		`{"ts":2,"crew_id":"c1","kind":"dispatch","worker_id":"worker:feat/x#s1-1","engine":"claude","branch":"feat/x"}`+"\n"+
+			`{"ts":3,"crew_id":"c1","kind":"status","from":"worker:feat/x#s1-1","body":{"state":"working"}}`+"\n")
+	_, errOut := c.expectIn(c.outside, 0, "reply", "--crew", "c1", "worker:feat/x", "go ahead")
+	if !strings.Contains(errOut, "reply: no nudge (start failed: layout-2 crew with no home repo") {
+		t.Fatalf("stderr %q, want a no-nudge line instead of a started wait", errOut)
+	}
+}
