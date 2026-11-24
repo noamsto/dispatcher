@@ -295,6 +295,44 @@ mirror_dispatch() {
   [ "$(local_dispatch_rows | wc -l)" -eq 1 ]
 }
 
+@test "dispatch --host --recover on a layout-2 crew records the row in its log and indexes the crew once" {
+  assert_isolated_xdg_state_home
+  (cd "$TEST_REPO" && CREW_ID=c1 CREW_LAYOUT=2 "$CREW_GO_BIN" register "$$")
+  l2_log="$XDG_STATE_HOME/crew/crews/c1/events.jsonl"
+  [ -f "$XDG_STATE_HOME/crew/crews/c1/meta.json" ]
+  CREW_CALLS="$BATS_TEST_TMPDIR/crew-calls"
+  export CREW_CALLS
+  mv "$STUB_DIR/crew" "$STUB_DIR/crew-wrapped"
+  cat >"$STUB_DIR/crew" <<EOF
+#!/usr/bin/env bash
+case "\${1:-} \${2:-}" in
+"index add") printf '%s\n' "\$*" >>"\$CREW_CALLS" ;;
+esac
+exec "$STUB_DIR/crew-wrapped" "\$@"
+EOF
+  chmod +x "$STUB_DIR/crew"
+
+  SSH_DROP_AFTER_DISPATCH=1 SSH_DOWN_AFTER_DROP=1 DISPATCH_HOST_RECOVER_TRIES=3 DISPATCH_HOST_RECOVER_SLEEP=0 \
+    run --separate-stderr dispatch_remote --host mini 42 "Recover later"
+  [ "$status" -eq 255 ]
+  session="$(grep -o -- '--recover s[0-9]*-[0-9]*' <<<"$stderr" | head -1 | cut -d' ' -f2)"
+  [[ "$session" =~ ^s[0-9]+-[0-9]+$ ]]
+  [ ! -e "$CREW_CALLS" ]
+
+  rm -f "$SSH_DOWN"
+  unset SSH_DROP_AFTER_DISPATCH SSH_DOWN_AFTER_DROP
+  TMUX_PANE=%0 DISPATCH_HOST_RECOVER_TRIES=2 DISPATCH_HOST_RECOVER_SLEEP=0 \
+    run --separate-stderr dispatch --host mini --recover "$session" --crew-id c1
+  [ "$status" -eq 0 ] || {
+    echo "$stderr" >&2
+    false
+  }
+  [ "$(grep -cxF 'index add --crew c1' "$CREW_CALLS")" -eq 1 ]
+  [ "$(wc -l <"$CREW_CALLS")" -eq 1 ]
+  [ "$(jq -c --arg s "$session" 'select(.kind == "dispatch" and .session == $s and .host == "mini" and .remote == true)' "$l2_log" | wc -l)" -eq 1 ]
+  [ ! -e "$LBUS" ]
+}
+
 @test "dispatch --host --recover with no remote row exits 1 and writes nothing" {
   DISPATCH_HOST_RECOVER_TRIES=2 DISPATCH_HOST_RECOVER_SLEEP=0 \
     run --separate-stderr dispatch --host mini --recover s1-1 --crew-id c1

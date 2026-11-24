@@ -4296,6 +4296,7 @@ remote-run)
     ;;
   esac
   ;;
+where) [ -z "${CREW_WHERE_PWD_LOG:-}" ] || printf '%s\n' "$PWD" >>"$CREW_WHERE_PWD_LOG" ;;
 identity) printf 'iris\nbad name\n' ;;
 spec-lint)
   [ -z "${STUB_SPEC_LINT_OUT:-}" ] || printf '%s\n' "$STUB_SPEC_LINT_OUT" >&2
@@ -4527,6 +4528,7 @@ EOF
   setup_recorded_w9
   _host_crew_stub
   export CREW_PWD_LOG="$BATS_TEST_TMPDIR/remote-pwd"
+  export CREW_WHERE_PWD_LOG="$BATS_TEST_TMPDIR/where-pwd"
   printf 'the spec body\n' >"$TEST_REPO/w9/spec.md"
   cd "$TEST_REPO/w9"
   DISPATCH_SPEC=spec.md run --separate-stderr run_dispatch standard sonnet --host mini --effort medium --crew-id c1 42 "Do a thing"
@@ -4536,6 +4538,10 @@ EOF
     [ "$(realpath "$dir")" = "$(realpath "$TEST_REPO")" ] || return 1
   done <"$CREW_PWD_LOG"
   [ "$(wc -l <"$CREW_PWD_LOG")" -eq 2 ]
+  [ -s "$CREW_WHERE_PWD_LOG" ]
+  while IFS= read -r dir; do
+    [ "$(realpath "$dir")" = "$(realpath "$TEST_REPO")" ] || return 1
+  done <"$CREW_WHERE_PWD_LOG"
 }
 
 # A crew stub whose spec-lint answers STUB_SPEC_LINT_OUT on stderr and exits
@@ -11611,15 +11617,21 @@ printf '%s\n' "$*" >>"$STUB_LOG"
 case "$1" in
 identity) printf '%s\n' '{"name":"iris","color":"blue","tmux":"colour33"}' ;;
 reap) printf '%s\n' "$PWD" >>"$REAP_PWD_LOG" ;;
+where) printf '%s\n' "$PWD" >>"$WHERE_PWD_LOG" ;;
 esac
 exit 0
 EOF
   chmod +x "$STUB_DIR/crew"
   export REAP_PWD_LOG="$BATS_TEST_TMPDIR/reap-pwd"
+  export WHERE_PWD_LOG="$BATS_TEST_TMPDIR/where-pwd"
   cd "$TEST_REPO/w9"
   DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
   [ "$status" -eq 0 ]
   [ "$(realpath "$(cat "$REAP_PWD_LOG")")" = "$(realpath "$TEST_REPO/w9")" ]
+  [ -s "$WHERE_PWD_LOG" ]
+  while IFS= read -r dir; do
+    [ "$(realpath "$dir")" = "$(realpath "$TEST_REPO")" ] || return 1
+  done <"$WHERE_PWD_LOG"
 }
 
 @test "dispatch refuses from a worker worktree whose .git is already a standalone repo (#633)" {

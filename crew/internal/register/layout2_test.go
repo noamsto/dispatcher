@@ -224,35 +224,46 @@ func TestDeregisterLayout2KeepsTheCrew(t *testing.T) {
 }
 
 // Layout-1 deregister removes the crew dir, so a running legacy crew between
-// register cycles is known only by its home record and repo-log rows: either
-// keeps it layout 1.
+// register cycles is known only by its home record and repo-log rows; each
+// trace alone keeps it layout 1.
 func TestRegisterLayout2KeepsADeregisteredLegacyCrewLayout1(t *testing.T) {
-	for _, keepHome := range []bool{true, false} {
-		p := statePaths(t)
-		if code, stderr := run("register", "888", p, newWorld("c1")); code != 0 {
-			t.Fatalf("register: code=%d stderr=%q", code, stderr)
-		}
-		if err := bus.Append(p.Log, `{"ts":1,"crew_id":"c1","event":"status","state":"working"}`); err != nil {
-			t.Fatal(err)
-		}
-		if code, stderr := run("deregister", "", p, newWorld("c1")); code != 0 {
-			t.Fatalf("deregister: code=%d stderr=%q", code, stderr)
-		}
-		if !keepHome {
-			if err := os.Remove(crews.HomePath(p, "c1")); err != nil {
-				t.Fatal(err)
+	for _, tc := range []struct {
+		name    string
+		logRow  bool
+		keepHom bool
+	}{
+		{"home record only", false, true},
+		{"log row only", true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := statePaths(t)
+			if code, stderr := run("register", "888", p, newWorld("c1")); code != 0 {
+				t.Fatalf("register: code=%d stderr=%q", code, stderr)
 			}
-		}
-		if code, stderr := run("register", "999", p, layout2World("c1")); code != 0 || stderr != "" {
-			t.Fatalf("home=%v: code=%d stderr=%q", keepHome, code, stderr)
-		}
-		absent(t, bus.StoreDir(p.State, "c1"))
-		if got := readFile(t, p.CrewDir("c1")+"/pid"); got != "999\n" {
-			t.Errorf("home=%v: legacy pid = %q", keepHome, got)
-		}
-		bc, err := p.Crew("c1")
-		if err != nil || bc.Layout == 2 || bc.Log != p.Log {
-			t.Errorf("home=%v: crew = %+v, %v; want the repo log", keepHome, bc, err)
-		}
+			if tc.logRow {
+				if err := bus.Append(p.Log, `{"ts":1,"crew_id":"c1","event":"status","state":"working"}`); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if code, stderr := run("deregister", "", p, newWorld("c1")); code != 0 {
+				t.Fatalf("deregister: code=%d stderr=%q", code, stderr)
+			}
+			if !tc.keepHom {
+				if err := os.Remove(crews.HomePath(p, "c1")); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if code, stderr := run("register", "999", p, layout2World("c1")); code != 0 || stderr != "" {
+				t.Fatalf("code=%d stderr=%q", code, stderr)
+			}
+			absent(t, bus.StoreDir(p.State, "c1"))
+			if got := readFile(t, p.CrewDir("c1")+"/pid"); got != "999\n" {
+				t.Errorf("legacy pid = %q", got)
+			}
+			bc, err := p.Crew("c1")
+			if err != nil || bc.Layout == 2 || bc.Log != p.Log {
+				t.Errorf("crew = %+v, %v; want the repo log", bc, err)
+			}
+		})
 	}
 }
