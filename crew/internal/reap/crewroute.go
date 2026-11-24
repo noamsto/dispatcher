@@ -5,9 +5,8 @@ import (
 )
 
 // indexCrewDocs is the dispatch rows of the layout-2 crews the repo index
-// lists that name this repo, read once on first call: a crew dispatching in
-// several repos keeps the other repos' rows out. A repo without a state root
-// or an index yields none.
+// lists that name this repo, read once on first call. A crew dispatching in
+// several repos has the other repos' rows filtered out.
 func indexCrewDocs(paths bus.Paths) func() []map[string]any {
 	var docs []map[string]any
 	var done bool

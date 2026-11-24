@@ -13,10 +13,8 @@ import (
 
 // rowCrewID is the crew id a reap or release row carries: the first valid one
 // of the window stamps, the worktree record's fifth line, then the newest
-// dispatch row of the branch across docs and indexDocs (the layout-2 crews the
-// repo index lists; may be nil), by ts with ties to docs. The record is read
-// only when no stamp names a crew, and the logs only when neither does. It must
-// run before the windows are killed and the record removed.
+// dispatch row of the branch across docs and indexDocs (may be nil), by ts with
+// ties to docs. It must run before the windows are killed and the record removed.
 func rowCrewID(ctx context.Context, tm tmux.Client, windows []string, wt, branch string, docs, indexDocs func() []map[string]any) string {
 	for _, w := range windows {
 		out, _ := tm.Run(ctx, "display-message", "-p", "-t", w, "#{@crew_id}")

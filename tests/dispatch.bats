@@ -8333,10 +8333,8 @@ EOF
   [ ! -e "$lock" ]
 }
 
-# Same-branch refusal: one worker per branch name in a crew. The crew's log names
-# candidate repos; a candidate counts only while one of its worktrees has the
-# branch checked out, read from its HEAD files. These plant the rows another
-# repo's dispatch writes into a log its repos share.
+# Same-branch refusal: the crew's log names candidate repos; a candidate counts
+# only while one of its worktrees has the branch checked out.
 
 # bus_row <kind> <branch> <ts> [repo|-] [crew] — append a row to the test repo's
 # log; `-` (the default) leaves it untagged.
@@ -8463,8 +8461,7 @@ EOF
   stub_launch_bins
   other="$(other_repo)"
   # 51: the repo does not exist. 52: no worktree has the branch (a planted or
-  # stale row); its own log's dispatch of the branch no longer confirms. 53: its
-  # HEAD naming the branch is a symlink. 54: a junk ts orders as 0, so the later
+  # stale row). 53: its HEAD naming the branch is a symlink. 54: a junk ts orders as 0, so the later
   # release here ends it though a worktree there has the branch. 55: an alias of
   # this repo, whose worktree this dispatch puts on the branch. 56: a worktree
   # there is on a branch the name only prefixes. 57: its HEAD is detached. 58: its

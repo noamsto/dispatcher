@@ -35,14 +35,16 @@ teardown() {
 }
 
 @test "no repo-bus events.jsonl literal in adapters/ outside the legacy-fallback allowlist" {
-  # A layout-2 crew's log is not at <repo>/crew/events.jsonl; every adapter path
-  # to a crew's log goes through _crew_log, crew resolve-target or the inline
-  # derivation in the hooks. A new literal join reads the wrong bus for a
-  # layout-2 crew. Each allowed site is a file suffix plus a fixed substring of
-  # its line; the reason is the comment above it. Comment lines are skipped.
+  # A layout-2 crew's log is not at <repo>/crew/events.jsonl, so a literal join
+  # reads the wrong bus. Each allowed site is a file suffix plus a fixed
+  # substring of its line; the reason is the comment above it.
   allow=(
     # _crew_log's legacy (layout-1) answer
     'core/launcher-common.sh|printf '\''%s\n'\'' "$1/events.jsonl"'
+    # _crew_log's fallback warning names the legacy path it falls back to
+    'core/launcher-common.sh|gave no log (rc $rc) — using $1/events.jsonl'
+    # dispatch-resume's layout test compares against the legacy path
+    'core/dispatch-resume.sh|[ "$crew_log" = "$crew_dir/events.jsonl" ]'
     # each hook's legacy derivation (layout 1, no crew id, or no meta.json)
     'dispatch-notify.sh|log="$common/crew/events.jsonl"'
     'directive-delivery.sh|log=$crew_dir/events.jsonl'
@@ -54,7 +56,7 @@ teardown() {
     'core/dispatch.sh|"$clone/.git/crew/events.jsonl"'
     # _crew_log_init tells layout 1 from layout 2 by comparing to the legacy path
     'core/dispatch.sh|[ "$crew_log" != "$crew_dir/events.jsonl" ]'
-    # _chrome_holders reads window @crew_dir logs (mixed-period limitation, D8)
+    # _chrome_holders reads window @crew_dir logs (mixed-period limitation)
     'core/dispatch.sh|"$ldir/events.jsonl"'
   )
   offenders=""

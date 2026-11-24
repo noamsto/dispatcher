@@ -1010,9 +1010,8 @@ _registry_add() {
 }
 
 # _crew_log_init — set crew_log, crew_layout and crew_state from $crew_dir and
-# $crew_id. Layout 2 is read off the resolved log, so no second fork: its state
-# dir holds the log; at layout 1 the state dir is $crew_dir. Returns 1 on a
-# refusal, which _crew_log already printed.
+# $crew_id. A layout-2 crew's state dir holds its log; at layout 1 the state dir
+# is $crew_dir. Returns 1 on a refusal, which _crew_log already printed.
 _crew_log_init() {
   crew_log="$(_crew_log "$crew_dir" "$crew_id")" || return 1
   crew_layout=1 crew_state="$crew_dir"
@@ -1997,9 +1996,9 @@ _branch_live_repos() {
 # _repo_branch_checked_out <common> <branch> — 0 when a worktree of the repo
 # whose git common dir is <common> has <branch> checked out, read from its HEAD
 # files alone: no git command runs in a repo a log row named. Mid-rebase or
-# mid-bisect HEAD holds a SHA, so the rebase's head-name or BISECT_START (a
-# short name) names the branch instead. A symlinked or non-regular file (a FIFO
-# would hang the read) does not count.
+# mid-bisect HEAD holds a SHA, so the rebase's head-name or BISECT_START names
+# the branch instead. A symlinked or non-regular file (a FIFO would hang the
+# read) does not count.
 _repo_branch_checked_out() {
   local head f line
   for head in "$1/HEAD" "$1"/worktrees/*/HEAD; do
@@ -2022,11 +2021,8 @@ _repo_branch_checked_out() {
 # key on the branch alone, so a crew holds one worker per branch name. A row's
 # repo is its writer's word and nothing here can end a planted or stale one, so
 # the crew's log only names candidates: one counts when a worktree of it has the
-# branch checked out. That fact holds in every layout, where the candidate's own
-# log no longer does once a crew's repos share one log. A human checkout of the
-# branch there confirms too: the branch is live in that repo. A candidate that is
-# this repo (an alias included) is skipped. A missing log here is no conflict;
-# one jq cannot read returns 1.
+# branch checked out. A candidate that is this repo (an alias included) is
+# skipped. A missing log here is no conflict; one jq cannot read returns 1.
 _branch_live_elsewhere() {
   local here live repo
   [ -e "$crew_log" ] || [ -L "$crew_log" ] || return 0
@@ -3848,10 +3844,8 @@ model_gate
 # computed after this gate). At this point $* is the title.
 # A Linear id overrides the issue-derived branch at the identity step below, so
 # it has no failed history under the issue's branch name — no escalation.
-# crew resolves the log from the trusted checkout in a subshell (#633: never
-# from a worker's worktree), ahead of the main trusted cd below. A refused crew
-# or an untrusted cwd reads no history here; the main crew_log computation and
-# trusted cd report the refusal and exit.
+# The log resolves from the trusted checkout in a subshell, never from a
+# worker's worktree; a refused crew or untrusted cwd reads no history here.
 if [ -n "$gh_issue" ] && [ -z "$linear_id" ]; then
   _escalation_slug="$(printf '%s' "$*" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g' | cut -c1-40 | sed -E 's/^-+//; s/-+$//')"
   _escalation_branch="feat/$gh_issue-$_escalation_slug"
@@ -4838,8 +4832,8 @@ _ident_lock_acquire() {
 }
 
 # _ident_lock_release — drop the codename lock and break mutex this process
-# holds. Each flag clears before its link goes, so a repeat call (a signal trap
-# then the EXIT trap) finds nothing left to remove.
+# holds. Each flag clears before its link goes, so a repeat call finds nothing
+# left to remove.
 _ident_lock_release() {
   if [ -n "$ident_break_held" ]; then
     ident_break_held=""
@@ -5324,9 +5318,9 @@ line=$(jq -nc --arg crew "$crew_id" --arg branch "$branch" --arg session "$sessi
    + if $migrated_from != "" then {migrated_from:$migrated_from, engine_context:$engine_context} else {} end
    + if $engine_context_why != "" then {engine_context_why:$engine_context_why} else {} end')
 _crew_append "$line"
-# A layout-2 crew is listed in this repo's index, the only way a repo finds the
-# crews that ran here. After the dispatch row: an index rebuild keys on rows
-# that carry a repo, which a claim row does not.
+# The repo index is the only way a repo finds a layout-2 crew that ran here. It
+# follows the dispatch row because a rebuild keys on rows that carry a repo,
+# which a claim row does not.
 [ "$crew_layout" != 2 ] || crew index add --crew "$crew_id" || true
 # A dispatcher on another host records the same row from this line.
 [ "${DISPATCH_EMIT_ROW:-}" != 1 ] || printf 'dispatch_row: %s\n' "$line"

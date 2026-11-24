@@ -28,10 +28,8 @@ _bus_append() {
 
 # _crew_log <crew_dir> <crew_id> — print the crew's log: `crew where --log` for
 # an id, "<crew_dir>/events.jsonl" for no id or when the call fails for a
-# non-refusal reason (an older crew binary, a test stub that prints nothing),
-# with a stderr warning for an id. A refusal (rc 3: archived or index-only id)
-# re-prints crew's stderr and returns 1. Only stdout is the path, so a stderr
-# note on success does not cost a layout-2 crew its log.
+# reason other than a refusal. A refusal (rc 3: archived or index-only id)
+# re-prints crew's stderr and returns 1.
 _crew_log() {
   local out err rc=0
   if [ -n "$2" ]; then

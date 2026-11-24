@@ -38,16 +38,15 @@ const indexVersion = 1
 func indexDir(state string) string { return state + "/index/repos" }
 
 // IndexPath is the index file of the repo known by repoTag, keyed by the full
-// sha256 hex of the tag as policy.Dir keys a repo's policies.
+// sha256 hex of the tag, as policy.Dir does.
 func IndexPath(state, repoTag string) string {
 	sum := sha256.Sum256([]byte(repoTag))
 	return indexDir(state) + "/" + hex.EncodeToString(sum[:])
 }
 
 // IndexAdd lists id in repoTag's index, writing the header first when the file
-// is new. An id already listed is left alone (added false); otherwise the entry
-// is one O_APPEND write. It runs under state/gc.lock.d, so an IndexRebuild
-// replacing or removing the file cannot drop the append.
+// is new; added is false when id was already listed. It holds state/gc.lock.d
+// so a concurrent IndexRebuild cannot drop the append.
 func IndexAdd(state, repoTag, slug, id string, now time.Time) (bool, error) {
 	if !ValidCrewID(id) {
 		return false, &InvalidCrewIDError{ID: id}
@@ -98,8 +97,7 @@ func IndexListed(state, id string) bool {
 	return false
 }
 
-// indexFileName excludes the dot-prefixed temp files IndexAdd and IndexRebuild
-// write beside the index files.
+// indexFileName excludes the dot-prefixed temp files written beside the index files.
 func indexFileName(name string) bool { return !strings.HasPrefix(name, ".") }
 
 // readIndex is the valid crew ids an index file lists, deduplicated, in file
@@ -149,9 +147,8 @@ func acquireGCLock(state string) (release func(), err error) {
 
 // IndexRebuild regenerates every repo index from the logs: a crew with a
 // crews/ or archive/ meta.json is listed for each repo its own dispatch rows
-// name, so an entry no log backs is dropped. Each file is replaced by temp +
-// rename and files for no repo are removed, all under state/gc.lock.d. slugOf
-// gives each header's slug from the repo's common dir.
+// name, so an entry no log backs is dropped. Files for no repo are removed. It
+// holds state/gc.lock.d. slugOf gives each header's slug from the repo's common dir.
 func IndexRebuild(state string, slugOf func(common string) string) error {
 	if err := os.MkdirAll(state, 0o755); err != nil {
 		return err

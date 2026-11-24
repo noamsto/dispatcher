@@ -42,16 +42,14 @@ type Options struct {
 	// Pwd is `$PWD`.
 	Pwd string
 	// Getenv reads TMUX_PANE and CREW_LAYOUT.
-	Getenv func(string) string
-	// Hostname is os.Hostname, the home_host of a crew register creates.
+	Getenv   func(string) string
 	Hostname func() (string, error)
-	// Slug is the owner/repo of the repo whose common dir it is given, "" when
-	// its origin names none: the home_slug of a crew register creates.
+	// Slug is the owner/repo of the repo with the given common dir, "" when its
+	// origin names none.
 	Slug func(common string) string
 }
 
-// errCreate marks a failure of register's own layout-2 resolution, printed
-// under `crew: register:`.
+// errCreate marks a failure of register's own layout-2 resolution.
 type errCreate struct{ err error }
 
 func (e *errCreate) Error() string { return e.err.Error() }
@@ -170,10 +168,9 @@ func Run(sub, pid string, paths bus.Paths, stderr io.Writer, o Options) int {
 	return 0
 }
 
-// registerCrew resolves crew for register under CREW_LAYOUT. Unset, "" and 1
-// are today's resolution. 2 creates the layout-2 crew unless the id already
-// resolves to one (the pin is sticky either way), is refused (archived,
-// index-only), or has a legacy trace in this repo, which keeps it layout 1.
+// registerCrew resolves crew for register under CREW_LAYOUT. Under 2 it creates
+// the layout-2 crew unless the id already resolves to one, is refused, or has a
+// legacy trace in this repo, which keeps it layout 1.
 func registerCrew(paths bus.Paths, crew string, o Options) (bus.Crew, error) {
 	switch v := o.Getenv("CREW_LAYOUT"); v {
 	case "", "1":
@@ -207,7 +204,7 @@ func registerCrew(paths bus.Paths, crew string, o Options) (bus.Crew, error) {
 
 // legacy reports whether layout-1 crew bc left a trace in this repo: its dir,
 // its home record, or a row on the repo log. Deregister removes only the dir,
-// so a running legacy crew between register cycles has just the other two.
+// so a legacy crew between register cycles has just the other two.
 func legacy(paths bus.Paths, bc bus.Crew) bool {
 	if filekind.IsDir(bc.Dir) || filekind.IsRegular(crews.HomePath(paths, bc.ID)) {
 		return true
@@ -215,7 +212,6 @@ func legacy(paths bus.Paths, bc bus.Crew) bool {
 	return slices.Contains(crews.IDs(paths), bc.ID)
 }
 
-// newMeta is the meta.json of a crew register creates where paths is.
 func newMeta(paths bus.Paths, crew string, o Options) (bus.Meta, error) {
 	host, err := o.Hostname()
 	if err != nil {

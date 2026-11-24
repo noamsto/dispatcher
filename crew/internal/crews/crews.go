@@ -118,8 +118,7 @@ func table(ctx context.Context, homeOnly bool, paths bus.Paths, stdout, stderr i
 		return 0
 	}
 
-	// A corrupt log contributes nothing to stats (jq -s failed whole,
-	// `|| echo '{}'`); a layout-2 crew's rows are on its own log.
+	// A corrupt log contributes nothing to stats.
 	var docs []any
 	if logOK {
 		for _, ev := range events {

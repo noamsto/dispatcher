@@ -850,10 +850,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 
 	paths, err := bus.Locate(ctx, cwd)
 	if err != nil {
-		// The lifecycle commands also serve layout-2 crews, which live under
-		// the state root and need no repo; a layout-1 id still refuses with
-		// this line, from its own arm. register reaches its arm even with no
-		// state root, so CREW_LAYOUT=2 refuses in its own words.
+		// register reaches its arm even with no state root, so CREW_LAYOUT=2
+		// refuses in its own words.
 		state := bus.StateRoot(os.Getenv)
 		if !repoOptional(parsed) || state == "" && sub != "register" {
 			say(stderr, "crew: not in a git repo\n")

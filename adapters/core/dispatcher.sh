@@ -304,9 +304,8 @@ _require_plain_crew_id() {
 # _resolve_crew_dir [<common>] — set crew_dir to crew $CREW_ID's per-crew dir
 # and crew_dir_v2 to 1 when it is a layout-2 dir: `crew where --dir`, else the
 # legacy "<common>/crew/crews/$CREW_ID" (empty without <common>) when the call
-# fails for a non-refusal reason (an older crew, a stub that prints nothing).
-# Returns 1 after re-printing crew's line when it refuses the id (rc 3); crew's
-# stderr on success never joins the path.
+# fails for a reason other than a refusal. Returns 1 after re-printing crew's
+# stderr when it refuses the id (rc 3).
 _resolve_crew_dir() {
   local out err_file rc=0 legacy=""
   [ -z "${1:-}" ] || legacy="$1/crew/crews/$CREW_ID"
@@ -496,8 +495,7 @@ _start_in_window() {
   }
   for _ in $(seq 20); do
     sleep 0.5
-    # A spawned crew's dir exists only once its launcher registers, and where
-    # it lands depends on the launcher's own layout.
+    # A spawned crew's dir exists only once its launcher registers.
     [ "${spawning:-0}" = 0 ] || _resolve_crew_dir "$common" 2>/dev/null || true
     new_pid=$(cat -- "$crew_dir/pid" 2>/dev/null) || new_pid=""
     if [[ $new_pid =~ ^[1-9][0-9]*$ ]] && [ "$new_pid" != "$old_pid" ] && kill -0 "$new_pid" 2>/dev/null; then
@@ -1034,7 +1032,7 @@ fi
 
 # An exported CREW_ID already means "this crew", and a mint outside a git repo
 # has no per-repo crew table to consult (same guard `crew register` uses); at
-# layout 2 the table also holds the null-home crews, so no repo is needed.
+# layout 2 no repo is needed.
 adopted_live=0
 if [ "$overseer" = 0 ] && [ -z "${CREW_ID:-}" ] && [ "$new_crew" = 0 ] &&
   { [ "$crew_layout" = 2 ] || git rev-parse --git-common-dir >/dev/null 2>&1; }; then
@@ -1092,8 +1090,7 @@ if [ "$overseer" = 0 ]; then
   echo "crew id: $CREW_ID"
 fi
 
-# A layout-2 crew needs no repo; only a non-overseer layout-2 crew registers
-# outside one, while inside a repo every launch (the overseer too) registers.
+# Outside a repo only a non-overseer layout-2 crew registers.
 registers=0
 if { [ "$overseer" = 0 ] && [ "$crew_layout" = 2 ]; } || git rev-parse --git-common-dir >/dev/null 2>&1; then
   registers=1
