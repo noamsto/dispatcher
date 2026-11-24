@@ -487,3 +487,18 @@ func TestLayout2UnreadableMetaIsNotListedButNoted(t *testing.T) {
 		t.Errorf("%d not-listed notes in %q, want one per unreadable crew", n, stderr.String())
 	}
 }
+
+func TestLayout2UnreadableMetaIsNotedWhenServed(t *testing.T) {
+	f := newQueueFix(t, "alpha")
+	f.register("alpha", "c1", livePID)
+	f.write(filepath.Join(bus.StoreDir(f.stateRoot(), "mismatch"), "meta.json"),
+		`{"layout":2,"id":"other","created":1,"home_host":"box","home_repo":null,"visiting":false,"created_by":"register"}`+"\n")
+
+	var stderr bytes.Buffer
+	o := f.statusOpts()
+	o.Served = &ServedStatus{Origin: "halo", Since: 0}
+	CollectStatus(t.Context(), StatusRequest{}, &stderr, o)
+	if n := strings.Count(stderr.String(), "crew fleet: crew mismatch: unreadable meta.json ("); n != 1 {
+		t.Errorf("served status printed %d notes for the bad crew in %q, want exactly one", n, stderr.String())
+	}
+}
