@@ -274,7 +274,22 @@ func (o Options) trimLog(cutoff time.Time) error {
 	if kept.Len() == len(b) {
 		return nil
 	}
-	return os.WriteFile(path, kept.Bytes(), 0o600)
+	// The log is the only record of what the unattended run removed: a crash
+	// mid-write must leave the old file whole.
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".auto-log-")
+	if err != nil {
+		return err
+	}
+	_, werr := tmp.Write(kept.Bytes())
+	if err := errors.Join(werr, tmp.Sync(), tmp.Close()); err != nil {
+		_ = os.Remove(tmp.Name())
+		return err
+	}
+	if err := os.Rename(tmp.Name(), path); err != nil {
+		_ = os.Remove(tmp.Name())
+		return err
+	}
+	return nil
 }
 
 func appendLine(root string, line []byte) error {
