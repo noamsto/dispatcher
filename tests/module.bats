@@ -312,6 +312,8 @@ in {
     launchdAgents = d.launchd.agents;
     systemdUser = d.systemd.user;
   };
+  cleanupOff = mkResult {enable = true; cleanup.auto = false;};
+  darwinCleanupOff = (evalOn darwinPkgs {enable = true; cleanup.auto = false;}).launchd.agents;
   darwinReapOff = (evalOn darwinPkgs {enable = true; reap.enable = false;}).launchd.agents;
   darwinHarnessOff = (evalOn darwinPkgs {enable = true; refreshHarness.enable = false;}).launchd.agents;
   darwinRefreshOff = (evalOn darwinPkgs {enable = true; refresh.enable = false;}).launchd.agents;
@@ -1053,7 +1055,9 @@ worktree_git_lib_crew_go_row() { # bin
   [ "$status" -eq 0 ]
   run jq -e '.full.systemdUser.services["dispatcher-reap"].Service.TimeoutStartSec == "1h"' "$EVAL"
   [ "$status" -eq 0 ]
-  run jq -e '.full.systemdUser.services["dispatcher-reap"].Service.ExecStart | length == 1 and (.[0] | test("^/nix/store/[^/]+-crew/bin/crew reap --fleet --quiet --no-wait$"))' "$EVAL"
+  run jq -e '.full.systemdUser.services["dispatcher-reap"].Service.ExecStart | length == 2 and (.[0] | test("^-/nix/store/[^/]+-crew/bin/crew reap --fleet --quiet --no-wait$")) and (.[1] | test("^-/nix/store/[^/]+-crew/bin/crew cleanup --auto --fleet$"))' "$EVAL"
+  [ "$status" -eq 0 ]
+  run jq -e '.cleanupOff.systemdUser.services["dispatcher-reap"].Service.ExecStart | length == 1 and (.[0] | test("^/nix/store/[^/]+-crew/bin/crew reap --fleet --quiet --no-wait$"))' "$EVAL"
   [ "$status" -eq 0 ]
   run jq -e '.full.launchdAgents["dispatcher-reap"] == null' "$EVAL"
   [ "$status" -eq 0 ]
@@ -1064,7 +1068,9 @@ worktree_git_lib_crew_go_row() { # bin
   [ "$status" -eq 0 ]
   run jq -e '.darwin.launchdAgents["dispatcher-reap"].config | .StandardErrorPath == "/home/test/Library/Logs/dispatcher-reap.log" and .StandardOutPath == .StandardErrorPath' "$EVAL"
   [ "$status" -eq 0 ]
-  run jq -e '.darwin.launchdAgents["dispatcher-reap"].config.ProgramArguments | length == 3 and .[0] == "/bin/sh" and .[1] == "-c" and (.[2] | test("^/nix/store/[^/]+-crew/bin/crew reap --fleet --quiet --no-wait$"))' "$EVAL"
+  run jq -e '.darwin.launchdAgents["dispatcher-reap"].config.ProgramArguments | length == 3 and .[0] == "/bin/sh" and .[1] == "-c" and (.[2] | test("^/nix/store/[^/]+-crew/bin/crew reap --fleet --quiet --no-wait; /nix/store/[^/]+-crew/bin/crew cleanup --auto --fleet$"))' "$EVAL"
+  [ "$status" -eq 0 ]
+  run jq -e '.darwinCleanupOff["dispatcher-reap"].config.ProgramArguments | length == 3 and (.[2] | test("^/nix/store/[^/]+-crew/bin/crew reap --fleet --quiet --no-wait$"))' "$EVAL"
   [ "$status" -eq 0 ]
   run jq -e '.darwin.launchdAgents["dispatcher-reap"].config.EnvironmentVariables.CREW_RATE_AUTOSWEEP == "sync"' "$EVAL"
   [ "$status" -eq 0 ]

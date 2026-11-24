@@ -666,7 +666,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 		c := parsed.typed.Cleanup
 		cwd, _ := e.getwd()
 		return cleanup.Run(ctx, cleanup.Request{
-			Fleet: c.Fleet, List: c.List, JSON: c.JSON, PruneArchive: c.PruneArchive, Repo: str(c.Repo), OlderThan: str(c.OlderThan),
+			Fleet: c.Fleet, List: c.List, JSON: c.JSON, PruneArchive: c.PruneArchive, Auto: c.Auto, DryRun: c.DryRun, Repo: str(c.Repo), OlderThan: str(c.OlderThan),
 		}, cwd, stdout, stderr, cleanupOptions(ctx, e))
 	case "overseer":
 		// It picks its own bus, so it runs before Locate and outside any repo.
@@ -1607,13 +1607,15 @@ func reapOptions(ctx context.Context) reap.Options {
 }
 
 // cleanupOptions is `crew cleanup`'s production wiring: reap's probes, the
-// process environment, and a terminal check on the real stdin and stdout.
+// process environment, a terminal check on the real stdin and stdout, and the
+// cleanup.* settings from dispatch-config.
 func cleanupOptions(ctx context.Context, e env) cleanup.Options {
 	return cleanup.Options{
 		Reap:        reapOptions(ctx),
 		Getenv:      os.Getenv,
 		Stdin:       e.stdin,
 		Interactive: func() bool { return bus.IsTerminal(0) && bus.IsTerminal(1) },
+		Settings:    readCleanupSettings,
 	}
 }
 

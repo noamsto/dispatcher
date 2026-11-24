@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -25,6 +26,9 @@ const (
 
 // errDrift is reap's own refusal text for a git config that left its baseline.
 var errDrift = errors.New("git config drift (run `crew git-baseline`)")
+
+// errBranchKept marks a removal that took the worktree but not its branch.
+var errBranchKept = errors.New("worktree removed, but branch delete failed")
 
 // archiveRoot is ${XDG_DATA_HOME:-$HOME/.local/share}/crew/cleanup-archive.
 func (o Options) archiveRoot() string {
@@ -85,6 +89,10 @@ func (o Options) remove(ctx context.Context, it *Item, stderr io.Writer) (string
 		return "", fmt.Errorf("archive failed, nothing removed: %w", err)
 	}
 
+	if err := o.verifyArchive(ctx, it, dir, before, stderr); err != nil {
+		_ = os.RemoveAll(dir)
+		return "", fmt.Errorf("archive failed, nothing removed: %w", err)
+	}
 	if after, err := o.treeState(ctx, admin, it, stderr); err != nil || after != before {
 		return dir, errors.New("changed while saving; archived, but nothing removed — review it again")
 	}
@@ -112,9 +120,55 @@ func (o Options) remove(ctx context.Context, it *Item, stderr io.Writer) (string
 		return dir, errDrift
 	}
 	if err := cmd.Run(); err != nil {
-		return dir, fmt.Errorf("worktree removed, but branch delete failed: %w", err)
+		return dir, fmt.Errorf("%w: %w", errBranchKept, err)
 	}
 	return dir, nil
+}
+
+// verifyArchive proves the archive at dir holds the work before anything is
+// deleted: the bundle verifies, and a patch exists, non-empty, whenever the
+// worktree held uncommitted changes. before is treeState's "tree\ntip".
+func (o Options) verifyArchive(ctx context.Context, it *Item, dir, before string, stderr io.Writer) error {
+	b, err := os.ReadFile(filepath.Join(dir, infoName))
+	if err != nil {
+		return err
+	}
+	var meta info
+	if err := json.Unmarshal(b, &meta); err != nil {
+		return err
+	}
+	bundle := filepath.Join(dir, bundleName)
+	if _, err := os.Stat(bundle); err == nil {
+		cmd, err := wtgit.CommonCommand(ctx, it.paths.Common, wtgit.Opts{Stderr: stderr}, "bundle", "verify", bundle)
+		if err != nil {
+			return errDrift
+		}
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("the commit bundle does not verify: %w", err)
+		}
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	if meta.Uncommit {
+		fi, err := os.Stat(filepath.Join(dir, patchName))
+		if err != nil || fi.Size() == 0 {
+			return errors.New("the uncommitted patch is missing or empty")
+		}
+		return nil
+	}
+	tree, tip, _ := strings.Cut(before, "\n")
+	cmd, err := wtgit.CommonCommand(ctx, it.paths.Common, wtgit.Opts{Stderr: stderr}, "rev-parse", "--verify", tip+"^{tree}")
+	if err != nil {
+		return errDrift
+	}
+	head, err := cmd.Output()
+	if err != nil {
+		return errors.New("could not read the branch tip's tree")
+	}
+	if tree != strings.TrimSpace(string(head)) {
+		return errors.New("it has uncommitted changes but no patch was written")
+	}
+	return nil
 }
 
 // checkBaseline is reap's pair of git-config checks: the admin dir and the

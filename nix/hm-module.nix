@@ -23,6 +23,10 @@ self: {
   overseerLocked = lib.filterAttrs (_: v: v != null) {
     inherit (cfg.overseer) autoRelaunch autoStart acceptTrust digestEvery root;
   };
+  cleanupLocked = lib.filterAttrs (_: v: v != null) {
+    inherit (cfg.cleanup) auto;
+  };
+  cleanupAuto = cfg.cleanup.auto != false;
   lockedSettings =
     {inherit (cfg) profile grantRoots;}
     // lib.optionalAttrs (cfg.engines != null) {inherit (cfg) engines;}
@@ -32,6 +36,7 @@ self: {
     // lib.optionalAttrs (cfg.repoTrackers != null) {inherit (cfg) repoTrackers;}
     // lib.optionalAttrs (cfg.orgTrackers != null) {inherit (cfg) orgTrackers;}
     // lib.optionalAttrs (openrouterLocked != {}) {openrouter = openrouterLocked;}
+    // lib.optionalAttrs (cleanupLocked != {}) {cleanup = cleanupLocked;}
     // lib.optionalAttrs (overseerLocked != {}) {overseer = overseerLocked;}
     // lib.optionalAttrs (cfg.anthropicCredits != null) {
       anthropicCredits = {
@@ -702,7 +707,8 @@ in {
           Reclaim finished workers' windows and worktrees machine-wide without
           a dispatcher session: a systemd user timer on Linux, a launchd agent
           on Darwin, running `crew reap --fleet` over every repo with a crew
-          bus. Set false to schedule nothing.
+          bus, then `crew cleanup --auto --fleet` unless `cleanup.auto` is
+          false. Set false to schedule nothing.
         '';
       };
 
@@ -715,6 +721,18 @@ in {
           always runs every 10 minutes.
         '';
       };
+    };
+
+    cleanup.auto = lib.mkOption {
+      type = lib.types.nullOr lib.types.bool;
+      default = null;
+      description = ''
+        Whether `crew cleanup --auto` archives and removes stale, settled
+        worktrees. Set, it lands as `cleanup.auto` in the locked settings
+        layer; set false, the reap timer also stops running it. Unset (the
+        default), the base default (true) applies and the user settings file
+        can turn it off.
+      '';
     };
 
     workerDeniedMcpServers = lib.mkOption {
@@ -1080,7 +1098,10 @@ in {
             Type = "oneshot";
             Environment = ["PATH=${refreshPath}" "CREW_RATE_AUTOSWEEP=sync"];
             TimeoutStartSec = "1h";
-            ExecStart = ["${pkgsFor.crew}/bin/crew reap --fleet --quiet --no-wait"];
+            ExecStart =
+              if cleanupAuto
+              then ["-${pkgsFor.crew}/bin/crew reap --fleet --quiet --no-wait" "-${pkgsFor.crew}/bin/crew cleanup --auto --fleet"]
+              else ["${pkgsFor.crew}/bin/crew reap --fleet --quiet --no-wait"];
           };
         };
         timers.dispatcher-reap = {
@@ -1139,7 +1160,14 @@ in {
         dispatcher-reap = {
           enable = true;
           config = {
-            ProgramArguments = ["/bin/sh" "-c" "${pkgsFor.crew}/bin/crew reap --fleet --quiet --no-wait"];
+            ProgramArguments = [
+              "/bin/sh"
+              "-c"
+              (
+                "${pkgsFor.crew}/bin/crew reap --fleet --quiet --no-wait"
+                + lib.optionalString cleanupAuto "; ${pkgsFor.crew}/bin/crew cleanup --auto --fleet"
+              )
+            ];
             EnvironmentVariables.PATH = refreshPath;
             EnvironmentVariables.CREW_RATE_AUTOSWEEP = "sync";
             StandardOutPath = reapLog;

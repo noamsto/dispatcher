@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"slices"
 
+	"github.com/noamsto/dispatcher/crew/internal/cleanup"
 	"github.com/noamsto/dispatcher/crew/internal/clock"
 	"github.com/noamsto/dispatcher/crew/internal/fleet"
 	"github.com/noamsto/dispatcher/crew/internal/git"
@@ -98,6 +99,22 @@ func readOverseerSettings(ctx context.Context) (overseerSettings, error) {
 		return overseerSettings{}, fmt.Errorf("%s: %w", bin, err)
 	}
 	return s.Overseer, nil
+}
+
+// readCleanupSettings runs dispatch-config for the .cleanup object.
+func readCleanupSettings(ctx context.Context) (cleanup.Settings, error) {
+	bin := remote.ConfigBin()
+	out, err := exec.CommandContext(ctx, bin).Output()
+	if err != nil {
+		return cleanup.Settings{}, fmt.Errorf("%s: %w", bin, err)
+	}
+	var s struct {
+		Cleanup cleanup.Settings `json:"cleanup"`
+	}
+	if err := json.Unmarshal(out, &s); err != nil {
+		return cleanup.Settings{}, fmt.Errorf("%s: %w", bin, err)
+	}
+	return s.Cleanup, nil
 }
 
 // servedRoot is the sweep root the far verbs walk besides the registry:

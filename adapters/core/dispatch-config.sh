@@ -38,6 +38,12 @@
 # `overseer` command treats as holding the user's repos; when unset it falls
 # through to the first CREW_SWEEP_ROOTS entry, then $HOME. It is honoured from
 # every layer and has no env var.
+# cleanup.auto (boolean, default true) lets `crew cleanup --auto` archive and
+# remove stale worktrees whose issue or PR has settled; cleanup.autoAfterDays
+# (positive integer, default 14) is the grace period since the worker's last
+# status; cleanup.archiveDays (non-negative integer, default 365; 0 keeps
+# archives forever) is the age after which --auto prunes recovery bundles.
+# They are honoured from every layer and have no env var.
 # freshSeams (boolean, default false) arms dispatch's fresh lead relaunch at
 # the execute and review seams for eligible claude/pi standard/deep implement
 # workers; dispatch --fresh-seams/--no-fresh-seams override it per dispatch.
@@ -668,6 +674,10 @@ printf '%s\n' "$base" "$user" "$locked" "$env_layer" | jq -n --argjson show_orig
   | need(["fleetBudget"]; "a non-negative integer"; type == "number" and . == floor and . >= 0)
   | need(["fleetBackfillAfter"]; "a non-negative integer"; type == "number" and . == floor and . >= 0)
   | need(["fleetHeadTimeout"]; "a non-negative integer"; type == "number" and . == floor and . >= 0)
+  | need(["cleanup"]; "an object"; type == "object")
+  | need(["cleanup", "auto"]; "a boolean"; type == "boolean")
+  | need(["cleanup", "autoAfterDays"]; "a positive integer (days)"; pos_int)
+  | need(["cleanup", "archiveDays"]; "a non-negative integer (days)"; type == "number" and . == floor and . >= 0)
   | need(["overseer"]; "an object"; type == "object")
   | need(["overseer", "autoRelaunch"]; "a boolean"; type == "boolean")
   | need(["overseer", "autoStart"]; "a boolean"; type == "boolean")
