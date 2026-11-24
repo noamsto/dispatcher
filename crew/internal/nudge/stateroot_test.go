@@ -64,53 +64,64 @@ func TestWaitLockUnderCrewStateRoot(t *testing.T) {
 // The wait lock stays under the store dir rather than a path relative to the cwd.
 func TestVisitingCrewWindowIsBoundToItsDispatchRow(t *testing.T) {
 	const clone = "/some/clone"
-	// srv is the live tmux server's identity (pid:start_time), the sixth field the
-	// arm's list-windows prints.
+	// srv is the identity (pid:start_time) the fake tmux server answers to the
+	// arm's display-message read and the bus rows here record.
 	const srv = "111:222"
 	row := `{"ts":1,"crew_id":"c1","kind":"dispatch","branch":"feat/x","repo":"` + clone + `"}`
 	winRow := `{"ts":2,"crew_id":"c1","kind":"window","branch":"feat/x","repo":"` + clone + `","window_id":"@7","tmux_server":"` + srv + `"}`
 	// shiftRow records the identity the attacker injects into @crew_name below,
 	// for the window id the forged row carries.
 	shiftRow := strings.Replace(winRow, `"window_id":"@7"`, `"window_id":"@9"`, 1)
+	// nlRow records the stale identity the attacker read from the log; the forged
+	// window list below carries it and then the real live identity on a second line.
+	nlRow := shiftRow
 	resumeRow := `{"ts":3,"crew_id":"c1","kind":"resume","branch":"feat/x","repo":"` + clone + `","window_id":"@8","tmux_server":"` + srv + `"}`
-	real := "@7\tfeat/x\t" + clone + "/crew\tc1\tlead\t" + srv
+	real := "@7\tfeat/x\t" + clone + "/crew\tc1\tlead"
 	// A worker of another crew stamps its own window with this crew's id and branch.
-	forged := "@9\tfeat/x\t/other/clone/crew\tc1\tevil\t" + srv
-	copied := "@9\tfeat/x\t" + clone + "/crew\tc1\tevil\t" + srv
+	forged := "@9\tfeat/x\t/other/clone/crew\tc1\tevil"
+	copied := "@9\tfeat/x\t" + clone + "/crew\tc1\tevil"
 	for _, tc := range []struct {
 		name    string
 		rows    []string
 		windows string
-		found   bool
-		err     string
+		// server is display-message's answer; "" is the live identity srv.
+		server string
+		found  bool
+		err    string
 	}{
-		{"id and row dir match", []string{row}, real, true, ""},
-		{"other crew", []string{row}, "@7\tfeat/x\t" + clone + "/crew\tother\tlead", false, "no live pane"},
-		{"no crew id", []string{row}, "@7\tfeat/x\t" + clone + "/crew\t\tlead", false, "no live pane"},
-		{"forged id, its own dir", []string{row}, forged, false, "no live pane"},
-		{"forged id listed before the real window", []string{row}, forged + "\n" + real, true, ""},
-		{"forged id, no dispatch row", nil, real, false, "no worker matches"},
-		{"forged id, row of another crew", []string{strings.Replace(row, `"c1"`, `"c2"`, 1)}, real, false, "no worker matches"},
-		{"forged id, row of another branch", []string{strings.Replace(row, "feat/x", "feat/y", 1)}, real, false, "no worker matches"},
+		{"id and row dir match", []string{row}, real, "", true, ""},
+		{"other crew", []string{row}, "@7\tfeat/x\t" + clone + "/crew\tother\tlead", "", false, "no live pane"},
+		{"no crew id", []string{row}, "@7\tfeat/x\t" + clone + "/crew\t\tlead", "", false, "no live pane"},
+		{"forged id, its own dir", []string{row}, forged, "", false, "no live pane"},
+		{"forged id listed before the real window", []string{row}, forged + "\n" + real, "", true, ""},
+		{"forged id, no dispatch row", nil, real, "", false, "no worker matches"},
+		{"forged id, row of another crew", []string{strings.Replace(row, `"c1"`, `"c2"`, 1)}, real, "", false, "no worker matches"},
+		{"forged id, row of another branch", []string{strings.Replace(row, "feat/x", "feat/y", 1)}, real, "", false, "no worker matches"},
 		// The real window closed and a worker copied every stamp of it, dir included.
-		{"recorded window id", []string{row, winRow}, real, true, ""},
-		{"copied stamps after the real window closed", []string{row, winRow}, copied, false, "no live pane"},
-		{"copied stamps beside the real window, recorded id", []string{row, winRow}, copied + "\n" + real, true, ""},
-		{"a dispatch row whose window is not open yet binds no window", []string{strings.Replace(row, `"kind":"dispatch"`, `"kind":"dispatch","window_id":null`, 1)}, copied, false, "no live pane"},
-		{"a resume row's id replaces the window row's", []string{row, winRow, resumeRow}, real, false, "no live pane"},
-		{"a legacy resume row keeps the dir binding", []string{row, winRow, strings.Replace(resumeRow, `,"window_id":"@8"`, "", 1)}, real, true, ""},
+		{"recorded window id", []string{row, winRow}, real, "", true, ""},
+		{"copied stamps after the real window closed", []string{row, winRow}, copied, "", false, "no live pane"},
+		{"copied stamps beside the real window, recorded id", []string{row, winRow}, copied + "\n" + real, "", true, ""},
+		{"a dispatch row whose window is not open yet binds no window", []string{strings.Replace(row, `"kind":"dispatch"`, `"kind":"dispatch","window_id":null`, 1)}, copied, "", false, "no live pane"},
+		{"a resume row's id replaces the window row's", []string{row, winRow, resumeRow}, real, "", false, "no live pane"},
+		{"a legacy resume row keeps the dir binding", []string{row, winRow, strings.Replace(resumeRow, `,"window_id":"@8"`, "", 1)}, real, "", true, ""},
 		// A row from before the tmux server restarted names an id this server handed
 		// to somebody else's window.
-		{"a row of another tmux server does not bind", []string{row, strings.Replace(winRow, srv, "999:888", 1)}, real, false, "no live pane"},
-		{"a window on the server the row recorded binds", []string{row, strings.Replace(winRow, srv, "999:888", 1)}, "@7\tfeat/x\t" + clone + "/crew\tc1\tlead\t999:888", true, ""},
+		{"a row of another tmux server does not bind", []string{row, strings.Replace(winRow, srv, "999:888", 1)}, real, "", false, "no live pane"},
+		{"a window on the server the row recorded binds", []string{row, strings.Replace(winRow, srv, "999:888", 1)}, "@7\tfeat/x\t" + clone + "/crew\tc1\tlead", "999:888", true, ""},
 		// tmux expands an option value raw, so a tab in a stamp can put the row's
-		// recorded identity where the parser reads the live one: the forged
+		// recorded identity where the parser used to read the live one: the forged
 		// window's @crew_name ends in a tab plus the recorded identity, pushing
 		// the real live identity one field later (a tab-shifted identity).
-		{"a tab-shifted identity", []string{row, shiftRow}, "@9\tfeat/x\t" + clone + "/crew\tc1\tevil\t" + srv + "\t999:999", false, "no live pane"},
+		{"a tab-shifted identity", []string{row, shiftRow}, "@9\tfeat/x\t" + clone + "/crew\tc1\tevil\t" + srv + "\t999:999", "999:999", false, "no live pane"},
+		// A newline in the option value ends the forged row exactly where the
+		// attacker wants: after the stale identity and at the field count the
+		// parser expects, with the real live identity on a short continuation
+		// line. The identity read is its own display-message call, so the stale
+		// one the row records cannot be shifted into it.
+		{"a newline-forged identity", []string{row, nlRow}, "@9\tfeat/x\t" + clone + "/crew\tc1\tevil\t" + srv + "\n\t999:999", "999:999", false, "no live pane"},
 		// The rows after a torn line could move the branch to another clone.
-		{"torn log line before a newer row", []string{row, "{\"ts\":", strings.Replace(row, clone, "/moved", 1)}, real, false, "cannot read the crew log"},
-		{"copied stamps beside the real window", []string{row}, copied + "\n" + real, false, "ambiguous branch"},
+		{"torn log line before a newer row", []string{row, "{\"ts\":", strings.Replace(row, clone, "/moved", 1)}, real, "", false, "cannot read the crew log"},
+		{"copied stamps beside the real window", []string{row}, copied + "\n" + real, "", false, "ambiguous branch"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newArm(t)
@@ -123,6 +134,9 @@ func TestVisitingCrewWindowIsBoundToItsDispatchRow(t *testing.T) {
 				}
 			}
 			f.pane.windows = tc.windows
+			if tc.server != "" {
+				f.pane.server = tc.server
+			}
 			rc := f.run(Request{Target: featX})
 			if tc.found && rc != 0 {
 				t.Fatalf("rc = %d, stderr %q, want the window found", rc, f.errOut())

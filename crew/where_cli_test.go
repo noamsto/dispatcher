@@ -8,15 +8,14 @@ import (
 	"testing"
 )
 
-// tmuxServerIdentity is the tmux server identity (`pid:start_time`) the arm's
-// last list-windows field carries.
+// tmuxServerIdentity is the tmux server identity (`pid:start_time`) the fake
+// tmux server answers to the arm's display-message read.
 const tmuxServerIdentity = "12345:1700000000"
 
 // crewWin is one `list-windows` line: window id, branch, crew dir, crew id,
-// codename, session, window index, window name, bridge branch, bridge crew id,
-// and the tmux server identity.
+// codename, session, window index, window name, bridge branch and bridge crew id.
 func crewWin(dir, id, branch, crew, name, index, winName string) string {
-	return strings.Join([]string{id, branch, dir, crew, name, "sess", index, winName, "", "", tmuxServerIdentity}, "\t")
+	return strings.Join([]string{id, branch, dir, crew, name, "sess", index, winName, "", ""}, "\t")
 }
 
 // A bad argument is the arm's own refusal, and it is reached without asking tmux

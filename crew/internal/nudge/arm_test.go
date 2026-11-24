@@ -68,8 +68,8 @@ const (
 	leadID = "%9"
 )
 
-// tmuxServer is the identity (pid:start_time) the fake tmux server reports in
-// the arm's sixth list-windows field and the bus rows here record.
+// tmuxServer is the identity (pid:start_time) the fake tmux server reports to
+// the arm's display-message read and the bus rows here record.
 const tmuxServer = "111:222"
 
 func newArm(t *testing.T) *armFixture {
@@ -81,7 +81,7 @@ func newArm(t *testing.T) *armFixture {
 			Common: common, Dir: common + "/crew", Log: common + "/crew/events.jsonl",
 		},
 		stdout: &bytes.Buffer{}, stderr: &bytes.Buffer{},
-		pane:   &fakePane{frames: acceptedFrames(t)},
+		pane:   &fakePane{frames: acceptedFrames(t), server: tmuxServer},
 		bus:    &fakeBus{},
 		now:    time.Now().UnixMilli(),
 		crewID: "c1",
@@ -94,10 +94,9 @@ func newArm(t *testing.T) *armFixture {
 	return f
 }
 
-// windowRows is `list-windows`' answer for one window anchored to this checkout,
-// ending in the tmux server identity the arm's format asks for last.
+// windowRows is `list-windows`' answer for one window anchored to this checkout.
 func (f *armFixture) windowRows(win, branch, name string) string {
-	return win + "\t" + branch + "\t" + f.paths.Dir + "\tc1\t" + name + "\t" + tmuxServer
+	return win + "\t" + branch + "\t" + f.paths.Dir + "\tc1\t" + name
 }
 
 func (f *armFixture) paneRows(win, pane, role, cmd string) string {
@@ -383,7 +382,7 @@ func TestRunResolvesTarget(t *testing.T) {
 
 	t.Run("another checkout's window", func(t *testing.T) {
 		f := newArm(t)
-		f.pane.windows = "@7\tfeat/x\t/other/crew\tc1\treef\t" + tmuxServer
+		f.pane.windows = "@7\tfeat/x\t/other/crew\tc1\treef"
 		if rc := f.run(Request{Target: featX}); rc != 1 || !strings.Contains(f.errOut(), "no worker matches 'feat/x'") {
 			t.Errorf("rc = %d, stderr = %q", rc, f.errOut())
 		}
@@ -391,7 +390,7 @@ func TestRunResolvesTarget(t *testing.T) {
 
 	t.Run("another crew's window", func(t *testing.T) {
 		f := newArm(t)
-		f.pane.windows = "@7\tfeat/x\t" + f.paths.Dir + "\tc2\treef\t" + tmuxServer
+		f.pane.windows = "@7\tfeat/x\t" + f.paths.Dir + "\tc2\treef"
 		// The branch is on the bus, so the target resolves and the pane does not:
 		// a gone window is a different answer from "no worker matches".
 		if err := os.MkdirAll(filepath.Dir(f.paths.Log), 0o755); err != nil {

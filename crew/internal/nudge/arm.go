@@ -155,7 +155,7 @@ func Run(ctx context.Context, r Request, paths bus.Paths, stdout, stderr io.Writ
 	}
 
 	wins, err := o.Deps.Tmux.Run(ctx, "list-windows", "-a", "-F",
-		"#{window_id}\t#{@crew_branch}\t#{@crew_dir}\t#{@crew_id}\t#{@crew_name}\t#{pid}:#{start_time}")
+		"#{window_id}\t#{@crew_branch}\t#{@crew_dir}\t#{@crew_id}\t#{@crew_name}")
 	if err != nil {
 		return fail(stderr, "cannot read tmux windows (is a tmux server running?)")
 	}
@@ -171,23 +171,24 @@ func Run(ctx context.Context, r Request, paths bus.Paths, stdout, stderr io.Writ
 	// stamp a window with a crew's id: so a window counts only when this crew's own
 	// dispatch, resume or window row for its branch names its window id, and (a row
 	// that recorded one) the identity of this tmux server, which the row's id is
-	// unique within (remote.WindowBound).
+	// unique within (remote.WindowBound). The identity comes from its own
+	// `display-message` read, which no window option can shift.
 	var events []bus.Event
+	server := ""
 	if paths.Dir == "" {
+		if server, err = o.Deps.Tmux.Run(ctx, "display-message", "-p", "#{pid}:#{start_time}"); err != nil {
+			return fail(stderr, "cannot read the tmux server identity (is a tmux server running?)")
+		}
 		if events, err = remote.BoundRows(a.bc.Log); err != nil {
 			return fail(stderr, "cannot read the crew log: "+err.Error())
 		}
 	}
 	var cwins [][]string
 	for _, r := range tsvRows(wins) {
-		// The format above asks for exactly six fields. tmux expands an option
-		// value into the format output raw, so a value with a tab in it would
-		// land in the identity field; a row that is not exactly the six fields
-		// the format asks for is not this arm's window at all.
-		if len(r) != 6 || r[1] == "" || r[3] != a.crew {
+		if len(r) < 5 || r[1] == "" || r[3] != a.crew {
 			continue
 		}
-		if paths.Dir == "" && !remote.WindowBound(events, r[1], a.crew, r[0], r[2], r[5]) || paths.Dir != "" && r[2] != paths.Dir {
+		if paths.Dir == "" && !remote.WindowBound(events, r[1], a.crew, r[0], r[2], server) || paths.Dir != "" && r[2] != paths.Dir {
 			continue
 		}
 		cwins = append(cwins, r)

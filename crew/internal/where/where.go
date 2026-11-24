@@ -48,7 +48,7 @@ const (
 // "the target is gone".
 var (
 	windowsArgs = []string{"list-windows", "-a", "-F",
-		"#{window_id}\t#{@crew_branch}\t#{@crew_dir}\t#{@crew_id}\t#{@crew_name}\t#{session_name}\t#{window_index}\t#{window_name}\t#{@bridge_crew_branch}\t#{@bridge_crew_id}\t#{pid}:#{start_time}"}
+		"#{window_id}\t#{@crew_branch}\t#{@crew_dir}\t#{@crew_id}\t#{@crew_name}\t#{session_name}\t#{window_index}\t#{window_name}\t#{@bridge_crew_branch}\t#{@bridge_crew_id}"}
 	panesArgs = []string{"list-panes", "-a", "-F", "#{window_id}\t#{pane_id}\t#{@crew_role}\t#{pane_index}"}
 )
 
@@ -232,7 +232,13 @@ func Run(ctx context.Context, req Request, paths bus.Paths, stdout, stderr io.Wr
 		return die(stderr, "cannot read tmux panes (is a tmux server running?)")
 	}
 	panes := readPanes(panesRaw)
-	wins, err := readWindows(winsRaw, paths, crew)
+	server := ""
+	if paths.Dir == "" {
+		if server, err = o.Tmux.Run(ctx, "display-message", "-p", "#{pid}:#{start_time}"); err != nil {
+			return die(stderr, "cannot read the tmux server identity (is a tmux server running?)")
+		}
+	}
+	wins, err := readWindows(winsRaw, paths, crew, server)
 	if err != nil {
 		return die(stderr, "cannot read the crew log: %v", err)
 	}
@@ -356,7 +362,7 @@ func mirrorWindow(raw, branch, crew string) (window, bool) {
 	return window{}, false
 }
 
-// readWindows is the arm's crew filter over `list-windows`: the eleven format
+// readWindows is the arm's crew filter over `list-windows`: the ten format
 // fields, a non-empty branch, this repo's crew dir, and this crew's id when the
 // window carries one. An empty caller crew (no CREW_ID, no WORKER_TASK.md)
 // filters nothing at all. A state-only call (dir "") has no checkout, so a
@@ -364,11 +370,9 @@ func mirrorWindow(raw, branch, crew string) (window, bool) {
 // resume or window row for its branch names its tmux window id, and (a row that
 // recorded one) the identity of this tmux server, which the row's id is unique
 // within: any process on the tmux server can stamp a window with a crew's id, so
-// the stamp alone binds nothing (remote.WindowBound). The format asks for exactly
-// eleven fields, and tmux expands an option value raw, so a value with a tab in it
-// would land in the identity field: a row that is not exactly eleven fields is not
-// this crew's window at all.
-func readWindows(raw string, paths bus.Paths, crew string) ([]window, error) {
+// the stamp alone binds nothing (remote.WindowBound). The identity is `server`,
+// read once from its own `display-message`, which no window option can shift.
+func readWindows(raw string, paths bus.Paths, crew string, server string) ([]window, error) {
 	dir := paths.Dir
 	var events []bus.Event
 	if dir == "" && crew != "" {
@@ -380,11 +384,11 @@ func readWindows(raw string, paths bus.Paths, crew string) ([]window, error) {
 	var wins []window
 	for _, line := range strings.Split(raw, "\n") {
 		f := strings.Split(line, "\t")
-		if len(f) != 11 || f[1] == "" {
+		if len(f) < 8 || f[1] == "" {
 			continue
 		}
 		if dir == "" {
-			if crew == "" || f[3] != crew || !remote.WindowBound(events, f[1], crew, f[0], f[2], f[10]) {
+			if crew == "" || f[3] != crew || !remote.WindowBound(events, f[1], crew, f[0], f[2], server) {
 				continue
 			}
 		} else if f[2] != dir {

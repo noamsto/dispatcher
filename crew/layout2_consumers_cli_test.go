@@ -107,7 +107,7 @@ func TestLayout2ConsumersMergeNullHomeRefusesBeforeGh(t *testing.T) {
 
 func TestLayout2ConsumersNudgeResolvesWindowOutsideRepo(t *testing.T) {
 	c := homeCrewCLI(t, true)
-	t.Setenv("TMUX_WINDOWS", "@1\tfeat/x\t"+homeCommon(t, c)+"/crew\tc1\tsage\t"+tmuxServerIdentity)
+	t.Setenv("TMUX_WINDOWS", "@1\tfeat/x\t"+homeCommon(t, c)+"/crew\tc1\tsage")
 	_, errOut := c.expectIn(c.outside, 1, "nudge", "--crew", "c1", "feat/x")
 	if !strings.Contains(errOut, "no pane in the window") {
 		t.Fatalf("stderr %q, want the window resolved (no pane in it)", errOut)
@@ -117,7 +117,7 @@ func TestLayout2ConsumersNudgeResolvesWindowOutsideRepo(t *testing.T) {
 	// crew dir, which its own dispatch row for the branch has to name.
 	n := homeCrewCLI(t, false)
 	appendTo(t, n.store("c1")+"/events.jsonl", visitingBranchRow)
-	t.Setenv("TMUX_WINDOWS", "@1\tfeat/x\t/some/clone/crew\tc1\tsage\t"+tmuxServerIdentity)
+	t.Setenv("TMUX_WINDOWS", "@1\tfeat/x\t/some/clone/crew\tc1\tsage")
 	_, errOut = n.expectIn(n.outside, 1, "nudge", "--crew", "c1", "feat/x")
 	if !strings.Contains(errOut, "no pane in the window") {
 		t.Fatalf("null home_repo: stderr %q, want the window resolved (no pane in it)", errOut)
@@ -125,7 +125,8 @@ func TestLayout2ConsumersNudgeResolvesWindowOutsideRepo(t *testing.T) {
 }
 
 // visitingTmux stubs tmux ahead of the PATH one with a window and pane list,
-// like a remote host whose tmux holds the visiting crew's window.
+// like a remote host whose tmux holds the visiting crew's window. It also
+// answers the arm's own display-message read with the server identity.
 func visitingTmux(t *testing.T, windows, panes string) {
 	t.Helper()
 	stubs := t.TempDir()
@@ -133,12 +134,14 @@ func visitingTmux(t *testing.T, windows, panes string) {
 case "$1 $2" in
 "list-windows -a") printf '%s\n' "$TMUX_WINDOWS" ;;
 "list-panes -a") printf '%s\n' "$TMUX_PANES" ;;
+"display-message -p") printf '%s\n' "$TMUX_SERVER" ;;
 esac
 exit 0
 `)
 	t.Setenv("PATH", stubs+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("TMUX_WINDOWS", windows)
 	t.Setenv("TMUX_PANES", panes)
+	t.Setenv("TMUX_SERVER", tmuxServerIdentity)
 }
 
 func TestLayout2ConsumersVisitingCrewWhereAndNudgeOutsideRepo(t *testing.T) {
@@ -146,7 +149,7 @@ func TestLayout2ConsumersVisitingCrewWhereAndNudgeOutsideRepo(t *testing.T) {
 	c := homeCrewCLI(t, false)
 	appendTo(t, c.store("c1")+"/events.jsonl", visitingBranchRow)
 	visitingTmux(t,
-		"@1\tfeat/x\t"+foreign+"\tc1\tsage\tsess\t3\twin\t\t\t"+tmuxServerIdentity+"\n@2\tfeat/x\t"+foreign+"\tother\tmuse\tsess\t4\twin2\t\t\t"+tmuxServerIdentity,
+		"@1\tfeat/x\t"+foreign+"\tc1\tsage\tsess\t3\twin\t\t\n@2\tfeat/x\t"+foreign+"\tother\tmuse\tsess\t4\twin2\t\t",
 		"@1\t%9\tlead\t1\n@2\t%8\tlead\t1")
 
 	out, errOut := c.expectIn(c.outside, 0, "where", "--crew", "c1", "--", "feat/x")
@@ -156,9 +159,7 @@ func TestLayout2ConsumersVisitingCrewWhereAndNudgeOutsideRepo(t *testing.T) {
 
 	// The dispatch row has no status row: reaching that refusal proves the
 	// dispatch-row-bound window match resolved the lead pane. nudge reads the
-	// six-field window format, so the same windows are restated with the identity
-	// last.
-	t.Setenv("TMUX_WINDOWS", "@1\tfeat/x\t"+foreign+"\tc1\tsage\t"+tmuxServerIdentity+"\n@2\tfeat/x\t"+foreign+"\tother\tmuse\t"+tmuxServerIdentity)
+	// same window rows where does.
 	_, errOut = c.expectIn(c.outside, 2, "nudge", "--crew", "c1", "--", "feat/x")
 	if !strings.Contains(errOut, "lead has not posted its first status yet") {
 		t.Fatalf("nudge stderr %q, want the session refusal", errOut)
