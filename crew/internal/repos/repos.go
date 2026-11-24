@@ -73,8 +73,9 @@ func RegistryPath(lookup func(string) string) string {
 var ErrTempRegistry = errors.New("repo is under the system temp dir (set CREW_REGISTRY_ALLOW_TMP=1 to register it anyway)")
 
 // Register adds common to the registry the way dispatch's `_registry_add` does,
-// holding the registry lock so it does not race Prune. Paths under the system
-// temp dir are refused unless $CREW_REGISTRY_ALLOW_TMP is set.
+// waiting up to about a second for the registry lock so it does not race Prune,
+// then appending anyway. Paths under the system temp dir are refused unless
+// $CREW_REGISTRY_ALLOW_TMP is set.
 func Register(registry, common string) error {
 	if os.Getenv("CREW_REGISTRY_ALLOW_TMP") == "" && underTemp(common) {
 		return ErrTempRegistry
