@@ -674,3 +674,38 @@ func TestServedQueueIsEvaluatedOverTheWholeMachine(t *testing.T) {
 		}
 	}
 }
+
+func TestServedQueueShowsAServedHeadAndOnlyServedDemotions(t *testing.T) {
+	f := newQueueFix(t, "alpha")
+	f.repo("gamma", false)
+	f.repo("delta", true)
+	for _, l := range []struct{ id, hold, repo string }{{"lg", "hg", "gamma"}, {"la", "ha", "alpha"}, {"ld", "hd", "delta"}} {
+		dir := f.layout2(l.id, f.tag(l.repo), fleetAddRow(f.ms(500), l.id, l.hold, "feat/"+l.hold, "normal", 1))
+		f.write(filepath.Join(dir, "pid"), livePID+"\n")
+	}
+	f.writeRecord(map[holdKey]dueEntry{
+		{"", "lg", "hg"}: {FirstDue: f.ms(400), Demoted: f.ms(300)},
+		{"", "ld", "hd"}: {FirstDue: f.ms(400), Demoted: f.ms(300)},
+	})
+	demoted := func(d StatusDoc) []string {
+		ids := []string{}
+		for _, x := range d.Queue.Demoted {
+			ids = append(ids, x.ID)
+		}
+		slices.Sort(ids)
+		return ids
+	}
+	if got := demoted(f.status()); !slices.Equal(got, []string{"hd", "hg"}) {
+		t.Fatalf("local demoted = %v, want hd and hg", got)
+	}
+
+	o := f.statusOpts()
+	o.Served = &ServedStatus{Origin: "halo"}
+	d := CollectStatus(t.Context(), StatusRequest{}, os.Stderr, o)
+	if got := demoted(d); !slices.Equal(got, []string{"hd"}) {
+		t.Errorf("served demoted = %v, want only the registered delta's hd", got)
+	}
+	if d.Queue.Head == nil || d.Queue.Head.ID != "ha" || d.Queue.Head.Repo != "acme/alpha" {
+		t.Errorf("served head = %+v, want alpha's ha", d.Queue.Head)
+	}
+}
