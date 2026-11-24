@@ -1123,7 +1123,7 @@ func TestSweepPlanPrintsLabelsAndUnclusteredMarker(t *testing.T) {
 	if !strings.Contains(labelTemplate, `"tags":["<tag>"]`) {
 		t.Errorf("label template = %s", labelTemplate)
 	}
-	if !strings.Contains(out, `  A cluster row may also carry "issue":<number>, "ignore":true or "scope":"harness" in the same row.`) {
+	if !strings.Contains(out, `  A cluster row may also carry "issue":<number>, "ignore":true or "scope":"harness" in the same row; on a non-home repo a harness-scoped "issue" names a noamsto/dispatcher issue.`) {
 		t.Errorf("cluster row note missing:\n%s", out)
 	}
 	if strings.Contains(out, "To bind a finding above") {
@@ -1239,5 +1239,27 @@ func TestSweepBareReopenAfterAReopenPostsNothing(t *testing.T) {
 	}
 	if got := commentFirstLines(iss); !slices.Equal(got, []string{verdictMarker(secondKey, closedAt), verdictMarker(diverseKey, closedAt)}) {
 		t.Errorf("comments = %q", got)
+	}
+}
+
+func TestSweepSameIssueNumberInTwoReposReopensBoth(t *testing.T) {
+	d := newTracker(t)
+	closedAt := rfc(ago(20))
+	d.add(7, "dispatcher issue", "closed", "completed", closedAt)
+	l := nonHome(t, d, "acme/app")
+	l.add(7, "own issue", "closed", "completed", closedAt)
+	events := findingsRow(ago(60), `{"key":"`+diverseKey+`","issue":7,"scope":"harness"}`) +
+		findingsRow(ago(60), `{"key":"`+secondKey+`","match":"pane.*timeout","issue":7}`) +
+		continuingEvents(20) +
+		noteRuns("before2", 21, 5, "other", secondDetail) +
+		noteRuns("after2", 1, 4, "other", secondDetail)
+	paths := fixture(t, events)
+
+	l.applyPlan(paths)
+	if len(d.reopened) != 1 || len(l.reopened) != 1 {
+		t.Fatalf("dispatcher reopened %q, local reopened %q", d.reopened, l.reopened)
+	}
+	if d.find("7").state != "open" || l.find("7").state != "open" {
+		t.Errorf("states: dispatcher %s, local %s", d.find("7").state, l.find("7").state)
 	}
 }
