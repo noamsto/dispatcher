@@ -87,12 +87,25 @@ fi
 [[ -n $crew ]] || crew=${CREW_ID:-}
 [[ -n $crew ]] || exit 0
 
+# A layout-2 crew's log lives under the state root (crew's StateRoot and
+# ValidCrewID); an archived crew is left alone. The repo index is never scanned.
+log=''
+S=${XDG_STATE_HOME:-}
+[[ $S == /* ]] || { S=''; [[ ${HOME:-} != /* ]] || S=$HOME/.local/state; }
+if [[ -n $S && $crew =~ ^[A-Za-z0-9._-]+$ && $crew != -* && $crew != . && $crew != .. ]]; then
+  if [[ -f $S/crew/crews/$crew/meta.json ]]; then
+    log=$S/crew/crews/$crew/events.jsonl
+  elif [[ -f $S/crew/archive/$crew/meta.json ]]; then
+    exit 0
+  fi
+fi
+
 if [[ -z $crew_dir || ! -d $crew_dir ]]; then
   common=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || exit 0
   [[ -n $common ]] || exit 0
   crew_dir=$common/crew
 fi
-log=$crew_dir/events.jsonl
+[[ -n $log ]] || log=$crew_dir/events.jsonl
 [[ -f $log ]] || exit 0
 
 # Cursor key: the id with every character outside the filename-safe set replaced,

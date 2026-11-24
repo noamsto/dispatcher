@@ -157,8 +157,25 @@ common="$(git -C "$cwd" rev-parse --path-format=absolute --git-common-dir 2>/dev
 me="$CREW_WORKER_ID"
 last=""
 log=""
-if [[ -n $crew_id && -n $common ]]; then
-  log="$common/crew/events.jsonl"
+legacy=0
+if [[ -n $crew_id ]]; then
+  # A layout-2 crew's log lives under the state root (crew's StateRoot and
+  # ValidCrewID); an archived crew is left alone. The repo index is never scanned.
+  S=${XDG_STATE_HOME:-}
+  [[ $S == /* ]] || { S=''; [[ ${HOME:-} != /* ]] || S=$HOME/.local/state; }
+  if [[ -n $S && $crew_id =~ ^[A-Za-z0-9._-]+$ && $crew_id != -* && $crew_id != . && $crew_id != .. ]]; then
+    if [[ -f $S/crew/crews/$crew_id/meta.json ]]; then
+      log="$S/crew/crews/$crew_id/events.jsonl"
+    elif [[ -f $S/crew/archive/$crew_id/meta.json ]]; then
+      exit 0
+    fi
+  fi
+  if [[ -z $log && -n $common ]]; then
+    log="$common/crew/events.jsonl"
+    legacy=1
+  fi
+fi
+if [[ -n $log ]]; then
   if [[ -f $log ]]; then
     last="$(jq -r --arg c "$crew_id" --arg m "$me" \
       'select(.crew_id==$c and .kind=="status" and .from==$m) | .body.state' "$log" 2>/dev/null | tail -1 || true)"
@@ -183,7 +200,7 @@ if [[ -n $pane ]] && { [[ $mode == session-end ]] || [[ $silent == 1 ]]; }; then
 fi
 
 if [[ -n $log && $silent == 1 ]]; then
-  mkdir -p "$common/crew"
+  [[ $legacy == 0 ]] || mkdir -p "$common/crew"
   line="$(jq -nc --arg c "$crew_id" --arg m "$me" \
     '{ts:(now*1000|floor), crew_id:$c, from:$m, to:("dispatcher:"+$c), kind:"status", body:{state:"exited"}}')"
   _bus_append "$log" "$line"
