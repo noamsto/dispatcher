@@ -12,11 +12,11 @@
 # and never sees this worker's pr_open/done. Print the exact lane command for the
 # worker's repo when the pane sits elsewhere and that bus is not already being
 # streamed. A layout-2 crew has one log under the state root, readable from any
-# cwd, so the per-repo lane note is false for it and the `crew fleet watch`
-# fallback never reads that store: resolve the crew's own log and go silent for
-# it. `crew stream --status` is the single source of truth for liveness (rc 0
-# alive, 1 stale, 2 dead), so anything but alive means the dispatcher cannot see
-# this worker here. Read-only; must run from the worker repo.
+# cwd, so the lane note is false for it: resolve its log and go silent unless
+# that log is this repo's bus. `crew stream --status` is the single source of
+# truth for liveness (rc 0 alive, 1 stale, 2 dead), so anything but alive means
+# the dispatcher cannot see this worker here. Read-only; must run from the worker
+# repo.
 cross_repo_hint() {
   local worker_common="$1" crew_id="$2" dpane_path dcommon worker_top
   [ -n "${TMUX_PANE:-}" ] || return 0
@@ -26,10 +26,8 @@ cross_repo_hint() {
     dcommon=$(git -C "$dpane_path" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)
   fi
   [ -n "$dcommon" ] && [ "$dcommon" != "$worker_common" ] || return 0
-  # A layout-2 crew has one log under the state root, readable from any cwd, so
-  # the per-repo lane note is false for it and `crew fleet watch` never reads
-  # that store: go silent unless the resolved log is this repo's bus. A failed
-  # resolution keeps today's advisory behaviour (a layout-1 crew still gets it).
+  # A failed resolution keeps the hint: a launcher that cannot resolve the
+  # store registers the crew on this repo's bus, so the lane is real.
   local crew_log
   if crew_log=$(crew where --log --crew "$crew_id" 2>/dev/null); then
     [ "$crew_log" = "$worker_common/crew/events.jsonl" ] || return 0

@@ -106,7 +106,7 @@ func TestRegisterLayout1OutsideARepoIsNotARepo(t *testing.T) {
 func TestRegisterDefaultIsLayout2(t *testing.T) {
 	p := statePaths(t)
 	w := newWorld("c1")
-	delete(w.env, "CREW_LAYOUT") // newWorld pins layout 1 for the corpus; this test wants it unset.
+	delete(w.env, "CREW_LAYOUT") // newWorld pins layout 1 for the corpus
 	if code, stderr := run("register", "888", p, w); code != 0 || stderr != "" {
 		t.Fatalf("code=%d stderr=%q", code, stderr)
 	}
@@ -122,7 +122,7 @@ func TestRegisterDefaultIsLayout2(t *testing.T) {
 func TestRegisterDefaultRefusesWithoutStateRoot(t *testing.T) {
 	p := testPaths(t)
 	w := newWorld("c1")
-	delete(w.env, "CREW_LAYOUT") // newWorld pins layout 1 for the corpus; this test wants it unset.
+	delete(w.env, "CREW_LAYOUT") // newWorld pins layout 1 for the corpus
 	code, stderr := run("register", "888", p, w)
 	if code != 1 || stderr != "crew: register: CREW_LAYOUT=2 needs XDG_STATE_HOME or HOME\n" {
 		t.Fatalf("code=%d stderr=%q", code, stderr)
@@ -135,7 +135,7 @@ func TestRegisterDefaultRefusesWithoutStateRoot(t *testing.T) {
 func TestRegisterDefaultKeepsALegacyCrewLayout1WithoutAStateRoot(t *testing.T) {
 	p := testPaths(t)
 	w := newWorld("c1")
-	delete(w.env, "CREW_LAYOUT") // newWorld pins layout 1 for the corpus; this test wants it unset.
+	delete(w.env, "CREW_LAYOUT") // newWorld pins layout 1 for the corpus
 	seed(t, p, "c1", "777")
 	if code, stderr := run("register", "888", p, w); code != 0 || stderr != "" {
 		t.Fatalf("code=%d stderr=%q", code, stderr)

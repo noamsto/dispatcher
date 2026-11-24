@@ -5835,10 +5835,9 @@ echo "worker_id: $worker_id"
 
 # Cross-repo dispatch (#398, #420): a layout-1 crew's bus is per repo, so print
 # the worker-repo lane command when the dispatcher's pane sits elsewhere and that
-# bus is not being streamed (a layout-2 crew has one log, so the helper stays
-# silent for it). The detection is one sourced helper whose store path flake.nix
-# bakes, shared with dispatch-resume.sh; a raw run without the override skips it
-# rather than aborting under set -e (the hint is advisory).
+# bus is not being streamed. The detection is one sourced helper whose store path
+# flake.nix bakes, shared with dispatch-resume.sh; a raw run without the override
+# skips it rather than aborting under set -e (the hint is advisory).
 hint_lib="${CROSS_REPO_HINT_LIB:-@crossRepoHintLib@}"
 if [ -r "$hint_lib" ]; then
   # shellcheck source=/dev/null

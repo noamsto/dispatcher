@@ -190,9 +190,8 @@ func registerCrew(paths bus.Paths, crew string, o Options) (bus.Crew, error) {
 	case err != nil && !errors.Is(err, bus.ErrNotRepo):
 		return bc, err
 	}
-	// A layout-2 crew is about to be written, so this is where the state root
-	// is actually required: a legacy crew resolved layout 1 above never gets
-	// here, and a repo with no legacy trace is still refused.
+	// Not earlier: a crew with a legacy trace registers at layout 1 above and
+	// needs no state root to do it.
 	if paths.State == "" {
 		return bus.Crew{}, &errCreate{errors.New("CREW_LAYOUT=2 needs XDG_STATE_HOME or HOME")}
 	}
