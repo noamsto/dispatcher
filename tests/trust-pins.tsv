@@ -110,3 +110,6 @@ SB1	adapters/core/dispatch.sh	live_repo="$(_branch_live_elsewhere)" || exit 1	1	
 SB2	adapters/core/dispatch.sh	live_repo="$(_branch_live_elsewhere)" || exit 1	2	live_repo=""	tests/dispatch.bats	^same-branch: a create that loses the race removes its worktree	"$status" -eq 1
 SB3	adapters/core/dispatch.sh	if [ -n "$prev_wt" ]; then	1	if false; then	tests/dispatch.bats	^same-branch: a dispatch onto an existing worktree that loses the race touches nothing	kept: worktree
 SB4	adapters/core/dispatch.sh	elif [ -n "$branch_existed" ]; then	1	elif false; then	tests/dispatch.bats	^same-branch: a name --pr onto an existing local branch that loses the race	kept: branch feat/pr-head (it existed before this dispatch)
+L2A	crew/internal/bus/resolve.go	if isFile(metaPath(ArchiveDir(p.State, id))) {	1	if false {	crew/internal/bus/resolve_test.go	^TestPathsCrewClassification$	crew arch is archived
+L2I	crew/internal/bus/resolve.go	if IndexListed(p.State, id) {	1	if false {	crew/internal/bus/resolve_test.go	^TestPathsCrewClassification$	crew gone is listed in the repo index
+T16	adapters/core/directive-delivery.sh	if [[ -f $S/crew/crews/$crew/meta.json ]]; then	1	if false; then	tests/directive-delivery.bats	^delivery: a directive in a layout-2 crew.s log is delivered, cursor stays in the crew dir	"body":"layout two"

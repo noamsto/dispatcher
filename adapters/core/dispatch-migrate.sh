@@ -168,7 +168,7 @@ scratch="$(mktemp -d)"
 
 # The worker the target names, from the dispatcher's own bus rows.
 rt_rc=0
-row="$(crew resolve-target "$target" 2>"$scratch/resolve.err")" || rt_rc=$?
+row="$(crew resolve-target "$target" ${CREW_ID:+--crew "$CREW_ID"} 2>"$scratch/resolve.err")" || rt_rc=$?
 if [ "$rt_rc" -ne 0 ]; then
   row="$(cat "$scratch/resolve.err")"
   _die 2 "${row#crew: resolve-target: }"

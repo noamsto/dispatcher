@@ -1013,9 +1013,7 @@ EOF
   repo_log="$LBUS"
   LBUS="$XDG_STATE_HOME/crew/crews/c1/events.jsonl"
   start_local_worker
-  # crew resolve-target reads the repo log unless given the crew, so the target
-  # lookup is pointed at c1 here; what this pins is migrate's own reads.
-  crew_intercept "'resolve-target '*" "exec \"\$real\" \"\$@\" --crew c1"
+  export CREW_ID=c1
   SSH_FAIL_MIGRATE=1 DISPATCH_HOST_RECOVER_TRIES=1 DISPATCH_HOST_RECOVER_SLEEP=0 migrate 7 --host mini --now
   [ "$status" -eq 1 ]
   [ -n "$(mark_rows)" ]
