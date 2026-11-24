@@ -364,7 +364,10 @@ func mirrorWindow(raw, branch, crew string) (window, bool) {
 // resume or window row for its branch names its tmux window id, and (a row that
 // recorded one) the identity of this tmux server, which the row's id is unique
 // within: any process on the tmux server can stamp a window with a crew's id, so
-// the stamp alone binds nothing (remote.WindowBound).
+// the stamp alone binds nothing (remote.WindowBound). The format asks for exactly
+// eleven fields, and tmux expands an option value raw, so a value with a tab in it
+// would land in the identity field: a row that is not exactly eleven fields is not
+// this crew's window at all.
 func readWindows(raw string, paths bus.Paths, crew string) ([]window, error) {
 	dir := paths.Dir
 	var events []bus.Event
@@ -377,15 +380,11 @@ func readWindows(raw string, paths bus.Paths, crew string) ([]window, error) {
 	var wins []window
 	for _, line := range strings.Split(raw, "\n") {
 		f := strings.Split(line, "\t")
-		if len(f) < 8 || f[1] == "" {
+		if len(f) != 11 || f[1] == "" {
 			continue
 		}
 		if dir == "" {
-			srv := ""
-			if len(f) > 10 {
-				srv = f[10]
-			}
-			if crew == "" || f[3] != crew || !remote.WindowBound(events, f[1], crew, f[0], f[2], srv) {
+			if crew == "" || f[3] != crew || !remote.WindowBound(events, f[1], crew, f[0], f[2], f[10]) {
 				continue
 			}
 		} else if f[2] != dir {

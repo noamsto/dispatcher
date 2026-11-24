@@ -69,6 +69,9 @@ func TestVisitingCrewWindowIsBoundToItsDispatchRow(t *testing.T) {
 	const srv = "111:222"
 	row := `{"ts":1,"crew_id":"c1","kind":"dispatch","branch":"feat/x","repo":"` + clone + `"}`
 	winRow := `{"ts":2,"crew_id":"c1","kind":"window","branch":"feat/x","repo":"` + clone + `","window_id":"@7","tmux_server":"` + srv + `"}`
+	// shiftRow records the identity the attacker injects into @crew_name below,
+	// for the window id the forged row carries.
+	shiftRow := strings.Replace(winRow, `"window_id":"@7"`, `"window_id":"@9"`, 1)
 	resumeRow := `{"ts":3,"crew_id":"c1","kind":"resume","branch":"feat/x","repo":"` + clone + `","window_id":"@8","tmux_server":"` + srv + `"}`
 	real := "@7\tfeat/x\t" + clone + "/crew\tc1\tlead\t" + srv
 	// A worker of another crew stamps its own window with this crew's id and branch.
@@ -100,6 +103,11 @@ func TestVisitingCrewWindowIsBoundToItsDispatchRow(t *testing.T) {
 		// to somebody else's window.
 		{"a row of another tmux server does not bind", []string{row, strings.Replace(winRow, srv, "999:888", 1)}, real, false, "no live pane"},
 		{"a window on the server the row recorded binds", []string{row, strings.Replace(winRow, srv, "999:888", 1)}, "@7\tfeat/x\t" + clone + "/crew\tc1\tlead\t999:888", true, ""},
+		// tmux expands an option value raw, so a tab in a stamp can put the row's
+		// recorded identity where the parser reads the live one: the forged
+		// window's @crew_name ends in a tab plus the recorded identity, pushing
+		// the real live identity one field later (a tab-shifted identity).
+		{"a tab-shifted identity", []string{row, shiftRow}, "@9\tfeat/x\t" + clone + "/crew\tc1\tevil\t" + srv + "\t999:999", false, "no live pane"},
 		// The rows after a torn line could move the branch to another clone.
 		{"torn log line before a newer row", []string{row, "{\"ts\":", strings.Replace(row, clone, "/moved", 1)}, real, false, "cannot read the crew log"},
 		{"copied stamps beside the real window", []string{row}, copied + "\n" + real, false, "ambiguous branch"},

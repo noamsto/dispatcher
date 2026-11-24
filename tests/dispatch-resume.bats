@@ -97,7 +97,7 @@ new-window) printf '%s %s\n' '%99' '%99' ;;
 display-message)
   case "$*" in
   *'#{session_name}'*) printf '%s\n' "${STUB_SESSION_NAME:-main}" ;;
-  *'#{pid}:#{start_time}'*) printf '%s\n' '4321:8765' ;;
+  *'#{pid}:#{start_time}'*) printf '%s\n' "${STUB_TMUX_SERVER-4321:8765}" ;;
   *) printf '%s\n' '80 24 on' ;;
   esac
   ;;
@@ -1003,7 +1003,7 @@ new-window) printf '%s %s\n' '%99' '%99' ;;
 display-message)
   case "\$*" in
   *'#{pane_pid}'*) printf '%s\n' "\${STUB_PANE_PID:-}" ;;
-  *'#{pid}:#{start_time}'*) printf '%s\n' '4321:8765' ;;
+  *'#{pid}:#{start_time}'*) printf '%s\n' "\${STUB_TMUX_SERVER-4321:8765}" ;;
   *) printf '%s\n' '80 24 on' ;;
   esac
   ;;
@@ -1317,6 +1317,20 @@ _lead_pane() { sed -n 's/^set-option -p -t \([^ ]*\) @crew_model .*/\1/p' "$STUB
   [ "$status" -eq 0 ]
   [ "$(jq -r 'select(.kind == "resume") | .window_id' "$(bus_log)" | tail -1)" = "@98" ]
   [ "$(jq -r 'select(.kind == "resume") | .tmux_server' "$(bus_log)" | tail -1)" = "4321:8765" ]
+}
+
+@test "resume row carries no tmux_server key when the tmux server identity cannot be read" {
+  setup_worker_wt
+  stub_tmux_no_pane
+  # Distinct window and pane ids: the row must carry the window's, not the pane's.
+  sed -i "s/'%99' '%99'/'@98' '%99'/" "$STUB_DIR/tmux"
+  # The identity read returns nothing: the resume row must omit the key entirely.
+  export STUB_TMUX_SERVER=
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 0 ]
+  [ "$(jq -r 'select(.kind == "resume") | .window_id' "$(bus_log)" | tail -1)" = "@98" ]
+  [ "$(jq -r 'select(.kind == "resume") | has("tmux_server")' "$(bus_log)" | tail -1)" = "false" ]
 }
 
 @test "claude resume row carries the repo, the realpath of the common dir" {

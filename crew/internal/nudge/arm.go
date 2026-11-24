@@ -180,10 +180,14 @@ func Run(ctx context.Context, r Request, paths bus.Paths, stdout, stderr io.Writ
 	}
 	var cwins [][]string
 	for _, r := range tsvRows(wins) {
-		if len(r) < 5 || r[1] == "" || r[3] != a.crew {
+		// The format above asks for exactly six fields. tmux expands an option
+		// value into the format output raw, so a value with a tab in it would
+		// land in the identity field; a row that is not exactly the six fields
+		// the format asks for is not this arm's window at all.
+		if len(r) != 6 || r[1] == "" || r[3] != a.crew {
 			continue
 		}
-		if paths.Dir == "" && !remote.WindowBound(events, r[1], a.crew, r[0], r[2], field(r, 5)) || paths.Dir != "" && r[2] != paths.Dir {
+		if paths.Dir == "" && !remote.WindowBound(events, r[1], a.crew, r[0], r[2], r[5]) || paths.Dir != "" && r[2] != paths.Dir {
 			continue
 		}
 		cwins = append(cwins, r)

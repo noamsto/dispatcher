@@ -511,6 +511,12 @@ func TestVisitingCrewWindowIsBoundToItsDispatchRow(t *testing.T) {
 	panes := paneLine("@624", "%204", "lead", "1") + "\n" + paneLine("@700", "%300", "lead", "1")
 	want := `nova — sess:3.1 "win-name" (lead pane)   jump: ! tmux switch-client -t %204` + "\n"
 	real := winLine(clone+"/crew", "@624", "feat/x", "c1", "nova", "sess", "3", "win-name")
+	// tmux expands an option value raw, so a tab in @bridge_crew_id can put the
+	// row's recorded identity where the parser reads the live one: the forged
+	// window carries twelve fields, the recorded identity at index 10 and the
+	// real live identity one field later (a tab-shifted identity).
+	shiftRow := fmt.Sprintf(`{"ts":2,"crew_id":"c1","kind":"window","branch":"feat/x","repo":%q,"window_id":"@700","tmux_server":%q}`, clone, tmuxServer)
+	shifted := strings.Join([]string{"@700", "feat/x", clone + "/crew", "c1", "evil", "sess", "4", "w", "", "evil", tmuxServer, "999:888"}, "\t")
 	for _, tc := range []struct {
 		name  string
 		rows  []string
@@ -537,6 +543,9 @@ func TestVisitingCrewWindowIsBoundToItsDispatchRow(t *testing.T) {
 		// recorded: after a restart the same id can name another branch's window.
 		{"a row of another tmux server binds nothing", []string{row, strings.Replace(winRow, tmuxServer, "999:888", 1)}, real, false, "no live pane"},
 		{"a row of another tmux server beside the live window", []string{row, strings.Replace(winRow, tmuxServer, "999:888", 1)}, real + "\n" + copied, false, "no live pane"},
+		// A tab in an attacker-settable stamp shifts the row's recorded identity
+		// into the identity position, so the live identity lands one field later.
+		{"a tab-shifted identity", []string{row, shiftRow}, shifted, false, ""},
 		// The rows after a torn line could move the branch to another clone.
 		{"torn log line before a newer row", []string{row, "{\"ts\":", strings.ReplaceAll(row, clone, "/moved")}, real, false, "cannot read the crew log"},
 		// Every stamp copied: both windows pass, so neither is guessed.
