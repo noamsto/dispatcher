@@ -447,3 +447,70 @@ func TestFleetStampSinceResolverFailureLeavesNil(t *testing.T) {
 		t.Errorf("Since = %d, want nil", *s)
 	}
 }
+
+func TestFleetStampSinceCachesDirButNotFailures(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "crews", "c2")
+	touchPid(t, dir, time.Unix(1794799900, 0))
+	cfg := baseConfig()
+	cfg.Dirs = NewCrewDirs()
+	r := &FakeRunner{Responses: map[string]FakeResponse{
+		fleetStatusKey:               {Stdout: stampSinceDoc(t, "", "c2")},
+		"crew where --dir --crew c2": {Err: FakeExitError{Code: 3}},
+	}}
+	for range 2 {
+		CollectFleetStatus(context.Background(), r, cfg, FleetViewMaxAge)
+	}
+	if n := whereCalls(r); n != 2 {
+		t.Fatalf("refusal: where called %d times, want 2 (not cached)", n)
+	}
+
+	r.Responses["crew where --dir --crew c2"] = FakeResponse{Stdout: []byte(dir + "\n")}
+	for range 2 {
+		st, _ := CollectFleetStatus(context.Background(), r, cfg, FleetViewMaxAge)
+		if st.Repos[0].Crews[0].Dispatcher.Since == nil {
+			t.Fatal("Since not stamped")
+		}
+	}
+	if n := whereCalls(r); n != 3 {
+		t.Errorf("where called %d times in total, want 3 (one success, then cached)", n)
+	}
+}
+
+func TestScanCrewsReadsLayout2OwnLog(t *testing.T) {
+	root := t.TempDir()
+	common := filepath.Join(root, "repo", ".git")
+	if err := os.MkdirAll(filepath.Join(common, "crew", "crews", "c1"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(root, "state", "c2")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	row := `{"ts":1794800000000,"crew_id":"c2","from":"worker:feat/x#s1","to":"dispatcher:c2","kind":"msg","body":"own"}` + "\n"
+	if err := os.WriteFile(filepath.Join(dir, "events.jsonl"), []byte(row), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	r := &FakeRunner{Responses: map[string]FakeResponse{"crew where --dir --crew c2": {Stdout: []byte(dir + "\n")}}}
+	cfg := baseConfig()
+	cfg.Dirs = NewCrewDirs()
+
+	crews := []CrewRef{{Crew: "c1", Common: common}, {Crew: "c2", Common: common}}
+	d, errs := NewFleetScanners().ScanCrews(context.Background(), r, cfg, crews, 1794800010000)
+	if len(errs) != 0 || len(d) != 1 {
+		t.Fatalf("digests=%v errs=%v, want only the layout-2 crew", d, errs)
+	}
+	if got := d[crews[1].Key()].RecentByCrew["c2"]; len(got) != 1 || got[0].Detail != "own" {
+		t.Errorf("c2 ring = %+v", got)
+	}
+	if n := whereCalls(r); n != 1 {
+		t.Errorf("where called %d times, want 1 (layout 1 crew skips it)", n)
+	}
+
+	if err := os.Remove(filepath.Join(dir, "events.jsonl")); err != nil {
+		t.Fatal(err)
+	}
+	_, errs = NewFleetScanners().ScanCrews(context.Background(), r, cfg, crews, 1794800010000)
+	if errs[crews[1].Key()] == "" {
+		t.Errorf("unreadable own log: errs = %v", errs)
+	}
+}

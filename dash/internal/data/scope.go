@@ -81,7 +81,17 @@ func paneScope(ctx context.Context, r Runner, cfg Config, rows []crewRow) Scope 
 	for _, row := range rows {
 		file := filepath.Join(crewsDir, row.id, "pane")
 		b, err := os.ReadFile(file)
-		if err != nil || !panes[strings.TrimSpace(string(b))] {
+		if err != nil {
+			dir, derr := cfg.Dirs.Resolve(ctx, r, cfg, "/", row.id)
+			if derr != nil {
+				continue
+			}
+			file = filepath.Join(dir, "pane")
+			if b, err = os.ReadFile(file); err != nil {
+				continue
+			}
+		}
+		if !panes[strings.TrimSpace(string(b))] {
 			continue
 		}
 		fi, err := os.Stat(file)

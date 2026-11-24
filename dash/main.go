@@ -550,6 +550,7 @@ func (fc *fleetCollector) stream(ctx context.Context, nowSec int64, emit func(vi
 		st, stErr := data.CollectFleetStatus(ctx, fc.runner, cfg, data.FleetViewMaxAge)
 		sec := data.FleetSection{Status: st}
 		digests, digestErrs := fc.scanners.Scan(view.ActiveCommons(sec), nowMS)
+		crewDigests, crewDigestErrs := fc.scanners.ScanCrews(ctx, fc.runner, cfg, view.ActiveCrews(sec), nowMS)
 
 		// A failed fleet status keeps the last known commons so the watcher
 		// still polls the repos it knew.
@@ -567,6 +568,7 @@ func (fc *fleetCollector) stream(ctx context.Context, nowSec int64, emit func(vi
 		update(func(in *view.FleetInputs) {
 			in.Fleet.Status, in.Fleet.StatusError = st, stErr
 			in.Digests, in.DigestErrs = digests, digestErrs
+			in.CrewDigests, in.CrewDigestErrs = crewDigests, crewDigestErrs
 		}, func(p *view.FleetPending) { p.Status = false })
 	}()
 	go func() {
@@ -708,6 +710,7 @@ func resolveConfig(o opts) data.Config {
 		CrewID:            crewID,
 		CrewIDSource:      crewSource,
 		Pane:              os.Getenv("TMUX_PANE"),
+		Dirs:              data.NewCrewDirs(),
 	}
 }
 

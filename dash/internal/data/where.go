@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 )
 
 // CrewBus is `crew where --json`: where one crew's bus lives. Layout 1 keeps
@@ -63,6 +64,39 @@ func ResolveCrewDir(ctx context.Context, r Runner, cfg Config, dir, id string) (
 	if got == "" {
 		return "", fmt.Errorf("crew where: empty output")
 	}
+	return got, nil
+}
+
+// CrewDirs caches crew where --dir answers for the dash process: a live crew's
+// dir never moves. Failures and refusals are not cached. The zero value and a
+// nil pointer are both usable; nil never caches.
+type CrewDirs struct {
+	mu   sync.Mutex
+	dirs map[string]string
+}
+
+func NewCrewDirs() *CrewDirs { return &CrewDirs{dirs: map[string]string{}} }
+
+// Resolve is ResolveCrewDir through the cache.
+func (c *CrewDirs) Resolve(ctx context.Context, r Runner, cfg Config, dir, id string) (string, error) {
+	if c != nil {
+		c.mu.Lock()
+		got, ok := c.dirs[id]
+		c.mu.Unlock()
+		if ok {
+			return got, nil
+		}
+	}
+	got, err := ResolveCrewDir(ctx, r, cfg, dir, id)
+	if err != nil || c == nil {
+		return got, err
+	}
+	c.mu.Lock()
+	if c.dirs == nil {
+		c.dirs = map[string]string{}
+	}
+	c.dirs[id] = got
+	c.mu.Unlock()
 	return got, nil
 }
 

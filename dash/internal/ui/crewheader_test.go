@@ -135,3 +135,15 @@ func TestCrewHeaderNoRepoWithoutDispatchRows(t *testing.T) {
 		t.Errorf("header should name the crew without a repo:\n%s", out)
 	}
 }
+
+func TestCrewHeaderRepoAppearsAfterLateDispatch(t *testing.T) {
+	asciiProfile(t)
+	m := labelledModel(t, "")
+	if out := stripped(m.View()); strings.Contains(out, "myrepo") {
+		t.Fatalf("label before any dispatch row:\n%s", out)
+	}
+	nm, _ := m.Update(sourceMsg{src: srcBus, apply: func(*data.Snapshot) {}, bus: &data.BusDigest{Repo: "myrepo"}})
+	if out := stripped(nm.(Model).View()); !strings.Contains(out, "crew › myrepo c2 · live") {
+		t.Errorf("header after dispatch row:\n%s", out)
+	}
+}

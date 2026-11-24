@@ -893,3 +893,28 @@ func TestFleetNoRepoGroup(t *testing.T) {
 		}
 	}
 }
+
+func TestCrewDigestPrefersOwnLogForLayout2(t *testing.T) {
+	in := viewtest.FleetInputs()
+	own := data.RecentEvent{TS: 1, Kind: "msg", Detail: "from own log", Crew: "c1"}
+	in.CrewDigests = map[string]data.BusDigest{
+		data.CrewRef{Crew: "c1", Common: "/r/a/.git"}.Key(): {RecentByCrew: map[string][]data.RecentEvent{"c1": {own}}},
+	}
+	a, ok := view.CrewInputs(in, keyA1)
+	if !ok || len(a.Bus.Recent) != 1 || a.Bus.Recent[0].Detail != "from own log" {
+		t.Fatalf("layout 2 crew recent = %+v", a.Bus.Recent)
+	}
+	base, _ := view.CrewInputs(viewtest.FleetInputs(), keyB1)
+	b, _ := view.CrewInputs(in, keyB1)
+	if len(b.Bus.Recent) == 0 || !reflect.DeepEqual(b.Bus.Recent, base.Bus.Recent) {
+		t.Errorf("layout 1 crew digest changed: %+v", b.Bus.Recent)
+	}
+
+	msg := "boom"
+	in.CrewDigestErrs = map[string]string{data.CrewRef{Crew: "c1", Common: "/r/a/.git"}.Key(): msg}
+	in.CrewDigests = nil
+	a, _ = view.CrewInputs(in, keyA1)
+	if a.Bus.Err == nil || *a.Bus.Err != msg {
+		t.Errorf("own log error not surfaced: %+v", a.Bus.Err)
+	}
+}

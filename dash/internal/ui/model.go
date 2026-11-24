@@ -448,6 +448,9 @@ func (m Model) update(msg tea.Msg) (Model, tea.Cmd) {
 		msg.apply(&m.snap)
 		if msg.bus != nil {
 			m.digest = *msg.bus
+			if m.repo == "" {
+				m.repo = m.digest.Repo
+			}
 		}
 		if msg.fleet != nil {
 			m.fleetIn = *msg.fleet

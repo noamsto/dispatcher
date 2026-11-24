@@ -31,6 +31,8 @@ type Config struct {
 	CrewIDSource string
 	// Pane is the dash's own tmux pane ($TMUX_PANE), used to infer the scope.
 	Pane string
+	// Dirs caches crew where --dir lookups; nil disables caching.
+	Dirs *CrewDirs
 }
 
 // Collect runs every read-only source through r concurrently and folds the
@@ -258,7 +260,7 @@ func crewPidSince(ctx context.Context, r Runner, cfg Config, crewsDir, repoDir, 
 			return since
 		}
 	}
-	dir, err := ResolveCrewDir(ctx, r, cfg, repoDir, id)
+	dir, err := cfg.Dirs.Resolve(ctx, r, cfg, repoDir, id)
 	if err != nil {
 		return nil
 	}

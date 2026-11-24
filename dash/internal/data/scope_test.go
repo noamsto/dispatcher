@@ -284,3 +284,39 @@ func TestDispatcherSinceIsPidFileMtime(t *testing.T) {
 		}
 	}
 }
+
+func TestScopePaneResolvesLayout2CrewDir(t *testing.T) {
+	r := scopeRunner(t)
+	paneBus(t, r, nil, nil)
+	dir := filepath.Join(t.TempDir(), "state", "c2")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(dir, "pane")
+	if err := os.WriteFile(file, []byte("%1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(file, time.Unix(1100, 0), time.Unix(1100, 0)); err != nil {
+		t.Fatal(err)
+	}
+	r.Responses["crew where --dir --crew c2"] = FakeResponse{Stdout: []byte(dir + "\n")}
+	r.Responses["crew where --dir --crew c1"] = FakeResponse{Err: FakeExitError{Code: 3}}
+	tmuxPane(r, "", 1000, "%9", "%1")
+	cfg := scopedConfig("%9")
+	cfg.Dirs = NewCrewDirs()
+	for range 2 {
+		sc := CollectRoster(context.Background(), r, cfg).Scope
+		if sc.Crew != "c2" || sc.Source != "pane" {
+			t.Fatalf("Scope = %+v, want c2 via pane", sc)
+		}
+	}
+	c2 := 0
+	for _, c := range r.CallsSnapshot() {
+		if fakeKey(c.Name, c.Args) == "crew where --dir --crew c2" {
+			c2++
+		}
+	}
+	if c2 != 1 {
+		t.Errorf("c2 dir looked up %d times, want 1 (cached)", c2)
+	}
+}

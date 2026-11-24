@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"math"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -339,7 +340,7 @@ func orEmpty[T any](s []T) []T {
 	return s
 }
 
-// FleetScanners keeps one BusScanner per repo common across collects.
+// FleetScanners keeps one BusScanner per bus log path across collects.
 type FleetScanners struct {
 	mu       sync.Mutex
 	scanners map[string]*BusScanner
@@ -352,16 +353,50 @@ func NewFleetScanners() *FleetScanners {
 // Scan folds only the given commons' buses. A repo whose scan fails has an
 // entry in the errors map and none in the digests.
 func (f *FleetScanners) Scan(commons []string, nowMS int64) (map[string]BusDigest, map[string]string) {
+	logs := make(map[string]string, len(commons))
+	for _, common := range commons {
+		logs[common] = filepath.Join(common, "crew", "events.jsonl")
+	}
+	return f.scanLogs(logs, nowMS)
+}
+
+// CrewRef names a crew by id and its home repo's common dir.
+type CrewRef struct{ Crew, Common string }
+
+// Key identifies the crew in ScanCrews results; ids alone may repeat across repos.
+func (c CrewRef) Key() string { return c.Common + "|" + c.Crew }
+
+// ScanCrews folds the own log of every layout-2 crew among crews, keyed by
+// crew id. A crew with a layout-1 dir under its common, or whose dir crew
+// where cannot give, is left to the repo-wide Scan. Results are keyed by Key.
+func (f *FleetScanners) ScanCrews(ctx context.Context, r Runner, cfg Config, crews []CrewRef, nowMS int64) (map[string]BusDigest, map[string]string) {
+	logs := map[string]string{}
+	for _, c := range crews {
+		layout1 := filepath.Join(c.Common, "crew", "crews", c.Crew)
+		if fi, err := os.Stat(layout1); err == nil && fi.IsDir() {
+			continue
+		}
+		dir, err := cfg.Dirs.Resolve(ctx, r, cfg, strings.TrimSuffix(c.Common, "/.git"), c.Crew)
+		if err != nil || dir == layout1 {
+			continue
+		}
+		logs[c.Key()] = filepath.Join(dir, "events.jsonl")
+	}
+	return f.scanLogs(logs, nowMS)
+}
+
+// scanLogs scans each log, returning digests and errors under the caller's key.
+func (f *FleetScanners) scanLogs(logs map[string]string, nowMS int64) (map[string]BusDigest, map[string]string) {
 	digests := map[string]BusDigest{}
 	errs := map[string]string{}
 	var mu sync.Mutex
 	var wg sync.WaitGroup
-	for _, common := range commons {
+	for key, path := range logs {
 		f.mu.Lock()
-		s, ok := f.scanners[common]
+		s, ok := f.scanners[path]
 		if !ok {
-			s = NewBusScanner(filepath.Join(common, "crew", "events.jsonl"))
-			f.scanners[common] = s
+			s = NewBusScanner(path)
+			f.scanners[path] = s
 		}
 		f.mu.Unlock()
 		wg.Add(1)
@@ -371,10 +406,10 @@ func (f *FleetScanners) Scan(commons []string, nowMS int64) (map[string]BusDiges
 			mu.Lock()
 			defer mu.Unlock()
 			if err != nil {
-				errs[common] = err.Error()
+				errs[key] = err.Error()
 				return
 			}
-			digests[common] = d
+			digests[key] = d
 		}()
 	}
 	wg.Wait()
