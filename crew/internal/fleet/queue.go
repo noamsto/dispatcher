@@ -184,15 +184,14 @@ func (c busCache) readLog(path string) ([]bus.Event, string, string) {
 // scanFleet reads the registry's repos, never the walk: the walk's roots are
 // the caller's, and every dispatcher must see the same queue. The live
 // layout-2 crews are read beside them, each under its home repo, and a crew
-// id that is layout 2 is dead in a repo bus. A non-nil scope keeps only the
-// repos it accepts, and the crews homed in them.
-func scanFleet(registry string, getenv func(string) string, read busReader, nowMS int64, stderr io.Writer, scope func(common string) bool) fleetScan {
+// id that is layout 2 is dead in a repo bus.
+func scanFleet(registry string, getenv func(string) string, read busReader, nowMS int64, stderr io.Writer) fleetScan {
 	s := fleetScan{lastRelease: map[string]int64{}, unread: unread{repos: map[string]bool{}, crews: map[crewRef]bool{}}}
 	registered := repos.Registered(registry, getenv)
 	crews := readLayout2(bus.StateRoot(getenv), stderr)
 	groups := groupLayout2(crews, knownCommons(registered))
 	for _, r := range registered {
-		if r.Status != repos.StatusOK || scope != nil && !scope(r.Common) {
+		if r.Status != repos.StatusOK {
 			continue
 		}
 		s.commons = append(s.commons, r.Common)
@@ -204,9 +203,6 @@ func scanFleet(registry string, getenv func(string) string, read busReader, nowM
 		s.addRepo(r.Common, withoutCrews(events, crews), false, nowMS)
 	}
 	for _, common := range slices.Sorted(maps.Keys(groups)) {
-		if scope != nil && !scope(common) {
-			continue
-		}
 		for _, c := range groups[common] {
 			events, _, skip := read(c.log)
 			if skip != "" && skip != string(repos.StatusNoBus) {
@@ -757,7 +753,7 @@ func writeAtomic(path string, data []byte) (err error) {
 // a recording run writes the demotion record.
 func Due(ctx context.Context, common, crew string, record bool, o QueueOptions) (hold.FleetVerdict, error) {
 	now := o.Clock.Now()
-	scan := scanFleet(o.Registry, o.Getenv, readLog, now.UnixMilli(), o.Stderr, nil)
+	scan := scanFleet(o.Registry, o.Getenv, readLog, now.UnixMilli(), o.Stderr)
 	path := duePath(o.Getenv)
 	var v hold.FleetVerdict
 	step := func(rec map[holdKey]dueEntry) map[holdKey]dueEntry { return scan.unread.kept(rec, now.UnixMilli()) }
@@ -848,7 +844,7 @@ func Queue(ctx context.Context, req QueueRequest, stdout, stderr io.Writer, o Qu
 		return ExitError
 	}
 	now := o.Clock.Now()
-	scan := scanFleet(o.Registry, o.Getenv, readLog, now.UnixMilli(), o.Stderr, nil)
+	scan := scanFleet(o.Registry, o.Getenv, readLog, now.UnixMilli(), o.Stderr)
 	if req.Admit > 0 && len(scan.holds) == 0 {
 		return ExitFits
 	}
@@ -959,18 +955,22 @@ func queueTable(rows []queueRow) []byte {
 
 // report is the queue as fleet status shows it: the head and its wait, the
 // demoted holds with their clocks, and every parked hold with its reason.
-func (q *queue) report(rec map[holdKey]dueEntry, names func(string) string) QueueStatus {
+func (q *queue) report(rec map[holdKey]dueEntry, names func(string) string, scope func(common string) bool) QueueStatus {
 	out := QueueStatus{Demoted: []QueueDemote{}, Parked: []QueueParked{}}
 	fresh, demoted := q.split(rec)
-	if len(fresh) > 0 {
+	shown := func(h *queued) bool { return scope == nil || scope(h.common) }
+	if len(fresh) > 0 && shown(fresh[0]) {
 		h := fresh[0]
 		out.Head = &QueueHead{Repo: names(h.common), CrewID: h.crew, ID: h.id, WaitedS: q.waitedS(h)}
 	}
 	for _, h := range demoted {
+		if !shown(h) {
+			continue
+		}
 		out.Demoted = append(out.Demoted, QueueDemote{Repo: names(h.common), CrewID: h.crew, ID: h.id, FirstDue: rec[h.key()].FirstDue, DemotedAt: rec[h.key()].Demoted})
 	}
 	for _, h := range q.holds {
-		if reason := q.parked(h, rec); reason != "" {
+		if reason := q.parked(h, rec); reason != "" && shown(h) {
 			out.Parked = append(out.Parked, QueueParked{Repo: names(h.common), CrewID: h.crew, ID: h.id, Reason: reason})
 		}
 	}

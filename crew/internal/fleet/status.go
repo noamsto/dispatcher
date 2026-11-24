@@ -349,7 +349,8 @@ func collectStatus(ctx context.Context, req StatusRequest, stderr io.Writer, o S
 		busHost = o.Served.Origin
 		found = ServedRepos(o.Registry, o.Getenv, o.Served.Root, stderr, "crew: fleet status")
 	}
-	// A served pull queues only its served repos.
+	// The queue is evaluated over the whole machine; a served pull reports only
+	// the holds of its served repos.
 	var scope func(string) bool
 	if o.Served != nil {
 		scope = servedScope(found)
@@ -362,11 +363,11 @@ func collectStatus(ctx context.Context, req StatusRequest, stderr io.Writer, o S
 	} else {
 		lo := LoadOptions{Getenv: o.Getenv, Registry: o.Registry, Tmux: once, Git: o.Git, Clock: o.Clock, BudgetFile: o.BudgetFile, Cmd: o.Cmd, LocalModels: o.LocalModels, Stderr: stderr}
 		// readLayout2 below notes an unreadable meta.json, so this scan stays quiet.
-		q := newQueue(ctx, QueueOptions{LoadOptions: lo, Proc: o.Proc}, scanFleet(o.Registry, o.Getenv, buses.readLog, nowMS, io.Discard, scope), s, now)
+		q := newQueue(ctx, QueueOptions{LoadOptions: lo, Proc: o.Proc}, scanFleet(o.Registry, o.Getenv, buses.readLog, nowMS, io.Discard), s, now)
 		var rec map[holdKey]dueEntry
 		rec, due = q.advance(readRecord(duePath(o.Getenv)))
 		doc.Machine = &q.load
-		doc.Queue = q.report(rec, repoNamer(ctx, o.Git))
+		doc.Queue = q.report(rec, repoNamer(ctx, o.Git), scope)
 	}
 
 	stamps, _ := once.Run(ctx, "list-windows", "-a", "-F", "#{@crew_id}\x1f#{@crew_dispatcher_host}")

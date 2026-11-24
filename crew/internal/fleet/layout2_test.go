@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -639,5 +640,37 @@ func TestLocalStatusAndQueueListEveryCrew(t *testing.T) {
 	slices.Sort(got)
 	if !slices.Equal(got, []string{"ha", "hb", "hg", "hn"}) {
 		t.Errorf("local queue = %v, want ha, hb, hg and hn", got)
+	}
+}
+
+func TestServedQueueIsEvaluatedOverTheWholeMachine(t *testing.T) {
+	f := newQueueFix(t, "alpha")
+	f.repo("gamma", false)
+	for _, l := range []struct{ id, hold, repo string }{{"lg", "hg", "gamma"}, {"la", "ha", "alpha"}} {
+		ago := int64(900)
+		if l.repo == "alpha" {
+			ago = 90
+		}
+		dir := f.layout2(l.id, f.tag(l.repo), fleetAddRow(f.ms(ago), l.id, l.hold, "feat/"+l.hold, "normal", 1))
+		f.write(filepath.Join(dir, "pid"), livePID+"\n")
+	}
+	local := f.status()
+	if local.Queue.Head == nil || local.Queue.Head.ID != "hg" {
+		t.Fatalf("local head = %+v, want gamma's older hg", local.Queue.Head)
+	}
+
+	o := f.statusOpts()
+	o.Served = &ServedStatus{Origin: "halo"}
+	d := CollectStatus(t.Context(), StatusRequest{}, os.Stderr, o)
+	if d.Queue.Head != nil {
+		t.Errorf("served head = %+v, want none: the machine's head is not served", d.Queue.Head)
+	}
+	if !reflect.DeepEqual(d.Machine, local.Machine) {
+		t.Errorf("served machine = %+v, want the local %+v", d.Machine, local.Machine)
+	}
+	for _, h := range d.crew(t, "la").Holds {
+		if h.Due {
+			t.Errorf("served %s is due while gamma's older hold is ahead", h.ID)
+		}
 	}
 }
