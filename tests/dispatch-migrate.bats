@@ -1006,3 +1006,22 @@ EOF
   grep -qE '^       dispatch migrate <target> --host' <<<"$output"
   grep -qE '^  dispatch migrate \.\.\. ' <<<"$output"
 }
+
+@test "layout 2: dispatch migrate reads its crew's own log — a migrating mark there names the host to retry" {
+  assert_isolated_xdg_state_home
+  (cd "$TEST_REPO" && CREW_ID=c1 CREW_LAYOUT=2 crew register "$$")
+  repo_log="$LBUS"
+  LBUS="$XDG_STATE_HOME/crew/crews/c1/events.jsonl"
+  start_local_worker
+  # crew resolve-target reads the repo log unless given the crew, so the target
+  # lookup is pointed at c1 here; what this pins is migrate's own reads.
+  crew_intercept "'resolve-target '*" "exec \"\$real\" \"\$@\" --crew c1"
+  SSH_FAIL_MIGRATE=1 DISPATCH_HOST_RECOVER_TRIES=1 DISPATCH_HOST_RECOVER_SLEEP=0 migrate 7 --host mini --now
+  [ "$status" -eq 1 ]
+  [ -n "$(mark_rows)" ]
+  [ ! -e "$repo_log" ] || [ -z "$(jq -c 'select(.kind == "dispatch" or (.kind == "status" and .body.source == "migrate"))' "$repo_log")" ]
+
+  migrate 7 --host chromebox --now
+  [ "$status" -eq 2 ]
+  [[ $stderr == *"$BRANCH is marked migrating to host mini — retry: dispatch migrate $BRANCH --host mini"* ]]
+}

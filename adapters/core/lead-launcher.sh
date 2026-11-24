@@ -165,6 +165,7 @@ if [[ $crew_dir != /* || $note != /* ]] || [ -z "$branch" ] || [ -z "$sid" ] ||
   echo "lead-launcher: needs an absolute --crew-dir and --note, --branch, --sid, --prompt, --execute-prompt, --review-prompt, and -- <engine> <args>" >&2
   exit 2
 fi
+crew_log="$(_crew_log "$crew_dir" "${CREW_ID:-}")" || exit 1
 
 # Computed while the pinned PATH is still in effect; `env` itself and the tools
 # the launcher still calls after the launch resolve as before.
@@ -225,7 +226,7 @@ while :; do
   row=$(jq -nc --arg crew "${CREW_ID:-}" --arg branch "$branch" --arg worker "${CREW_WORKER_ID:-}" \
     --arg engine "$engine" --arg stage "$stage" --arg sid "$sid" \
     '{ts:(now*1000|floor), crew_id:$crew, kind:"relaunch", branch:$branch, worker_id:$worker, engine:$engine, stage:$stage, engine_session:$sid}') &&
-    _bus_append "$crew_dir/events.jsonl" "$row" || true
+    _bus_append "$crew_log" "$row" || true
   seams=${seams:+$seams,}$stage
   export CREW_LEAD_SEAMS="$seams"
   case "$stage" in

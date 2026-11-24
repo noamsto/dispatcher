@@ -502,3 +502,40 @@ exit 3'
   [ "$cmd" != bash ]
   [ "$cmd" = "${comm##*/}" ]
 }
+
+@test "lead-launcher: a layout-2 crew's relaunch row lands in its own log, not the repo log" {
+  assert_isolated_xdg_state_home
+  (cd "$TEST_REPO" && CREW_LAYOUT=2 "$CREW_GO_BIN" register "$$")
+  l2_log="$XDG_STATE_HOME/crew/crews/c1/events.jsonl"
+  [ -f "${l2_log%/*}/meta.json" ]
+  # The crew's log resolves for real; every other call keeps the stub.
+  cat >"$STUB_DIR/crew" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >>"$STUB_LOG"
+[ "\${1:-}" != where ] || exec "$CREW_GO_BIN" "\$@"
+exit 0
+EOF
+  chmod +x "$STUB_DIR/crew"
+  _engine_stub claude
+  _body 1 "$(_seam_body execute)"
+  run --separate-stderr run_lead
+  [ "$status" -eq 0 ]
+  [ "$(_launches)" = 2 ]
+  [ "$(grep -c '"kind":"relaunch"' "$l2_log")" -eq 1 ]
+  jq -e --arg sid "$(_sid_of 2)" 'select(.kind == "relaunch") | .stage == "execute" and .engine_session == $sid and .crew_id == "c1"' "$l2_log"
+  [ -z "$(_relaunch_rows)" ]
+}
+
+@test "lead-launcher: a relaunch with a refused crew exits 1 with crew's line before the engine starts" {
+  cat >"$STUB_DIR/crew" <<'EOF'
+#!/usr/bin/env bash
+[ "${1:-}" != where ] || { echo "crew: crew c1 is archived" >&2; exit 3; }
+exit 0
+EOF
+  chmod +x "$STUB_DIR/crew"
+  _engine_stub claude
+  run --separate-stderr run_lead
+  [ "$status" -eq 1 ]
+  [ "$stderr" = "crew: crew c1 is archived" ]
+  [ "$(_launches)" = 0 ]
+}

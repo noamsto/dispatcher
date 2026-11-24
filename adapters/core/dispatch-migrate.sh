@@ -141,7 +141,6 @@ common="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" ||
 # #633: git and crew never run from a worker's worktree.
 _wt_trusted_cwd "$common" || exit 2
 crew_dir="$common/crew"
-events="$crew_dir/events.jsonl"
 
 lock=""
 nudge_pid=""
@@ -179,6 +178,7 @@ branch="$(cut -f1 <<<"$row")"
 row_host="$(cut -f3 <<<"$row")"
 crew_id="$(cut -f4 <<<"$row")"
 [[ $crew_id =~ ^[A-Za-z0-9_-]+$ ]] || _die 2 "the bus names crew '$crew_id' for $branch — not a plain crew id"
+events="$(_crew_log "$crew_dir" "$crew_id")" || exit 1
 _wt_plain_branch_name "$branch" && [[ $branch =~ ^[A-Za-z0-9][A-Za-z0-9._/@+-]*$ ]] ||
   _die 2 "the bus names branch '$branch' — not a plain branch name"
 

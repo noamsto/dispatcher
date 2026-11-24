@@ -26,6 +26,31 @@ _bus_append() {
   printf '%s%s\n' "$p" "$2" | dd bs=1048576 iflag=fullblock status=none >>"$1"
 }
 
+# _crew_log <crew_dir> <crew_id> — print the crew's log: `crew where --log` for
+# an id, "<crew_dir>/events.jsonl" for no id or when the call fails for a
+# non-refusal reason (an older crew binary, a test stub that prints nothing). A
+# refusal (rc 3: archived or index-only id) re-prints crew's line on stderr and
+# returns 1. On rc 3 crew prints nothing on stdout, so the combined capture is
+# its stderr line.
+_crew_log() {
+  local out rc=0
+  if [ -n "$2" ]; then
+    out="$(crew where --log --crew "$2" 2>&1)" || rc=$?
+    if [ "$rc" -eq 3 ]; then
+      printf '%s\n' "$out" >&2
+      return 1
+    fi
+    case "$rc:$out" in
+    0:/*$'\n'*) ;;
+    0:/*)
+      printf '%s\n' "$out"
+      return 0
+      ;;
+    esac
+  fi
+  printf '%s\n' "$1/events.jsonl"
+}
+
 # _pid_alive <pid> — 0 when a process with this pid exists, under any uid.
 # `kill -0 0` signals the caller's own process group and `kill -0 -1`
 # broadcasts, so only a positive integer is a liveness probe. A failed signal
@@ -1373,14 +1398,13 @@ pi_skill_args() {
 # (#249); standard/trivial opus has no in-row rung above it, so the dispatcher
 # re-tiers that failure to deep; and pi deep has none, so a failed deep pi
 # worker is re-dispatched on another engine.
-# _prior_failed_model <branch> <crew_dir> <tier> — prints the model of the
+# _prior_failed_model <branch> <crew_log> <tier> — prints the model of the
 # dispatch that the branch's latest terminal worker status (failed/done/pr_open/migrated)
 # ended, provided that status is `failed` and that dispatch ran at <tier>. The
 # dispatch is the failing worker's own session; a resume-only session falls back
 # to the latest dispatch before the failure. Prints nothing otherwise.
 _prior_failed_model() {
-  local branch="$1" dir="$2" tier="$3" events
-  events="$dir/events.jsonl"
+  local branch="$1" events="$2" tier="$3"
   [ -f "$events" ] || return 0
   jq -r --arg b "$branch" --arg t "$tier" '
     [., inputs] | . as $all
@@ -1398,7 +1422,7 @@ _prior_failed_model() {
   ' "$events" 2>/dev/null || true
 }
 
-# _prior_failed_escalation_available <branch> <crew_dir> — returns 0 if:
+# _prior_failed_escalation_available <branch> <crew_log> — returns 0 if:
 # 1. The branch's latest terminal worker status (failed/done/pr_open/migrated) is
 #    `failed`, AND that worker's session has a matching dispatch or resume
 #    event on the same branch (anti-spoofing), AND
@@ -1406,8 +1430,7 @@ _prior_failed_model() {
 #    dispatch followed the first failure (an unstamped record-only hop or a
 #    same-model retry is an attempt too).
 _prior_failed_escalation_available() {
-  local branch="$1" dir="$2" events
-  events="$dir/events.jsonl"
+  local branch="$1" events="$2"
   [ -f "$events" ] || return 1
   # Check 1: the latest terminal status is a failure posted by a session that
   # was really dispatched (or resumed) on this branch.
