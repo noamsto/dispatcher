@@ -8905,7 +8905,7 @@ EOF
   [ ! -e "$XDG_STATE_HOME/crew/crews/c1/identity.lock" ]
 }
 
-@test "crew_log: no id, a failed or empty crew where, and an absolute path; a refusal returns 1 with crew's line" {
+@test "crew_log: no id, a failed or empty crew where, and an absolute path; a refusal returns 1 with crew's line passed through" {
   run bash -c '
     . "$1"; calls="$2/calls"
     crew() { printf "%s\n" "$*" >>"$calls"; case "$CASE" in
@@ -8920,10 +8920,10 @@ EOF
   [ "$status" -eq 0 ]
   [ "$output" = "$(printf '%s\n' empty=/r/.git/crew/events.jsonl fail=/r/.git/crew/events.jsonl path=/state/crew/crews/c1/events.jsonl relative=/r/.git/crew/events.jsonl noted=/state/crew/crews/c1/events.jsonl noid=/r/.git/crew/events.jsonl 'refuse rc=1 crew: crew c1 is archived')" ]
   [ "$(cat "$BATS_TEST_TMPDIR/err-empty")" = "crew where --log --crew c1 gave no log (rc 0) — using /r/.git/crew/events.jsonl" ]
-  [ "$(cat "$BATS_TEST_TMPDIR/err-fail")" = "crew where --log --crew c1 gave no log (rc 1) — using /r/.git/crew/events.jsonl" ]
+  [ "$(cat "$BATS_TEST_TMPDIR/err-fail")" = "$(printf '%s\n' 'crew: no such subcommand' 'crew where --log --crew c1 gave no log (rc 1) — using /r/.git/crew/events.jsonl')" ]
   [ "$(cat "$BATS_TEST_TMPDIR/err-relative")" = "crew where --log --crew c1 gave no log (rc 0) — using /r/.git/crew/events.jsonl" ]
   [ ! -s "$BATS_TEST_TMPDIR/err-path" ]
-  [ ! -s "$BATS_TEST_TMPDIR/err-noted" ]
+  [ "$(cat "$BATS_TEST_TMPDIR/err-noted")" = "crew: note" ]
   [ "$(grep -c . "$BATS_TEST_TMPDIR/calls")" -eq 6 ]
   [ "$(sort -u "$BATS_TEST_TMPDIR/calls")" = "where --log --crew c1" ]
 }
@@ -17249,10 +17249,13 @@ _fs_assert_three_launches() {
   _replay_lead_launch_env "--engine claude"
   _fs_assert_three_launches claude claude
   # The relaunches keep the claim and the one pane: no claim or release row, and
-  # no tmux, gh or crew call.
+  # no tmux, gh or crew call beyond the read-only lookup of the crew's log.
   [ "$(cat "$XDG_DATA_HOME"/crew/claims/*/*)" = "$claims" ]
   [ "$(jq -c 'select(.kind != "relaunch")' "$(_fs_crew_dir)/events.jsonl")" = "$bus" ]
-  cmp "$BATS_TEST_TMPDIR/stub.log.before" "$STUB_LOG"
+  before_lines="$(wc -l <"$BATS_TEST_TMPDIR/stub.log.before")"
+  cmp "$BATS_TEST_TMPDIR/stub.log.before" <(head -n "$before_lines" "$STUB_LOG")
+  extra="$(tail -n +"$((before_lines + 1))" "$STUB_LOG" | grep -vxF -- 'where --log --crew c1' || true)"
+  [ -z "$extra" ] || { printf 'unexpected calls after the relaunch:\n%s\n' "$extra" >&2; false; }
   [ "$(grep -c '^new-window' "$STUB_LOG")" -eq 1 ]
   [[ "$(cat "$STUB_DIR/last.2")" == *"You lead a role grid"* ]]
   [[ "$(cat "$STUB_DIR/last.2")" != *"Process authority"* ]]

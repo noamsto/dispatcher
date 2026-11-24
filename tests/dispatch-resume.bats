@@ -403,7 +403,7 @@ EOF
   run ! grep -q 'send-keys' "$STUB_LOG"
 }
 
-@test "resume accepts any header crew id against a four-line anchor" {
+@test "resume accepts a layout-1 header crew id against a four-line anchor" {
   setup_worker_wt
   [ "$(wc -l <"$(anchor_path_for "$WT")")" -eq 4 ]
   sed -i 's/^crew_id: c1$/crew_id: c2/' "$WT/WORKER_TASK.md"
@@ -4289,14 +4289,30 @@ STUB
 # Layout 2: a crew registered with CREW_LAYOUT=2 keeps its log under the suite's
 # temp state root; resume reads and writes it there.
 
-# _l2_register — register c1 at layout 2 with the real crew, from the test repo.
+# _l2_register [four-line] — register c1 at layout 2 with the real crew, from the
+# test repo, and record c1 as the worktree's anchor crew id unless "four-line".
 _l2_register() {
   assert_isolated_xdg_state_home
+  [ "${1:-}" = four-line ] || printf 'c1\n' >>"$(anchor_path_for "$WT")"
   (cd "$TEST_REPO" && CREW_ID=c1 CREW_LAYOUT=2 "$CREW_REAL" register "$$")
   [ -f "$XDG_STATE_HOME/crew/crews/c1/meta.json" ]
 }
 
 _l2_log() { printf '%s/crew/crews/c1/events.jsonl' "$XDG_STATE_HOME"; }
+
+@test "layout: a four-line anchor refuses a header crew id naming a layout-2 crew" {
+  setup_worker_wt
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  _l2_register four-line
+  [ "$(wc -l <"$(anchor_path_for "$WT")")" -eq 4 ]
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"crew id (c1) does not match the dispatcher's record (a layout-1 crew)"* ]]
+  run ! grep -q 'send-keys' "$STUB_LOG"
+  [ ! -e "$(_l2_log)" ] || run ! jq -e 'select(.kind == "resume")' "$(_l2_log)"
+  [ ! -e "$TEST_REPO/.git/crew/events.jsonl" ] || run ! jq -e 'select(.kind == "resume")' "$TEST_REPO/.git/crew/events.jsonl"
+}
 
 @test "layout: a layout-2 crew's resume row lands in its own log, not the repo log" {
   setup_worker_wt

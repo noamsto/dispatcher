@@ -290,11 +290,20 @@ ROWS
 }
 
 @test "crewLayout must be 1 or 2" {
-  for bad in '3' '"2"' 'true'; do
+  for bad in '3' '"2"' 'true' '2.0' '1.0'; do
     user_settings "{\"crewLayout\":$bad}"
     run --separate-stderr "$CONFIG"
     [ "$status" -eq 1 ]
     [[ "$stderr" == *"crewLayout must be 1 or 2"* ]]
+  done
+}
+
+@test "crewLayout accepts 1 and 2" {
+  for good in 1 2; do
+    user_settings "{\"crewLayout\":$good}"
+    run --separate-stderr "$CONFIG"
+    [ "$status" -eq 0 ]
+    jq -e ".crewLayout == $good" <<<"$output"
   done
 }
 

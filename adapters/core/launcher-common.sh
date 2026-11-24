@@ -28,19 +28,13 @@ _bus_append() {
 
 # _crew_log <crew_dir> <crew_id> — print the crew's log: `crew where --log` for
 # an id, "<crew_dir>/events.jsonl" for no id or when the call fails for a
-# reason other than a refusal. A refusal (rc 3: archived or index-only id)
-# re-prints crew's stderr and returns 1.
+# reason other than a refusal. A refusal (rc 3: archived or index-only id) has
+# already printed crew's reason and returns 1.
 _crew_log() {
-  local out err rc=0
+  local out rc=0
   if [ -n "$2" ]; then
-    err="$(mktemp)"
-    out="$(crew where --log --crew "$2" 2>"$err")" || rc=$?
-    if [ "$rc" -eq 3 ]; then
-      cat -- "$err" >&2
-      rm -f -- "$err"
-      return 1
-    fi
-    rm -f -- "$err"
+    out="$(crew where --log --crew "$2")" || rc=$?
+    [ "$rc" -ne 3 ] || return 1
     case "$rc:$out" in
     0:/*$'\n'*) ;;
     0:/*)

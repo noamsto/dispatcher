@@ -304,20 +304,13 @@ _require_plain_crew_id() {
 # _resolve_crew_dir [<common>] — set crew_dir to crew $CREW_ID's per-crew dir
 # and crew_dir_v2 to 1 when it is a layout-2 dir: `crew where --dir`, else the
 # legacy "<common>/crew/crews/$CREW_ID" (empty without <common>) when the call
-# fails for a reason other than a refusal. Returns 1 after re-printing crew's
-# stderr when it refuses the id (rc 3).
+# fails for a reason other than a refusal. Returns 1 when crew refuses the id
+# (rc 3), having printed its reason.
 _resolve_crew_dir() {
-  local out err_file rc=0 legacy=""
+  local out rc=0 legacy=""
   [ -z "${1:-}" ] || legacy="$1/crew/crews/$CREW_ID"
-  err_file=$(mktemp)
-  out="$(crew where --dir --crew "$CREW_ID" 2>"$err_file")" || rc=$?
-  if [ "$rc" -eq 3 ]; then
-    cat -- "$err_file" >&2
-    rm -f -- "$err_file"
-    return 1
-  fi
-  [ "$rc" -eq 0 ] || cat -- "$err_file" >&2
-  rm -f -- "$err_file"
+  out="$(crew where --dir --crew "$CREW_ID")" || rc=$?
+  [ "$rc" -ne 3 ] || return 1
   crew_dir=$legacy
   crew_dir_v2=0
   case "$rc:$out" in

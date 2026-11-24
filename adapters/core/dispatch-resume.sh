@@ -489,9 +489,11 @@ mcp_profile="${mcp_flag_val:-$(_hdr mcp)}"
 tier="$(_hdr tier)"
 crew_id="$(_hdr crew_id)"
 # The header crew id picks the log, so it must match the anchor's; anchors
-# written before crew ids were recorded have four lines.
+# written before crew ids were recorded have four lines and only ever named a
+# layout-1 crew, so they cannot select a layout-2 log.
 [ -z "${_anchor_lines[4]:-}" ] || [ "${_anchor_lines[4]}" = "$crew_id" ] || _anchor_mismatch "crew id" "$crew_id" "${_anchor_lines[4]}"
 crew_log="$(_crew_log "$crew_dir" "$crew_id")" || exit 1
+[ -n "${_anchor_lines[4]:-}" ] || [ "$crew_log" = "$crew_dir/events.jsonl" ] || _anchor_mismatch "crew id" "$crew_id" "a layout-1 crew"
 # Stamped at dispatch only when the owning dispatcher is on another host.
 dispatcher_host="$(_hdr dispatcher_host)"
 [[ -z $dispatcher_host || $dispatcher_host =~ ^[A-Za-z0-9][A-Za-z0-9_-]*$ ]] || dispatcher_host=""

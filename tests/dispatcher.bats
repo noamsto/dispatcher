@@ -3466,6 +3466,7 @@ STUB
   [ "$status" -eq 0 ]
   [ "$(cat "$STUB_DIR/handoff-dir")" = "$XDG_STATE_HOME/crew/crews/c-noisy/handoff" ]
   [ -s "$XDG_STATE_HOME/crew/crews/c-noisy/launch" ]
+  [[ "$stderr" == *"crew: note on stderr"* ]]
 }
 
 @test "1747: --spawn follows a launcher that registers at layout 2 into the crew state dir" {

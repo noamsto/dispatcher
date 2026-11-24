@@ -681,7 +681,7 @@ printf '%s\n' "$base" "$user" "$locked" "$env_layer" | jq -n --argjson show_orig
   | need(["workerDeniedMcpServers"]; "an array of MCP server names (letters, digits, \"_\", \"-\")"; string_array and all(.[]; test("^[A-Za-z0-9_-]+$")))
   | need(["dispatcherChrome"]; "a boolean"; type == "boolean")
   | need(["freshSeams"]; "a boolean"; type == "boolean")
-  | need(["crewLayout"]; "1 or 2"; . == 1 or . == 2)
+  | need(["crewLayout"]; "1 or 2"; type == "number" and (tostring | IN("1", "2")))
   | need(["dashTailscale"]; "a boolean"; type == "boolean")
   | need(["dashAutoOpen"]; "a boolean"; type == "boolean")
   | need(["dashPlacement"]; "\"side\" or \"float\""; . == "side" or . == "float")
