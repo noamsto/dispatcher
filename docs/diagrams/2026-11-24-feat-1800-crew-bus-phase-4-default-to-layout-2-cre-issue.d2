@@ -7,7 +7,7 @@ legacy: "register.go:208 legacy()\nlegacy dir / homes / log rows"
 resolve: "resolve.go:57 Paths.Crew\nstate meta -> 2, else 1"
 
 l1: "layout-1 store\n<common>/crew/crews/<id>/" {shape: cylinder}
-l2: "layout-2 store\n$S/crew/crews/<id>/\nmeta.json + events.jsonl" {shape: cylinder}
+l2: "layout-2 store\n\$S/crew/crews/<id>/\nmeta.json + events.jsonl" {shape: cylinder}
 
 gate: "crew crews --legacy\n(phase 6 gate)" {style.stroke-dash: 4}
 proto: "DISPATCHER_PROTOCOL.md:167\n\"The bus is per repo.\"\ncommands/dispatcher.md:29 .git/crew/crews/" {style.stroke-dash: 4}
