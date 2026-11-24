@@ -85,7 +85,7 @@ anything.
 ```bash
 crew roster                  # who is working, on what, how long (`answered`: blocked, dispatcher replied, not yet resumed)
 crew fleet                   # every live worker across all repos (--all: stale rows too)
-crew fleet stream --crew <id>  # one lane for a crew whose workers span repos
+crew fleet stream --crew <id>  # one lane for a layout-1 crew whose workers span repos (layout-2 crews are skipped: use `crew stream --crew <id>`)
 crew fleet status --json --gh  # cold start: dispatchers, blocked workers, PRs, holds, load
 crew status <from> <state>   # worker → dispatcher progress
 crew watch --states blocked  # block until something needs you

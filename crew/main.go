@@ -538,7 +538,8 @@ func repoOptional(p crewArgs) bool {
 
 // stateOnly reports whether a call may run outside a repo because it needs no
 // repo path: remote-run in crew scope, and relay or dispatch-row naming a
-// layout-2 crew under the state root.
+// layout-2 crew under the state root. reply, merge, watch, stream, nudge and
+// hold due qualify the same way.
 func stateOnly(p crewArgs, state string) bool {
 	var crew *string
 	switch p.sub {
@@ -548,6 +549,21 @@ func stateOnly(p crewArgs, state string) bool {
 		crew = p.typed.Relay.Crew
 	case "dispatch-row":
 		crew = p.typed.DispatchRow.Crew
+	case "reply":
+		crew = p.typed.Reply.Crew
+	case "merge":
+		crew = p.typed.Merge.Crew
+	case "watch":
+		crew = p.typed.Watch.Crew
+	case "stream":
+		crew = p.typed.Stream.Crew
+	case "nudge":
+		crew = p.typed.Nudge.Crew
+	case "hold":
+		if p.cmd != "hold due" {
+			return false
+		}
+		crew = p.typed.Hold.Due.Crew
 	default:
 		return false
 	}
@@ -556,6 +572,20 @@ func stateOnly(p crewArgs, state string) bool {
 	}
 	bc, err := bus.StatePaths(state).Crew(*crew)
 	return err == nil && bc.Layout == 2
+}
+
+// homePaths is the bus of the repo a layout-2 crew was registered in, resolving
+// crews under state, so a call outside any repo sees the same paths the crew's
+// dispatch stamped. It errors when the crew has no home repo.
+func homePaths(state, crew string) (bus.Paths, error) {
+	m, err := bus.ReadMeta(state, crew)
+	if err != nil {
+		return bus.Paths{}, err
+	}
+	if m.HomeRepo == nil {
+		return bus.Paths{}, fmt.Errorf("crew %s has no home repo", crew)
+	}
+	return bus.PathsFor(*m.HomeRepo).WithState(state), nil
 }
 
 // runIndexAdd is `crew index add --crew <id>`: it lists a layout-2 crew in this
@@ -871,6 +901,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 	}
 
 	paths, err := bus.Locate(ctx, cwd)
+	located := err == nil
 	if err != nil {
 		// register reaches its arm even with no state root, so CREW_LAYOUT=2
 		// refuses in its own words.
@@ -884,6 +915,42 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 
 	if parsed.refusal != nil {
 		return refuse(stderr, parsed.refusal)
+	}
+
+	// Outside a repo these run against the crew's home repo, so gh, the window
+	// scan and the fleet holds see what they see from inside it.
+	var home bus.Paths
+	if !located && stateOnly(parsed, paths.State) {
+		var crew string
+		switch sub {
+		case "reply":
+			crew = str(parsed.typed.Reply.Crew)
+		case "merge":
+			crew = str(parsed.typed.Merge.Crew)
+		case "nudge":
+			crew = str(parsed.typed.Nudge.Crew)
+		case "hold":
+			crew = str(parsed.typed.Hold.Due.Crew)
+		}
+		if crew != "" {
+			var herr error
+			home, herr = homePaths(paths.State, crew)
+			if herr != nil && sub != "reply" && sub != "hold" {
+				say(stderr, "crew: %s: %v\n", sub, herr)
+				return exitFailure
+			}
+			switch {
+			case herr != nil:
+			case sub == "merge":
+				if err := os.Chdir(home.Common); err != nil {
+					say(stderr, "crew: merge: %v\n", err)
+					return exitFailure
+				}
+				cwd, paths = home.Common, home
+			case sub == "nudge" || sub == "hold":
+				paths = home
+			}
+		}
 	}
 
 	// reap prints its lines as it goes and runs the ratings sweep as a detached
@@ -1193,7 +1260,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 			Proc:   e.proc,
 			Sender: senderProbes(e.proc),
 			Remote: func(host, crew string, argv []string) int {
-				return remoteAs(ctx, e, cwd, crew)(host, argv, stdout, stderr)
+				return remoteAs(ctx, e, cmp.Or(home.Common, cwd), crew)(host, argv, stdout, stderr)
 			},
 			Nudge: reply.DetachedNudge(),
 		})

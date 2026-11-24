@@ -160,6 +160,9 @@ func Run(r Request, paths bus.Paths, stdout, stderr io.Writer, opts Options) int
 		say(stderr, "%s\n", badCrewMsg)
 		return exitUsage
 	}
+	if paths.Common == "" {
+		c.reapEvery = 0
+	}
 	cdir := bc.Dir
 	if err := os.MkdirAll(cdir, 0o755); err != nil {
 		say(stderr, "crew: %v\n", err)

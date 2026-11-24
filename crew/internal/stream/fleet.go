@@ -165,6 +165,12 @@ func RunFleet(r FleetRequest, stdout, stderr io.Writer, opts FleetOptions) int {
 		say(stderr, "%s\n", msg)
 		return exitUsage
 	}
+	if state := bus.StateRoot(o.Getenv); state != "" {
+		if bc, err := bus.StatePaths(state).Crew(c.crew); err == nil && bc.Layout == 2 {
+			say(stderr, "crew: fleet stream: crew %s is layout 2 — skipped; run crew stream --crew %s\n", c.crew, c.crew)
+			return 0
+		}
+	}
 	c.reapEvery = 0
 
 	// Each bus loop's child runs in its repo's git common dir, so a relative
