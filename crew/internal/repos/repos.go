@@ -20,6 +20,9 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/lock"
 )
 
+// NoRepoLabel is the label fleet shows for a crew with no home repo.
+const NoRepoLabel = "(no repo)"
+
 // Status says whether a discovered candidate can be read as a bus.
 type Status string
 

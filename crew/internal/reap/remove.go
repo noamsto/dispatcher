@@ -45,6 +45,21 @@ func (r *run) remove(ctx context.Context, c *candidate) (removed bool, code int)
 		return false, 0
 	}
 
+	// A layout-2 branch's windows are checked on the very list killed below,
+	// before anything is moved.
+	var wins []string
+	crew, l2, why := r.l2Owner(c.branch)
+	if why != "" {
+		r.keep(c, "layout-2 row not validated: "+why)
+		return false, 0
+	}
+	if l2 {
+		wins = worktreeWindows(ctx, r.p.Tmux, c.wtpath)
+		if why, ok := stampedCrew(ctx, r.p.Tmux, wins, crew); !ok {
+			r.keep(c, "layout-2 row not validated: "+why)
+			return false, 0
+		}
+	}
 	// The re-check below treats any status line as dirt, so the scaffold must
 	// also move out physically. --discard's patch already holds it, and its
 	// re-check compares against the status saved with it, so it stays put; so
@@ -52,7 +67,13 @@ func (r *run) remove(ctx context.Context, c *candidate) (removed bool, code int)
 	if r.discard == "" && !c.markTree {
 		r.trashScaffold(ctx, c)
 	}
-	killWindows(ctx, r.p.Tmux, c.wtpath)
+	if l2 {
+		for _, w := range wins {
+			_, _ = r.p.Tmux.Run(ctx, "kill-window", "-t", w)
+		}
+	} else {
+		killWindows(ctx, r.p.Tmux, c.wtpath)
+	}
 	// Remove anchored (#677): --git-dir=<common> discovers nothing through the
 	// tree's worker-writable .git, and --force skips git's clean-check child.
 	// The re-checks just before it are the keep gates.
@@ -456,7 +477,7 @@ func (r *run) deleteOriginBranch(ctx context.Context, c *candidate) {
 // origin, "" when the row has none or it is not a full object id. Resume rows
 // never push, so they must not mask the create row.
 func (r *run) pushedOID(branch string) string {
-	raws, err := readRaws(r.paths.Log)
+	raws, err := r.repoRaws()
 	if err != nil {
 		return ""
 	}

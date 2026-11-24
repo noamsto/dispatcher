@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 
+	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/fleet"
 	"github.com/noamsto/dispatcher/crew/internal/sender"
 	"github.com/noamsto/dispatcher/crew/internal/status"
@@ -58,13 +59,9 @@ func RunDeliver(ctx context.Context, req DeliverRequest, stdout, stderr io.Write
 	if err != nil {
 		return refuseFar(stdout, stderr, refusedRoot, "overseer root: %v", err)
 	}
-	common, reason := findBus(ctx, req.Repo, fleet.ServedRepos(o.Registry, o.Getenv, root, stderr, "crew: overseer deliver"), o)
+	paths, code, reason := deliverBus(ctx, req, root, stderr, o)
 	if reason != "" {
-		return refuseFar(stdout, stderr, refusedRepo, "%s", reason)
-	}
-	paths, reason := onBus(common, req.Crew)
-	if reason != "" {
-		return refuseFar(stdout, stderr, refusedCrew, "%s", reason)
+		return refuseFar(stdout, stderr, code, "%s", reason)
 	}
 	ts, rc := status.RunOverseerRelay(ctx, status.OverseerMsgRequest{Self: req.Origin, Crew: req.Crew, Body: req.Body}, paths, stderr, status.Options{Clock: o.Clock, Sender: o.Sender})
 	if rc != 0 {
@@ -74,6 +71,28 @@ func RunDeliver(ctx context.Context, req DeliverRequest, stdout, stderr io.Write
 	return emit(stdout, stderr, "deliver", struct {
 		TS int64 `json:"ts"`
 	}{ts})
+}
+
+// deliverBus is the bus of req.Crew on req.Repo, else the refusal code and reason.
+func deliverBus(ctx context.Context, req DeliverRequest, root string, stderr io.Writer, o Options) (bus.Paths, farRefusal, string) {
+	if paths, m, reason, ok := layout2Crew(o, req.Crew); ok {
+		if reason != "" {
+			return bus.Paths{}, refusedCrew, reason
+		}
+		if reason := homeMismatch(ctx, req.Repo, req.Crew, m, o); reason != "" {
+			return bus.Paths{}, refusedRepo, reason
+		}
+		return paths, "", ""
+	}
+	common, reason := findBus(ctx, req.Repo, fleet.ServedRepos(o.Registry, o.Getenv, root, stderr, "crew: overseer deliver"), o)
+	if reason != "" {
+		return bus.Paths{}, refusedRepo, reason
+	}
+	paths, reason := onBus(common, req.Crew)
+	if reason != "" {
+		return bus.Paths{}, refusedCrew, reason
+	}
+	return paths, "", ""
 }
 
 // refusal is a refusing deliver's answer on stdout.

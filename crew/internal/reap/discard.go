@@ -38,6 +38,10 @@ func (r *run) discardBranch(ctx context.Context) int {
 		return r.refuse("no worktree for it")
 	}
 	c.wtpath = wt
+	// The windows are checked in remove, on the list it kills.
+	if why, ok := r.l2Check(ctx, c.branch, wt, nil); !ok {
+		return r.refuse("layout-2 row not validated: " + why)
+	}
 	rows, err := r.latest(c.branch)
 	if err != nil {
 		return r.refuse("could not read the bus")

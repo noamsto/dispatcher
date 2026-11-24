@@ -49,11 +49,35 @@ func readRaws(log string) ([]any, error) {
 	if err != nil {
 		return nil, err
 	}
+	return eventRaws(events), nil
+}
+
+// repoRaws is readRaws over the repo's rows: its log (missing reads as none)
+// merged with its layout-2 crews' rows.
+func (r *run) repoRaws() ([]any, error) {
+	events, err := r.repoEvents()
+	if err != nil {
+		return nil, err
+	}
+	return eventRaws(events), nil
+}
+
+// repoEvents is bus.ReadRepoEvents, noting the layout-2 owners it saw.
+func (r *run) repoEvents() ([]bus.Event, error) {
+	rows, err := bus.ReadRepoRows(r.paths)
+	if err != nil {
+		return nil, err
+	}
+	r.noteSeen(rows.Crews)
+	return rows.Events, nil
+}
+
+func eventRaws(events []bus.Event) []any {
 	raws := make([]any, len(events))
 	for i, ev := range events {
 		raws[i] = ev.Doc
 	}
-	return raws, nil
+	return raws
 }
 
 func (r *run) nowSec() float64 {
@@ -63,7 +87,7 @@ func (r *run) nowSec() float64 {
 // latest is `_reap_latest [branch]`. The error is the bus read's (map it
 // through bus.JQFailure) or the program's.
 func (r *run) latest(only string) ([]latestRow, error) {
-	raws, err := readRaws(r.paths.Log)
+	raws, err := r.repoRaws()
 	if err != nil {
 		return nil, err
 	}
@@ -86,7 +110,7 @@ func (r *run) latest(only string) ([]latestRow, error) {
 // or program failure is no rows — the arm's heredoc `$(jq …)` never tripped
 // `set -e`.
 func (r *run) idleRows() [][]string {
-	raws, err := readRaws(r.paths.Log)
+	raws, err := r.repoRaws()
 	if err != nil {
 		return nil
 	}
@@ -103,7 +127,7 @@ func (r *run) idleRows() [][]string {
 // claimed is the claimed-issue fold's `$(jq -s -r …)` text: the branch's
 // claimed issues, one per line.
 func (r *run) claimed(branch string) (string, error) {
-	raws, err := readRaws(r.paths.Log)
+	raws, err := r.repoRaws()
 	if err != nil {
 		return "", err
 	}
@@ -122,7 +146,7 @@ func (r *run) postedSince(branch, ts string) bool {
 	if err != nil {
 		return true
 	}
-	raws, err := readRaws(r.paths.Log)
+	raws, err := r.repoRaws()
 	if err != nil {
 		return true
 	}

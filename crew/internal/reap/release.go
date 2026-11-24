@@ -38,7 +38,10 @@ type Deps struct {
 	Say, Note func(string)
 	// Keep, when set, also receives each keep's branch and reason.
 	Keep func(branch, why string)
-	P    Probes
+	// Check, when set, vets the windows about to be released; false keeps
+	// them all, with why.
+	Check func(branch, wt string, windows []string) (string, bool)
+	P     Probes
 }
 
 func (d Deps) keep(branch, why string) {
@@ -80,6 +83,12 @@ func ReleaseWindows(ctx context.Context, d Deps, branch, session, state string, 
 	windows := make([]string, len(occ))
 	for i, o := range occ {
 		windows[i] = o.Window
+	}
+	if d.Check != nil {
+		if why, ok := d.Check(branch, wt, windows); !ok {
+			d.keep(branch, "layout-2 row not validated: "+why)
+			return 0, nil
+		}
 	}
 	if why, ok := humanPresent(ctx, d.P, windows, wt, tsMS, grace); ok {
 		d.keep(branch, "human present: "+why)

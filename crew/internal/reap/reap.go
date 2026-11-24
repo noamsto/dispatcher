@@ -63,6 +63,9 @@ type run struct {
 	docs      []map[string]any
 	staleRecs map[string]staleRec
 	staleNow  map[string]bool
+	// l2Seen is each branch's first layout-2 owner any read this run saw; the
+	// gate refuses a branch whose claim has since vanished or changed crew.
+	l2Seen map[string]string
 }
 
 // Run is crew.sh's `reap)` arm: reclaim the window and worktree of workers
@@ -97,7 +100,10 @@ func Run(ctx context.Context, req Request, paths bus.Paths, cwd string, stdout, 
 	r.trusted = dir
 	// Resolved once, after the cwd is trusted: bus pr_urls are checked against it.
 	r.repo = originGitHubRepo(ctx, r.p.Git)
-	if st, err := os.Stat(paths.Log); err != nil || !st.Mode().IsRegular() {
+	crews, crewErr := bus.RepoCrewRows(paths)
+	r.noteSeen(crews.Crews)
+	// An unreadable crew log counts as rows, so the fold reports it.
+	if st, err := os.Stat(paths.Log); (err != nil || !st.Mode().IsRegular()) && crewErr == nil && len(crews.Events) == 0 {
 		if r.discard != "" {
 			return r.refuse("latest status is none")
 		}
@@ -192,7 +198,16 @@ func (r *run) foldFailed(err error) int {
 	if errors.Is(err, bus.ErrNoLog) {
 		msg, code = "No such file or directory", 2
 	}
-	_, _ = fmt.Fprintf(r.stderr, "crew: reap: %s: %s\n", r.paths.Log, msg)
+	log := r.paths.Log
+	var decode *bus.DecodeError
+	var open *bus.OpenError
+	switch {
+	case errors.As(err, &decode):
+		log = decode.Path
+	case errors.As(err, &open):
+		log = open.Path
+	}
+	_, _ = fmt.Fprintf(r.stderr, "crew: reap: %s: %s\n", log, msg)
 	return code
 }
 
@@ -293,7 +308,9 @@ func (r *run) lockReap() (code int, done bool) {
 // `set -e` did.
 func (r *run) idleRelease(ctx context.Context) int {
 	grace := r.grace()
-	d := Deps{Paths: r.paths, Say: r.say, Note: r.note, P: r.p}
+	d := Deps{Paths: r.paths, Say: r.say, Note: r.note, P: r.p, Check: func(b, wt string, ws []string) (string, bool) {
+		return r.l2Check(ctx, b, wt, ws)
+	}}
 	for _, row := range r.idleRows() {
 		if row[0] == "" {
 			continue
@@ -335,6 +352,10 @@ func (r *run) orphans(ctx context.Context) int {
 		keep := state == "" || wid == self || r.orphanInUse(ctx, wid)
 		if keep {
 			r.note("window " + wid + " is stamped " + branch + " but its worktree is gone — not killed")
+			continue
+		}
+		if why, ok := r.l2Windows(ctx, branch, []string{wid}); !ok {
+			r.note("window " + wid + " is stamped " + branch + " but layout-2 window not validated: " + why + " — not killed")
 			continue
 		}
 		what := branch + ", PR #" + num + " " + state + ", worktree already gone"

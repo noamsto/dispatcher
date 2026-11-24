@@ -36,22 +36,58 @@ func sweepAll(roots []string, stdout, stderr io.Writer, o Options) int {
 		Stderr: stderr,
 		Prefix: "crew: rate --sweep-all",
 	})
-	failed := 0
+	getenv := o.Getenv
+	if getenv == nil {
+		getenv = os.Getenv
+	}
+	state := bus.StateRoot(getenv)
+	var indexed []bus.IndexHeader
+	if state != "" {
+		indexed = bus.IndexRepos(state)
+	}
+	listed := map[string]bool{}
+	for _, h := range indexed {
+		listed[h.Common] = true
+	}
+	seen := map[string]bool{}
+	var commons []string
 	for _, r := range found {
+		tag, err := bus.RepoTag(r.Common)
+		if err == nil {
+			seen[tag] = true
+		}
+		if r.Status == repos.StatusNoBus && listed[tag] {
+			commons = append(commons, r.Common)
+			continue
+		}
 		if r.Status != repos.StatusOK {
 			say(stdout, "%s: skipped (%s)\n", r.Common, r.Status)
 			continue
 		}
+		commons = append(commons, r.Common)
+	}
+	for _, h := range indexed {
+		if seen[h.Common] {
+			continue
+		}
+		if why := indexRepoProblem(h.Common); why != "" {
+			say(stdout, "%s: skipped (%s)\n", h.Common, why)
+			continue
+		}
+		commons = append(commons, h.Common)
+	}
+	failed := 0
+	for _, common := range commons {
 		// A repo's checkout is its common dir's parent, and the origin there folds
 		// to the slug the store keys that repo's rows by.
-		workdir := filepath.Dir(r.Common)
+		workdir := filepath.Dir(common)
 		origin := git.Output(context.Background(), o.Git, "", "-C", workdir, "config", "--get", "remote.origin.url")
 		if origin == "" {
 			say(stdout, "%s: skipped (no origin remote)\n", workdir)
 			continue
 		}
 		slug := git.RepoSlug(origin)
-		if rc := o.sweepRepo(bus.PathsFor(r.Common), workdir, stderr); rc != 0 {
+		if rc := o.sweepRepo(bus.PathsFor(common).WithState(state), workdir, stderr); rc != 0 {
 			say(stdout, "%s: failed (rc=%d)\n", slug, rc)
 			failed++
 			continue
@@ -62,6 +98,25 @@ func sweepAll(roots []string, stdout, stderr io.Writer, o Options) int {
 		return exitFailure
 	}
 	return 0
+}
+
+// indexRepoProblem is why an index header's common dir is not a repo to sweep,
+// "" when it is: the index is state any crew wrote, so its path is checked before
+// git runs in its parent.
+func indexRepoProblem(common string) string {
+	if !filepath.IsAbs(common) {
+		return "not an absolute path"
+	}
+	if fi, err := os.Stat(common); err != nil || !fi.IsDir() {
+		return "gone"
+	}
+	if tag, err := bus.RepoTag(common); err != nil || tag != common {
+		return "not a resolved path"
+	}
+	if filepath.Base(common) != ".git" {
+		return "not a .git dir"
+	}
+	return ""
 }
 
 // sweepRepo is the loop's per-repo child: Options.SweepRepo when the caller set

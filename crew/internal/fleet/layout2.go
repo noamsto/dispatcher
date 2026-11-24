@@ -75,6 +75,24 @@ func groupLayout2(crews []layout2Crew, known []string) map[string][]layout2Crew 
 	return groups
 }
 
+// servedGroups keeps the groups a served pull may list: the no-repo group and
+// those whose common is, by realpath, one of the served repos.
+func servedGroups(groups map[string][]layout2Crew, served []repos.Repo) map[string][]layout2Crew {
+	tags := map[string]bool{}
+	for _, r := range served {
+		if tag, err := bus.RepoTag(r.Common); err == nil {
+			tags[tag] = true
+		}
+	}
+	out := map[string][]layout2Crew{}
+	for common, cs := range groups {
+		if tag, err := bus.RepoTag(common); common == "" || err == nil && tags[tag] {
+			out[common] = cs
+		}
+	}
+	return out
+}
+
 // withoutCrews is events minus the rows of the given layout-2 crews: a crew
 // pinned to layout 2 has no live state in a repo bus.
 func withoutCrews(events []bus.Event, crews []layout2Crew) []bus.Event {

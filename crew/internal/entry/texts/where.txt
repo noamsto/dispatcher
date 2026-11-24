@@ -1,4 +1,4 @@
-usage: crew where <target> [--crew ID] | crew where --log|--dir [--crew ID] | crew where --json [--crew ID]
+usage: crew where <target> [--crew ID] | crew where --log|--dir [--crew ID] | crew where --json [--crew ID] | crew where --home [--crew ID]
 
 A human-usable address for a worker's pane: codename, session:window.pane, window
 name, role and the jump command.
@@ -8,6 +8,7 @@ name, role and the jump command.
   --log     Print the crew's bus log path instead (no target, no tmux)
   --dir     Print the crew's own directory instead (no target, no tmux)
   --json    Print one JSON object instead (no target, no tmux; excludes --log, --dir)
+  --home    Print a layout-2 crew's home main checkout (no target, no tmux; excludes --log, --dir, --json)
 
 --json prints, in this key order:
   {"crew_id","layout","dir","log","repo_dir","meta"}
@@ -19,7 +20,13 @@ is null for layout 1 and for layout 2 the crew's meta.json:
 home_repo may be null; home_slug and dispatcher_session are omitted when empty.
 A refusal prints nothing on stdout.
 
---log, --dir and --json resolve the crew from --crew, the task doc, then $CREW_ID.
+--home prints the checkout holding the crew's home_repo, so a relaunch can start
+the crew there from outside any repo. A layout-1 crew, a crew visiting this host
+and a home_repo that is not an absolute realpath ending in .git exit 1 with one
+line naming the cause; a layout-2 crew registered outside a repo (no home repo)
+exits 4.
+
+--log, --dir, --json and --home resolve the crew from --crew, the task doc, then $CREW_ID.
 A layout-2 crew answers outside a repo too; a layout-1 crew needs its repo. An
 archived or index-only crew is refused with exit 3, any other failure exits 1.
 
@@ -28,7 +35,7 @@ it: the local mirror window's when there is one, else the host's own. A target
 that names a local and a remote worker is refused; a `%id` is never routed.
 
 A <target> is resolved from dispatcher-anchored state only — never git discovery
-in a worktree or the caller's env (only --log and --dir read those). Non-zero
+in a worktree or the caller's env (only --log, --dir, --json and --home read those). Non-zero
 with a readable message when the pane is gone.
 
   crew where lime

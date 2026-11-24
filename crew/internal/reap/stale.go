@@ -141,7 +141,7 @@ func (r *run) busDocs() []map[string]any {
 		return r.docs
 	}
 	r.docs = []map[string]any{}
-	raws, err := readRaws(r.paths.Log)
+	raws, err := r.repoRaws()
 	if err != nil {
 		return r.docs
 	}

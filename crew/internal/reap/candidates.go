@@ -3,14 +3,12 @@ package reap
 import (
 	"context"
 	"io"
-	"path/filepath"
 	"slices"
 	"strings"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/gh"
 	"github.com/noamsto/dispatcher/crew/internal/identity"
-	"github.com/noamsto/dispatcher/crew/internal/repos"
 )
 
 // tipPastReason is the keep reason of a branch whose tip holds commits past
@@ -55,7 +53,7 @@ func Candidates(ctx context.Context, paths bus.Paths, cwd string, stderr io.Writ
 			rows[row.branch] = row
 		}
 	}
-	raws, _ := readRaws(paths.Log)
+	raws, _ := r.repoRaws()
 	// Bus pr_urls and claimed issues are worker-written: only this repo's PRs
 	// and plain numbers may point gh anywhere, as reap's own gates require.
 	repo := originGitHubRepo(ctx, o.Probes.Git)
@@ -102,12 +100,9 @@ func (l latestRow) statusTS() float64 { return (&candidate{latestRow: l}).status
 // FleetBuses are the buses of every repo `crew reap --fleet` covers.
 func FleetBuses(stderr io.Writer, fo FleetOptions) []bus.Paths {
 	var out []bus.Paths
-	for _, r := range repos.Discover(repos.Options{Registry: fo.Registry, Getenv: fo.Getenv, Stderr: stderr, Prefix: "crew cleanup --fleet"}) {
-		if r.Status != repos.StatusOK {
-			continue
-		}
-		if common, err := filepath.Abs(r.Common); err == nil {
-			out = append(out, bus.PathsFor(common))
+	for _, r := range fleetRepos(stderr, fo, "crew cleanup --fleet") {
+		if r.skip == "" && r.err == nil {
+			out = append(out, r.paths)
 		}
 	}
 	return out

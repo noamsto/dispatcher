@@ -97,6 +97,29 @@ type Request struct {
 	Reattach bool
 }
 
+// refuseNotHome is adopt's layout-2 gate: a crew visiting this host, or homed
+// in another repo, is adopted where it lives. It returns 0 for a crew homed here.
+func refuseNotHome(paths bus.Paths, id string, stderr io.Writer) int {
+	m, err := bus.ReadMeta(paths.State, id)
+	if err != nil {
+		say(stderr, "crew: %v\n", err)
+		return exitFailure
+	}
+	if m.Visiting {
+		say(stderr, "crew: crew %s is visiting this host (home %s) — adopt it there\n", id, m.HomeHost)
+		return exitFailure
+	}
+	if !crews.HomedHere(paths, m) {
+		home := "no repo"
+		if m.HomeRepo != nil {
+			home = *m.HomeRepo
+		}
+		say(stderr, "crew: crew %s is homed in %s, not here\n", id, home)
+		return exitFailure
+	}
+	return 0
+}
+
 func Run(ctx context.Context, req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int {
 	o = o.withDefaults()
 
@@ -128,6 +151,11 @@ func Run(ctx context.Context, req Request, paths bus.Paths, stdout, stderr io.Wr
 	if err != nil {
 		say(stderr, "crew: invalid crew id — expected only letters, digits, '.', '_' and '-'\n")
 		return exitFailure
+	}
+	if bc.Layout == 2 {
+		if code := refuseNotHome(paths, id, stderr); code != 0 {
+			return code
+		}
 	}
 
 	// The pid to record. `${2:-…}` falls back to the owner walk on an empty

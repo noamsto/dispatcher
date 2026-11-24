@@ -2,12 +2,14 @@ package rate
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/gh/ghtest"
@@ -311,5 +313,106 @@ func TestRunsInStore(t *testing.T) {
 				t.Errorf("runsInStore = %d, want %d", got, tc.want)
 			}
 		})
+	}
+}
+
+// indexRepo lists a repo in the state index the way a layout-2 dispatch does.
+func indexRepo(t *testing.T, state, common string) {
+	t.Helper()
+	if err := bus.CreateMeta(state, bus.Meta{ID: "c1"}); err != nil && !errors.Is(err, bus.ErrMetaExists) {
+		t.Fatal(err)
+	}
+	if _, err := bus.IndexAdd(state, common, "", "c1", time.UnixMilli(1)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// indexOnlyRepo is a checkout with no bus of its own, so only the index knows it.
+func (f *sweepAllFixture) indexOnlyRepo(state, name, origin string) string {
+	f.t.Helper()
+	common := filepath.Join(f.root, name, ".git")
+	if err := os.MkdirAll(common, 0o755); err != nil {
+		f.t.Fatal(err)
+	}
+	f.origins[filepath.Dir(common)] = origin
+	indexRepo(f.t, state, common)
+	return common
+}
+
+func stateOptions(o Options, state string) Options {
+	base := o.Getenv
+	o.Getenv = func(key string) string {
+		if key == "XDG_STATE_HOME" {
+			return filepath.Dir(state)
+		}
+		return base(key)
+	}
+	return o
+}
+
+func TestSweepAllSweepsIndexOnlyRepos(t *testing.T) {
+	f := newSweepAllFixture(t)
+	state := filepath.Join(t.TempDir(), "crew")
+	f.indexOnlyRepo(state, "idx", "https://github.com/acme/idx.git")
+	both := f.repo("both", "https://github.com/acme/both.git")
+	indexRepo(t, state, both)
+
+	var gotState []string
+	o := stateOptions(f.options(), state)
+	inner := o.SweepRepo
+	o.SweepRepo = func(p bus.Paths, w string, e io.Writer) int {
+		gotState = append(gotState, p.State)
+		return inner(p, w, e)
+	}
+	out, _, code := f.run(o, Request{SweepAll: true, Roots: []string{f.root}})
+	want := "acme/both: swept, 0 runs in store\nacme/idx: swept, 0 runs in store\n"
+	if code != 0 || out != want {
+		t.Errorf("rc %d, stdout =\n%s\nwant\n%s", code, out, want)
+	}
+	if got := strings.Join(f.swept, ","); got != filepath.Join(f.root, "both")+","+filepath.Join(f.root, "idx") {
+		t.Errorf("swept %s, each repo once", got)
+	}
+	for _, s := range gotState {
+		if s != state {
+			t.Errorf("paths.State = %q, want %q", s, state)
+		}
+	}
+}
+
+func TestSweepAllSkipsInvalidIndexHeaders(t *testing.T) {
+	f := newSweepAllFixture(t)
+	state := filepath.Join(t.TempDir(), "crew")
+	missing := filepath.Join(f.root, "gone", ".git")
+	notGit := filepath.Join(f.root, "plain", "checkout")
+	if err := os.MkdirAll(notGit, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	indexRepo(t, state, missing)
+	indexRepo(t, state, notGit)
+
+	out, _, code := f.run(stateOptions(f.options(), state), Request{SweepAll: true, Roots: []string{f.root}})
+	if code != 0 || len(f.swept) != 0 {
+		t.Errorf("rc %d, swept %v, want rc 0 and none", code, f.swept)
+	}
+	for _, c := range []string{missing, notGit} {
+		if !strings.Contains(out, c+": skipped (") {
+			t.Errorf("stdout = %q, want a skipped line for %s", out, c)
+		}
+	}
+}
+
+func TestSweepAllNilGetenvReadsTheProcessState(t *testing.T) {
+	f := newSweepAllFixture(t)
+	stateHome := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", stateHome)
+	t.Setenv("XDG_DATA_HOME", f.data)
+	t.Setenv("HOME", t.TempDir())
+	f.indexOnlyRepo(filepath.Join(stateHome, "crew"), "idx", "https://github.com/acme/idx.git")
+
+	o := f.options()
+	o.Getenv = nil
+	out, _, code := f.run(o, Request{SweepAll: true, Roots: []string{f.root}})
+	if code != 0 || out != "acme/idx: swept, 0 runs in store\n" {
+		t.Errorf("rc %d, stdout = %q", code, out)
 	}
 }

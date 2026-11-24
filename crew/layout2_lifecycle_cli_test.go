@@ -254,6 +254,40 @@ func TestWhereJSONCLI(t *testing.T) {
 	}
 }
 
+func TestWhereHomeCLI(t *testing.T) {
+	c := newLifecycleCLI(t)
+	t.Setenv("CREW_LAYOUT", "2")
+	c.as("c-home")
+	c.mustRun("register", "4242")
+	c.as("c-null")
+	c.expectIn(c.outside, 0, "register", "4242")
+	c.as("")
+
+	out, _ := c.expectIn(c.outside, 0, "where", "--home", "--crew", "c-home")
+	repo, err := filepath.EvalSymlinks(c.repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	eq(t, "homed outside a repo", out, repo+"\n")
+
+	for _, tc := range []struct {
+		name   string
+		args   []string
+		code   int
+		stderr string
+	}{
+		{"null home", []string{"where", "--home", "--crew", "c-null"}, 4, "crew: crew c-null has no home repo — it cannot be spawned into a repo\n"},
+		{"with a target", []string{"where", "--home", "nova"}, 1, "crew: where: --home takes no target (" + whereUsage + ")\n"},
+		{"with --log", []string{"where", "--home", "--log"}, 1, "crew: where: --home excludes --log, --dir and --json (" + whereUsage + ")\n"},
+		{"with --json", []string{"where", "--home", "--json"}, 1, "crew: where: --home excludes --log, --dir and --json (" + whereUsage + ")\n"},
+	} {
+		out, errOut, code := c.runIn(c.outside, tc.args...)
+		if code != tc.code || out != "" || errOut != tc.stderr {
+			t.Errorf("%s: code %d stdout %q stderr %q, want %d \"\" %q", tc.name, code, out, errOut, tc.code, tc.stderr)
+		}
+	}
+}
+
 func TestIndexCLI(t *testing.T) {
 	c := newLifecycleCLI(t)
 	t.Setenv("CREW_LAYOUT", "2")

@@ -344,13 +344,8 @@ func collectStatus(ctx context.Context, req StatusRequest, stderr io.Writer, o S
 		say(stderr, "crew: fleet status: machine: %s\n", oneLine(err))
 	} else {
 		lo := LoadOptions{Getenv: o.Getenv, Registry: o.Registry, Tmux: once, Git: o.Git, Clock: o.Clock, BudgetFile: o.BudgetFile, Cmd: o.Cmd, LocalModels: o.LocalModels, Stderr: stderr}
-		// The local pass's readLayout2 below notes an unreadable meta.json, so this
-		// scan stays quiet there; served mode never runs that pass, so it notes.
-		metaNotes := io.Discard
-		if o.Served != nil {
-			metaNotes = stderr
-		}
-		q := newQueue(ctx, QueueOptions{LoadOptions: lo, Proc: o.Proc}, scanFleet(o.Registry, o.Getenv, buses.readLog, nowMS, metaNotes), s, now)
+		// readLayout2 below notes an unreadable meta.json, so this scan stays quiet.
+		q := newQueue(ctx, QueueOptions{LoadOptions: lo, Proc: o.Proc}, scanFleet(o.Registry, o.Getenv, buses.readLog, nowMS, io.Discard), s, now)
 		var rec map[holdKey]dueEntry
 		rec, due = q.advance(readRecord(duePath(o.Getenv)))
 		doc.Machine = &q.load
@@ -380,12 +375,13 @@ func collectStatus(ctx context.Context, req StatusRequest, stderr io.Writer, o S
 		repo  RepoStatus
 	}
 	var slots []slot
-	// Layout-2 crews join the local pass only, each under its home repo.
-	var l2 []layout2Crew
-	if o.Served == nil {
-		l2 = readLayout2(stateRoot, stderr)
-	}
+	// Layout-2 crews join under their home repo. A served pull lists only those
+	// homed in a served repo, or in none: the served set is the sharing scope.
+	l2 := readLayout2(stateRoot, stderr)
 	groups := groupLayout2(l2, knownCommons(found))
+	if o.Served != nil {
+		groups = servedGroups(groups, found)
+	}
 	layout2IDs := map[string]bool{}
 	for _, c := range l2 {
 		layout2IDs[c.id] = true
@@ -408,7 +404,7 @@ func collectStatus(ctx context.Context, req StatusRequest, stderr io.Writer, o S
 		}
 		slots = append(slots, slot{build: &repoBuild{ctx: ctx, o: o, once: once, common: common, events: events, docs: eventDocs(events),
 			idx: indexBus(events, busHost), now: now, nowMS: nowMS, nowSec: nowSec, overseer: overseer, host: host, stateDir: stateDir, due: due,
-			probe: probe, homes: homes, crewDirs: dirs, layout2IDs: layout2IDs}})
+			probe: probe, homes: homes, stateRoot: stateRoot, crewDirs: dirs, layout2IDs: layout2IDs}})
 	}
 	grouped := map[string]bool{}
 	for _, r := range found {
@@ -507,7 +503,9 @@ type repoBuild struct {
 	due      *queued           // the fleet queue's due hold, nil for none
 	probe    *probeMemo        // the overseer's --host probes, nil for none
 	homes    map[string]string // crew id → home host of its guest windows
-	crewDirs map[string]string // layout-2 crew id → its dir
+	// stateRoot is bus.StateRoot, where layout-2 crews keep their dirs.
+	stateRoot string
+	crewDirs  map[string]string // layout-2 crew id → its dir
 	// layout2IDs is every live layout-2 crew id: one dir left in a layout-1
 	// repo is dead state, not a crew.
 	layout2IDs map[string]bool
@@ -553,7 +551,7 @@ func (b *repoBuild) build() (RepoStatus, error) {
 	repo.Misrouted = b.idx.misrouted(b.nowMS - inboxWindow.Milliseconds())
 	cutoff := b.inboxCutoff()
 	for _, id := range b.crewIDs(byCrew) {
-		c, err := b.crew(id, byCrew[id], live, cutoff)
+		c, err := b.crew(id, byCrew[id], live, b.crewCutoff(id, cutoff))
 		if err != nil {
 			return RepoStatus{}, err
 		}
@@ -599,12 +597,29 @@ func (b *repoBuild) inboxCutoff() int64 {
 		return b.o.Served.Since
 	}
 	if b.common != "" {
-		text, _ := crews.PidFileText(lane.OverseerCursor(b.stateDir, b.common))
-		if ts, err := strconv.ParseInt(strings.TrimSpace(text), 10, 64); err == nil && ts >= 0 {
+		if ts, ok := readCursor(lane.OverseerCursor(b.stateDir, b.common)); ok {
 			return ts
 		}
 	}
 	return b.nowMS - inboxWindow.Milliseconds()
+}
+
+// crewCutoff is a layout-2 crew's own inbox start: the overseer keeps its
+// cursor in the crew's dir, so that wins over the repo's cutoff when valid.
+func (b *repoBuild) crewCutoff(id string, cutoff int64) int64 {
+	if _, ok := b.crewDirs[id]; !ok || b.o.Served != nil {
+		return cutoff
+	}
+	if ts, ok := readCursor(lane.OverseerCrewCursor(b.stateRoot, id)); ok {
+		return ts
+	}
+	return cutoff
+}
+
+func readCursor(path string) (int64, bool) {
+	text, _ := crews.PidFileText(path)
+	ts, err := strconv.ParseInt(strings.TrimSpace(text), 10, 64)
+	return ts, err == nil && ts >= 0
 }
 
 // crewIDs are the crews with a worker row, a crew dir or a hold, in id order.

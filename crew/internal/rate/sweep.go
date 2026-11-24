@@ -22,6 +22,7 @@ import (
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/classes"
+	"github.com/noamsto/dispatcher/crew/internal/filekind"
 	"github.com/noamsto/dispatcher/crew/internal/git"
 	"github.com/noamsto/dispatcher/crew/internal/jqrun"
 	"github.com/noamsto/dispatcher/crew/internal/jsonval"
@@ -86,8 +87,9 @@ func (s *sweep) clock() float64 { return clockSeconds(s.o) }
 func runSweep(paths bus.Paths, cwd string, stderr io.Writer, o Options) int {
 	// `[ -f "$log" ] || exit 0`: with no bus there is nothing to fold, and the
 	// sweep — unlike every other subcommand — treats a missing log as success.
-	events, err := bus.ReadEvents(paths.Log)
-	if errors.Is(err, bus.ErrNoLog) {
+	// Layout-2 crews' rows of this repo count as a bus too.
+	events, err := bus.ReadRepoEvents(paths)
+	if err == nil && len(events) == 0 && !filekind.IsRegular(paths.Log) {
 		return 0
 	}
 	s := &sweep{
@@ -101,7 +103,16 @@ func runSweep(paths bus.Paths, cwd string, stderr io.Writer, o Options) int {
 	s.lockd = filepath.Join(filepath.Dir(s.store), "ratings.lock.d")
 	if err != nil {
 		msg, code := bus.JQFailure(err)
-		say(stderr, "crew: rate: %s: %v\n", paths.Log, msg)
+		log := paths.Log
+		var decode *bus.DecodeError
+		var open *bus.OpenError
+		switch {
+		case errors.As(err, &decode):
+			log = decode.Path
+		case errors.As(err, &open):
+			log = open.Path
+		}
+		say(stderr, "crew: rate: %s: %v\n", log, msg)
 		return code
 	}
 

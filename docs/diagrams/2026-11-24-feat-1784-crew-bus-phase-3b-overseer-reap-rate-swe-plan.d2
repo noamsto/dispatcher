@@ -1,0 +1,37 @@
+direction: right
+
+l2: "layout-2 store\n\$S/crews/<id>/\nmeta.json + events.jsonl" {shape: cylinder}
+idx: "repo index\n\$S/index/repos/<sha>" {shape: cylinder}
+repolog: "repo log\n<common>/crew/events.jsonl" {shape: cylinder}
+discover: "repos.Discover\n(unchanged, layout 1)"
+
+rows: "NEW bus.ReadRepoEvents\nrepo log + RepoCrewRows\n(index ∧ meta ∧ dispatch repo)" {style.fill: "#e6f4ea"}
+irepos: "NEW bus.IndexRepos\nheader name check" {style.fill: "#e6f4ea"}
+gate: "NEW reap l2Check\nrecord line2/line5\nwindow @crew_id" {style.fill: "#e6f4ea"}
+
+reap: "reap.Run folds\n(merged stream)"
+fleet: "reap --fleet / cleanup\nDiscover ∪ index"
+rate: "rate sweep / --sweep-all\nDiscover ∪ index"
+lane: "overseer lane\ncrew followers\ncrews/<id>/overseer.cursor"
+msg: "overseer msg/deliver/trust\nlayout2Crew + home match"
+adopt: "crew adopt\nvisiting / homed-here gate"
+where: "NEW crew where --home" {style.fill: "#e6f4ea"}
+relaunch: "dispatcher --relaunch\nhome from meta.home_repo"
+
+repolog -> rows
+l2 -> rows
+idx -> rows
+idx -> irepos
+rows -> reap
+rows -> rate
+reap -> gate: before any kill/remove
+discover -> fleet
+irepos -> fleet
+discover -> rate
+irepos -> rate
+fleet -> reap
+l2 -> lane: ScanMetas (non-visiting)
+l2 -> msg: crew dir direct
+l2 -> adopt: meta.json
+l2 -> where: meta.home_repo
+where -> relaunch
