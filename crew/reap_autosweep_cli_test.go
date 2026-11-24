@@ -24,7 +24,25 @@ func TestMain(m *testing.M) {
 	if len(os.Args) > 1 && os.Args[1] == "reap-autosweep" {
 		os.Exit(run(context.Background(), os.Args[1:], os.Stdout, os.Stderr, env{getwd: os.Getwd}))
 	}
-	testscript.Main(m, map[string]func(){"crew": crewMain, "tmux": fakeTmux})
+	testscript.Main(isolatedState{m}, map[string]func(){"crew": crewMain, "tmux": fakeTmux})
+}
+
+// isolatedState runs the tests with XDG_STATE_HOME at a fresh temp dir, since
+// bus.Locate reads the state root: no CLI test sees ~/.local/state/crew.
+type isolatedState struct{ m *testing.M }
+
+func (s isolatedState) Run() int {
+	dir, err := os.MkdirTemp("", "crew-state-")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	defer func() { _ = os.RemoveAll(dir) }()
+	if err := os.Setenv("XDG_STATE_HOME", dir); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	return s.m.Run()
 }
 
 // pkgDir is the package directory, captured before any test changes cwd
