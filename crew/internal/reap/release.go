@@ -90,7 +90,7 @@ func ReleaseWindows(ctx context.Context, d Deps, branch, session, state string, 
 		return 3, nil
 	}
 	// Read before the kill below removes the stamps.
-	crewID := rowCrewID(ctx, d.P.Tmux, windows, wt, branch, eventDocs(d.Paths.Log))
+	crewID := rowCrewID(ctx, d.P.Tmux, windows, wt, branch, eventDocs(d.Paths.Log), indexCrewDocs(d.Paths))
 	for _, w := range windows {
 		if dry {
 			d.Say("would release " + w + " at " + wt + " (" + branch + " " + state + ")")

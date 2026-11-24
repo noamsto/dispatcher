@@ -12,9 +12,10 @@ import (
 
 // rowCrewID is the crew id a reap or release row carries: the first valid one
 // of the window stamps, the worktree record's fifth line, then the newest
-// dispatch row of the branch. docs is read only when the first two name none.
-// It must run before the windows are killed and the record removed.
-func rowCrewID(ctx context.Context, tm tmux.Client, windows []string, wt, branch string, docs func() []map[string]any) string {
+// dispatch row of the branch in docs, then in indexDocs (the layout-2 crews the
+// repo index lists; may be nil). Each is read only when the earlier sources name
+// none. It must run before the windows are killed and the record removed.
+func rowCrewID(ctx context.Context, tm tmux.Client, windows []string, wt, branch string, docs, indexDocs func() []map[string]any) string {
 	for _, w := range windows {
 		out, _ := tm.Run(ctx, "display-message", "-p", "-t", w, "#{@crew_id}")
 		if id := strings.TrimRight(out, "\n"); bus.ValidCrewID(id) {
@@ -24,8 +25,20 @@ func rowCrewID(ctx context.Context, tm tmux.Client, windows []string, wt, branch
 	if id := recordCrewID(wt); bus.ValidCrewID(id) {
 		return id
 	}
+	if id := newestDispatchCrewID(docs(), branch); id != "" {
+		return id
+	}
+	if indexDocs == nil {
+		return ""
+	}
+	return newestDispatchCrewID(indexDocs(), branch)
+}
+
+// newestDispatchCrewID is the valid crew id of the last dispatch row of branch
+// in docs, "" when there is none.
+func newestDispatchCrewID(docs []map[string]any, branch string) string {
 	var newest map[string]any
-	for _, doc := range docs() {
+	for _, doc := range docs {
 		if doc["kind"] == "dispatch" && doc["branch"] == branch {
 			newest = doc
 		}
