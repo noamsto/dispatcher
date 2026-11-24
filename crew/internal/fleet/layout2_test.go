@@ -2,6 +2,7 @@ package fleet
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -9,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
+	"github.com/noamsto/dispatcher/crew/internal/lane"
 )
 
 func (f *queueFix) stateRoot() string { return bus.StateRoot(f.opts.Getenv) }
@@ -500,5 +502,71 @@ func TestLayout2UnreadableMetaIsNotedWhenServed(t *testing.T) {
 	CollectStatus(t.Context(), StatusRequest{}, &stderr, o)
 	if n := strings.Count(stderr.String(), "crew fleet: crew mismatch: unreadable meta.json ("); n != 1 {
 		t.Errorf("served status printed %d notes for the bad crew in %q, want exactly one", n, stderr.String())
+	}
+}
+
+// toOverseer is crew's dispatcher msg to overseer:box, agoS seconds ago.
+func (f *queueFix) toOverseer(crew string, agoS int64) string {
+	return fmt.Sprintf(`{"ts":%d,"crew_id":%q,"kind":"msg","from":"dispatcher:%s","to":"overseer:box","body":{"kind":"ack"}}`, f.ms(agoS), crew, crew)
+}
+
+func (f *queueFix) writeCursor(path string, agoS int64) {
+	f.t.Helper()
+	f.write(path, fmt.Sprintf("%d\n", f.ms(agoS)))
+}
+
+func inboxTS(c CrewStatus) []int64 {
+	var out []int64
+	for _, m := range c.OverseerInbox {
+		out = append(out, m.TS)
+	}
+	return out
+}
+
+func TestLayout2StatusInboxStartsAtTheCrewCursor(t *testing.T) {
+	f := newQueueFix(t, "alpha")
+	f.register("alpha", "c1", livePID)
+	f.post("alpha", f.toOverseer("c1", 3000), f.toOverseer("c1", 2000))
+	f.layout2("l2", f.tag("alpha"), f.toOverseer("l2", 3000), f.toOverseer("l2", 2000), f.toOverseer("l2", 1000))
+	f.layout2("l3", f.tag("alpha"), f.toOverseer("l3", 3000), f.toOverseer("l3", 2000))
+	f.writeCursor(lane.OverseerCursor(f.env["XDG_STATE_HOME"], f.commons["alpha"]), 2500)
+	f.writeCursor(lane.OverseerCrewCursor(f.stateRoot(), "l2"), 1500)
+	f.write(lane.OverseerCrewCursor(f.stateRoot(), "l3"), "garbage\n")
+
+	o := f.statusOpts()
+	o.Host = func() (string, error) { return "box", nil }
+	d := CollectStatus(t.Context(), StatusRequest{}, os.Stderr, o)
+	for _, tc := range []struct {
+		id   string
+		want []int64
+	}{
+		{"c1", []int64{f.ms(2000)}},
+		{"l2", []int64{f.ms(1000)}},
+		{"l3", []int64{f.ms(2000)}},
+	} {
+		if got := inboxTS(d.crew(t, tc.id)); !slices.Equal(got, tc.want) {
+			t.Errorf("%s inbox = %v, want %v", tc.id, got, tc.want)
+		}
+	}
+}
+
+func TestLayout2ServedStatusListsCrewsInTheServedScope(t *testing.T) {
+	f := newQueueFix(t, "alpha")
+	f.repo("gamma", false)
+	f.layout2("l2", f.tag("alpha"), wstatus(20, "l2", "feat/b", "working", ""))
+	f.layout2("l3", nil, wstatus(20, "l3", "feat/c", "working", ""))
+	f.layout2("l4", f.tag("gamma"), wstatus(20, "l4", "feat/d", "working", ""))
+
+	o := f.statusOpts()
+	o.Served = &ServedStatus{Origin: "halo"}
+	d := CollectStatus(t.Context(), StatusRequest{}, os.Stderr, o)
+	if got := d.crewIDs(); !slices.Equal(got, []string{"l2", "l3"}) {
+		t.Fatalf("crews = %v, want l2 and l3, not gamma's l4", got)
+	}
+	if r := d.repo(t, "acme/alpha"); r.Common != f.commons["alpha"] || len(r.Crews) != 1 || r.Crews[0].CrewID != "l2" {
+		t.Errorf("alpha = %+v, want l2 under alpha's registry path", r)
+	}
+	if r := d.repo(t, noRepo); r.Common != "" || len(r.Crews) != 1 || r.Crews[0].CrewID != "l3" {
+		t.Errorf("no-repo group = %+v, want l3", r)
 	}
 }
