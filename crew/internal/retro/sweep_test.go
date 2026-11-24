@@ -372,8 +372,8 @@ func TestSweepPartialApplyReRunPlansOnlyTheUnwritten(t *testing.T) {
 }
 
 func TestSweepGroupsOtherAndUnrecognizedTags(t *testing.T) {
-	f := newTracker(t)
-	f.repo = "acme/app"
+	d := newTracker(t)
+	f := nonHome(t, d, "acme/app")
 	events := findingsRow(ago(40), `{"key":"pane-timeout","title":"Reviewer pane times out","match":"pane.*timeout"}`) +
 		noteRuns("cat", 1, 6, "other", diverseDetail) +
 		noteRuns("lab", 1, 6, "flaky_thing", "pane hit a timeout") +
@@ -387,11 +387,11 @@ func TestSweepGroupsOtherAndUnrecognizedTags(t *testing.T) {
 	if !strings.Contains(out, "file pane-timeout") {
 		t.Errorf("the label's notes should file:\n%s", out)
 	}
-	if n := strings.Count(out, "\n  file "); n != 1 {
-		t.Errorf("only the repo-scoped label files, got %d:\n%s", n, out)
+	if n := strings.Count(out, "\n  file "); n != 2 {
+		t.Errorf("the label and the catalog hit file, got %d:\n%s", n, out)
 	}
-	if !strings.Contains(out, diverseKey+": harness finding (tracked in noamsto/dispatcher): 6 runs") {
-		t.Errorf("catalog hit in a non-home repo should be a harness line:\n%s", out)
+	if !strings.Contains(out, "file "+diverseKey+" in noamsto/dispatcher") {
+		t.Errorf("catalog hit in a non-home repo should file in the dispatcher repo:\n%s", out)
 	}
 	for _, want := range []string{"other: a one-off story", "misrouted: wrong lane", "Unclustered (2 notes):"} {
 		if !strings.Contains(out, want) {
@@ -406,24 +406,149 @@ func TestSweepGroupsOtherAndUnrecognizedTags(t *testing.T) {
 	}
 
 	f.applyPlan(paths)
-	if len(f.created) != 1 || ghissue.FirstLine(f.created[0][5]) != markerPrefix+"pane-timeout" {
-		t.Errorf("created = %q", f.created)
+	if len(f.created) != 1 || ghissue.FirstLine(f.created[0][5]) != markerPrefix+"pane-timeout" || len(d.created) != 1 {
+		t.Errorf("created = %q, dispatcher created %q", f.created, d.created)
 	}
 }
 
-func TestSweepHarnessFindingOutsideHomeRepoWritesNothing(t *testing.T) {
-	f := newTracker(t)
-	f.repo = "acme/app"
+// nonHome models a non-home local repo beside the dispatcher repo d: calls
+// aimed at noamsto/dispatcher reach d, the rest reach the returned tracker,
+// whose gh sees both.
+func nonHome(t *testing.T, d *fakeTracker, local string) *fakeTracker {
+	l := newTracker(t)
+	l.repo = local
+	const apiPrefix = "repos/" + harnessRepo + "/"
+	l.gh = &ghtest.Fake{Func: func(args []string) (string, error) {
+		n := len(args)
+		switch {
+		case n > 2 && args[n-2] == "--repo" && args[n-1] == harnessRepo:
+			return d.answer(args[:n-2])
+		case args[0] == "api" && strings.HasPrefix(args[2], apiPrefix):
+			args = slices.Clone(args)
+			args[2] = "repos/{owner}/{repo}/" + strings.TrimPrefix(args[2], apiPrefix)
+			return d.answer(args)
+		}
+		return l.answer(args)
+	}}
+	return l
+}
+
+func TestSweepHarnessFindingOutsideHomeRepoFilesInDispatcher(t *testing.T) {
+	d := newTracker(t)
+	l := nonHome(t, d, "acme/app")
 	paths := fixture(t, noteRuns("r", 1, 6, "other", diverseDetail))
 
-	out := f.plan(paths)
-	assertEmptyPlan(t, out)
-	if !strings.Contains(out, "harness finding (tracked in noamsto/dispatcher): 6 runs") {
-		t.Errorf("plan:\n%s", out)
+	out := l.plan(paths)
+	if !strings.Contains(out, "file "+diverseKey+" in noamsto/dispatcher: ") {
+		t.Fatalf("plan:\n%s", out)
 	}
-	assertNoWrites(t, f)
-	if calls := strings.Join(f.gh.Calls(), "\n"); strings.Contains(calls, "issue list") {
-		t.Errorf("a harness finding should not render or search:\n%s", calls)
+	if strings.Contains(out, "Harness:") {
+		t.Errorf("the harness line is gone:\n%s", out)
+	}
+
+	l.applyPlan(paths)
+	if len(d.created) != 1 || ghissue.FirstLine(d.created[0][5]) != diverseMarker || len(l.created) != 0 {
+		t.Fatalf("dispatcher created %q, local created %q", d.created, l.created)
+	}
+	if d.labelCreates != 1 || l.labelCreates != 0 {
+		t.Errorf("label creates: dispatcher %d, local %d", d.labelCreates, l.labelCreates)
+	}
+	calls := strings.Join(l.gh.Calls(), "\n")
+	for _, want := range []string{
+		"label create retro-finding --force --repo noamsto/dispatcher",
+		"--label retro-finding --repo noamsto/dispatcher",
+		"api --paginate repos/noamsto/dispatcher/issues?state=all&labels=retro-finding&per_page=100 --jq",
+	} {
+		if !strings.Contains(calls, want) {
+			t.Errorf("calls lack %q:\n%s", want, calls)
+		}
+	}
+}
+
+func TestSweepTwoNonHomeReposFileOneDispatcherIssue(t *testing.T) {
+	d := newTracker(t)
+	first := nonHome(t, d, "acme/app")
+	second := nonHome(t, d, "acme/web")
+	paths := fixture(t, noteRuns("r", 1, 6, "other", diverseDetail))
+
+	first.applyPlan(paths)
+	out := second.plan(paths)
+	assertEmptyPlan(t, out)
+	if !strings.Contains(out, "#101 "+diverseKey) {
+		t.Errorf("second repo should see the first's issue:\n%s", out)
+	}
+	if len(d.created) != 1 {
+		t.Errorf("created %d issues", len(d.created))
+	}
+}
+
+func TestSweepHarnessFindingOutsideHomeRepoReopensButNeverRecordsHeld(t *testing.T) {
+	t.Run("did not hold", func(t *testing.T) {
+		d := newTracker(t)
+		closedAt := rfc(ago(20))
+		d.add(7, diverseMarker+"\n\nbody", "closed", "completed", closedAt)
+		l := nonHome(t, d, "acme/app")
+		paths := fixture(t, continuingEvents(20))
+
+		if out := l.plan(paths); !strings.Contains(out, "reopen #7 "+diverseKey+" in noamsto/dispatcher") {
+			t.Fatalf("plan:\n%s", out)
+		}
+		l.applyPlan(paths)
+		if len(d.reopened) != 1 || d.find("7").state != "open" {
+			t.Errorf("reopened %q", d.reopened)
+		}
+	})
+	t.Run("held", func(t *testing.T) {
+		d := newTracker(t)
+		iss := d.add(7, diverseMarker+"\n\nbody", "closed", "completed", rfc(ago(12)))
+		l := nonHome(t, d, "acme/app")
+		paths := fixture(t, stoppedEvents(12, 31))
+
+		out := l.plan(paths)
+		assertEmptyPlan(t, out)
+		if !strings.Contains(out, "#7 "+diverseKey+": held on this bus, not recorded") {
+			t.Errorf("plan:\n%s", out)
+		}
+		assertNoWrites(t, d)
+		if len(iss.comments) != 0 {
+			t.Errorf("comments %q", iss.comments)
+		}
+	})
+}
+
+func TestSweepScopeHarnessLabelRoutesToDispatcher(t *testing.T) {
+	d := newTracker(t)
+	l := nonHome(t, d, "acme/app")
+	events := findingsRow(ago(40), `{"key":"pane-timeout","title":"Pane times out","match":"pane.*timeout","scope":"harness"}`) +
+		noteRuns("r", 1, 6, "other", "pane hit a timeout")
+	paths := fixture(t, events)
+
+	out := l.plan(paths)
+	if !strings.Contains(out, `scope "harness"`) || !strings.Contains(out, "file pane-timeout in noamsto/dispatcher") {
+		t.Fatalf("plan:\n%s", out)
+	}
+	l.applyPlan(paths)
+	if len(d.created) != 1 || len(l.created) != 0 {
+		t.Errorf("dispatcher created %q, local created %q", d.created, l.created)
+	}
+}
+
+func TestSweepLinearRepoStillPlansHarnessWrites(t *testing.T) {
+	d := newTracker(t)
+	l := nonHome(t, d, "acme/app")
+	l.disabled = true
+	events := findingsRow(ago(40), `{"key":"pane-timeout","match":"pane.*timeout"}`) +
+		noteRuns("cat", 1, 6, "other", diverseDetail) +
+		noteRuns("lab", 1, 6, "flaky_thing", "pane hit a timeout")
+	paths := fixture(t, events)
+
+	out := l.plan(paths)
+	if !strings.Contains(out, "file "+diverseKey+" in noamsto/dispatcher") || !strings.Contains(out, "pane-timeout: 6 occurrences in 12 runs (30d), recurring") {
+		t.Fatalf("plan:\n%s", out)
+	}
+	l.applyPlan(paths)
+	if len(d.created) != 1 || len(l.created) != 0 {
+		t.Errorf("dispatcher created %q, local created %q", d.created, l.created)
 	}
 }
 
@@ -998,7 +1123,7 @@ func TestSweepPlanPrintsLabelsAndUnclusteredMarker(t *testing.T) {
 	if !strings.Contains(labelTemplate, `"tags":["<tag>"]`) {
 		t.Errorf("label template = %s", labelTemplate)
 	}
-	if !strings.Contains(out, `  A cluster row may also carry "issue":<number> or "ignore":true in the same row.`) {
+	if !strings.Contains(out, `  A cluster row may also carry "issue":<number>, "ignore":true or "scope":"harness" in the same row; on a non-home repo a harness-scoped "issue" names a noamsto/dispatcher issue.`) {
 		t.Errorf("cluster row note missing:\n%s", out)
 	}
 	if strings.Contains(out, "To bind a finding above") {
@@ -1114,5 +1239,27 @@ func TestSweepBareReopenAfterAReopenPostsNothing(t *testing.T) {
 	}
 	if got := commentFirstLines(iss); !slices.Equal(got, []string{verdictMarker(secondKey, closedAt), verdictMarker(diverseKey, closedAt)}) {
 		t.Errorf("comments = %q", got)
+	}
+}
+
+func TestSweepSameIssueNumberInTwoReposReopensBoth(t *testing.T) {
+	d := newTracker(t)
+	closedAt := rfc(ago(20))
+	d.add(7, "dispatcher issue", "closed", "completed", closedAt)
+	l := nonHome(t, d, "acme/app")
+	l.add(7, "own issue", "closed", "completed", closedAt)
+	events := findingsRow(ago(60), `{"key":"`+diverseKey+`","issue":7,"scope":"harness"}`) +
+		findingsRow(ago(60), `{"key":"`+secondKey+`","match":"pane.*timeout","issue":7}`) +
+		continuingEvents(20) +
+		noteRuns("before2", 21, 5, "other", secondDetail) +
+		noteRuns("after2", 1, 4, "other", secondDetail)
+	paths := fixture(t, events)
+
+	l.applyPlan(paths)
+	if len(d.reopened) != 1 || len(l.reopened) != 1 {
+		t.Fatalf("dispatcher reopened %q, local reopened %q", d.reopened, l.reopened)
+	}
+	if d.find("7").state != "open" || l.find("7").state != "open" {
+		t.Errorf("states: dispatcher %s, local %s", d.find("7").state, l.find("7").state)
 	}
 }

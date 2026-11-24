@@ -929,3 +929,36 @@ func TestFleetLeavesRepoNoLongerListedOK(t *testing.T) {
 		t.Errorf("%q noted %d times, want once; stderr %q", want, n, l.errb.str())
 	}
 }
+
+func TestFleetSkipsALayout2CrewBeforeAnyLane(t *testing.T) {
+	xdg := t.TempDir()
+	if err := bus.CreateMeta(filepath.Join(xdg, "crew"), bus.Meta{ID: "c1", HomeHost: "h", CreatedBy: "register"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, status := range []bool{false, true} {
+		root := filepath.Join(t.TempDir(), "lanes")
+		var out, errb bytes.Buffer
+		r := fastRequest()
+		r.Status = status
+		rc := RunFleet(r, &out, &errb, FleetOptions{
+			LaneRoot: root,
+			Getenv: func(k string) string {
+				if k == "XDG_STATE_HOME" {
+					return xdg
+				}
+				return ""
+			},
+		})
+		want := "crew: fleet stream: crew c1 is layout 2 — skipped; run crew stream --crew c1\n"
+		wantRC := 0
+		if status {
+			wantRC = 2 // dead, never alive
+		}
+		if rc != wantRC || errb.String() != want || out.Len() != 0 {
+			t.Errorf("status=%v: rc %d stderr %q stdout %q, want %d and %q", status, rc, errb.String(), out.String(), wantRC, want)
+		}
+		if _, err := os.Stat(root); err == nil {
+			t.Errorf("status=%v: the lane root was created", status)
+		}
+	}
+}

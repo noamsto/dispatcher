@@ -54,6 +54,7 @@ type label struct {
 	Tags              []string
 	Issue             int
 	Ignore            bool
+	Scope             string
 	From              string
 	TS                int64
 	re                *regexp.Regexp
@@ -61,7 +62,7 @@ type label struct {
 
 var (
 	labelKeyRe  = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}$`)
-	labelFields = []string{"key", "title", "match", "tags", "issue", "ignore"}
+	labelFields = []string{"key", "title", "match", "tags", "issue", "ignore", "scope"}
 )
 
 const maxMatchLen = 400
@@ -192,6 +193,13 @@ func mergeLabel(l *label, obj map[string]any) error {
 		}
 		l.Ignore = b
 	}
+	if v, ok := obj["scope"]; ok {
+		s, isStr := v.(string)
+		if !isStr || (s != "harness" && s != "repo") {
+			return fmt.Errorf(`scope is not "harness" or "repo"`)
+		}
+		l.Scope = s
+	}
 	return nil
 }
 
@@ -234,7 +242,11 @@ func rulesFrom(labels []label) []rule {
 		if title == "" {
 			title = l.Key
 		}
-		rules = append(rules, rule{Key: l.Key, Title: title, Tags: l.Tags, Re: l.re, Scope: scopeRepo})
+		sc := scopeRepo
+		if l.Scope == "harness" {
+			sc = scopeHarness
+		}
+		rules = append(rules, rule{Key: l.Key, Title: title, Tags: l.Tags, Re: l.re, Scope: sc})
 	}
 	return append(rules, catalog...)
 }
