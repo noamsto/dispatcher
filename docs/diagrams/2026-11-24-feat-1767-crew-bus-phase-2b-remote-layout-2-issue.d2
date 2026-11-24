@@ -1,0 +1,21 @@
+direction: right
+origin: "Origin (layout-2 crew)" {
+  meta: "crews/<id>/meta.json\nthe pin" { shape: cylinder }
+  dispatch: "dispatch --host H\ndispatch.sh run_env"
+  stream: "crew stream relay\nstream/relay.go"
+  olog: "crews/<id>/events.jsonl" { shape: cylinder }
+}
+remote: "Remote host H" {
+  exec: "crew remote-exec\nrepo scope only"
+  rdispatch: "remote dispatch\nno CREW_LAYOUT"
+  worker: "worker pane"
+  rlog: "<clone>/.git/crew/events.jsonl\nrepo bus" { shape: cylinder; class: warn }
+}
+origin.meta -> origin.dispatch: "layout 2"
+origin.dispatch -> remote.exec: "v1 request\nlayout not sent" { class: warn; style.animated: true }
+remote.exec -> remote.rdispatch
+remote.rdispatch -> remote.worker: "launch"
+remote.worker -> remote.rlog: "id resolves layout 1" { class: warn }
+origin.dispatch -> origin.olog: "_remote_finish row"
+origin.stream -> remote.exec: "relay: any CREW_ID\nno admitCrew" { class: warn }
+remote.exec -> remote.rlog: "reads repo log"

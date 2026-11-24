@@ -1,0 +1,28 @@
+direction: right
+origin: "Origin (layout-2 crew)" {
+  meta: "crews/<id>/meta.json\nhome_host" { shape: cylinder }
+  dispatch: "dispatch --host H\nCREW_LAYOUT=2, v2" { class: good }
+  stream: "stream relay\nscope from crew_layout" { class: good }
+  olog: "crews/<id>/events.jsonl\nrow + crew_layout: 2" { shape: cylinder; class: good }
+}
+remote: "Remote host H" {
+  exec: "crew remote-exec\nv1-v2, crew scope" { class: good }
+  admit: "admitCrew\nvisiting + home_host" { class: good }
+  rdispatch: "remote dispatch\nregister --visiting" { class: good }
+  vmeta: "crews/<id>/meta.json\nvisiting: true" { shape: cylinder; class: good }
+  worker: "worker + role panes\n-e XDG_STATE_HOME" { class: good }
+  rlog: "crews/<id>/events.jsonl" { shape: cylinder; class: good }
+}
+old: "old remote-exec\nrefuses v2" { class: warn }
+origin.meta -> origin.dispatch: "home_host"
+origin.dispatch -> remote.exec: "v2 request" { style.animated: true }
+origin.dispatch -> old: "fails closed:\nnames v1" { class: warn }
+remote.exec -> remote.rdispatch
+remote.rdispatch -> remote.vmeta: "create once"
+remote.rdispatch -> remote.worker: "launch, pinned root"
+remote.worker -> remote.rlog { style.animated: true }
+remote.rdispatch -> origin.dispatch: "crew_layout: 2 line"
+origin.dispatch -> origin.olog: "_remote_finish"
+origin.stream -> remote.exec: "crew scope relay" { style.animated: true }
+remote.exec -> remote.admit
+remote.admit -> remote.rlog: "reads"
