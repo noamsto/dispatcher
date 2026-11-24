@@ -1970,10 +1970,12 @@ _hold_body='touch "$STUB_DIR/started"
 for _ in $(seq 100); do [ -e "$STUB_DIR/go" ] && break; sleep 0.1; done'
 
 # Job control gives the launcher its own process group (pgid = its pid) and
-# keeps SIGINT at its default, as in a tmux pane.
+# gives it SIGINT at its default, as in a tmux pane. `set -m` alone does not
+# reset a SIGINT already ignored at entry (CI backgrounds bats), hence
+# `env --default-signal=INT`.
 _start_bg_launcher() {
   set -m
-  CREW_ID=c1 bash -euo pipefail "$LAUNCHER" "$@" </dev/null >"$BATS_TEST_TMPDIR/bg.out" 2>&1 &
+  CREW_ID=c1 env --default-signal=INT bash -euo pipefail "$LAUNCHER" "$@" </dev/null >"$BATS_TEST_TMPDIR/bg.out" 2>&1 &
   live_pid=$!
   set +m
   _wait_for "$STUB_DIR/started"
