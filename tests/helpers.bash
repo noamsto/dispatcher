@@ -24,6 +24,7 @@ export CREW="${CREW_GO_BIN:?tests/setup_suite.bash did not build crew-go}"
 # state that individual setup() functions clear piecemeal.
 unset DISPATCH_ENGINES TMUX TMUX_PANE
 unset CREW_ID CREW_WORKER_ID CREW_ROLE_ID CREW_OVERSEER
+unset CREW_LAYOUT # it beats the settings, so a leaked one decides the 1747 layout tests
 unset DISPATCHER_CRITICS_DIR DISPATCHER_REVIEWERS_DIR DISPATCHER_SKILLS_DIR
 # The repo copy of the pinned pi subagent extension and agent roster pi leads load.
 export DISPATCHER_PI_DIR="$BATS_TEST_DIRNAME/../adapters/pi"

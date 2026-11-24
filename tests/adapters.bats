@@ -45,6 +45,8 @@ teardown() {
     'core/launcher-common.sh|gave no log (rc $rc) — using $1/events.jsonl'
     # dispatch-resume's layout test compares against the legacy path
     'core/dispatch-resume.sh|[ "$crew_log" = "$crew_dir/events.jsonl" ]'
+    # cross_repo_hint tells layout 1 from layout 2 by comparing to the legacy path
+    'core/cross-repo-hint.sh|[ "$crew_log" = "$worker_common/crew/events.jsonl" ]'
     # each hook's legacy derivation (layout 1, no crew id, or no meta.json)
     'dispatch-notify.sh|log="$common/crew/events.jsonl"'
     'directive-delivery.sh|log=$crew_dir/events.jsonl'

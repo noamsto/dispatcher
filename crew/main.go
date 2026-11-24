@@ -997,7 +997,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 			Clock: clock.FromEnv(),
 		}
 		if parsed.typed.Crews.Legacy {
-			return flush(out, stderr, crews.RunLegacy(paths, out, options))
+			return flush(out, stderr, crews.RunLegacy(paths, out, stderr, options))
 		}
 		code := crews.Run(ctx, parsed.typed.Crews.Mine, parsed.typed.Crews.Home, paths, out, stderr, options)
 		return flush(out, stderr, code)

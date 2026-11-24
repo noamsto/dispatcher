@@ -69,9 +69,14 @@ func Run(ctx context.Context, mineOnly, homeOnly bool, paths bus.Paths, stdout, 
 // RunLegacy lists the live layout-1 crews of this repo — the phase 6 deletion
 // gate, "crew crews --legacy prints nothing". Layout 1 means "resolves to
 // layout 1 here": a repo dir beside a meta.json is layout 2 and is skipped.
-// It prints one id per line in crewDirs order, with no header, and always
-// exits 0.
-func RunLegacy(paths bus.Paths, stdout io.Writer, o Options) int {
+// It prints one id per line in crewDirs order, with no header. Outside a repo
+// it refuses with exit 1, so the gate can tell "nothing" from "could not
+// look"; otherwise it exits 0.
+func RunLegacy(paths bus.Paths, stdout, stderr io.Writer, o Options) int {
+	if paths.Common == "" {
+		say(stderr, "crew: crews --legacy: no repo here — layout-1 crews live one per repo; run this inside each repo\n")
+		return 1
+	}
 	now := o.Clock.Now()
 	for _, id := range crewDirs(paths) {
 		crew, err := paths.Crew(id)

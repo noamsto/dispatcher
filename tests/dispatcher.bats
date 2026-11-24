@@ -2021,7 +2021,11 @@ _signal_row() { # signal want-status
   live_pid=""
   [ "$rc" -eq "$2" ]
   grep -qx deregister "$STUB_LOG"
+  # A layout-2 crew registers under the state root, so `_crew_dir c1` is the
+  # "nothing landed in the repo bus" check; the state-root pid is the
+  # deregistration's own subject and must be gone (the dir itself outlives it).
   [ ! -e "$(_crew_dir c1)" ]
+  [ ! -e "$XDG_STATE_HOME/crew/crews/c1/pid" ]
   [ "$(_launches)" = 1 ]
 }
 
@@ -2051,7 +2055,9 @@ date +%s >\"\$DISPATCHER_HANDOFF_DIR/\$CREW_ID.\$DISPATCHER_LAUNCHER_PID.restart
   [ "$rc" -eq 0 ]
   [ "$(_launches)" = 2 ]
   [[ "$(cat "$STUB_DIR/last.2")" == "Handoff: "* ]]
+  # The layout-2 registration's pid is gone; the repo bus never saw the crew.
   [ ! -e "$(_crew_dir c1)" ]
+  [ ! -e "$XDG_STATE_HOME/crew/crews/c1/pid" ]
 }
 
 @test "1420: --fresh --no-note launches without a stored note and says the queue is unknown" {

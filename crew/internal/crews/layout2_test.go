@@ -191,11 +191,12 @@ func TestCrewsLegacyOmitsALayout2CrewWithALegacyDir(t *testing.T) {
 	}
 }
 
-// TestCrewsLegacyOutsideARepoIsSilent: no repo means no layout-1 dirs to glob.
-func TestCrewsLegacyOutsideARepoIsSilent(t *testing.T) {
+// TestCrewsLegacyRefusesOutsideARepo: no repo means there is nothing to
+// glob and the phase 6 gate must not read "nothing" as "checked nothing".
+func TestCrewsLegacyRefusesOutsideARepo(t *testing.T) {
 	p := bus.StatePaths(layout2Fixture(t).State)
 	out, errB, code := runLegacy(t, p, opts(map[int]bool{4321: true}, nil))
-	if code != 0 || errB != "" || out != "" {
-		t.Errorf("legacy outside a repo: code %d, stdout %q, stderr %q", code, out, errB)
+	if want := "crew: crews --legacy: no repo here — layout-1 crews live one per repo; run this inside each repo\n"; code != 1 || errB != want || out != "" {
+		t.Errorf("legacy outside a repo: code %d, stdout %q, stderr %q; want code 1, stderr %q", code, out, errB, want)
 	}
 }

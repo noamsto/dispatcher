@@ -70,7 +70,7 @@ func runMine(t *testing.T, p bus.Paths, o Options) (string, string, int) {
 func runLegacy(t *testing.T, p bus.Paths, o Options) (string, string, int) {
 	t.Helper()
 	var out, errB bytes.Buffer
-	code := RunLegacy(p, &out, o)
+	code := RunLegacy(p, &out, &errB, o)
 	return out.String(), errB.String(), code
 }
 

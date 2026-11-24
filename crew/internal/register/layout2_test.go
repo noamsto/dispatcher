@@ -130,6 +130,26 @@ func TestRegisterDefaultRefusesWithoutStateRoot(t *testing.T) {
 	absent(t, p.Dir)
 }
 
+// A legacy crew stays layout 1 even with no state root: the missing-state-root
+// refusal fires only when a new layout-2 crew would actually be written.
+func TestRegisterDefaultKeepsALegacyCrewLayout1WithoutAStateRoot(t *testing.T) {
+	p := testPaths(t)
+	w := newWorld("c1")
+	delete(w.env, "CREW_LAYOUT") // newWorld pins layout 1 for the corpus; this test wants it unset.
+	seed(t, p, "c1", "777")
+	if code, stderr := run("register", "888", p, w); code != 0 || stderr != "" {
+		t.Fatalf("code=%d stderr=%q", code, stderr)
+	}
+	bc, err := p.Crew("c1")
+	if err != nil || bc.Layout != 1 {
+		t.Fatalf("crew = %+v, %v; want layout 1", bc, err)
+	}
+	if got := readFile(t, p.CrewDir("c1")+"/pid"); got != "888\n" {
+		t.Errorf("legacy pid = %q", got)
+	}
+	absent(t, p.CrewDir("c1")+"/meta.json")
+}
+
 // An existing meta.json is reused whatever CREW_LAYOUT says, and never
 // rewritten.
 func TestRegisterLayout2PinIsSticky(t *testing.T) {

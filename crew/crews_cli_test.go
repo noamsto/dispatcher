@@ -436,6 +436,21 @@ func TestCrewsHome(t *testing.T) {
 	})
 }
 
+func TestCrewsLegacy(t *testing.T) {
+	t.Run("prints the live layout-1 crew and nothing else", func(t *testing.T) {
+		c := newCrewsCLI(t)
+		c.registerAs("c-legacy", strconv.Itoa(os.Getppid()))
+		eq(t, "stdout", c.mustRun("crews", "--legacy"), "c-legacy\n")
+	})
+
+	t.Run("--legacy with --mine is a usage error", func(t *testing.T) {
+		c := newCrewsCLI(t)
+		out, errOut := c.expect(64, "crews", "--legacy", "--mine")
+		eq(t, "stdout", out, "")
+		eq(t, "stderr", errOut, "crew: crews: --mine and --legacy can't be used together\n")
+	})
+}
+
 func TestCrewsMine(t *testing.T) {
 	t.Run("lists the crew whose pid is an ancestor of the caller", func(t *testing.T) {
 		c := newCrewsCLI(t)

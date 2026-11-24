@@ -7371,6 +7371,9 @@ identity) printf '%s\n' '{"name":"iris","color":"blue","tmux":"colour33"}' ;;
 pi-agent-dir) exec "$CREW_REAL" pi-agent-dir ;;
 fleet) exec "$CREW_REAL" "$@" ;;
 stream) exec "$CREW_REAL" "$@" ;;
+# The hint resolves the crew's own log with `crew where --log`, so the layout
+# under test (the repo bus vs the state-root store) is resolved for real.
+where) case "${2:-}" in --log | --dir) exec "$CREW_REAL" "$@" ;; esac ;;
 esac
 exit 0
 EOF
@@ -7394,6 +7397,19 @@ _seed_worker_stream() {
   [ "$status" -eq 0 ]
   worker_top="$(git -C "$TEST_REPO" rev-parse --show-toplevel)"
   [[ "$output" == *"arm/adjust the lane: cd $worker_top && crew stream --crew c1"* ]]
+}
+
+@test "cross-repo: no hint for a layout-2 crew whose one log is read from any cwd (#1800)" {
+  _cross_repo_fixture "$BATS_TEST_TMPDIR/other-repo"
+  # The state-root meta.json is what makes c1 layout 2: `crew where --log` then
+  # answers the store's one log, not this repo's bus, so the lane note is false.
+  mkdir -p "$XDG_STATE_HOME/crew/crews/c1"
+  printf '{"layout":2,"id":"c1","created":1,"home_host":"h","visiting":false,"created_by":"register"}\n' \
+    >"$XDG_STATE_HOME/crew/crews/c1/meta.json"
+  DISPATCH_PROFILE=personal run run_dispatch \
+    standard sonnet --effort medium 42 --crew-id c1 "Do a thing"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"arm/adjust the lane"* ]]
 }
 
 @test "cross-repo: no hint when the dispatcher checkout is the worker repo (#398)" {

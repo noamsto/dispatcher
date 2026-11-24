@@ -1,10 +1,10 @@
 usage: crew crews [--mine | --home | --legacy]
 
-List every crew with traffic on this repo's bus: id, last and first event, worker
-count, dispatcher pid and whether that pid is alive. Both sources count — a crew
-dir alone (watch creates one) and an id seen only in the log. Layout-2 crews
-homed in this repo are listed too; run outside a repo, it lists the layout-2
-crews with no home repo.
+List every crew of this repo: its own store under the state root, or a crew dir
+or an id on this repo's bus. Each row has id, last and first event, worker
+count, dispatcher pid and whether that pid is alive. Both repo-bus sources count
+— a crew dir alone (watch creates one) and an id seen only in the log. Run
+outside a repo, it lists the layout-2 crews with no home repo.
 
   --mine    Print only the crews this caller owns — one id per line, no header —
             meaning the crews whose recorded dispatcher pid is a live ancestor of
@@ -23,8 +23,10 @@ crews with no home repo.
             header — the phase 6 deletion gate, which deletes the layout-1 code
             only once this prints nothing on every host. Layout 1 means "resolves
             to layout 1 here": a repo dir beside a meta.json is layout 2 and is
-            not reported. Ended layout-1 crews print nothing and stay on disk.
-            Exclusive with --mine and --home.
+            not reported. Live means the recorded dispatcher pid is alive and not
+            a recycled pid, the same rule the alive column and --mine use; the
+            listing deletes nothing, so a dir left by a killed dispatcher stays
+            put until phase 6. Exclusive with --mine and --home.
 
   crew crews
   crew crews --mine
