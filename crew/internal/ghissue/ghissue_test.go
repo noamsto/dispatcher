@@ -147,3 +147,44 @@ func TestStamp(t *testing.T) {
 		t.Error("unreadable stamp is not the zero time")
 	}
 }
+
+func TestRepoIsAppendedToIssueCallsOnly(t *testing.T) {
+	f := &ghtest.Fake{Func: func(args []string) (string, error) {
+		if args[1] == "create" {
+			return "https://github.com/o/r/issues/3\n", nil
+		}
+		return "[]", nil
+	}}
+	c := client(f)
+	c.Repo = "o/r"
+	var dst any
+	if err := c.Read(&dst, "issue", "view", "7", "--json", "closedByPullRequestsReferences"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.Create("t", "b", "l"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Reopen(7, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Comment(7, "x"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.Candidates("t"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Read(&dst, "pr", "view", "u", "--json", "mergedAt"); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"issue view 7 --json closedByPullRequestsReferences --repo o/r",
+		"issue create --title t --body b --assignee @me --label l --repo o/r",
+		"issue reopen 7 --repo o/r",
+		"issue comment 7 --body x --repo o/r",
+		"issue list --state open --search t --limit 5 --json number,title --repo o/r",
+		"pr view u --json mergedAt",
+	}
+	if !slices.Equal(f.Calls(), want) {
+		t.Errorf("calls = %q", f.Calls())
+	}
+}

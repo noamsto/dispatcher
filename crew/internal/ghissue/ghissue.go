@@ -16,9 +16,12 @@ import (
 )
 
 // Client reads and writes issues through GH. It caches View for its lifetime.
+// A non-empty Repo points every `gh issue` call at that repository instead of
+// the working directory's.
 type Client struct {
-	Ctx context.Context
-	GH  gh.Client
+	Ctx  context.Context
+	GH   gh.Client
+	Repo string
 
 	views map[int]*View
 }
@@ -52,9 +55,17 @@ type Issue struct {
 	Body   string `json:"body"`
 }
 
+// run is GH.Run with --repo appended to `gh issue` calls when Repo is set.
+func (c *Client) run(args ...string) (string, error) {
+	if c.Repo != "" && args[0] == "issue" {
+		args = append(args[:len(args):len(args)], "--repo", c.Repo)
+	}
+	return c.GH.Run(c.Ctx, args...)
+}
+
 // Read runs gh and decodes its JSON output into dst.
 func (c *Client) Read(dst any, args ...string) error {
-	out, err := c.GH.Run(c.Ctx, args...)
+	out, err := c.run(args...)
 	if err != nil {
 		return fmt.Errorf("gh %s failed: %v", strings.Join(args[:2], " "), err)
 	}
@@ -86,7 +97,7 @@ func (c *Client) Create(title, body string, labels ...string) (int, error) {
 	for _, l := range labels {
 		args = append(args, "--label", l)
 	}
-	out, err := c.GH.Run(c.Ctx, args...)
+	out, err := c.run(args...)
 	if err != nil {
 		return 0, fmt.Errorf("gh issue create %q failed: %v", title, err)
 	}
@@ -103,13 +114,13 @@ func (c *Client) Reopen(n int, comment string) error {
 	if comment != "" {
 		args = append(args, "--comment", comment)
 	}
-	_, err := c.GH.Run(c.Ctx, args...)
+	_, err := c.run(args...)
 	return err
 }
 
 // Comment posts body on issue n.
 func (c *Client) Comment(n int, body string) error {
-	_, err := c.GH.Run(c.Ctx, "issue", "comment", strconv.Itoa(n), "--body", body)
+	_, err := c.run("issue", "comment", strconv.Itoa(n), "--body", body)
 	return err
 }
 
