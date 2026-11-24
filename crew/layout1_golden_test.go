@@ -19,8 +19,23 @@ var (
 	goldenTS  = regexp.MustCompile(`\b1[0-9]{9,12}\b`)
 	goldenISO = regexp.MustCompile(`\b20[0-9]{2}-[0-9]{2}-[0-9]{2}T[0-9:]+Z\b`)
 	goldenBy  = regexp.MustCompile(` by=.*`)
-	goldenUID = regexp.MustCompile(`linux:[0-9a-f-]{36}:[0-9]+`)
+	goldenUID = regexp.MustCompile(`linux:[0-9a-f-]{36}:[0-9]+|lstart:[A-Za-z]{3} [A-Za-z]{3} [0-9]{1,2} [0-9:]{8} [0-9]{4}`)
 )
+
+// proc.OS.Start is a boot-id token on Linux and ps' lstart elsewhere; the
+// golden must normalize both or it only passes on Linux.
+func TestGoldenStartTokenNormalization(t *testing.T) {
+	for _, tok := range []string{
+		"linux:0a1b2c3d-0000-4000-8000-123456789abc:48213",
+		"lstart:Tue Nov 24 03:50:07 2026",
+		"lstart:Mon Jan  5 03:50:07 2026",
+	} {
+		tok = strings.Join(strings.Fields(tok), " ")
+		if got := goldenUID.ReplaceAllString("4242 "+tok, "<START>"); got != "4242 <START>" {
+			t.Errorf("%q normalized to %q", tok, got)
+		}
+	}
+}
 
 // TestLayout1Golden records the unswapped layout-1 file-level behaviour of one
 // crew's lifecycle, so a state-root change can prove layout 1 stays
