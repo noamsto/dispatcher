@@ -1267,6 +1267,15 @@ _lead_pane() { sed -n 's/^set-option -p -t \([^ ]*\) @crew_model .*/\1/p' "$STUB
   run ! grep -qF '@crew_chrome 1' "$STUB_LOG"
 }
 
+@test "claude resume row carries the repo, the realpath of the common dir" {
+  setup_worker_wt
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 0 ]
+  [ "$(jq -r 'select(.kind == "resume") | .repo' "$TEST_REPO/.git/crew/events.jsonl" | tail -1)" = "$(realpath "$TEST_REPO/.git")" ]
+}
+
 @test "claude resume ignores a header-only chrome: true and rewrites it" {
   setup_worker_wt 'chrome: true'
   stub_tmux_with_pane_at_wt '@4' '%8' iris

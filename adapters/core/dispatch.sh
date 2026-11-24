@@ -1960,10 +1960,6 @@ split_role_pane() {
   printf '%s' "$pane"
 }
 
-# _crew_repo — the repo (git common dir) whose bus $crew_dir is, tagged on the rows
-# that name a branch so a shared bus can tell repos apart.
-_crew_repo() { realpath -e -- "${crew_dir%/crew}"; }
-
 # _branch_live_repos <log> <repo> [<only>] — print each repo <log> shows with a
 # live dispatch of $branch in crew $crew_id, one per line (only <only>, when
 # given). An untagged row belongs to <repo>, the repo whose log it is. A dispatch
@@ -1976,7 +1972,7 @@ _branch_live_repos() {
       .n += 1
       | if $row.branch != $b then . else
           (($row.repo // $r) | tostring) as $repo | [(($row.ts | numbers) // 0), .n] as $at
-          | if $row.kind == "dispatch" and $row.crew_id == $c then
+          | if ($row.kind == "dispatch" or $row.kind == "resume") and $row.crew_id == $c then
               .live[$repo] = ([.live[$repo], $at] | max)
             elif $row.kind == "reap" or $row.kind == "release" then
               .ended[$repo] = ([.ended[$repo], $at] | max)
@@ -4798,8 +4794,8 @@ _ident_lock_acquire() {
 }
 
 # _ident_lock_release — drop the codename lock and break mutex this process
-# holds. Each flag clears before its link goes: the signal trap runs this too,
-# and resumes the script afterwards, so a set flag must never outlive the link.
+# holds. Each flag clears before its link goes, so a repeat call (a signal trap
+# then the EXIT trap) finds nothing left to remove.
 _ident_lock_release() {
   if [ -n "$ident_break_held" ]; then
     ident_break_held=""
@@ -4810,7 +4806,14 @@ _ident_lock_release() {
     rm -f "$ident_lock"
   fi
 }
-trap 'rm -f "$dispatch_lock" "${claude_json_lock:-}"; _ident_lock_release' EXIT INT TERM HUP
+_dispatch_cleanup() {
+  rm -f "$dispatch_lock" "${claude_json_lock:-}"
+  _ident_lock_release
+}
+trap _dispatch_cleanup EXIT
+trap '_dispatch_cleanup; exit 130' INT
+trap '_dispatch_cleanup; exit 143' TERM
+trap '_dispatch_cleanup; exit 129' HUP
 
 # Same-branch pre-check, lock-free: runs before the reclaim and the switch below,
 # so the common refusal leaves no window killed and no branch or worktree made.

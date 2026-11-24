@@ -1198,12 +1198,13 @@ escalated_from_event="${escalated_from:-}"
 line=$(jq -nc --arg crew "$crew_id" --arg branch "$branch" \
   --arg worker "$worker_id" --arg prev "$prev_worker_id" \
   --arg engine "$agent" --arg model "$model" --arg session "$session" \
+  --arg repo "$(_crew_repo)" \
   --argjson continued "$([ -n "$fresh" ] && echo false || echo true)" \
   --arg engine_session "${lead_sid:-${lead_session#-}}" \
   --arg escalated_from "$escalated_from_event" \
   --argjson chrome "$([ -n "$chrome" ] && echo true || echo false)" \
   --argjson code_mode "$([ -n "$code_mode" ] && echo true || echo false)" \
-  '{ts:(now*1000|floor), crew_id:$crew, kind:"resume", branch:$branch,
+  '{ts:(now*1000|floor), crew_id:$crew, kind:"resume", branch:$branch, repo:$repo,
      worker_id:$worker, prev_worker_id:$prev, engine:$engine, model:$model,
      session:$session, continued:$continued,
      engine_session:(if $engine_session == "" then null else $engine_session end)}

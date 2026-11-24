@@ -3,6 +3,7 @@
 # `load helpers` runs once per test setup, so this is a fresh suite-local store
 # even for tests that do not need a throwaway repository.
 export XDG_DATA_HOME="$BATS_TEST_TMPDIR/data"
+export XDG_STATE_HOME="$BATS_TEST_TMPDIR/state"
 
 # Real `crew reap` invocations across the suite would each fork a ratings
 # sweep; the fork would outlive the test and race teardown_repo's rm -rf.
@@ -70,7 +71,9 @@ setup_repo() {
   # Every test gets a private data store; never let crew state leak in from
   # the shell running bats.
   export XDG_DATA_HOME="$BATS_TEST_TMPDIR/data"
+  export XDG_STATE_HOME="$BATS_TEST_TMPDIR/state"
   assert_isolated_xdg_data_home || return 1
+  assert_isolated_xdg_state_home || return 1
   # Overriding $HOME is not enough: $XDG_CONFIG_HOME survives it, so git still
   # reads ~/.config/git/config, whose commit.gpgSign and tilde-relative
   # signingkey then re-expand against the new HOME and kill every commit.
@@ -100,6 +103,15 @@ assert_isolated_xdg_data_home() {
   esac
   printf 'XDG_DATA_HOME must be under BATS_TEST_TMPDIR (got %s)\n' \
     "${XDG_DATA_HOME:-<unset>}" >&2
+  return 1
+}
+
+assert_isolated_xdg_state_home() {
+  case "${XDG_STATE_HOME:-}" in
+  "$BATS_TEST_TMPDIR"/*) return 0 ;;
+  esac
+  printf 'XDG_STATE_HOME must be under BATS_TEST_TMPDIR (got %s)\n' \
+    "${XDG_STATE_HOME:-<unset>}" >&2
   return 1
 }
 

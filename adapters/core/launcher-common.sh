@@ -1209,6 +1209,10 @@ claude_subagent_effort_env() {
   printf 'CLAUDE_CODE_SUBAGENT_EFFORT=%s ' "$sub"
 }
 
+# _crew_repo — the repo (git common dir) whose bus $crew_dir is, tagged on the rows
+# that name a branch so a shared bus can tell repos apart.
+_crew_repo() { realpath -e -- "${crew_dir%/crew}"; }
+
 # _claude_pretrust <path>... — stamp .projects[<path>].hasTrustDialogAccepted in
 # ~/.claude.json for every path in one locked write; a no-op (no lock, no write)
 # when every path is already stamped. Claude Code skips its "trust this

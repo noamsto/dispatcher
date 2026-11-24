@@ -8147,6 +8147,28 @@ EOF
   jq -e 'select(.kind == "claim")' "$TEST_REPO/.git/crew/events.jsonl" >/dev/null
 }
 
+@test "signal: a SIGTERM while the identity lock is held exits 143, writes no dispatch row and releases both locks" {
+  stub_launch_bins
+  lock="$(ident_lock_path)"
+  mv "$STUB_DIR/crew" "$STUB_DIR/crew-inner"
+  cat >"$STUB_DIR/crew" <<EOF
+#!/usr/bin/env bash
+if [ "\${1:-}" = identity ] && [ "\${2#--}" = "\${2:-}" ]; then
+  kill -TERM "\$(readlink "$lock")"
+  exit 0
+fi
+exec "$STUB_DIR/crew-inner" "\$@"
+EOF
+  chmod +x "$STUB_DIR/crew"
+
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  [ "$status" -eq 143 ]
+  [ ! -L "$lock" ]
+  run ! compgen -G "$TEST_REPO/.git/crew/dispatch-*.lock"
+  assert_no_bus_row dispatch
+  run ! grep -q 'new-window' "$STUB_LOG"
+}
+
 @test "identity lock: a live holder past the bound refuses with it named, no claim row and no unlocked fallback" {
   stub_launch_bins
   lock="$(ident_lock_path)"
@@ -8331,6 +8353,22 @@ EOF
   [ ! -e "$TEST_REPO/.dispatch-wt" ]
   [ "$(git -C "$TEST_REPO" worktree list --porcelain | grep -c '^worktree ')" -eq 1 ]
   [ "$(dispatch_rows)" -eq 1 ]
+  assert_no_bus_row claim
+}
+
+@test "same-branch: a resume row after a release in another repo of the crew makes the branch live again" {
+  stub_launch_bins
+  b=feat/42-do-a-thing
+  other="$(other_repo)"
+  other_row dispatch "$b" 100
+  bus_row dispatch "$b" 100 "$other"
+  bus_row release "$b" 200 "$other"
+  bus_row resume "$b" 300 "$other"
+
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"$b is already dispatched live into $other in crew c1"* ]]
+  run ! grep -q '^switch' "$STUB_LOG"
   assert_no_bus_row claim
 }
 
