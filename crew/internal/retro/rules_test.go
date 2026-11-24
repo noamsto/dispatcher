@@ -190,3 +190,26 @@ func TestRulesFromOrder(t *testing.T) {
 		t.Fatalf("rules order: %v", rules)
 	}
 }
+
+func TestLabelScopeRoutesCustomKeyToHarness(t *testing.T) {
+	rows := []bus.Event{
+		labelRow(1, "dispatcher:a", "findings:a", `{"key":"pane-timeout","match":"pane","scope":"harness"}`),
+		labelRow(2, "dispatcher:a", "findings:a", `{"key":"repo-thing","match":"thing","scope":"repo"}`),
+		labelRow(3, "dispatcher:a", "findings:a", `{"key":"bad-scope","match":"bad","scope":"fleet"}`),
+	}
+	labels, warnings := foldLabels(rows)
+	if len(labels) != 2 || len(warnings) != 1 || !strings.Contains(warnings[0], "bad-scope skipped: scope is not") {
+		t.Fatalf("labels %+v, warnings %q", labels, warnings)
+	}
+	rules := rulesFrom(labels)
+	for key, c := range map[string]struct {
+		detail string
+		want   scope
+	}{"pane-timeout": {"pane", scopeHarness}, "repo-thing": {"thing", scopeRepo}} {
+		want := c.want
+		_, r, _ := classify(flatNote{Tag: "other", Detail: c.detail}, rules)
+		if r == nil || r.Key != key || r.Scope != want {
+			t.Errorf("%s classified as %+v, want scope %v", key, r, want)
+		}
+	}
+}
