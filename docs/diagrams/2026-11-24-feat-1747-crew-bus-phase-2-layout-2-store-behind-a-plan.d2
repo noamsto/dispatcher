@@ -1,0 +1,29 @@
+direction: right
+
+classes: {
+  store: { shape: cylinder; style: { stroke: "#2E7D32"; stroke-width: 2 } }
+  sh: { style: { stroke: "#E65100"; stroke-width: 2; stroke-dash: 3 } }
+}
+
+register: "crew register\nCREW_LAYOUT=2" { class: good }
+meta: "crews/<id>/meta.json\n(the pin)" { class: store }
+writers: "Go writers\nstatus, msg, hold, reap"
+dispatch: "dispatch.sh\n_crew_log / crew where --log" { class: sh }
+resolver: "bus.Paths.Crew(id)\nmeta → archive → index → legacy" { class: accent }
+crewlog: "crews/<id>/events.jsonl\n+ marks, holds, nudge-wait\n+ identity.lock" { class: store }
+repolog: "<repo>/crew/events.jsonl\nunpinned crews, unchanged" { class: store }
+index: "index/repos/<sha256>\ncrew index add | rebuild" { class: store }
+refuse: "archived / index-only\nrefused, nothing created" { class: warn }
+samebranch: "_branch_live_elsewhere\nconfirms via \$R worktree HEADs" { class: good }
+trap: "INT/TERM/HUP traps\ncleanup + exit" { class: good }
+
+register -> meta: "exclusive link"
+writers -> resolver {style.animated: true}
+dispatch -> resolver {style.animated: true}
+resolver -> crewlog: "layout 2 (State root)" {style.animated: true}
+resolver -> repolog: "layout 1" {style.animated: true}
+resolver -> refuse
+meta -> resolver: "classifies"
+dispatch -> index: "once per process"
+dispatch -> samebranch: "candidates from crew log"
+dispatch -> trap
