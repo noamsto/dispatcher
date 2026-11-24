@@ -515,16 +515,16 @@ func TestScanCrewsReadsLayout2OwnLog(t *testing.T) {
 	}
 }
 
-func TestScanCrewsSharedIDAcrossReposKeepsRepoScan(t *testing.T) {
-	root := t.TempDir()
-	b, c := filepath.Join(root, "b", ".git"), filepath.Join(root, "c", ".git")
-	r := &FakeRunner{Responses: map[string]FakeResponse{}}
-	r.Responses["crew where --dir --crew x"] = FakeResponse{Stdout: []byte(filepath.Join(b, "crew", "crews", "x") + "\n")}
+func TestCrewDirsKeyIncludesRunDir(t *testing.T) {
+	r := &FakeRunner{Responses: map[string]FakeResponse{"crew where --dir --crew x": {Stdout: []byte("/s/x\n")}}}
 	cfg := baseConfig()
 	cfg.Dirs = NewCrewDirs()
-	crews := []CrewRef{{Crew: "x", Common: b}, {Crew: "x", Common: c}}
-	d, errs := NewFleetScanners().ScanCrews(context.Background(), r, cfg, crews, 1)
-	if len(d) != 0 || len(errs) != 1 {
-		t.Fatalf("digests=%v errs=%v: only repo c's lookup (answered with b's path) may differ", d, errs)
+	for _, dir := range []string{"/a", "/b", "/a", "/b"} {
+		if _, err := cfg.Dirs.Resolve(context.Background(), r, cfg, dir, "x"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n := whereCalls(r); n != 2 {
+		t.Errorf("where called %d times, want 2 (once per run dir)", n)
 	}
 }
