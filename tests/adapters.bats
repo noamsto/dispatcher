@@ -538,9 +538,14 @@ guard_ships_row() { # script basename
 }
 
 @test "no command body references a plugin command without its namespace" {
-  # All four commands ship namespaced under the dispatcher plugin, so a bare
-  # /autopilot or /finish-prs cross-reference resolves to nothing. /loop and
-  # /schedule are deliberately excluded — those skills stay outside this plugin.
+  # Five commands ship namespaced under the dispatcher plugin. This scan
+  # covers the three whose cursors carry the namespace — /autopilot,
+  # /finish-prs, /project-autopilot — because a bare cross-reference to any
+  # of them resolves to nothing. /night-shift is excluded because its cursor
+  # form is itself bare (`/night-shift` on cursor, `$night-shift` on codex),
+  # and /dispatcher is excluded because it is the plugin's own command. /loop
+  # and /schedule are deliberately excluded — those skills stay outside this
+  # plugin.
   #
   # Scans the SHIPPED trees as well as the source, not source alone: the source
   # is what a fix edits, but the generated copies are what each engine actually

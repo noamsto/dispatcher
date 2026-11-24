@@ -28,8 +28,9 @@ nothing, run nothing else.
      ```
      crew policy set night 'dispatch queued issues in order; merge PRs with crew merge --policy night when CI is green and the ledger validates; answer worker blocks within the task spec; ask me nothing until morning'
      ```
-     Tell them to edit the words to taste and re-run this command in that
-     terminal. This command never runs `crew policy set` itself.
+     Tell them to edit the words to taste, run that line there, then re-run
+     this command from this dispatcher session. This command never runs
+     `crew policy set` itself.
    - Present → load the `standing-policy` skill and quote that provenance line
      back.
 2. **Retitle.** Guard the optional tool; keep ≤40 cells, start with a letter or
