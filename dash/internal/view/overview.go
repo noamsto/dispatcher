@@ -149,6 +149,10 @@ type BudgetRow struct {
 	AheadPts *int64  `json:"ahead_pts"`
 	Pace     string  `json:"pace"`
 	Verdict  *string `json:"verdict"`
+	// Text is the dollar figure behind the percentage; Critical forces the red
+	// gauge for a credit that is expired or spent.
+	Text     string `json:"text,omitempty"`
+	Critical bool   `json:"critical,omitempty"`
 }
 
 type Monitors struct {
@@ -402,11 +406,21 @@ func budgetRows(r *data.BudgetReport) []BudgetRow {
 			continue
 		}
 		for _, win := range r.Engines[name].Windows {
-			rows = append(rows, BudgetRow{
-				Engine: name, Label: name + " " + win.Key, UsedPct: win.UsedPct,
+			row := BudgetRow{
+				Engine: name, Label: data.WindowLabel(name, win.Key), UsedPct: win.UsedPct,
 				AheadPts: win.AheadPts, Pace: paceOf(win.AheadPts), Verdict: win.Verdict,
-			})
+			}
+			if name == "pi" && win.Key == "month" {
+				row.Text = r.Engines[name].SpendText()
+			}
+			rows = append(rows, row)
 		}
+	}
+	if c := r.AnthropicCredit; c != nil {
+		rows = append(rows, BudgetRow{
+			Engine: "pi", Label: "pi anthropic", UsedPct: c.UsedPct, Pace: "n/a",
+			Text: c.LeftText(), Critical: c.Exhausted(),
+		})
 	}
 	return rows
 }

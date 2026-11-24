@@ -305,3 +305,24 @@ func TestRosterForeignErrorShown(t *testing.T) {
 		}
 	}
 }
+
+func TestBudgetPaneLabelsPiBudgets(t *testing.T) {
+	spend, target := 34.59, 30.0
+	snap := data.Snapshot{Budget: data.BudgetSection{Report: &data.BudgetReport{
+		Engines: map[string]*data.EngineBudget{"pi": {
+			Source: "openrouter_key", SpendUSD: &spend, TargetUSD: &target,
+			Windows: []data.Window{{Key: "month", UsedPct: 115.3}},
+		}},
+		AnthropicCredit: &data.AnthropicCredit{BalanceUSD: 50, RemainingUSD: 20, UsedPct: 60},
+	}}}
+	var texts []string
+	for _, l := range budgetPane(snap) {
+		texts = append(texts, l.text)
+	}
+	out := strings.Join(texts, "\n")
+	for _, want := range []string{"pi openrouter", "pi anthropic", "$20.00 of $50.00 left"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("budget pane lacks %q:\n%s", want, out)
+		}
+	}
+}

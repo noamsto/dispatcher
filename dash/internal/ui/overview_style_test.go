@@ -10,6 +10,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 	"github.com/muesli/termenv"
 
+	"github.com/noamsto/dispatcher/dash/internal/data"
 	vm "github.com/noamsto/dispatcher/dash/internal/view"
 )
 
@@ -194,5 +195,36 @@ func TestPhaseTrack(t *testing.T) {
 		if got := phaseTrack(tc.in); got != tc.want {
 			t.Errorf("%s: got %q, want %q", tc.name, got, tc.want)
 		}
+	}
+}
+
+func TestBudgetBarDollarTextTruncatesBeforePercent(t *testing.T) {
+	row := vm.BudgetRow{Label: "pi anthropic", UsedPct: 60, Text: "$20.00 left expired", Critical: true}
+	wide := ansi.Strip(budgetBar(row, newSpans(60, nil), 60))
+	if !strings.Contains(wide, "pi anthropic") || !strings.Contains(wide, "60%") || !strings.Contains(wide, "$20.00 left expired") {
+		t.Errorf("wide row = %q", wide)
+	}
+	narrow := ansi.Strip(budgetBar(row, newSpans(30, nil), 30))
+	if !strings.Contains(narrow, "60%") || strings.Contains(narrow, "expired") {
+		t.Errorf("narrow row = %q, want the percent kept and the text cut", narrow)
+	}
+}
+
+func TestBudgetBarCriticalIsRed(t *testing.T) {
+	trueColorProfile(t)
+	row := vm.BudgetRow{Label: "pi anthropic", UsedPct: 25, Text: "$37 left expired"}
+	healthy := budgetBar(row, newSpans(60, nil), 60)
+	row.Critical = true
+	if budgetBar(row, newSpans(60, nil), 60) == healthy {
+		t.Error("a critical row renders like a healthy one at 25%")
+	}
+}
+
+func TestCreditPctRedWhenExhausted(t *testing.T) {
+	if got := creditPct(&data.AnthropicCredit{UsedPct: 25, RemainingUSD: 5}); got != 25 {
+		t.Errorf("healthy credit pct = %v", got)
+	}
+	if got := creditPct(&data.AnthropicCredit{UsedPct: 25, RemainingUSD: 5, Expired: true}); got != 100 {
+		t.Errorf("expired credit pct = %v", got)
 	}
 }
