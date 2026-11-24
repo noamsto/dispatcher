@@ -516,22 +516,6 @@ func RouteAny(rows []bus.Event, branch string) (host, crew string, err error) {
 	return host, crew, nil
 }
 
-// RemoteHosts is the sorted distinct hosts of crew's remote:true dispatch rows.
-func RemoteHosts(rows []bus.Event, crew string) []string {
-	var hosts []string
-	for _, e := range rows {
-		doc, ok := dispatchRow(e, crew)
-		if !ok {
-			continue
-		}
-		if host, remote := isRemote(doc); remote && host != "" && !slices.Contains(hosts, host) {
-			hosts = append(hosts, host)
-		}
-	}
-	sort.Strings(hosts)
-	return hosts
-}
-
 // Call is one remote-run invocation. SpecFile and MigrateDir are "" for none;
 // a relative path is read from Cwd. CrewScope sends a crew-scope request,
 // which needs no checkout at Cwd.

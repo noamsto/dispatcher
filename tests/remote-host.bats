@@ -36,6 +36,12 @@ teardown() { remote_host_teardown; }
   [ "$(remote_tmux show-environment -g | cut -d= -f1 | grep -cE '^(CREW|DISPATCH)_')" -eq 0 ]
   grep -qxF 'mini main --into main --window @crew_id=c1' "$OG_LOG"
   assert_ssh_command_is_literal
+  # A layout-1 origin speaks v1 only and leaves no visiting crew behind.
+  [ -s "$SSH_REQS" ]
+  jq -s -e 'all(.[]; .v == 1 and (.env // {} | has("CREW_LAYOUT") | not) and .scope != "crew")' "$SSH_REQS"
+  [ ! -e "$RHOME/state/crew/crews/c1/meta.json" ]
+  jq -e 'has("crew_layout") | not' <<<"$row"
+  ! grep -q '^crew_layout:' <<<"$output"
 
   # 2. Follow it from the local dispatcher's lane.
   start_stream --crew c1 --park 2 --retry 1 --coalesce 1 --interval 1
@@ -296,10 +302,8 @@ mirror_dispatch() {
 }
 
 @test "dispatch --host --recover on a layout-2 crew records the row in its log and indexes the crew once" {
-  assert_isolated_xdg_state_home
-  (cd "$TEST_REPO" && CREW_ID=c1 CREW_LAYOUT=2 "$CREW_GO_BIN" register "$$")
-  l2_log="$XDG_STATE_HOME/crew/crews/c1/events.jsonl"
-  [ -f "$XDG_STATE_HOME/crew/crews/c1/meta.json" ]
+  l2_origin
+  l2_log="$L2_LOG"
   CREW_CALLS="$BATS_TEST_TMPDIR/crew-calls"
   export CREW_CALLS
   mv "$STUB_DIR/crew" "$STUB_DIR/crew-wrapped"
@@ -331,6 +335,7 @@ EOF
   [ "$(wc -l <"$CREW_CALLS")" -eq 1 ]
   [ "$(jq -c --arg s "$session" 'select(.kind == "dispatch" and .session == $s and .host == "mini" and .remote == true)' "$l2_log" | wc -l)" -eq 1 ]
   [ ! -e "$LBUS" ]
+  jq -s -e 'any(.[]; .scope == "crew" and .argv[1] == "dispatch-row")' "$SSH_REQS"
 }
 
 @test "dispatch --host --recover with no remote row exits 1 and writes nothing" {
@@ -407,4 +412,182 @@ EOF
     false
   }
   grep -qxF 'mini crew-c1 --into main' "$OG_LOG"
+}
+
+# l2_dispatch — a layout-2 dispatch of issue 42 to mini from a pane whose local
+# session names the remote session `main`.
+l2_dispatch() {
+  TMUX_PANE=%0 run --separate-stderr dispatch_remote --host mini 42 "Layout two"
+  [ "$status" -eq 0 ] || {
+    echo "$stderr" >&2
+    false
+  }
+}
+
+@test "layout-2 origin: visiting crew on the remote, rows in the layout-2 logs, v2 requests, crew-scope relay and reply" {
+  l2_origin
+  l2_dispatch
+  worker_id="$(sed -n 's/^worker_id: //p' <<<"$output" | head -1)"
+  [ -n "$worker_id" ]
+
+  local rmeta="$RHOME/state/crew/crews/c1/meta.json" rlog="$RHOME/state/crew/crews/c1/events.jsonl"
+  jq -e --arg h "$(jq -r .home_host "$L2_META")" \
+    '.layout == 2 and .id == "c1" and .visiting == true and .home_host == $h and .home_repo == null and .created_by == "remote-dispatch"' "$rmeta"
+  jq -e --arg w "$worker_id" 'select(.kind == "dispatch" and .worker_id == $w)' "$rlog"
+  ! jq -e 'select(.kind == "dispatch")' "$REMOTE_CLONE/.git/crew/events.jsonl" 2>/dev/null
+
+  row="$(jq -c 'select(.kind == "dispatch")' "$L2_LOG")"
+  [ "$(wc -l <<<"$row")" -eq 1 ]
+  jq -e --arg w "$worker_id" '.host == "mini" and .remote == true and .worker_id == $w and .crew_layout == 2' <<<"$row"
+  [ -z "$(local_dispatch_rows)" ]
+
+  jq -s -e 'any(.[]; .argv[0] == "dispatch" and .argv[1] != "--engines" and .v == 2 and .env.CREW_LAYOUT == "2")' "$SSH_REQS"
+  jq -s -e 'any(.[]; .argv[0] == "dispatch" and .argv[1] == "--engines" and .v == 2)' "$SSH_REQS"
+
+  wt="$(remote_wt "$(jq -r .branch <<<"$row")")"
+  [ -d "$wt" ]
+  start_stream --crew c1 --park 2 --retry 1 --coalesce 1 --interval 1
+  on_remote "$wt" env CREW_WORKER_ID="$worker_id" crew status "$worker_id" blocked "need input"
+  poll_for 300 stream_has_blocked || {
+    cat "$STREAM_ERR" >&2
+    cat "$STREAM_OUT" >&2
+    false
+  }
+  jq -s -e 'any(.[]; .scope == "crew" and .argv[1] == "relay")' "$SSH_REQS"
+  stop_stream
+
+  run crew reply --crew c1 "$worker_id" "hello"
+  [ "$status" -eq 0 ]
+  run on_remote "$wt" crew inbox "$worker_id"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *hello* ]]
+}
+
+# pinned_remote_session — the remote tmux server and session `main` already
+# exist with a state root other than the remote dispatch's.
+pinned_remote_session() {
+  on_remote "$RHOME" env XDG_STATE_HOME="$BATS_TEST_TMPDIR/other" tmux new-session -d -s main
+}
+
+# last_engine_root — the state root the newest engine stub launch saw.
+last_engine_root() {
+  tail -1 "$BATS_TEST_TMPDIR/claude-xdg"
+}
+
+@test "layout-2 dispatch pins the worker pane's state root over a tmux server that carries another" {
+  l2_origin
+  pinned_remote_session
+  l2_dispatch
+  row="$(jq -c 'select(.kind == "dispatch")' "$L2_LOG")"
+  win="$(remote_tmux list-windows -t =main -F '#{window_id}|#{@crew_branch}' | awk -F'|' -v b="$(jq -r .branch <<<"$row")" '$2 == b {print $1}')"
+  [ -n "$win" ]
+  poll_for 100 test -s "$BATS_TEST_TMPDIR/claude-xdg"
+  [ "$(last_engine_root)" = "$RHOME/state" ]
+  [ "$(remote_tmux show-options -wqv -t "$win" @crew_state_home)" = "$RHOME/state" ]
+  # The session environment must not keep the pin: it is shared with other windows.
+  run remote_tmux show-environment -t =main XDG_STATE_HOME
+  [[ "$output" != "XDG_STATE_HOME=$RHOME/state" ]]
+}
+
+@test "layout-2 --spawn-role pins the lazy role pane's state root from the window stamp" {
+  l2_origin
+  pinned_remote_session
+  l2_dispatch
+  worker_id="$(sed -n 's/^worker_id: //p' <<<"$output" | head -1)"
+  row="$(jq -c 'select(.kind == "dispatch")' "$L2_LOG")"
+  branch="$(jq -r .branch <<<"$row")"
+  wt="$(remote_wt "$branch")"
+  crew_dir="$REMOTE_CLONE/.git/crew"
+  mkdir -p "$crew_dir/artifacts/$branch"
+  printf '{"reviewer":{"agent":"claude","model":"sonnet","effort":"medium"}}\n' >"$crew_dir/artifacts/$branch/roles.json"
+  poll_for 100 test -s "$BATS_TEST_TMPDIR/claude-xdg"
+  : >"$BATS_TEST_TMPDIR/claude-xdg"
+
+  # The lead's own pane: --spawn-role must run inside the pane it names.
+  local out="$BATS_TEST_TMPDIR/spawn.out"
+  win="$(remote_tmux list-windows -t =main -F '#{window_id}|#{@crew_branch}' | awk -F'|' -v b="$branch" '$2 == b {print $1}')"
+  remote_tmux split-window -d -t "$win" -c "$wt" -e CREW_WORKER_ID="$worker_id" \
+    "dispatch --spawn-role reviewer >$out 2>&1; echo rc=\$? >>$out; sleep 60"
+  poll_for 300 grep -q '^rc=' "$out" || {
+    cat "$out" >&2
+    false
+  }
+  grep -qx 'rc=0' "$out" || {
+    cat "$out" >&2
+    false
+  }
+  poll_for 100 test -s "$BATS_TEST_TMPDIR/claude-xdg"
+  [ "$(last_engine_root)" = "$RHOME/state" ]
+}
+
+@test "layout-2 dispatch --host recovers a dropped link through a crew-scope dispatch-row and records crew_layout 2" {
+  l2_origin
+  SSH_DROP_AFTER_DISPATCH=1 DISPATCH_HOST_RECOVER_TRIES=3 DISPATCH_HOST_RECOVER_SLEEP=1 \
+    run --separate-stderr dispatch_remote --host mini 42 "Recover layout two"
+  [ "$status" -eq 0 ] || {
+    echo "$stderr" >&2
+    false
+  }
+  [[ "$stderr" == *"link dropped"* ]]
+  jq -s -e 'any(.[]; .scope == "crew" and .argv[0] == "crew" and .argv[1] == "dispatch-row" and .v == 2)' "$SSH_REQS"
+  row="$(jq -c 'select(.kind == "dispatch")' "$L2_LOG")"
+  [ "$(wc -l <<<"$row")" -eq 1 ]
+  jq -e '.host == "mini" and .remote == true and .crew_layout == 2' <<<"$row"
+  [ -d "$(remote_wt "$(jq -r .branch <<<"$row")")" ]
+  [ -z "$(local_dispatch_rows)" ]
+}
+
+@test "layout-2 dispatch --host against a remote that speaks request v1 only fails closed and records nothing" {
+  l2_origin
+  cat >"$RBINS/crew" <<EOF
+#!/usr/bin/env bash
+if [ "\${1:-}" = remote-exec ]; then
+  req="\$(cat)"
+  if [ "\$(jq -r .v <<<"\$req")" = 2 ]; then
+    echo 'crew: remote-exec: unsupported request version 2' >&2
+    exit 2
+  fi
+  exec "$STUB_DIR/crew" "\$@" <<<"\$req"
+fi
+exec "$STUB_DIR/crew" "\$@"
+EOF
+  chmod +x "$RBINS/crew"
+  run --separate-stderr dispatch_remote --host mini 42 "Old remote"
+  [ "$status" -ne 0 ]
+  [[ "$stderr" == *"speaks request v1 only"* ]]
+  [[ "$stderr" == *"'mini'"* ]]
+  assert_nothing_recorded_locally
+  [ -z "$(jq -c 'select(.kind == "dispatch")' "$L2_LOG")" ]
+  [ "$(git -C "$REMOTE_CLONE" worktree list --porcelain | grep -c '^worktree ')" -eq 1 ]
+}
+
+@test "layout-2 dispatch --host refuses a remote dispatch that does not confirm layout 2, recording nothing" {
+  l2_origin
+  cat >"$RBINS/dispatch" <<EOF
+#!/usr/bin/env bash
+"$STUB_DIR/dispatch" "\$@" | grep -vx 'crew_layout: 2'
+EOF
+  chmod +x "$RBINS/dispatch"
+  run --separate-stderr dispatch_remote --host mini 42 "Unconfirmed"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"did not confirm layout 2"* ]]
+  assert_nothing_recorded_locally
+  [ -z "$(jq -c 'select(.kind == "dispatch")' "$L2_LOG")" ]
+}
+
+@test "layout-2 dispatch --host refuses a host holding a pre-layout-2 remote worker of the crew, before any ssh" {
+  l2_origin
+  printf '%s\n' '{"kind":"dispatch","remote":true,"host":"mini","crew_id":"c1","branch":"feat/1-old","ts":1}' >>"$L2_LOG"
+  run --separate-stderr dispatch_remote --host mini 42 "Guarded"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"feat/1-old"* ]]
+  [ ! -e "$SSH_LOG" ]
+  assert_nothing_recorded_locally
+}
+
+@test "crew remote-run --crew-scope for a crew the remote never admitted exits 2 naming it" {
+  run --separate-stderr crew remote-run --host mini --crew-scope --env CREW_ID=c9 --env DISPATCH_ORIGIN_HOST=originbox \
+    -- crew dispatch-row --crew c9 --session s1-1
+  [ "$status" -eq 2 ]
+  [[ "$stderr" == *c9* ]]
 }

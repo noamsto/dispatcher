@@ -294,22 +294,6 @@ func TestRouteAny(t *testing.T) {
 	}
 }
 
-func TestRemoteHosts(t *testing.T) {
-	rows := busRows(t,
-		`{"kind":"dispatch","crew_id":"c","branch":"feat/a","host":"mini","remote":true}`,
-		`{"kind":"dispatch","crew_id":"c","branch":"feat/b","host":"big","remote":true}`,
-		`{"kind":"dispatch","crew_id":"c","branch":"feat/c","host":"mini","remote":true}`,
-		`{"kind":"dispatch","crew_id":"c","branch":"feat/d","host":"laptop"}`,
-		`{"kind":"dispatch","crew_id":"d","branch":"feat/e","host":"other","remote":true}`,
-	)
-	if got := RemoteHosts(rows, "c"); !reflect.DeepEqual(got, []string{"big", "mini"}) {
-		t.Fatalf("RemoteHosts = %q", got)
-	}
-	if got := RemoteHosts(rows, "z"); len(got) != 0 {
-		t.Fatalf("RemoteHosts(z) = %q", got)
-	}
-}
-
 // sshShim puts a fake ssh first on PATH: it records its argv and stdin under
 // dir, prints to both streams, and exits with code.
 func sshShim(t *testing.T, code string) string {
