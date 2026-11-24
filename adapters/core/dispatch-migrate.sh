@@ -424,8 +424,11 @@ else
   if [ "$mode" = coop ]; then
     # Ask the worker to checkpoint and post migrated; poll its status against
     # one deadline while the nudge waits out a live turn in the background.
+    # --no-nudge: a reply would otherwise start its own default-budget (1800 s)
+    # wait and take the lead's wait lock first, so the --wait "$wait_s" nudge
+    # below would only join it and end with the first waiter's outcome.
     start_ms="$(($(date +%s%N) / 1000000))"
-    crew reply --crew "$crew_id" -- "$worker" "$(jq -nc --arg h "$host" '{directive: "migrate", to_host: $h}')" >/dev/null ||
+    crew reply --crew "$crew_id" --no-nudge -- "$worker" "$(jq -nc --arg h "$host" '{directive: "migrate", to_host: $h}')" >/dev/null ||
       _die 1 "could not post the migrate directive to $worker — nothing was stopped"
     nudge_log="$scratch/nudge.log"
     crew nudge "$branch" --crew "$crew_id" --wait "$wait_s" </dev/null >"$nudge_log" 2>&1 &

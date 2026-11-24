@@ -122,8 +122,9 @@ func Run(ctx context.Context, req Request, paths bus.Paths, stderr io.Writer, o 
 			}
 			say(stderr, "reply: no nudge (%s)\n", reason)
 		}
-		// --no-nudge crosses the hop so the host's own reply skips its wait too;
-		// the `--` keeps it an option and still ends the flags before the body.
+		// --no-nudge crosses the hop so the host's own reply starts no wait
+		// either, and it goes before the `--`, which still ends the flags
+		// before the body.
 		argv := []string{"crew", "reply", "--crew", as}
 		if req.NoNudge {
 			argv = append(argv, "--no-nudge")

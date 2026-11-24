@@ -1149,4 +1149,36 @@ func TestStartDetachedRunsTheChildAndLogsIt(t *testing.T) {
 	if want := strings.Join(argv, " ") + "\n"; string(data) != want {
 		t.Fatalf("log\n got %q\nwant %q", string(data), want)
 	}
+	info, err := os.Stat(logPath)
+	if err != nil {
+		t.Fatalf("stat log: %v", err)
+	}
+	if got := info.Mode().Perm(); got&0o077 != 0 {
+		t.Fatalf("log mode is %v, want no group/other bits", got)
+	}
+}
+
+// TestStartDetachedRefusesASymlinkedLog pins syscall.O_NOFOLLOW and 0o600: a
+// symlink left at the log path must not be followed, and its target stays as
+// it was. startDetached opens the log before it ever execs, so self is unused.
+func TestStartDetachedRefusesASymlinkedLog(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "target")
+	if err := os.WriteFile(target, []byte("keep me"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	logPath := filepath.Join(dir, "nudge-wait.log")
+	if err := os.Symlink(target, logPath); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := startDetached(filepath.Join(dir, "self"), []string{"nudge"}, logPath); err == nil {
+		t.Fatal("startDetached followed a symlinked log")
+	}
+	data, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatalf("read target: %v", err)
+	}
+	if string(data) != "keep me" {
+		t.Fatalf("target contents changed to %q", string(data))
+	}
 }
