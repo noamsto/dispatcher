@@ -83,12 +83,13 @@ actors: "ACTORS" {
 
 contracts: "CONTRACTS" {
   class: band
-  grid-columns: 6
+  label.near: bottom-center
+  grid-columns: 9
   bus: "bus envelope\nschema" {class: [contract; new]}
   hook: "hook envelope\npackage" {class: [contract; new]}
   cm: "controlmode\nstdlib package" {class: [contract; new]}
   manifest: "remux manifest\nschema" {class: [contract; new]}
-  fc: "forged\nclient" {class: [contract; new]}
+  fc: "forged\nclient" {class: contract}
   theme: "theme-state\nfile" {class: contract}
 }
 

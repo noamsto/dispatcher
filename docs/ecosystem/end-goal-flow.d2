@@ -1,4 +1,4 @@
-direction: right
+direction: down
 
 classes: {
   host: {
@@ -74,7 +74,6 @@ local: "LOCAL HOST" {
   bus: "crew bus" {class: node}
   crew: "crew CLI\nJSON stream" {class: contract}
   tmux.agents -> hookyard: hooks {class: plain}
-  hookyard -> bus: envelopes {class: plain}
   bus -> crew: stream {class: plain}
 }
 
@@ -89,7 +88,6 @@ remote: "REMOTE HOST" {
   bus: "crew bus" {class: node}
   crew: "crew CLI\nJSON stream" {class: contract}
   tmux.agents -> hookyard: hooks {class: plain}
-  hookyard -> bus: envelopes {class: plain}
   bus -> crew: stream {class: plain}
 }
 
@@ -100,7 +98,9 @@ web: "web UI" {class: surface}
 overseer: "overseer\nClaude / Hermes" {class: surface}
 
 local.crew -> hub: "2  stream" {class: g2}
+local.hookyard -> hub: "2  envelope stream" {class: g2}
 remote.crew -> hub: "2  stream" {class: g2}
+remote.hookyard -> hub: "2  envelope stream" {class: g2}
 hub -> web: "2  merged view" {class: g2}
 local.crew -> overseer: "3  reads" {class: g3}
 overseer -> local.crew: "3  crew verbs" {class: g3}
