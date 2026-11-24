@@ -1099,3 +1099,34 @@ func TestResolveBus(t *testing.T) {
 		t.Errorf("watch = %v, want %v", got, want)
 	}
 }
+
+func TestResolveBusRefusalAndIncompleteAnswer(t *testing.T) {
+	ctx := context.Background()
+	cfg := data.Config{Crew: []string{"crew"}, Git: "git", CrewID: "c2"}
+	gitKey := "git rev-parse --path-format=absolute --git-common-dir"
+	r := &data.FakeRunner{Responses: map[string]data.FakeResponse{
+		"crew where --json --crew c2": {Err: data.FakeExitError{Code: 3}},
+		gitKey:                        {Stdout: []byte("/h/proj/.git\n")},
+	}}
+	b := resolveBus(ctx, r, cfg)
+	if b.err == nil || b.eventsPath != "" || b.watch() != nil {
+		t.Fatalf("refusal = %+v, want bus error and no watch", b)
+	}
+	for _, c := range r.CallsSnapshot() {
+		if c.Name == "git" {
+			t.Errorf("refusal fell back to git: %+v", c)
+		}
+	}
+
+	for _, doc := range []string{
+		`{"crew_id":"c2","layout":2,"dir":"","log":"/l"}`,
+		`{"crew_id":"c2","layout":2,"dir":"/d","log":""}`,
+	} {
+		r = &data.FakeRunner{Responses: map[string]data.FakeResponse{
+			"crew where --json --crew c2": {Stdout: []byte(doc)},
+		}}
+		if b := resolveBus(ctx, r, cfg); b.err == nil || b.watch() != nil {
+			t.Errorf("%s = %+v, want bus error", doc, b)
+		}
+	}
+}

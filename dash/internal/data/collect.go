@@ -246,7 +246,7 @@ func stampSince(ctx context.Context, r Runner, cfg Config, ids []string, locs ma
 		if locs[id].Where != "here" {
 			continue
 		}
-		locs[id].Since = crewPidSince(ctx, r, cfg, crewsDir, "", id)
+		locs[id].Since = crewPidSince(ctx, r, cfg, crewsDir, "/", id)
 	}
 }
 

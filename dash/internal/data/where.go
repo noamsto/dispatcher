@@ -22,8 +22,20 @@ type CrewBus struct {
 	RepoDir *string `json:"repo_dir"`
 }
 
+// WhereError is a failed crew where run; Code 3 is a refusal (an archived or
+// index-only crew), which must not fall back to another bus.
+type WhereError struct {
+	Code int
+	Msg  string
+}
+
+func (e *WhereError) Error() string { return "crew where: " + e.Msg }
+
+// WhereRefused is the crew where exit code for a refused crew.
+const WhereRefused = 3
+
 // ResolveCrewBus asks crew where for the bus of crewID (the caller's own
-// crew when empty). Any non-zero exit or unusable output is an error.
+// crew when empty). Any non-zero exit is a *WhereError; unusable output is an error.
 func ResolveCrewBus(ctx context.Context, r Runner, cfg Config, crewID string) (CrewBus, error) {
 	args := []string{"where", "--json"}
 	if crewID != "" {
@@ -31,7 +43,7 @@ func ResolveCrewBus(ctx context.Context, r Runner, cfg Config, crewID string) (C
 	}
 	out, errb, err := r.Run(ctx, cfg.Crew[0], crewArgs(cfg, args...)...)
 	if err != nil {
-		return CrewBus{}, fmt.Errorf("crew where: %s", FailureLine(errb, err))
+		return CrewBus{}, &WhereError{Code: exitCode(err), Msg: FailureLine(errb, err)}
 	}
 	var b CrewBus
 	if err := json.Unmarshal(bytes.TrimSpace(out), &b); err != nil {
@@ -41,7 +53,7 @@ func ResolveCrewBus(ctx context.Context, r Runner, cfg Config, crewID string) (C
 }
 
 // ResolveCrewDir asks crew where for the crew's state directory, run from dir
-// ("" for the caller's cwd) so a repo-scoped lookup sees that repo.
+// so a repo-scoped lookup sees that repo.
 func ResolveCrewDir(ctx context.Context, r Runner, cfg Config, dir, id string) (string, error) {
 	out, errb, err := r.RunIn(ctx, dir, cfg.Crew[0], crewArgs(cfg, "where", "--dir", "--crew", id)...)
 	if err != nil {

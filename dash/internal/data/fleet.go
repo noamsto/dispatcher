@@ -222,7 +222,7 @@ func (st *FleetStatus) stampSince(ctx context.Context, r Runner, cfg Config) {
 		if repo.Host != st.Host {
 			continue
 		}
-		var repoDir string
+		repoDir := "/"
 		crewsDir := ""
 		if repo.Common != "" {
 			repoDir = strings.TrimSuffix(repo.Common, "/.git")

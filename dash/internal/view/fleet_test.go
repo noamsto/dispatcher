@@ -864,7 +864,6 @@ func TestFleetNoRepoGroup(t *testing.T) {
 		crewIn("c9", "live", wk("feat/x", "working")),
 		crewIn("c8", "dead", wk("feat/y", "working")),
 	}})
-	r := &data.FakeRunner{}
 	v := view.BuildFleet(in)
 	if len(v.Crews) == 0 {
 		t.Fatal("(no repo) group not rendered")
@@ -892,8 +891,5 @@ func TestFleetNoRepoGroup(t *testing.T) {
 		if it.Action != nil && it.Action.Verb == "relaunch" {
 			t.Errorf("relaunch offered for a no-repo crew: %+v", it)
 		}
-	}
-	if n := len(r.CallsSnapshot()); n != 0 {
-		t.Errorf("runner calls = %d, want 0", n)
 	}
 }

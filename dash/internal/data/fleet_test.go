@@ -422,7 +422,7 @@ func TestFleetStampSinceLayout2ResolvesDir(t *testing.T) {
 		if s := st.Repos[0].Crews[0].Dispatcher.Since; s == nil || *s != mtime.Unix() {
 			t.Errorf("common %q: Since = %v, want %d", common, s, mtime.Unix())
 		}
-		var wantDir string
+		wantDir := "/"
 		if common != "" {
 			wantDir = filepath.Dir(common)
 		}

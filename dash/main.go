@@ -281,11 +281,20 @@ type busInfo struct {
 }
 
 // resolveBus asks `crew where` for the bus of cfg.CrewID. A layout-2 crew
-// reads its log under crew state; every other outcome (no crew, layout 1, a
-// resolver failure or empty answer) keeps the repo's git-common-dir bus.
+// reads its log under crew state and a refused crew (exit 3) is an error;
+// every other outcome (no crew, layout 1, a resolver failure or empty answer)
+// keeps the repo's git-common-dir bus.
 func resolveBus(ctx context.Context, r data.Runner, cfg data.Config) busInfo {
 	if cfg.CrewID != "" {
-		if b, err := data.ResolveCrewBus(ctx, r, cfg, cfg.CrewID); err == nil && b.Layout == 2 {
+		b, err := data.ResolveCrewBus(ctx, r, cfg, cfg.CrewID)
+		var we *data.WhereError
+		switch {
+		case errors.As(err, &we) && we.Code == data.WhereRefused:
+			return busInfo{err: err, watch: func() []string { return nil }}
+		case err == nil && b.Layout == 2:
+			if b.Log == "" || b.Dir == "" {
+				return busInfo{err: fmt.Errorf("crew where: layout 2 answer without dir or log"), watch: func() []string { return nil }}
+			}
 			watch := []string{b.Log, filepath.Join(b.Dir, "relay", "*.cursor")}
 			return busInfo{
 				eventsPath: b.Log,
