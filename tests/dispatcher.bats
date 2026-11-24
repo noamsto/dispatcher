@@ -3413,3 +3413,84 @@ STUB
   [[ "$output" == *"crew c-l2 already has a live dispatcher in pane %7"* ]]
   grep -qx 'switch-client -t %7' "$STUB_LOG"
 }
+
+# A layout-2 crew c-l2 whose dispatcher pid is alive with no pane: the launcher
+# re-attaches, and `crew register` refuses the live pid.
+_l2_register_refused_setup() {
+  sleep 30 &
+  live_pid=$!
+  CREW_LAYOUT=2 CREW_ID=c-l2 "$CREW" register "$live_pid"
+  crews_tsv "$(printf 'c-l2\t5\t5\t1\t%s\tyes' "$live_pid")" >"$STUB_DIR/crews.tsv"
+  cat >"$STUB_DIR/crew" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$1" in
+crews) cat "$STUB_DIR/crews.tsv" ;;
+register) exit 1 ;;
+where | engine-cmd) exec "$CREW" "$@" ;;
+esac
+exit 0
+STUB
+  chmod +x "$STUB_DIR/crew"
+  _engine_stub claude 'printf "%s" "$DISPATCHER_HANDOFF_DIR" >"$STUB_DIR/handoff-dir"'
+}
+
+@test "1747: a refused re-attach to a layout-2 crew in a repo keeps the handoff dir in the crew dir" {
+  _l2_register_refused_setup
+  CREW_LAYOUT=2 run --separate-stderr run_launcher
+  [ "$status" -eq 0 ]
+  [[ "$stderr" == *"keeps its live dispatcher pid"* ]]
+  [ "$(cat "$STUB_DIR/handoff-dir")" = "$XDG_STATE_HOME/crew/crews/c-l2/handoff" ]
+}
+
+@test "1747: a refused re-attach to a layout-2 crew outside a repo keeps the handoff dir in the crew dir" {
+  _l2_register_refused_setup
+  _outside_repo
+  CREW_LAYOUT=2 run --separate-stderr run_launcher
+  [ "$status" -eq 0 ]
+  [ "$(cat "$STUB_DIR/handoff-dir")" = "$XDG_STATE_HOME/crew/crews/c-l2/handoff" ]
+}
+
+@test "1747: crew's stderr on a successful where --dir does not drop a layout-2 crew to the legacy dir" {
+  _engine_stub claude 'printf "%s" "$DISPATCHER_HANDOFF_DIR" >"$STUB_DIR/handoff-dir"'
+  cat >"$STUB_DIR/crew" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$1" in
+where) echo "$XDG_STATE_HOME/crew/crews/c-noisy"; echo "crew: note on stderr" >&2 ;;
+esac
+exit 0
+STUB
+  chmod +x "$STUB_DIR/crew"
+  CREW_LAYOUT=2 CREW_ID=c-noisy run --separate-stderr run_launcher
+  [ "$status" -eq 0 ]
+  [ "$(cat "$STUB_DIR/handoff-dir")" = "$XDG_STATE_HOME/crew/crews/c-noisy/handoff" ]
+  [ -s "$XDG_STATE_HOME/crew/crews/c-noisy/launch" ]
+}
+
+@test "1747: --spawn follows a launcher that registers at layout 2 into the crew state dir" {
+  _spawn_setup
+  _spawn_bus
+  cat >"$STUB_DIR/crew" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$1" in
+new) echo c-new ;;
+crews) cat "$STUB_DIR/crews.tsv" ;;
+where) exec "$CREW" "$@" ;;
+esac
+exit 0
+STUB
+  cat >"$STUB_DIR/dispatcher" <<'STUB'
+#!/usr/bin/env bash
+echo $$ >"$STUB_DIR/dispatcher.pid"
+CREW_LAYOUT=2 "$CREW" register $$
+exec sleep 15
+STUB
+  CREW_LAYOUT=2 run --separate-stderr run_launcher --spawn "$SPAWN_REPO"
+  live_pid=$(cat "$STUB_DIR/dispatcher.pid")
+  [ "$status" -eq 0 ]
+  [ "$output" = "dispatcher: spawned crew c-new in pane %9" ]
+  [ -s "$XDG_STATE_HOME/crew/crews/c-new/pid" ]
+  [ ! -e "$SPAWN_REPO/.git/crew/crews/c-new" ]
+}

@@ -305,15 +305,20 @@ _require_plain_crew_id() {
 # and crew_dir_v2 to 1 when it is a layout-2 dir: `crew where --dir`, else the
 # legacy "<common>/crew/crews/$CREW_ID" (empty without <common>) when the call
 # fails for a non-refusal reason (an older crew, a stub that prints nothing).
-# Returns 1 after re-printing crew's line when it refuses the id (rc 3).
+# Returns 1 after re-printing crew's line when it refuses the id (rc 3); crew's
+# stderr on success never joins the path.
 _resolve_crew_dir() {
-  local out rc=0 legacy=""
+  local out err_file rc=0 legacy=""
   [ -z "${1:-}" ] || legacy="$1/crew/crews/$CREW_ID"
-  out="$(crew where --dir --crew "$CREW_ID" 2>&1)" || rc=$?
+  err_file=$(mktemp)
+  out="$(crew where --dir --crew "$CREW_ID" 2>"$err_file")" || rc=$?
   if [ "$rc" -eq 3 ]; then
-    printf '%s\n' "$out" >&2
+    cat -- "$err_file" >&2
+    rm -f -- "$err_file"
     return 1
   fi
+  [ "$rc" -eq 0 ] || cat -- "$err_file" >&2
+  rm -f -- "$err_file"
   crew_dir=$legacy
   crew_dir_v2=0
   case "$rc:$out" in
@@ -324,6 +329,8 @@ _resolve_crew_dir() {
       crew_dir_v2=1
     fi
     ;;
+  0:*) ;;
+  *) echo "dispatcher: crew where --dir failed for crew $CREW_ID (exit $rc); using the legacy crew dir" >&2 ;;
   esac
 }
 
@@ -1085,7 +1092,8 @@ if [ "$overseer" = 0 ]; then
   echo "crew id: $CREW_ID"
 fi
 
-# A layout-2 crew needs no repo; the overseer never registers.
+# A layout-2 crew needs no repo; only a non-overseer layout-2 crew registers
+# outside one, while inside a repo every launch (the overseer too) registers.
 registers=0
 if { [ "$overseer" = 0 ] && [ "$crew_layout" = 2 ]; } || git rev-parse --git-common-dir >/dev/null 2>&1; then
   registers=1
@@ -1112,8 +1120,10 @@ if [ "$registers" = 1 ]; then
   # The launch record `dispatcher --relaunch` restarts a crashed crew from; a
   # deregister removes it with the crew dir.
   crew_dir_v2=0
-  if [ "$registered" = 1 ] && _plain_crew_id; then
+  if _plain_crew_id; then
     _resolve_crew_dir "${common_dir:-}" || exit 1
+  fi
+  if [ "$registered" = 1 ] && _plain_crew_id; then
     mkdir -p -- "$crew_dir"
     record_tmp=$(mktemp "$crew_dir/.launch.XXXXXX")
     jq -n --arg agent "$agent" --arg model "${model:-$(orch_default model)}" \
