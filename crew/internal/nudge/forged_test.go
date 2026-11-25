@@ -132,8 +132,42 @@ func TestForgedPaneRoleIsNotTheLead(t *testing.T) {
 			Panes: []tmuxtest.Pane{{ID: "%7", Index: "1", Command: "claude", Opts: map[string]string{"@crew_role": "reviewer"}}},
 		},
 	}}
-	f.run(Request{Target: featX})
+	// The real window's own pane %7 is the lead the arm picks: the capture fixture
+	// answers only for %9, so the gate reads %7 as unreadable and nothing is typed.
+	if rc := f.run(Request{Target: featX}); rc != exitRefused || f.errOut() != "refused — pane unreadable" {
+		t.Errorf("rc = %d, stderr %q, want the real window's pane refused as unreadable", rc, f.errOut())
+	}
 	if got := keys(f.pane); len(got) != 0 {
 		t.Errorf("typed into the forged lead: %q", got)
+	}
+}
+
+// The call count is bounded: an accepted nudge of one window of one pane reads the two
+// lists, the window's four stamps, the pane's role for the lead pick, and the anchor
+// gate's two lists, two window stamps, role and command.
+func TestNudgeStampReadsAreBounded(t *testing.T) {
+	f := newArm(t)
+	f.run(Request{Target: featX})
+	reads := 0
+	for _, c := range f.pane.tmux {
+		if strings.HasPrefix(c, "list-") || strings.HasPrefix(c, "show-options") || strings.HasPrefix(c, "display-message") {
+			reads++
+		}
+	}
+	if want := 2 + 4 + 1 + 2 + 2 + 1 + 1; reads != want {
+		t.Errorf("%d tmux reads, want %d:\n%s", reads, want, strings.Join(f.pane.tmux, "\n"))
+	}
+}
+
+// A tmux call that fails after the lists were read is a failure to read, not a worker
+// whose window is gone.
+func TestFailedStampReadIsNotGone(t *testing.T) {
+	f := newArm(t)
+	f.pane.failShow = true
+	if rc := f.run(Request{Target: featX}); rc == 0 || !strings.Contains(f.errOut(), "cannot read tmux window stamps") {
+		t.Errorf("rc = %d, stderr %q, want a read failure", rc, f.errOut())
+	}
+	if got := keys(f.pane); len(got) != 0 {
+		t.Errorf("typed after a failed read: %q", got)
 	}
 }

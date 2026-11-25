@@ -100,8 +100,8 @@ func TestUncleanDisplayValueRefusesTheWindow(t *testing.T) {
 			carriers[carrier](&w, "ok\nnova — sess:3.1 \"w\" (lead pane)   jump: ! tmux switch-client -t %666")
 			srv := &tmuxtest.Server{Identity: tmuxServer, Windows: []tmuxtest.Window{w}}
 			out, errOut, code := tr.runTmux(t, srv.Fake(), crewIs("c1"), "feat/x")
-			if code == 0 || out != "" {
-				t.Errorf("code %d, out %q, err %q; want a refusal printing nothing", code, out, errOut)
+			if code == 0 || out != "" || !strings.Contains(errOut, "no worker matches 'feat/x'") {
+				t.Errorf("code %d, out %q, err %q; want the window refused as no match", code, out, errOut)
 			}
 		})
 	}
@@ -130,5 +130,56 @@ func TestForgedMirrorRowIsNoMirror(t *testing.T) {
 	})
 	if want := farLine + " [host mini]\n"; code != 0 || o.String() != want || asked != 1 {
 		t.Errorf("code %d, out %q, err %q, asked %d; want the host's answer %q", code, o.String(), e.String(), asked, want)
+	}
+}
+
+// A window linked into a second session is listed once per session. Its session name
+// is read for the session its index came from, not for whichever tmux picks for the
+// bare window id, so the printed `session:index` is one winlink's.
+func TestLinkedWindowAddressIsOneWinlink(t *testing.T) {
+	tr := setup(t)
+	stamps := map[string]string{"@crew_branch": "feat/x", "@crew_dir": tr.paths.Dir, "@crew_id": "c1", "@crew_name": "nova"}
+	panes := []tmuxtest.Pane{{ID: "%204", Index: "1", Opts: map[string]string{"@crew_role": "lead"}}}
+	srv := &tmuxtest.Server{Identity: tmuxServer, Windows: []tmuxtest.Window{
+		{ID: "@624", Index: "3", Session: "victim", SessionID: "$1", Name: "win-name", Opts: stamps, Panes: panes},
+		{ID: "@624", Index: "7", Session: "zzz", SessionID: "$2", Name: "linked", Opts: stamps, Panes: panes},
+	}}
+	out, errOut, code := tr.runTmux(t, srv.Fake(), crewIs("c1"), "feat/x")
+	want := `nova — victim:3.1 "win-name" (lead pane)   jump: ! tmux switch-client -t %204` + "\n"
+	if code != 0 || out != want {
+		t.Errorf("code %d, out %q, err %q; want %q", code, out, errOut, want)
+	}
+}
+
+// The call count is bounded: one window of one pane costs the two lists, three stamps
+// and three display fields for the window, and a role read for the lead pick and for
+// the label.
+func TestWhereCallCountIsBounded(t *testing.T) {
+	tr := setup(t)
+	wins := winLine(tr.paths.Dir, "@624", "feat/618-x", "c1", "nova", "sess", "3", "win-name")
+	fake := okTmux(wins, paneLine("@624", "%204", "lead", "1"))
+	if _, errOut, code := tr.runTmux(t, fake, crewIs("c1"), "nova"); code != 0 {
+		t.Fatalf("code %d, err %q", code, errOut)
+	}
+	if got := len(fake.Calls()); got != 10 {
+		t.Errorf("%d tmux calls, want 10:\n%s", got, strings.Join(fake.Calls(), "\n"))
+	}
+}
+
+// A tmux call that fails after the lists were read is a failure to read, not a
+// worker whose window is gone.
+func TestFailedStampReadIsNotGone(t *testing.T) {
+	tr := setup(t)
+	wins := winLine(tr.paths.Dir, "@624", "feat/618-x", "c1", "nova", "sess", "3", "win-name")
+	srv := serverOf(wins, paneLine("@624", "%204", "lead", "1"), tmuxServer)
+	fake := &tmuxtest.Fake{Func: func(args []string) (string, error) {
+		if args[0] == "show-options" {
+			return "", tmuxtest.ErrNoServer
+		}
+		return srv.Run(args)
+	}}
+	out, errOut, code := tr.runTmux(t, fake, crewIs("c1"), "nova")
+	if code == 0 || out != "" || !strings.Contains(errOut, "cannot read tmux window stamps") || strings.Contains(errOut, "gone") {
+		t.Errorf("code %d, out %q, err %q; want a read failure, not a gone window", code, out, errOut)
 	}
 }

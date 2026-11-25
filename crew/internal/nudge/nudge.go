@@ -18,6 +18,7 @@ package nudge
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"slices"
 	"strconv"
 	"strings"
@@ -459,8 +460,12 @@ func anchorGate(ctx context.Context, d Deps, req PaneRequest) (string, bool) {
 	// branch; a role that cannot is neither the lead's nor unlabelled.
 	var wcrew, wbranch string
 	if slices.ContainsFunc(wins, func(w tmuxstamp.Window) bool { return w.ID == wid }) {
-		wcrew, _ = tmuxstamp.WindowOption(ctx, d.Tmux, wid, "@crew_id")
-		wbranch, _ = tmuxstamp.WindowOption(ctx, d.Tmux, wid, "@crew_branch")
+		var err1, err2 error
+		wcrew, _, err1 = tmuxstamp.WindowOption(ctx, d.Tmux, wid, "@crew_id")
+		wbranch, _, err2 = tmuxstamp.WindowOption(ctx, d.Tmux, wid, "@crew_branch")
+		if err := errors.Join(err1, err2); err != nil {
+			return "anchor: cannot read tmux window stamps", false
+		}
 	}
 	if req.Crew == "" || wcrew != req.Crew {
 		return "anchor: window " + wid + " of " + req.Pane + " is not anchored to crew " + req.Crew, false
@@ -468,7 +473,10 @@ func anchorGate(ctx context.Context, d Deps, req PaneRequest) (string, bool) {
 	if wbranch != branch {
 		return "anchor: window " + wid + " of " + req.Pane + " is not " + branch + "'s window", false
 	}
-	role, ok := tmuxstamp.PaneOption(ctx, d.Tmux, req.Pane, "@crew_role")
+	role, ok, err := tmuxstamp.PaneOption(ctx, d.Tmux, req.Pane, "@crew_role")
+	if err != nil {
+		return "anchor: cannot read tmux pane stamps", false
+	}
 	if !ok {
 		role = "?"
 	}
@@ -485,7 +493,10 @@ func anchorGate(ctx context.Context, d Deps, req PaneRequest) (string, bool) {
 			return "anchor: " + req.Pane + " is not the lead pane of " + wid, false
 		}
 	}
-	cmd, _ := tmuxstamp.Field(ctx, d.Tmux, req.Pane, "#{pane_current_command}")
+	cmd, _, err := tmuxstamp.Field(ctx, d.Tmux, req.Pane, "#{pane_current_command}")
+	if err != nil {
+		return "anchor: cannot read tmux pane command", false
+	}
 	if !roster.IsEngineCmd(cmd) {
 		who := cmd
 		if who == "" {

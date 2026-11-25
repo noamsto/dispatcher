@@ -8,8 +8,11 @@ import (
 // Window is one window of a Server. Opts are its own user options.
 type Window struct {
 	ID, Index, Session, Name string
-	Opts                     map[string]string
-	Panes                    []Pane
+	// SessionID is the session's id; "" is "$0". A window linked into several
+	// sessions is one Window per session, sharing its ID.
+	SessionID string
+	Opts      map[string]string
+	Panes     []Pane
 }
 
 // Pane is one pane of a Window. Opts are its own user options; a read of one it
@@ -37,8 +40,14 @@ func (s *Server) Fake() *Fake { return &Fake{Func: s.Run} }
 
 var formatToken = regexp.MustCompile(`#\{([^}]*)\}`)
 
-// Run answers one argv; a call it does not model fails with ErrNoServer.
+// Run answers one argv, its output cut of trailing newlines as tmux.Exec cuts it; a
+// call it does not model fails with ErrNoServer.
 func (s *Server) Run(args []string) (string, error) {
+	out, err := s.run(args)
+	return strings.TrimRight(out, "\n"), err
+}
+
+func (s *Server) run(args []string) (string, error) {
 	if len(args) == 0 {
 		return "", ErrNoServer
 	}
@@ -95,12 +104,24 @@ func (s *Server) Run(args []string) (string, error) {
 	return "", ErrNoServer
 }
 
-// find is the window or pane a target id names.
+// find is the window or pane a target names: `@7`, `%3` or `$1:@7`. A bare window
+// id that is linked into several sessions names the last of them, as tmux picks a
+// session of its own for it; `$1:@7` names that session's winlink.
 func (s *Server) find(id string) (*Window, *Pane, bool) {
-	for i := range s.Windows {
+	if sid, wid, ok := strings.Cut(id, ":"); ok && strings.HasPrefix(sid, "$") {
+		for i := range s.Windows {
+			if s.Windows[i].ID == wid && s.sessionID(&s.Windows[i]) == sid {
+				return &s.Windows[i], nil, true
+			}
+		}
+		return nil, nil, false
+	}
+	for i := len(s.Windows) - 1; i >= 0; i-- {
 		if s.Windows[i].ID == id {
 			return &s.Windows[i], nil, true
 		}
+	}
+	for i := range s.Windows {
 		for j := range s.Windows[i].Panes {
 			if s.Windows[i].Panes[j].ID == id {
 				return &s.Windows[i], &s.Windows[i].Panes[j], true
@@ -108,6 +129,13 @@ func (s *Server) find(id string) (*Window, *Pane, bool) {
 		}
 	}
 	return nil, nil, false
+}
+
+func (s *Server) sessionID(w *Window) string {
+	if w.SessionID == "" {
+		return "$0"
+	}
+	return w.SessionID
 }
 
 func (s *Server) expand(format string, w *Window, p *Pane) string {
@@ -126,6 +154,8 @@ func (s *Server) expand(format string, w *Window, p *Pane) string {
 			return w.ID
 		case "window_index":
 			return w.Index
+		case "session_id":
+			return s.sessionID(w)
 		case "session_name":
 			return w.Session
 		case "window_name":

@@ -46,6 +46,7 @@ type fakePane struct {
 	server      string
 	failWindows bool
 	failPanes   bool
+	failShow    bool
 	// srv, when set, is the tmux server instead of the windows and panes rows: a
 	// test that sets an option to a forged value builds it by hand.
 	srv        *tmuxtest.Server
@@ -78,6 +79,9 @@ func (f *fakePane) run(args []string) (string, error) {
 	f.tmux = append(f.tmux, strings.Join(args, " "))
 	switch args[0] {
 	case "list-windows", "list-panes", "show-options", "display-message":
+		if f.failShow && args[0] == "show-options" {
+			return "", tmuxtest.ErrNoServer
+		}
 		return f.model().Run(args)
 	case "send-keys":
 		enter := len(args) > 3 && args[3] == "Enter"
@@ -512,7 +516,7 @@ func TestPaneAcceptedClaude(t *testing.T) {
 	// The keystrokes are the whole contract: the fixed line typed literally, then
 	// one Enter, in that order, with the two anchor reads between the gates.
 	want := []string{
-		"list-windows -a -F #{window_id}\t#{window_index}",
+		"list-windows -a -F #{window_id}\t#{window_index}\t#{session_id}",
 		"list-panes -a -F #{window_id}\t#{pane_id}\t#{pane_index}",
 		"show-options -wqv -t @7 @crew_id",
 		"show-options -wqv -t @7 @crew_branch",

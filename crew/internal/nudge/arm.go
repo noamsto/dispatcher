@@ -189,7 +189,10 @@ func Run(ctx context.Context, r Request, paths bus.Paths, stdout, stderr io.Writ
 	}
 	var cwins [][]string
 	for _, w := range wins {
-		r := a.stamps(w.ID)
+		r, err := a.stamps(w.ID)
+		if err != nil {
+			return fail(stderr, "cannot read tmux window stamps: "+err.Error())
+		}
 		if r == nil {
 			continue
 		}
@@ -249,7 +252,11 @@ func Run(ctx context.Context, r Request, paths bus.Paths, stdout, stderr io.Writ
 		if a.pane == "" {
 			a.pane = p.ID
 		}
-		if role, _ := tmuxstamp.PaneOption(ctx, o.Deps.Tmux, p.ID, "@crew_role"); role == "lead" {
+		role, _, err := tmuxstamp.PaneOption(ctx, o.Deps.Tmux, p.ID, "@crew_role")
+		if err != nil {
+			return fail(stderr, "cannot read tmux pane stamps: "+err.Error())
+		}
+		if role == "lead" {
 			a.pane = p.ID
 			break
 		}
@@ -281,25 +288,22 @@ func Run(ctx context.Context, r Request, paths bus.Paths, stdout, stderr io.Writ
 
 // stamps is window id's row — id, branch, dir, crew id, codename — read one stamp
 // per call, cheapest filter first: nil unless the window carries this crew's id
-// and a branch, and every stamp is a clean value (tmuxstamp).
-func (a *arm) stamps(id string) []string {
+// and a branch, and every stamp is a clean value (tmuxstamp). The error is a tmux
+// call that failed, which is not "the window is not this crew's".
+func (a *arm) stamps(id string) ([]string, error) {
 	c := a.o.Deps.Tmux
-	if crew, ok := tmuxstamp.WindowOption(a.ctx, c, id, "@crew_id"); !ok || crew != a.crew {
-		return nil
+	var v [4]string
+	for i, name := range []string{"@crew_id", "@crew_branch", "@crew_dir", "@crew_name"} {
+		val, ok, err := tmuxstamp.WindowOption(a.ctx, c, id, name)
+		if err != nil {
+			return nil, err
+		}
+		v[i] = val
+		if !ok || i == 0 && val != a.crew || i == 1 && val == "" {
+			return nil, nil
+		}
 	}
-	branch, ok := tmuxstamp.WindowOption(a.ctx, c, id, "@crew_branch")
-	if !ok || branch == "" {
-		return nil
-	}
-	dir, ok := tmuxstamp.WindowOption(a.ctx, c, id, "@crew_dir")
-	if !ok {
-		return nil
-	}
-	name, ok := tmuxstamp.WindowOption(a.ctx, c, id, "@crew_name")
-	if !ok {
-		return nil
-	}
-	return []string{id, branch, dir, a.crew, name}
+	return []string{id, v[1], v[2], a.crew, v[3]}, nil
 }
 
 // arm is one resolved nudge: the target's address, plus the wait loop's state.

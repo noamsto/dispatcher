@@ -123,7 +123,7 @@ func stubCrewTmuxLogged(t *testing.T, windows, panes string) (calls func() strin
 // value per call, from $TMUX_WINDOWS (crewWin's rows) and $TMUX_PANES (rows of
 // window id, pane id, role, then the pane index or its foreground command).
 const (
-	stampReadsHead = `w=$(printf '#{window_id}\t#{window_index}')
+	stampReadsHead = `w=$(printf '#{window_id}\t#{window_index}\t#{session_id}')
 p=$(printf '#{window_id}\t#{pane_id}\t#{pane_index}')
 col() {
   case "$1" in
@@ -134,11 +134,11 @@ col() {
 }
 pick() { printf '%s\n' "$1" | awk -F'\t' -v k="$2" -v t="$3" -v c="$4" '$k == t { print $c; exit }'; }
 `
-	stampReadsCases = `"list-windows -a $w") printf '%s\n' "$TMUX_WINDOWS" | awk -F'\t' 'NF { print $1 "\t" ($7 ~ /^[0-9]+$/ ? $7 : 1) }' ;;
+	stampReadsCases = `"list-windows -a $w") printf '%s\n' "$TMUX_WINDOWS" | awk -F'\t' 'NF { print $1 "\t" ($7 ~ /^[0-9]+$/ ? $7 : 1) "\t$0" }' ;;
 "list-panes -a $p") printf '%s\n' "$TMUX_PANES" | awk -F'\t' 'NF { print $1 "\t" $2 "\t" ($4 ~ /^[0-9]+$/ ? $4 : 1) }' ;;
 "show-options -wqv "*) pick "$TMUX_WINDOWS" 1 "$4" "$(col "$5")" ;;
 "show-options -pqv "*) pick "$TMUX_PANES" 2 "$4" "$(col "$5")" ;;
-"display-message -p @"*) pick "$TMUX_WINDOWS" 1 "$4" "$(col "$5")" ;;
+"display-message -p "*"@"*) pick "$TMUX_WINDOWS" 1 "${4#*:}" "$(col "$5")" ;;
 "display-message -p %"*) pick "$TMUX_PANES" 2 "$4" "$(col "$5")" ;;
 `
 )
