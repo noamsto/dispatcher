@@ -47,6 +47,8 @@ type fakePane struct {
 	failWindows bool
 	failPanes   bool
 	failShow    bool
+	// failDisplay fails the per-pane `display-message -t` read.
+	failDisplay bool
 	// srv, when set, is the tmux server instead of the windows and panes rows: a
 	// test that sets an option to a forged value builds it by hand.
 	srv        *tmuxtest.Server
@@ -79,7 +81,7 @@ func (f *fakePane) run(args []string) (string, error) {
 	f.tmux = append(f.tmux, strings.Join(args, " "))
 	switch args[0] {
 	case "list-windows", "list-panes", "show-options", "display-message":
-		if f.failShow && args[0] == "show-options" {
+		if f.failShow && args[0] == "show-options" || f.failDisplay && args[0] == "display-message" && len(args) > 2 && args[2] == "-t" {
 			return "", tmuxtest.ErrNoServer
 		}
 		return f.model().Run(args)

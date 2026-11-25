@@ -171,3 +171,29 @@ func TestFailedStampReadIsNotGone(t *testing.T) {
 		t.Errorf("typed after a failed read: %q", got)
 	}
 }
+
+// The anchor gate's own reads fail closed with a reason that names the read, not as a
+// mismatch: a window or pane it could not read is not one it judged.
+func TestAnchorGateNamesAFailedRead(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		pane *fakePane
+		want string
+	}{
+		{"window stamps", &fakePane{failShow: true}, "anchor: cannot read tmux window stamps"},
+		{"pane command", &fakePane{failDisplay: true}, "anchor: cannot read tmux pane command"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tc.pane.frames = acceptedFrames(t)
+			tc.pane.windows, tc.pane.panes = anchored()
+			b := &fakeBus{rows: sessionRows(t, idleReq, "working")}
+			out, rc := Pane(t.Context(), req("claude"), newDeps(tc.pane, b, nil))
+			if rc != exitRefused || out != tc.want {
+				t.Errorf("Pane = (%q, %d), want %q", out, rc, tc.want)
+			}
+			if got := keys(tc.pane); len(got) != 0 {
+				t.Errorf("typed anyway: %q", got)
+			}
+		})
+	}
+}

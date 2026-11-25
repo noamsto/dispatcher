@@ -183,3 +183,21 @@ func TestFailedStampReadIsNotGone(t *testing.T) {
 		t.Errorf("code %d, out %q, err %q; want a read failure, not a gone window", code, out, errOut)
 	}
 }
+
+// The display reads come after the stamps: a failed `display-message` is a read
+// failure too, not a window that is unclean and so skipped as gone.
+func TestFailedDisplayReadIsNotGone(t *testing.T) {
+	tr := setup(t)
+	wins := winLine(tr.paths.Dir, "@624", "feat/618-x", "c1", "nova", "sess", "3", "win-name")
+	srv := serverOf(wins, paneLine("@624", "%204", "lead", "1"), tmuxServer)
+	fake := &tmuxtest.Fake{Func: func(args []string) (string, error) {
+		if args[0] == "display-message" && len(args) > 2 && args[2] == "-t" {
+			return "", tmuxtest.ErrNoServer
+		}
+		return srv.Run(args)
+	}}
+	out, errOut, code := tr.runTmux(t, fake, crewIs("c1"), "nova")
+	if code == 0 || out != "" || !strings.Contains(errOut, "cannot read tmux window stamps") || strings.Contains(errOut, "gone") {
+		t.Errorf("code %d, out %q, err %q; want a read failure, not a gone window", code, out, errOut)
+	}
+}

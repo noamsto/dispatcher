@@ -13,6 +13,7 @@ package tmuxstamp
 import (
 	"context"
 	"strings"
+	"unicode"
 
 	"github.com/noamsto/dispatcher/crew/internal/tmux"
 )
@@ -93,9 +94,9 @@ func clean(out string, err error) (string, bool, error) {
 }
 
 // unclean is a control character, which no stamp, name or command of a worker holds
-// and which a terminal or a relayed line would act on: tab, newline, escape, DEL and
-// the Unicode line and paragraph separators.
-func unclean(r rune) bool { return r < 0x20 || r == 0x7f || r == 0x2028 || r == 0x2029 }
+// and which a terminal or a relayed line would act on: the C0 and C1 controls (tab,
+// newline, escape, DEL, CSI) and the Unicode line and paragraph separators.
+func unclean(r rune) bool { return unicode.IsControl(r) || r == 0x2028 || r == 0x2029 }
 
 func isID(s string, prefix byte) bool {
 	return len(s) > 1 && s[0] == prefix && isDigits(s[1:])

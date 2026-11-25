@@ -56,7 +56,7 @@ func TestReadsRefuseUncleanValues(t *testing.T) {
 		ID: "@1", Session: "s\tt", Name: "ok",
 		Opts: map[string]string{
 			"@a": "v", "@b": "x\ty", "@c": "x\ny", "@e": "", "@esc": "x\x1b[8m", "@del": "x\x7f",
-			"@ls": "x\u2028y", "@uni": "caf\u00e9 \u2014 ok",
+			"@ls": "x\u2028y", "@c1": "x\u009b[8m", "@uni": "caf\u00e9 \u2014 ok",
 		},
 		Panes: []tmuxtest.Pane{{ID: "%1", Command: "claude", Opts: map[string]string{"@a": "p", "@b": "p\nq"}}},
 	}}}
@@ -76,6 +76,7 @@ func TestReadsRefuseUncleanValues(t *testing.T) {
 		{"escape", func() (string, bool, error) { return WindowOption(t.Context(), c, "@1", "@esc") }, "", false},
 		{"DEL", func() (string, bool, error) { return WindowOption(t.Context(), c, "@1", "@del") }, "", false},
 		{"line separator", func() (string, bool, error) { return WindowOption(t.Context(), c, "@1", "@ls") }, "", false},
+		{"C1 control", func() (string, bool, error) { return WindowOption(t.Context(), c, "@1", "@c1") }, "", false},
 		{"pane option", func() (string, bool, error) { return PaneOption(t.Context(), c, "%1", "@a") }, "p", true},
 		{"pane newline", func() (string, bool, error) { return PaneOption(t.Context(), c, "%1", "@b") }, "", false},
 		{"field", func() (string, bool, error) { return Field(t.Context(), c, "%1", "#{pane_current_command}") }, "claude", true},
