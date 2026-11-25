@@ -123,16 +123,29 @@
 #
 # --layers prints the file layers' paths and presence, reading no contents:
 # {"base": …, "user": {"path": …, "present": …}, "locked": … or null}.
+#
+# set <dot.path> <value> / unset <dot.path> mutates the user settings file
+# atomically after validating the merged result through dispatch-config.
 set -euo pipefail
 
 show_origin=false
 layers=false
+subcmd=""
+sub_path=""
+sub_val=""
 if [[ $# -eq 1 && $1 == --show-origin ]]; then
   show_origin=true
 elif [[ $# -eq 1 && $1 == --layers ]]; then
   layers=true
+elif [[ $# -eq 3 && $1 == set ]]; then
+  subcmd="set"
+  sub_path=$2
+  sub_val=$3
+elif [[ $# -eq 2 && $1 == unset ]]; then
+  subcmd="unset"
+  sub_path=$2
 elif [[ $# -ne 0 ]]; then
-  echo "usage: dispatch-config [--show-origin | --layers]" >&2
+  echo "usage: dispatch-config [--show-origin | --layers | set <path> <value> | unset <path>]" >&2
   exit 2
 fi
 
@@ -411,6 +424,61 @@ if [[ $layers == true ]]; then
   exit 0
 fi
 
+if [[ -n $subcmd ]]; then
+  if [[ -z $sub_path || $sub_path == .* || $sub_path == *. || $sub_path == *..* ]]; then
+    die "invalid settings path: $sub_path"
+  fi
+  cur='{}'
+  if [[ -e $user_file ]]; then
+    cur=$(layer "$user_file")
+  fi
+  if [[ $subcmd == set ]]; then
+    # shellcheck disable=SC2016 # jq program text, not shell
+    next=$(jq --arg p "$sub_path" --arg raw "$sub_val" '
+      ($p | split(".")) as $path
+      | ($raw | try fromjson catch $raw) as $v
+      | setpath($path; $v)' <<<"$cur")
+  else
+    if ! jq -e --arg p "$sub_path" "$jq_defs"' holds($p | split("."))' <<<"$cur" >/dev/null; then
+      echo "dispatch-config: $sub_path is not set in $user_file" >&2
+      exit 0
+    fi
+    # shellcheck disable=SC2016 # jq program text, not shell
+    next=$(jq --arg p "$sub_path" '
+      def prune($path):
+        if ($path | length) == 0 then .
+        elif ($path | length) == 1 then del(.[$path[0]])
+        else
+          .[$path[0]] |= prune($path[1:])
+          | if (.[$path[0]] | type) == "object" and (.[$path[0]] | length) == 0 then del(.[$path[0]]) else . end
+        end;
+      prune($p | split("."))' <<<"$cur")
+  fi
+  tmp_xdg=$(mktemp -d "${TMPDIR:-/tmp}/dispatch-config-validate.XXXXXX")
+  trap 'rm -rf "$tmp_xdg"' EXIT
+  mkdir -p "$tmp_xdg/dispatcher"
+  printf '%s\n' "$next" >"$tmp_xdg/dispatcher/settings.json"
+  if ! XDG_CONFIG_HOME="$tmp_xdg" "$0" >/dev/null; then
+    exit 1
+  fi
+  mkdir -p "$(dirname "$user_file")"
+  tmp_out=$(mktemp "$(dirname "$user_file")/.settings.json.XXXXXX")
+  trap 'rm -rf "$tmp_xdg" "$tmp_out"' EXIT
+  printf '%s\n' "$next" >"$tmp_out"
+  if [[ -e $user_file ]]; then
+    chmod --reference="$user_file" "$tmp_out" 2>/dev/null || true
+  fi
+  mv -f "$tmp_out" "$user_file"
+  if [[ $subcmd == set ]]; then
+    # shellcheck disable=SC2016 # jq program text, not shell
+    shown=$(jq -r --arg p "$sub_path" 'getpath($p | split(".")) | if type == "string" then . else tojson end' <<<"$next")
+    echo "$sub_path = $shown"
+  else
+    echo "unset $sub_path"
+  fi
+  exit 0
+fi
+
 base=$(layer "$base_file")
 check_model_shapes "$base" "$base_file" base
 base=$(check_anthropic_credits "$base" "$base_file" base)
@@ -660,7 +728,7 @@ printf '%s\n' "$base" "$user" "$locked" "$env_layer" | jq -n --argjson show_orig
   def tag($layers; $p):
     if type == "object" and length > 0
     then with_entries(.key as $k | .value |= tag($layers; $p + [$k]))
-    else {value: ., origin: ($layers | to_entries | map(select(.value | holds($p)) | .key) | last)}
+    else {value: ., origin: (($layers | to_entries | map(select(.value | holds($p)) | .key) | last) // "user")}
     end;
   def lower_trackers:
     reduce ("repoTrackers", "orgTrackers", "dispatcherMcp") as $k
@@ -689,6 +757,17 @@ printf '%s\n' "$base" "$user" "$locked" "$env_layer" | jq -n --argjson show_orig
   | need(["repoTrackers"]; "an object of strings"; type == "object" and all(.[]; type == "string"))
   | need(["orgTrackers"]; "an object of strings"; type == "object" and all(.[]; type == "string"))
   | need(["workerDeniedMcpServers"]; "an array of MCP server names (letters, digits, \"_\", \"-\")"; string_array and all(.[]; test("^[A-Za-z0-9_-]+$")))
+  | need(["dispatcherAgent"]; "one of claude, codex, cursor or pi"; IN("claude", "codex", "cursor", "pi"))
+  | need(["disabledEngines"]; "an object of engine booleans (claude, codex, cursor, pi)"; type == "object" and all(keys[]; IN("claude", "codex", "cursor", "pi")) and all(.[]; type == "boolean"))
+  | if (($env | has("engines")) | not) and ((.disabledEngines // {} | to_entries | any(.value == true))) then
+      ([.disabledEngines | to_entries[] | select(.value == true) | .key]) as $off
+      | ((.engines // ["claude", "codex", "cursor", "pi"]) | map(select(IN($off[]) | not))) as $eff
+      | if ($eff | length) == 0 then
+          "dispatch-config: disabledEngines leaves no enabled engines (merged settings)\n" | halt_error(1)
+        else
+          .engines = $eff
+        end
+    else . end
   | need(["dispatcherChrome"]; "a boolean"; type == "boolean")
   | need(["freshSeams"]; "a boolean"; type == "boolean")
   | need(["crewLayout"]; "1 or 2"; type == "number" and (tostring | IN("1", "2")))
