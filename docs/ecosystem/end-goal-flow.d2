@@ -1,0 +1,117 @@
+direction: down
+
+classes: {
+  host: {
+    style: {
+      stroke: "#1565C0"
+      stroke-width: 2
+      border-radius: 10
+      font-size: 22
+      bold: true
+    }
+  }
+  node: {
+    style: {
+      stroke: "#1565C0"
+      stroke-width: 2
+      border-radius: 6
+      font-size: 18
+    }
+  }
+  contract: {
+    shape: hexagon
+    style: {
+      stroke: "#EF6C00"
+      stroke-width: 2
+      font-size: 18
+    }
+  }
+  surface: {
+    style: {
+      stroke: "#6A1B9A"
+      stroke-width: 2
+      border-radius: 10
+      font-size: 18
+    }
+  }
+  g1: {
+    style: {
+      stroke: "#C62828"
+      stroke-width: 3
+      font-size: 16
+    }
+  }
+  g2: {
+    style: {
+      stroke: "#2E7D32"
+      stroke-width: 3
+      font-size: 16
+    }
+  }
+  g3: {
+    style: {
+      stroke: "#6A1B9A"
+      stroke-width: 3
+      font-size: 16
+    }
+  }
+  plain: {
+    style: {
+      stroke-width: 2
+      font-size: 16
+    }
+  }
+}
+
+local: "LOCAL HOST" {
+  class: host
+  direction: right
+  tmux: "tmux" {
+    class: node
+    agents: "agents" {class: node}
+  }
+  hookyard: "hookyard" {class: node}
+  bus: "crew bus" {class: node}
+  crew: "crew CLI\nJSON stream" {class: contract}
+  tmux.agents -> hookyard: hooks {class: plain}
+  bus -> crew: stream {class: plain}
+}
+
+remote: "REMOTE HOST" {
+  class: host
+  direction: right
+  tmux: "tmux" {
+    class: node
+    agents: "agents" {class: node}
+  }
+  hookyard: "hookyard" {class: node}
+  bus: "crew bus" {class: node}
+  crew: "crew CLI\nJSON stream" {class: contract}
+  tmux.agents -> hookyard: hooks {class: plain}
+  bus -> crew: stream {class: plain}
+}
+
+local.tmux.agents <-> remote.tmux.agents: "1  ssh bridge" {class: g1}
+
+hub: "houston hub\nfederated merge" {class: node}
+web: "web UI" {class: surface}
+overseer: "overseer\nClaude / Hermes" {class: surface}
+
+local.crew -> hub: "2  stream" {class: g2}
+local.hookyard -> hub: "2  envelope stream" {class: g2}
+remote.crew -> hub: "2  stream" {class: g2}
+remote.hookyard -> hub: "2  envelope stream" {class: g2}
+hub -> web: "2  merged view" {class: g2}
+local.crew -> overseer: "3  reads" {class: g3}
+overseer -> local.crew: "3  crew verbs" {class: g3}
+
+legend: "Legend" {
+  grid-columns: 3
+  style.font-size: 20
+  h: "host" {class: node; style.font-size: 16}
+  c: "contract: JSON stream" {class: contract; style.font-size: 16}
+  s: "surface" {class: surface; style.font-size: 16}
+  g1: "1  tmux across hosts" {class: g1; style.font-size: 16}
+  g2: "2  one web UI" {class: g2; style.font-size: 16}
+  g3: "3  overseer acts" {class: g3; style.font-size: 16}
+}
