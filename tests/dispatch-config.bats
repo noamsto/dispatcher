@@ -1420,3 +1420,79 @@ ROWS
   [ "$status" -eq 1 ]
   [[ "$stderr" == *"dashPlacement must be"* ]]
 }
+
+@test "dispatcherAgent defaults to claude, accepts valid engines, rejects others" {
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 0 ]
+  jq -e '.dispatcherAgent == "claude"' <<<"$output"
+
+  user_settings '{"dispatcherAgent":"pi"}'
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 0 ]
+  jq -e '.dispatcherAgent == "pi"' <<<"$output"
+
+  user_settings '{"dispatcherAgent":"bogus"}'
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"dispatcherAgent must be"* ]]
+}
+
+@test "disabledEngines narrows locked engines and rejects disabling all engines" {
+  locked_settings '{"engines":["claude","pi"]}'
+  user_settings '{"disabledEngines":{"claude":true}}'
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 0 ]
+  jq -e '.engines == ["pi"]' <<<"$output"
+
+  # DISPATCH_ENGINES env override still wins for one-off CLI use.
+  DISPATCH_ENGINES="claude" run --separate-stderr "$CONFIG"
+  [ "$status" -eq 0 ]
+  jq -e '.engines == ["claude"]' <<<"$output"
+
+  # Disabling every enabled engine is refused.
+  user_settings '{"disabledEngines":{"claude":true,"pi":true}}'
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"disabledEngines leaves no enabled engines"* ]]
+
+  # Unknown engine or non-boolean is refused.
+  user_settings '{"disabledEngines":{"bogus":true}}'
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"disabledEngines must be"* ]]
+}
+
+@test "disabledEngines narrows default all-four roster when engines is unset" {
+  user_settings '{"disabledEngines":{"claude":true}}'
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 0 ]
+  jq -e '.engines == ["codex","cursor","pi"]' <<<"$output"
+}
+
+@test "set and unset mutate user settings atomically and validate before writing" {
+  run --separate-stderr "$CONFIG" set dispatcherAgent pi
+  [ "$status" -eq 0 ]
+  [ "$output" = "dispatcherAgent = pi" ]
+  jq -e '.dispatcherAgent == "pi"' "$USER_FILE"
+
+  run --separate-stderr "$CONFIG" set disabledEngines.claude true
+  [ "$status" -eq 0 ]
+  [ "$output" = "disabledEngines.claude = true" ]
+  jq -e '.disabledEngines.claude == true' "$USER_FILE"
+
+  # Invalid value is refused and leaves user file untouched.
+  run --separate-stderr "$CONFIG" set dispatcherAgent nope
+  [ "$status" -eq 1 ]
+  jq -e '.dispatcherAgent == "pi"' "$USER_FILE"
+
+  # Unset removes the key and prunes empty parent objects.
+  run --separate-stderr "$CONFIG" unset disabledEngines.claude
+  [ "$status" -eq 0 ]
+  [ "$output" = "unset disabledEngines.claude" ]
+  jq -e 'has("disabledEngines") | not' "$USER_FILE"
+
+  # Unsetting an absent key is a clean no-op.
+  run --separate-stderr "$CONFIG" unset disabledEngines.claude
+  [ "$status" -eq 0 ]
+  [[ "$stderr" == *"is not set"* ]]
+}

@@ -582,18 +582,18 @@ if [ -n "$relaunch_id" ]; then
     fi
     # The launcher's default agent and its owner-set defaults, as a launch of
     # `dispatcher` with no flags would resolve them.
+    rec_agent=$(jq -r '.dispatcherAgent // "claude"' <<<"$owner_settings")
     _settings_default() { # key fallback
-      jq -r --arg k "$1" --arg d "$2" '.orchestratorDefaults.claude[$k] // $d | tostring' <<<"$owner_settings"
+      jq -r --arg a "$rec_agent" --arg k "$1" --arg d "$2" '.orchestratorDefaults[$a][$k] // $d | tostring' <<<"$owner_settings"
     }
-    rec_agent=claude
     rec_model=$(_settings_default model '')
     rec_effort=$(_settings_default effort '')
     rec_autocompact=$(_settings_default autoCompact auto)
     if [ -z "$rec_model" ]; then
-      echo "dispatcher: --relaunch: crew $CREW_ID has no launch record and orchestratorDefaults.claude.model is unset — relaunch by hand with --agent/--model" >&2
+      echo "dispatcher: --relaunch: crew $CREW_ID has no launch record and orchestratorDefaults.$rec_agent.model is unset — relaunch by hand with --agent/--model" >&2
       exit 1
     fi
-    rec_from="the settings default (orchestratorDefaults.claude)"
+    rec_from="the settings default (orchestratorDefaults.$rec_agent)"
     echo "dispatcher: --relaunch: crew $CREW_ID has no launch record — using the settings defaults (overseer.autoStart)" >&2
   else
     if ! jq -es 'length == 1 and (.[0] | type == "object")' "$record" >/dev/null 2>&1; then
@@ -753,6 +753,39 @@ if [ -n "$spawn_repo" ]; then
   exit 0
 fi
 
+# DISPATCH_ENGINES may come from the settings resolver (dispatch-config) when
+# unset in the environment — see dispatch-config.sh for the layer order.
+dispatch_config_default="@dispatchConfig@"
+settings="$("${DISPATCH_CONFIG_BIN:-$dispatch_config_default}")"
+[ -n "${DISPATCH_ENGINES:-}" ] || DISPATCH_ENGINES="$(jq -r '.engines // [] | join(" ")' <<<"$settings")"
+
+if [ "$agent_set" = 0 ]; then
+  agent="$(jq -r '.dispatcherAgent // "claude"' <<<"$settings")"
+  case "$agent" in
+  claude | codex | cursor | pi) ;;
+  *)
+    echo "dispatcher: dispatcherAgent must be claude, codex, cursor, or pi" >&2
+    exit 1
+    ;;
+  esac
+  if [ "$overseer" = 1 ]; then
+    case "$agent" in
+    codex | cursor)
+      echo "dispatcher: --overseer is claude and pi only" >&2
+      exit 2
+      ;;
+    esac
+  fi
+  if [ "$fresh" = 1 ]; then
+    case "$agent" in
+    codex | cursor)
+      echo "dispatcher: --fresh is claude and pi only" >&2
+      exit 2
+      ;;
+    esac
+  fi
+fi
+
 # Checked before the crew is minted: pi's --append-system-prompt takes text or a
 # file, so a missing render path would be appended as literal text.
 case "$agent" in
@@ -769,12 +802,6 @@ elif [ ! -f "$protocol" ]; then
   echo "dispatcher: missing protocol file $protocol${DISPATCHER_PROTOCOL_DIR:+ (DISPATCHER_PROTOCOL_DIR=$DISPATCHER_PROTOCOL_DIR)}; regenerate with scripts/gen-adapters.sh or point DISPATCHER_PROTOCOL_DIR at a dir that has it" >&2
   exit 1
 fi
-
-# DISPATCH_ENGINES may come from the settings resolver (dispatch-config) when
-# unset in the environment — see dispatch-config.sh for the layer order.
-dispatch_config_default="@dispatchConfig@"
-settings="$("${DISPATCH_CONFIG_BIN:-$dispatch_config_default}")"
-[ -n "${DISPATCH_ENGINES:-}" ] || DISPATCH_ENGINES="$(jq -r '.engines // [] | join(" ")' <<<"$settings")"
 
 # Crew layout: the env wins for one launch, else the settings key (default 2).
 # Go reads only CREW_LAYOUT, so `crew register` gets it exported.

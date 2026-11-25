@@ -4,6 +4,7 @@ layers: default <BASE>
         locked  <LOCKED>
 › fleetBudget                         unset                                                                      default
   profile                             work                                                                     🔒 locked
+  dispatcherAgent                     unset                                                                      default
   freshSeams                          unset                                                                      default
   dispatcherChrome                    unset                                                                      default
   dashTailscale                       unset                                                                      default
@@ -14,14 +15,13 @@ layers: default <BASE>
   overseer.autoStart                  unset                                                                      default
   overseer.acceptTrust                unset                                                                      default
   openrouter.monthlyUsd               20                                                                         default
+  orchestratorDefaults.claude.model   opus                                                                       default
+  orchestratorDefaults.codex.model    gpt-5.6-sol                                                                default
+  orchestratorDefaults.cursor.model   kimi-k3-high                                                               default
+  orchestratorDefaults.pi.model       openrouter/deepseek/deepseek-v4.1-flash                                    default
   orchestratorDefaults.claude.effort  high                                                                       default
   orchestratorDefaults.codex.effort   high                                                                       default
   orchestratorDefaults.pi.effort      high                                                                       default
-
-
-
-
-
 
 
 

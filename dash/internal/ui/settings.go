@@ -31,10 +31,11 @@ const (
 	knobNumber
 	knobBool
 	knobEnum
+	knobString
 )
 
 func (k knobKind) String() string {
-	return [...]string{"int", "number", "bool", "enum"}[k]
+	return [...]string{"int", "number", "bool", "enum", "string"}[k]
 }
 
 // jsonType is the JSON type a value of this kind must have.
@@ -42,7 +43,7 @@ func (k knobKind) jsonType() string {
 	switch k {
 	case knobBool:
 		return "bool"
-	case knobEnum:
+	case knobEnum, knobString:
 		return "string"
 	}
 	return "number"
@@ -60,12 +61,17 @@ type knob struct {
 
 func kpath(s ...string) []string { return s }
 
-var efforts = []string{"low", "medium", "high", "xhigh", "max"}
+var (
+	efforts = []string{"low", "medium", "high", "xhigh", "max"}
+	agents  = []string{"claude", "codex", "cursor", "pi"}
+)
 
 // quickKnobs is the whole Settings tab; adding a knob is one line.
 var quickKnobs = []knob{
 	{path: kpath("fleetBudget"), kind: knobInt, min: 1},
 	{path: kpath("profile"), kind: knobEnum, choices: []string{"personal", "work"}, def: "personal"},
+	{path: kpath("dispatcherAgent"), kind: knobEnum, choices: agents, def: "claude"},
+	{path: kpath("disabledEngines", "*"), kind: knobBool},
 	{path: kpath("freshSeams"), kind: knobBool},
 	{path: kpath("dispatcherChrome"), kind: knobBool},
 	{path: kpath("dashTailscale"), kind: knobBool},
@@ -76,6 +82,7 @@ var quickKnobs = []knob{
 	{path: kpath("overseer", "autoStart"), kind: knobBool},
 	{path: kpath("overseer", "acceptTrust"), kind: knobBool},
 	{path: kpath("openrouter", "monthlyUsd"), kind: knobNumber, min: 0},
+	{path: kpath("orchestratorDefaults", "*", "model"), kind: knobString},
 	{path: kpath("orchestratorDefaults", "*", "effort"), kind: knobEnum, choices: efforts},
 }
 
@@ -245,7 +252,7 @@ type settingsView struct {
 func newSettingsView(sv vm.SettingsView, deps settingsDeps) settingsView {
 	v := settingsView{deps: deps, input: textinput.New()}
 	v.input.Prompt = ""
-	v.input.CharLimit = 32
+	v.input.CharLimit = 128
 	v.load(sv)
 	return v
 }
@@ -432,7 +439,14 @@ func (v settingsView) change() (view, tea.Cmd) {
 	v.editing = true
 	v.input.SetValue("")
 	if !isNull(r.row.Value) {
-		v.input.SetValue(compactJSON(r.row.Value))
+		if r.knob.kind == knobString {
+			var s string
+			if json.Unmarshal(r.row.Value, &s) == nil {
+				v.input.SetValue(s)
+			}
+		} else {
+			v.input.SetValue(compactJSON(r.row.Value))
+		}
 	}
 	v.input.CursorEnd()
 	return v, v.input.Focus()
@@ -560,9 +574,19 @@ func (v settingsView) handleInput(msg tea.KeyMsg) (view, tea.Cmd) {
 	return v, cmd
 }
 
-// parseKnobInput validates typed text for an int or number knob.
+// parseKnobInput validates typed text for an int, number, or string knob.
 func parseKnobInput(k knob, s string) (json.RawMessage, error) {
 	s = strings.TrimSpace(s)
+	if k.kind == knobString {
+		if s == "" {
+			return nil, errors.New("must not be empty")
+		}
+		raw, err := json.Marshal(s)
+		if err != nil {
+			return nil, err
+		}
+		return raw, nil
+	}
 	minText := strconv.FormatFloat(k.min, 'f', -1, 64)
 	if k.kind == knobInt {
 		n, err := strconv.Atoi(s)

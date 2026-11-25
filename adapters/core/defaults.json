@@ -469,6 +469,8 @@
   },
   "rosterDiagram": {"autoOpen": true},
   "workerDeniedMcpServers": ["plugin_hm_playwright", "plugin_hm_firefox-devtools"],
+  "dispatcherAgent": "claude",
+  "disabledEngines": {"claude": false, "codex": false, "cursor": false, "pi": false},
   "dispatcherChrome": false,
   "freshSeams": false,
   "crewLayout": 2,

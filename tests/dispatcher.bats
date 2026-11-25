@@ -3572,3 +3572,32 @@ STUB
   [ -s "$XDG_STATE_HOME/crew/crews/c-new/pid" ]
   [ ! -e "$SPAWN_REPO/.git/crew/crews/c-new" ]
 }
+
+@test "dispatcherAgent from settings sets default harness when --agent is omitted" {
+  printf '{"dispatcherAgent":"pi","orchestratorDefaults":{"pi":{"model":"openrouter/deepseek/deepseek-v4.1-flash","effort":"high"}}}\n' \
+    >"$BATS_TEST_TMPDIR/settings.json"
+  cat >"$STUB_DIR/dispatch-config" <<EOF
+#!/usr/bin/env bash
+if [ "\${1:-}" = "--layers" ]; then
+  echo '{"base":"b","user":{"path":"u","present":true},"locked":null}'
+else
+  cat "$BATS_TEST_TMPDIR/settings.json"
+fi
+EOF
+  chmod +x "$STUB_DIR/dispatch-config"
+  DISPATCH_CONFIG_BIN="$STUB_DIR/dispatch-config" run --separate-stderr run_launcher
+  [ "$status" -eq 0 ]
+  grep -q -- '--thinking high' "$STUB_LOG"
+  grep -q 'DISPATCHER_PROTOCOL.pi.md' "$STUB_LOG"
+}
+
+@test "--relaunch with no launch record uses dispatcherAgent from settings" {
+  _relaunch_setup
+  _fake_settings '{"overseer":{"autoStart":true},"dispatcherAgent":"pi","orchestratorDefaults":{"pi":{"model":"openrouter/deepseek/deepseek-v4.1-flash","effort":"high"}}}'
+  rm "$C1/launch"
+  run run_launcher --relaunch c1 --repo "$TEST_REPO"
+  live_pid=$(cat "$STUB_DIR/dispatcher.pid")
+  [ "$status" -eq 0 ]
+  mapfile -t got <"$STUB_DIR/respawn-pane.argv"
+  [ "${got[*]:9}" = "env -u CREW_OVERSEER dispatcher --fresh --no-note --agent pi --model openrouter/deepseek/deepseek-v4.1-flash --effort high --autocompact auto" ]
+}

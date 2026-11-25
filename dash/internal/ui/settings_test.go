@@ -18,12 +18,14 @@ import (
 
 // Row indexes of the fixture's knob list.
 const (
-	rowFleetBudget = 0
-	rowProfile     = 1 // locked in the fixture
-	rowFreshSeams  = 2
-	rowAutoOpen    = 7
-	rowMonthlyUsd  = 11
-	rowClaudeEff   = 12
+	rowFleetBudget     = 0
+	rowProfile         = 1 // locked in the fixture
+	rowDispatcherAgent = 2
+	rowFreshSeams      = 3
+	rowAutoOpen        = 8
+	rowMonthlyUsd      = 12
+	rowClaudeModel     = 13
+	rowClaudeEff       = 17
 )
 
 type knobHarness struct {
@@ -763,5 +765,60 @@ func TestSettingsViewFitsNarrowAndShort(t *testing.T) {
 	v := newKnobHarness(t, "", nil).v
 	for _, sz := range [][2]int{{1, 1}, {10, 3}, {30, 8}} {
 		assertWidth(t, v.View(sz[0], sz[1]), sz[0], sz[1])
+	}
+}
+
+func TestSettingsCycleDispatcherAgent(t *testing.T) {
+	h := newKnobHarness(t, "", nil).at(rowDispatcherAgent)
+	h.press(keyRune(' '))
+	if got := h.fileDoc()["dispatcherAgent"]; got != "codex" {
+		t.Fatalf("dispatcherAgent = %v, want codex (claude -> codex)", got)
+	}
+}
+
+func TestSettingsToggleDisabledEngine(t *testing.T) {
+	withDisabled := func(s *data.Snapshot) {
+		s.Settings.Rows = append(s.Settings.Rows,
+			data.SettingRow{Path: []string{"disabledEngines", "claude"}, Value: json.RawMessage("false"), Origin: "base", Editable: true},
+			data.SettingRow{Path: []string{"disabledEngines", "pi"}, Value: json.RawMessage("false"), Origin: "base", Editable: true},
+		)
+	}
+	h := newKnobHarness(t, "", withDisabled)
+	idx := -1
+	for i, r := range h.v.rows {
+		if dotPath(r.row.Path) == "disabledEngines.claude" {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		t.Fatalf("disabledEngines.claude not found in rows")
+	}
+	h.at(idx).press(keyRune(' '))
+	de := h.fileDoc()["disabledEngines"].(map[string]any)
+	if de["claude"] != true {
+		t.Fatalf("disabledEngines.claude = %v, want true", de["claude"])
+	}
+}
+
+func TestSettingsEditStringKnobModel(t *testing.T) {
+	h := newKnobHarness(t, "", nil).at(rowClaudeModel)
+	h.press(keyType(tea.KeyEnter))
+	if !h.v.editing {
+		t.Fatalf("expected editing mode for string knob")
+	}
+	if got := h.v.input.Value(); got != "opus" {
+		t.Fatalf("input value = %q, want unquoted opus", got)
+	}
+	h.v.input.SetValue("  ")
+	msgs := h.press(keyType(tea.KeyEnter))
+	if st := statusOf(t, msgs); !st.err || !strings.Contains(st.text, "must not be empty") {
+		t.Fatalf("empty string should be refused, got %+v", st)
+	}
+	h.v.input.SetValue("openrouter/deepseek/deepseek-v4.1-flash")
+	h.press(keyType(tea.KeyEnter))
+	got := h.fileDoc()["orchestratorDefaults"].(map[string]any)["claude"].(map[string]any)["model"]
+	if got != "openrouter/deepseek/deepseek-v4.1-flash" {
+		t.Fatalf("model = %v, want openrouter/deepseek/deepseek-v4.1-flash", got)
 	}
 }
