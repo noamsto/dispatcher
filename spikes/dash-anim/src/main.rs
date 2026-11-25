@@ -82,6 +82,8 @@ struct App {
     fx: Fx,
     /// Node ids whose glow is fired at the next draw, once the viewport is final.
     pending_glow: Vec<(String, ratatui::style::Color)>,
+    /// Feeds still delivering; the feed has ended only once this reaches zero.
+    live_sources: usize,
     feed_ended: bool,
 }
 
@@ -99,8 +101,14 @@ impl App {
             list: ListState::default(),
             fx: Fx::new(args.reduced_motion),
             pending_glow: Vec::new(),
+            live_sources: 0,
             feed_ended: false,
         }
+    }
+
+    fn on_source_ended(&mut self) {
+        self.live_sources = self.live_sources.saturating_sub(1);
+        self.feed_ended = self.live_sources == 0;
     }
 
     fn set_graph_data(&mut self, workers: Vec<WorkerView>, roles: Vec<RoleView>) {
@@ -283,8 +291,11 @@ fn main() -> io::Result<()> {
         app.set_graph_data(workers, roles);
         None
     } else if args.fixture.is_empty() {
-        Some(source::spawn_live(&["map", "overview"], &tx)?)
+        const VIEWS: &[&str] = &["map", "overview"];
+        app.live_sources = VIEWS.len();
+        Some(source::spawn_live(VIEWS, &tx)?)
     } else {
+        app.live_sources = 1;
         source::spawn_fixture(
             args.fixture.clone(),
             Duration::from_millis(if args.dump.is_some() {
@@ -384,7 +395,7 @@ fn run(
                 redraw = true;
             }
             Some(Msg::SourceEnded) => {
-                app.feed_ended = true;
+                app.on_source_ended();
                 redraw = true;
             }
             None => {
@@ -402,6 +413,16 @@ fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn feed_ends_only_when_last_source_ends() {
+        let mut app = App::new(&Args::parse_from(["dash-anim"]));
+        app.live_sources = 2;
+        app.on_source_ended();
+        assert!(!app.feed_ended);
+        app.on_source_ended();
+        assert!(app.feed_ended);
+    }
 
     fn worker(branch: &str, state: &str) -> WorkerView {
         WorkerView {

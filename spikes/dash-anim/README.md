@@ -169,7 +169,7 @@ rows animate; a rebuild does not replay everything.
 Node glow fires only while the Graph tab is shown and not under
 `--reduced-motion`; changes that arrive on the List tab are not replayed
 when switching back. An Overview document alone does not re-glow unchanged
-workers. When the feed ends, the header shows `[feed ended]`.
+workers. Once all feeds have ended, the header shows `[feed ended]`.
 
 Honest caveat: feel was judged from the timing parameters and frame
 captures, not from long interactive use. The release binary was run in a pty
