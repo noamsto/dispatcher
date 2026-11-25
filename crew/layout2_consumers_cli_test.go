@@ -131,10 +131,8 @@ func visitingTmux(t *testing.T, windows, panes string) {
 	t.Helper()
 	stubs := t.TempDir()
 	writeStub(t, stubs, "tmux", `#!/bin/sh
-case "$1 $2" in
-"list-windows -a") printf '%s\n' "$TMUX_WINDOWS" ;;
-"list-panes -a") printf '%s\n' "$TMUX_PANES" ;;
-"display-message -p") printf '%s\n' "$TMUX_SERVER" ;;
+`+stampReadsHead+`case "$1 $2 $4" in
+`+stampReadsCases+`"display-message -p ") printf '%s\n' "$TMUX_SERVER" ;;
 esac
 exit 0
 `)

@@ -25,6 +25,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/remote"
 	"github.com/noamsto/dispatcher/crew/internal/resolve"
 	"github.com/noamsto/dispatcher/crew/internal/sender"
+	"github.com/noamsto/dispatcher/crew/internal/tmuxstamp"
 )
 
 //go:embed already.jq
@@ -154,13 +155,11 @@ func Run(ctx context.Context, r Request, paths bus.Paths, stdout, stderr io.Writ
 		}
 	}
 
-	wins, err := o.Deps.Tmux.Run(ctx, "list-windows", "-a", "-F",
-		"#{window_id}\t#{@crew_branch}\t#{@crew_dir}\t#{@crew_id}\t#{@crew_name}")
+	wins, err := tmuxstamp.Windows(ctx, o.Deps.Tmux)
 	if err != nil {
 		return fail(stderr, "cannot read tmux windows (is a tmux server running?)")
 	}
-	panes, err := o.Deps.Tmux.Run(ctx, "list-panes", "-a", "-F",
-		"#{window_id}\t#{pane_id}\t#{@crew_role}\t#{pane_current_command}")
+	panes, err := tmuxstamp.Panes(ctx, o.Deps.Tmux)
 	if err != nil {
 		return fail(stderr, "cannot read tmux panes (is a tmux server running?)")
 	}
@@ -174,10 +173,10 @@ func Run(ctx context.Context, r Request, paths bus.Paths, stdout, stderr io.Writ
 	// unique within (remote.WindowBound). The identity comes from its own
 	// `display-message` read, which no window option can shift.
 	//
-	// What it does not buy: an option value is expanded into this output raw, so
-	// a process that sets window options can still print a row of its own, id and
-	// stamps included, that reads exactly like a real one. The identity closes the
-	// quieter case: a restart handing a surviving row's id to another window.
+	// The lists carry only ids tmux generates and each stamp is its own per-window
+	// read (tmuxstamp), so no option value can print a row of its own. The identity
+	// closes the quieter case: a restart handing a surviving row's id to another
+	// window.
 	var events []bus.Event
 	server := ""
 	if paths.Dir == "" {
@@ -189,8 +188,9 @@ func Run(ctx context.Context, r Request, paths bus.Paths, stdout, stderr io.Writ
 		}
 	}
 	var cwins [][]string
-	for _, r := range tsvRows(wins) {
-		if len(r) < 5 || r[1] == "" || r[3] != a.crew {
+	for _, w := range wins {
+		r := a.stamps(w.ID)
+		if r == nil {
 			continue
 		}
 		if paths.Dir == "" && !remote.WindowBound(events, r[1], a.crew, r[0], r[2], server) || paths.Dir != "" && r[2] != paths.Dir {
@@ -242,10 +242,17 @@ func Run(ctx context.Context, r Request, paths bus.Paths, stdout, stderr io.Writ
 	}
 
 	a.branch = field(win, 1)
-	a.pane = field(firstWhere(tsvRows(panes),
-		func(r []string) bool { return field(r, 0) == field(win, 0) && field(r, 2) == "lead" }), 1)
-	if a.pane == "" {
-		a.pane = field(firstWhere(tsvRows(panes), func(r []string) bool { return field(r, 0) == field(win, 0) }), 1)
+	for _, p := range panes {
+		if p.Window != field(win, 0) {
+			continue
+		}
+		if a.pane == "" {
+			a.pane = p.ID
+		}
+		if role, _ := tmuxstamp.PaneOption(ctx, o.Deps.Tmux, p.ID, "@crew_role"); role == "lead" {
+			a.pane = p.ID
+			break
+		}
 	}
 	if a.pane == "" {
 		return fail(stderr, "no pane in the window for '"+target+"'")
@@ -270,6 +277,29 @@ func Run(ctx context.Context, r Request, paths bus.Paths, stdout, stderr io.Writ
 		return rc
 	}
 	return a.wait(ctx, wait)
+}
+
+// stamps is window id's row — id, branch, dir, crew id, codename — read one stamp
+// per call, cheapest filter first: nil unless the window carries this crew's id
+// and a branch, and every stamp is a clean value (tmuxstamp).
+func (a *arm) stamps(id string) []string {
+	c := a.o.Deps.Tmux
+	if crew, ok := tmuxstamp.WindowOption(a.ctx, c, id, "@crew_id"); !ok || crew != a.crew {
+		return nil
+	}
+	branch, ok := tmuxstamp.WindowOption(a.ctx, c, id, "@crew_branch")
+	if !ok || branch == "" {
+		return nil
+	}
+	dir, ok := tmuxstamp.WindowOption(a.ctx, c, id, "@crew_dir")
+	if !ok {
+		return nil
+	}
+	name, ok := tmuxstamp.WindowOption(a.ctx, c, id, "@crew_name")
+	if !ok {
+		return nil
+	}
+	return []string{id, branch, dir, a.crew, name}
 }
 
 // arm is one resolved nudge: the target's address, plus the wait loop's state.

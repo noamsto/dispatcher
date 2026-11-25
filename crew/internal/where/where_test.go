@@ -77,7 +77,47 @@ func okTmux(wins, panes string) *tmuxtest.Fake {
 // okTmuxServer is okTmux with the identity the fake server answers to the arm's
 // own display-message read.
 func okTmuxServer(wins, panes, server string) *tmuxtest.Fake {
-	return &tmuxtest.Fake{Out: map[string]string{"list-windows": wins, "list-panes": panes, "display-message -p": server}}
+	return serverOf(wins, panes, server).Fake()
+}
+
+// serverOf is the tmux server the winLine, mirrorLine and paneLine rows describe.
+// The rows are the test's own, so they are split, not escaped; an injected value
+// is set on a tmuxtest.Server directly.
+func serverOf(wins, panes, identity string) *tmuxtest.Server {
+	srv := &tmuxtest.Server{Identity: identity}
+	at := map[string]int{}
+	win := func(id string) *tmuxtest.Window {
+		i, ok := at[id]
+		if !ok {
+			i = len(srv.Windows)
+			at[id] = i
+			srv.Windows = append(srv.Windows, tmuxtest.Window{ID: id, Opts: map[string]string{}})
+		}
+		return &srv.Windows[i]
+	}
+	cols := func(row string, n int) []string {
+		return append(strings.Split(row, "\t"), make([]string, n)...)[:n]
+	}
+	for _, row := range strings.Split(wins, "\n") {
+		if row == "" {
+			continue
+		}
+		c := cols(row, 10)
+		w := win(c[0])
+		w.Session, w.Index, w.Name = c[5], c[6], c[7]
+		for i, name := range map[int]string{1: "@crew_branch", 2: "@crew_dir", 3: "@crew_id", 4: "@crew_name", 8: "@bridge_crew_branch", 9: "@bridge_crew_id"} {
+			w.Opts[name] = c[i]
+		}
+	}
+	for _, row := range strings.Split(panes, "\n") {
+		if row == "" {
+			continue
+		}
+		c := cols(row, 4)
+		w := win(c[0])
+		w.Panes = append(w.Panes, tmuxtest.Pane{ID: c[1], Index: c[3], Opts: map[string]string{"@crew_role": c[2]}})
+	}
+	return srv
 }
 
 // win is one `list-windows` line, in the arm's format: window id, branch, crew
@@ -515,11 +555,6 @@ func TestVisitingCrewWindowIsBoundToItsDispatchRow(t *testing.T) {
 	panes := paneLine("@624", "%204", "lead", "1") + "\n" + paneLine("@700", "%300", "lead", "1")
 	want := `nova — sess:3.1 "win-name" (lead pane)   jump: ! tmux switch-client -t %204` + "\n"
 	real := winLine(clone+"/crew", "@624", "feat/x", "c1", "nova", "sess", "3", "win-name")
-	// shiftRow records the identity the attacker injects into @bridge_crew_id
-	// below, for the window id the forged row carries.
-	shiftRow := fmt.Sprintf(`{"ts":2,"crew_id":"c1","kind":"window","branch":"feat/x","repo":%q,"window_id":"@700","tmux_server":%q}`, clone, tmuxServer)
-	shifted := strings.Join([]string{"@700", "feat/x", clone + "/crew", "c1", "evil", "sess", "4", "w", "", "evil", tmuxServer, "999:888"}, "\t")
-	nl := strings.Join([]string{"@700", "feat/x", clone + "/crew", "c1", "evil", "sess", "4", "w", "", "evil", tmuxServer}, "\t") + "\n\t999:888"
 	for _, tc := range []struct {
 		name string
 		rows []string
@@ -548,13 +583,6 @@ func TestVisitingCrewWindowIsBoundToItsDispatchRow(t *testing.T) {
 		// recorded: after a restart the same id can name another branch's window.
 		{"a row of another tmux server binds nothing", []string{row, strings.Replace(winRow, tmuxServer, "999:888", 1)}, real, "", false, "no live pane"},
 		{"a row of another tmux server beside the live window", []string{row, strings.Replace(winRow, tmuxServer, "999:888", 1)}, real + "\n" + copied, "", false, "no live pane"},
-		// tmux expands an option value raw, so a tab in a stamp can carry the row's
-		// recorded identity into a later field of the same line.
-		{"a tab-shifted identity", []string{row, shiftRow}, shifted, "999:888", false, ""},
-		// A newline ends the forged row where the attacker wants it: the row text
-		// carries the stale identity, and the live one lands on a short continuation
-		// line no window row ever is.
-		{"a newline-forged identity", []string{row, shiftRow}, nl, "999:888", false, ""},
 		// The rows after a torn line could move the branch to another clone.
 		{"torn log line before a newer row", []string{row, "{\"ts\":", strings.ReplaceAll(row, clone, "/moved")}, real, "", false, "cannot read the crew log"},
 		// Every stamp copied: both windows pass, so neither is guessed.
