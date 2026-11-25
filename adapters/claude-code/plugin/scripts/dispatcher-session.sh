@@ -12,9 +12,15 @@ dispatcher_crew_id() {
   printf '%s\n' "$CREW_ID"
 }
 
-# dispatcher_crew_dir <id> — the crew's bus directory, or fail outside a git checkout.
+# dispatcher_crew_dir <id> — the crew's bus directory: the layout-2 state root when it
+# holds the crew (the default layout), else the layout-1 dir inside the git checkout.
 dispatcher_crew_dir() {
-  local common
+  local state=${XDG_STATE_HOME:-}/crew common
+  [[ ${XDG_STATE_HOME:-} == /* ]] || state=${HOME:-}/.local/state/crew
+  if [[ -f $state/crews/$1/meta.json ]]; then
+    printf '%s\n' "$state/crews/$1"
+    return 0
+  fi
   common=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || return 1
   printf '%s\n' "$common/crew/crews/$1"
 }

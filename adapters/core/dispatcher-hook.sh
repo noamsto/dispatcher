@@ -26,7 +26,7 @@ mode=${1:-}
 # hookyard's router bounds a pi handler at 4.3 s, so pi mode gets a tighter budget.
 budget=8 cap=3
 [[ -n $mode ]] || {
-  budget=3
+  budget=2
   cap=1
 }
 crew_dir=$(dispatcher_crew_dir "$id") || exit 0
@@ -126,35 +126,45 @@ write_pending() {
 
 emit_context() { jq -nc --arg c "$1" '{hookSpecificOutput: {additionalContext: $c}}'; }
 
+# The pending files carry data only (counts, a marker): the relay rebuilds the sentence
+# itself, so text planted in the shared crew dir never reaches the model.
 pi_input() {
-  local due unread since line="" parts=()
+  local due unread since
   due=$(step crew hold due --json --crew "$id" | jq 'length' 2>/dev/null)
-  [[ ${due:-0} == 0 ]] || parts+=("$due hold(s) due (crew hold due)")
   since=$(cat "$crew_dir/cursor" 2>/dev/null)
   [[ $since =~ ^[0-9]+$ ]] || since=$((($(date +%s) - 86400) * 1000))
   unread=$(step crew inbox "dispatcher:$id" "$id" --since "$since" | grep -c '^{')
-  [[ ${unread:-0} == 0 ]] || parts+=("$unread unread msg(s) (crew inbox dispatcher:$id $id --since $since)")
-  if ((${#parts[@]} > 0)); then
-    line="Park lane, crew $id: $(printf '%s; ' "${parts[@]}")"
-    line=${line%; }
+  [[ $due =~ ^[0-9]+$ ]] || due=0
+  [[ $unread =~ ^[0-9]+$ ]] || unread=0
+  if ((due + unread > 0)); then
+    write_pending pi-input "$due $unread $since"
+  else
+    write_pending pi-input ""
   fi
-  write_pending pi-input "$line"
 }
 
-pi_compact() {
-  write_pending pi-compact "$(printf 'Dispatcher session for crew %s is compacting or just compacted: at the next quiet point, hand off to a fresh session with "dispatcher --fresh --note" (protocol: "Hand off to a fresh session").' "$id")"
-}
+pi_compact() { write_pending pi-compact 1; }
 
 pi_relay() {
-  local name f out="" text
-  for name in pi-compact pi-input; do
-    f=$pending_dir/$name
-    [[ -f $f ]] || continue
-    mv "$f" "$f.take" 2>/dev/null || continue
-    text=$(<"$f.take")
+  local f out="" due unread since parts=()
+  f=$pending_dir/pi-compact
+  if [[ -f $f ]] && mv "$f" "$f.take" 2>/dev/null; then
     rm -f "$f.take"
-    out+=${out:+$'\n'}$text
-  done
+    out=$(printf 'Dispatcher session for crew %s is compacting or just compacted: at the next quiet point, hand off to a fresh session with "dispatcher --fresh --note" (protocol: "Hand off to a fresh session").' "$id")
+  fi
+  f=$pending_dir/pi-input
+  if [[ -f $f ]] && mv "$f" "$f.take" 2>/dev/null; then
+    read -r due unread since <"$f.take"
+    rm -f "$f.take"
+    if [[ $due =~ ^[0-9]+$ && $unread =~ ^[0-9]+$ && $since =~ ^[0-9]+$ ]]; then
+      ((due == 0)) || parts+=("$due hold(s) due (crew hold due)")
+      ((unread == 0)) || parts+=("$unread unread msg(s) (crew inbox dispatcher:$id $id --since $since)")
+      if ((${#parts[@]} > 0)); then
+        out+=${out:+$'\n'}"Park lane, crew $id: $(printf '%s; ' "${parts[@]}")"
+        out=${out%; }
+      fi
+    fi
+  fi
   [[ -z $out ]] || emit_context "$out"
 }
 
@@ -168,7 +178,10 @@ pi_mode() {
   fi
   event=$(jq -r '.native_event // empty' <<<"$payload" 2>/dev/null)
   case $event in
-  session_start) emit_context "$(session_start)" ;;
+  session_start)
+    rm -f "$pending_dir"/pi-input "$pending_dir"/pi-compact
+    emit_context "$(session_start)"
+    ;;
   input) pi_input ;;
   session_before_compact) pi_compact ;;
   esac
