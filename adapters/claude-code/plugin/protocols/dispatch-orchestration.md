@@ -76,8 +76,8 @@ class admission and refusal text only, so the checked id is the launched one.
 | cursor | `@cheap` | `trivial` | `trivial`, `standard` | `grok-*-low`, `grok-*-low-fast`, `cursor-grok-*-low`, `cursor-grok-*-low-fast` | `grok-4.7-low` |
 | cursor | `@standard` | `standard` | `standard`, `deep` | `grok-*-medium`, `grok-*-medium-fast`, `cursor-grok-*-medium`, `cursor-grok-*-medium-fast` | `grok-4.7-medium` |
 | cursor | `@premium` | `deep` | `deep` | `kimi-*-high`, `grok-*-high`, `grok-*-high-fast`, `cursor-grok-*-high`, `cursor-grok-*-high-fast` | `kimi-k3-high` |
-| pi | `@standard` | `trivial`, `standard`, `deep` | `trivial`, `standard`, `deep` | `openrouter/deepseek/deepseek-v*-flash`, `openrouter/z-ai/glm-*-flash`, `openrouter/qwen/qwen*-flash`, `anthropic/claude-sonnet-*` (needs anthropic_credits) | `openrouter/deepseek/deepseek-v4.1-flash` |
-| pi | `@premium` | — | `deep` | `openrouter/anthropic/claude-opus-*` (needs pi_month_target), `anthropic/claude-opus-*` (needs anthropic_credits) | — |
+| pi | `@standard` | `trivial`, `standard`, `deep` | `trivial`, `standard`, `deep` | `openrouter/deepseek/deepseek-v*-flash`, `openrouter/z-ai/glm-*-flash`, `openrouter/qwen/qwen*-flash`, `anthropic/claude-sonnet-*` (needs anthropic_credits), `google/gemini-4-hydrogen` (needs gemini_budget) | `openrouter/deepseek/deepseek-v4.1-flash` |
+| pi | `@premium` | — | `deep` | `openrouter/anthropic/claude-opus-*` (needs pi_month_target), `anthropic/claude-opus-*` (needs anthropic_credits), `google/gemini-4-argon` (needs gemini_budget) | — |
 
 <!-- END generated:model-classes -->
 
@@ -609,6 +609,7 @@ forms; `outOfRow` stays exact ids, since it widens what the tier gate admits.
 | cursor | `@premium:cursor-grok-*-high`, `@premium:cursor-grok-*-high-fast` | `cursor-grok-4.6-medium` |
 | pi | `openrouter/anthropic/claude-opus-*` | `@standard` |
 | pi | `anthropic/claude-opus-*` | `anthropic/claude-sonnet-5-5` |
+| pi | `google/gemini-4-argon` | `google/gemini-4-hydrogen` |
 
 <!-- END generated:pace-downgrades -->
 

@@ -227,6 +227,8 @@ pace_rule_target() {
     if (.fetched_epoch + 7200) < $now or .fetched_epoch > ($now + 300) then empty
     elif $e == "pi" and ($m | startswith("anthropic/")) then
       (.engines.pi.anthropic | objects | rule(.; "anthropic credit"))
+    elif $e == "pi" and ($m | startswith("google/")) then
+      (.engines.pi.gemini | objects | rule(.; "gemini month"))
     elif .engines[$e] == null then empty
     elif .engines[$e].windows["7d"] != null then rule(.engines[$e].windows["7d"]; "7d")
     elif .engines[$e].windows.month != null then rule(.engines[$e].windows.month; "month")
@@ -244,7 +246,7 @@ pace_rule_target() {
   # resolves through the untrusted class-state file, so it never lifts the refusal.
   # Nor does a direct anthropic/* id on pi: it spends dollars of credit, where
   # opus costs more than sonnet at any effort, not subscription quota.
-  if [ -n "$model_downgrade" ] && [[ $down_to != @* ]] && ! [[ $target_agent == pi && $target_model == anthropic/* ]]; then
+  if [ -n "$model_downgrade" ] && [[ $down_to != @* ]] && ! [[ $target_agent == pi && ($target_model == anthropic/* || $target_model == google/*) ]]; then
     model_weight="$(_pace_burn_weight "$target_model" "$target_effort")"
     downgrade_weight="$(_pace_burn_weight "$model_downgrade" "$target_effort")"
     # Numeric, not `[ -le ]`: burnClasses weights are JSON numbers, and a
@@ -257,7 +259,7 @@ pace_rule_target() {
   fi
   # cursor's --effort is accepted and ignored, so there is no effort to shed.
   case "$target_effort" in
-  max | xhigh) [ "$target_agent" = cursor ] || [[ $target_agent == pi && $target_model == anthropic/* ]] || effort_downgrade="high" ;;
+  max | xhigh) [ "$target_agent" = cursor ] || [[ $target_agent == pi && ($target_model == anthropic/* || $target_model == google/*) ]] || effort_downgrade="high" ;;
   esac
   [ -n "$model_rung$effort_downgrade" ] || return 0
   win="${rung_pct%%|*}" rung_pct="${rung_pct#*|}"
@@ -1642,6 +1644,31 @@ _anthropic_credits() {
   printf '%s\n' "$out"
 }
 
+# _gemini_budget — print `ok` when a fresh engine-budget.json shows pi's
+# direct Gemini monthly budget (refresh-budget's engines.pi.gemini) unspent
+# and matching the current gemini.monthlyUsd target.
+_gemini_budget() {
+  local out
+  if [ "$wire_side" = remote ]; then
+    printf 'host\t%s\n' "this is a dispatch --host launch, which never admits it: a host's engine-budget.json counts only that host's pi spend, so hosts sharing one Gemini budget could overspend it together (dispatch from the host holding the key, without --host)"
+    return
+  fi
+  # shellcheck disable=SC2016 # jq program text, not shell
+  out="$(jq -r --argjson now "$(date +%s)" --argjson t "$(jq -c '(.gemini.monthlyUsd // null) | if type == "string" then (tonumber? // null) elif type == "number" then . else null end' <<<"${settings:-null}")" '
+    def usd: (. * 100 | round) / 100 | tostring;
+    if (.fetched_epoch | type) != "number" or .fetched_epoch < $now - 7200 or .fetched_epoch > $now + 300 then empty
+    else .engines.pi.gemini as $g
+      | if ($g | type) != "object" then "none\tengine-budget.json records no Gemini budget (engines.pi.gemini; set gemini.monthlyUsd, configure GEMINI_API_KEY or pi google auth, and run refresh-budget)"
+        elif ($t | type) != "number" or $t <= 0 then "none\tthe settings hold no positive gemini.monthlyUsd target; set gemini.monthlyUsd and run refresh-budget"
+        elif $g.target_usd != $t then "mismatch\tengine-budget.json'"'"'s Gemini budget target ($\($g.target_usd | usd)) does not match gemini.monthlyUsd ($\($t | usd)); run refresh-budget"
+        elif ($g.resets_at | type) != "number" or $g.resets_at <= $now then "expired\tthe recorded Gemini monthly window has rolled over; run refresh-budget"
+        elif ($g.remaining_usd | type) != "number" or $g.remaining_usd <= 0 then "spent\tthe monthly Gemini budget is spent ($\([0, $g.remaining_usd] | max | usd) of $\($g.target_usd | usd) left, engines.pi.gemini)"
+        else "ok" end
+    end' "$budget_file" 2>/dev/null)" || out=""
+  [ -n "$out" ] || out="stale"$'\t'"there is no fresh engine-budget.json (missing, unparsable, over 2h old or future-dated; run refresh-budget)"
+  printf '%s\n' "$out"
+}
+
 # _model_class_admitted <agent> <tier> <model> — true when the catalog admits
 # <model> on the row through a class pattern (docs/model-classes.md §5): it is
 # in model-resolve's admitted set, or a conditional candidate whose requirement
@@ -1668,6 +1695,11 @@ _model_class_admitted() {
     req="$(_anthropic_credits)"
     [ "$req" != ok ] || return 0
     echo "dispatch: model '$3' matches a $1 class pattern that needs Anthropic credit, and ${req#*$'\t'}" >&2
+    ;;
+  gemini_budget)
+    req="$(_gemini_budget)"
+    [ "$req" != ok ] || return 0
+    echo "dispatch: model '$3' matches a $1 class pattern that needs a Gemini monthly budget, and ${req#*$'\t'}" >&2
     ;;
   *) echo "dispatch: model '$3' matches a $1 class pattern gated on an unknown requirement '$req'" >&2 ;;
   esac
@@ -2626,7 +2658,7 @@ if [ "${1:-}" = --models ]; then
   done
   # model-resolve per row, only when a cache exists: with neither file it
   # returns the seed row, which the jq below already prints.
-  resolved='{}' pitarget=false anthcredit=false
+  resolved='{}' pitarget=false anthcredit=false geminibudget=false
   if [ -e "$model_catalog" ] || [ -e "$model_class_state" ]; then
     for e in "${roster[@]}"; do
       for t in trivial standard deep; do
@@ -2636,10 +2668,11 @@ if [ "${1:-}" = --models ]; then
     done
     ! _pi_month_target || pitarget=true
     [ "$(_anthropic_credits)" != ok ] || anthcredit=true
+    [ "$(_gemini_budget)" != ok ] || geminibudget=true
   fi
   # A localModels id is admitted by its entry alone (the gate checks it before
   # modelMap), whose tiers default as in local-models.sh's _local_entry.
-  map="$(jq --argjson res "$resolved" --argjson pitarget "$pitarget" --argjson anthcredit "$anthcredit" --args '
+  map="$(jq --argjson res "$resolved" --argjson pitarget "$pitarget" --argjson anthcredit "$anthcredit" --argjson geminibudget "$geminibudget" --args '
     def uniq: reduce .[] as $m ([]; if index([$m]) then . else . + [$m] end);
     . as $s
     | ($s.localModels // {} | map_values((.tiers // ["trivial", "standard"]))) as $local
@@ -2648,7 +2681,7 @@ if [ "${1:-}" = --models ]; then
         ($s.modelMap[$e][$t] // {}) as $row
         | ($res[$e][$t] // {}) as $r
         | ($s.classes[$e].tiers[$t] // {}) as $ct
-        | (($r.conditional // []) | map(. + {met: ((.requires == "pi_month_target" and $pitarget) or (.requires == "anthropic_credits" and $anthcredit))})) as $cond
+        | (($r.conditional // []) | map(. + {met: ((.requires == "pi_month_target" and $pitarget) or (.requires == "anthropic_credits" and $anthcredit) or (.requires == "gemini_budget" and $geminibudget))})) as $cond
         | {class: ($ct.class // null),
            admits: ($ct.admits // (if $ct.class then [$ct.class] else [] end)),
            default: ($r.default // $row.default // null),

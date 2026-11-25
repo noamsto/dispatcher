@@ -150,16 +150,20 @@ JQ_DEFS='
   def usd: (. * 100 | round) as $c
     | "\($c / 100 | floor).\(($c % 100) | tostring | if length == 1 then "0" + . else . end)";
   # bare: an engine entry with no reading of its own, null or holding only
-  # pi'"'"'s anthropic credit estimate; every quota reader treats it as unknown.
-  def bare: . == null or (type == "object" and has("anthropic") and del(.anthropic) == {});
-  # credit_elapsed / credit_line: the pi anthropic credit summary, one string
-  # text and json both print.
+  # pi'"'"'s anthropic/gemini estimates; every OpenRouter quota reader treats them as unknown.
+  def bare: . == null or (type == "object" and (has("anthropic") or has("gemini")) and del(.anthropic, .gemini) == {});
+  # credit_elapsed / credit_line / gemini_line: pi direct-provider summaries.
   def credit_elapsed($a): ((elapsed_pct($a.resets_at; $a.resets_at - $a.starts_at) * 10 | round) / 10);
   def credit_line($a):
     "pi: anthropic credit $\(if $a.remaining_usd > 0 then $a.remaining_usd else 0 end | usd) of $\($a.balance_usd | usd) left (\($a.used_pct)% used, "
     + (if $a.resets_at > $now
        then "\(credit_elapsed($a))% of grant period elapsed, expires \($a.resets_at | todateiso8601), in \(($a.resets_at - $now) | reltime))"
        else "expired \($a.resets_at | todateiso8601))" end);
+  def gemini_line($g):
+    "pi: gemini month $\(if $g.remaining_usd > 0 then $g.remaining_usd else 0 end | usd) of $\($g.target_usd | usd) left (\($g.used_pct)% used, "
+    + (if $g.resets_at > $now
+       then "\(credit_elapsed($g))% of month elapsed, resets \($g.resets_at | todateiso8601), in \(($g.resets_at - $now) | reltime))"
+       else "expired \($g.resets_at | todateiso8601))" end);
   # >=95% is a hold candidate; each engine gets exactly one gating window
   # (precedence: no usable deadline, then no nominal length, then latest
   # resets_at) and every sibling >=95% window on that engine defers to it.
@@ -683,7 +687,8 @@ report() {
       ] | join(", ")) end) + (if .value.credits_cover then " [credits cover]" else "" end) +
       (if (.value.limit_reached.reason | type) == "string" then " [limit reached: \(.value.limit_reached.reason)]" else "" end)
     end),
-    (.engines.pi.anthropic | objects | credit_line(.))
+    (.engines.pi.anthropic | objects | credit_line(.)),
+    (.engines.pi.gemini | objects | gemini_line(.))
   ' "$OUT"
 }
 
@@ -732,7 +737,74 @@ report_json() {
         elapsed_pct: credit_elapsed(.), starts_at, resets_at,
         resets_in_s: (if .resets_at > $now then .resets_at - $now else null end),
         expired: (.resets_at <= $now), summary: credit_line(.)}}) // {})
+    + ((.engines.pi.gemini | objects | {gemini_budget: {
+        target_usd, spent_usd, remaining_usd, used_pct,
+        elapsed_pct: credit_elapsed(.), starts_at, resets_at,
+        resets_in_s: (if .resets_at > $now then .resets_at - $now else null end),
+        summary: gemini_line(.)}}) // {})
   ' "$OUT"
+}
+
+# _pi_agent_dirs — print the worker and ambient pi agent dirs (one per line).
+_pi_agent_dirs() {
+  local worker="$HOME/.pi/dispatcher-worker" ambient="${PI_CODING_AGENT_DIR:-}"
+  # shellcheck disable=SC2088 # a literal ~/ prefix, expanded by hand
+  [[ $ambient != "~/"* ]] || ambient="$HOME/${ambient#\~/}"
+  ambient="${ambient%/}"
+  [[ $ambient == /* && $ambient != "$worker" ]] || ambient="$HOME/.pi/agent"
+  printf '%s\n%s\n' "$worker" "$ambient"
+}
+
+# _pi_provider_spend <provider> <since_epoch> — sum pi session cost.total for
+# messages whose provider equals <provider> at or after <since_epoch>. Fails
+# closed on any find/read error so an undercount never overstates remaining
+# budget.
+_pi_provider_spend() {
+  local provider="$1" since="$2" d real spent
+  local -a dirs=()
+  while IFS= read -r d; do
+    real=$(realpath -e -- "$d/sessions" 2>/dev/null) || continue
+    [[ -d $real ]] || continue
+    [[ ${#dirs[@]} -eq 0 || ${dirs[0]} != "$real" ]] || continue
+    dirs+=("$real")
+  done < <(_pi_agent_dirs)
+  # shellcheck disable=SC2016 # jq program text, not shell
+  if ! spent=$(
+    (
+      rc=0
+      for d in "${dirs[@]}"; do
+        find "$d" -type f -name '*.jsonl' -newermt "@$((since - 1))" -print0 || rc=1
+      done
+      exit "$rc"
+    ) | xargs -0 -r "$BASH" -c 'grep -h -E -e "$0" -- "$@"; [ "$?" -le 1 ]' "\"provider\"[[:space:]]*:[[:space:]]*\"$provider\"" |
+      jq -nR --arg prov "$provider" --argjson since "$since" "$iso_epoch_def"'
+      reduce (inputs | fromjson? | objects
+        | select(.type == "message" and (.message | type) == "object" and .message.provider == $prov)
+        | select((.timestamp | iso_epoch) as $t | $t != null and $t >= $since)
+        | (try .message.usage.cost.total catch null) | numbers) as $c (0; . + $c)'
+  ) || [[ ! $spent =~ ^-?[0-9] ]]; then
+    return 1
+  fi
+  printf '%s\n' "$spent"
+}
+
+# _has_gemini_key — true when GEMINI_API_KEY is non-empty or pi's auth store
+# holds a non-empty google key/access entry. Never prints the key.
+_has_gemini_key() {
+  [[ -z ${GEMINI_API_KEY:-} ]] || return 0
+  local d auth
+  while IFS= read -r d; do
+    auth="$d/auth.json"
+    [[ -r $auth ]] || continue
+    if jq -e '
+      .google | objects |
+      ((.type == "api_key" and (.key | type == "string" and length > 0))
+       or (.type == "oauth" and (.access | type == "string" and length > 0)))
+    ' "$auth" >/dev/null 2>&1; then
+      return 0
+    fi
+  done < <(_pi_agent_dirs)
+  return 1
 }
 
 # anthropic_credit <grant> — print the engines.pi.anthropic object for the
@@ -740,8 +812,7 @@ report_json() {
 # when its dates do not parse or the session scan fails, so no estimate is
 # written and dispatch's admission check refuses (fail closed).
 anthropic_credit() {
-  local grant="$1" epochs as_of expires worker ambient d real spent
-  local -a dirs=()
+  local grant="$1" epochs as_of expires spent
   # shellcheck disable=SC2016 # jq program text, not shell
   epochs=$(jq -r "$iso_epoch_def"' [(.as_of | iso_epoch), (.expires | iso_epoch)]
     | if all(. != null) and .[0] < .[1] then @tsv else empty end' <<<"$grant" 2>/dev/null) || epochs=""
@@ -750,41 +821,7 @@ anthropic_credit() {
     return 1
   fi
   IFS=$'\t' read -r as_of expires <<<"$epochs"
-  # The interactive dir resolves like crew pi-agent-dir's ambient dir: an unset,
-  # relative or worker-dir PI_CODING_AGENT_DIR (a worker's own env) means
-  # ~/.pi/agent. The same real dir is scanned once.
-  worker="$HOME/.pi/dispatcher-worker"
-  ambient="${PI_CODING_AGENT_DIR:-}"
-  # shellcheck disable=SC2088 # a literal ~/ prefix, expanded by hand
-  [[ $ambient != "~/"* ]] || ambient="$HOME/${ambient#\~/}"
-  ambient="${ambient%/}"
-  [[ $ambient == /* && $ambient != "$worker" ]] || ambient="$HOME/.pi/agent"
-  for d in "$worker" "$ambient"; do
-    real=$(realpath -e -- "$d/sessions" 2>/dev/null) || continue
-    [[ -d $real ]] || continue
-    [[ ${#dirs[@]} -eq 0 || ${dirs[0]} != "$real" ]] || continue
-    dirs+=("$real")
-  done
-  # grep is a cheap prefilter (whitespace-tolerant, though pi writes compact
-  # JSONL); jq decides. Paths are absolute, though the session dirs' names
-  # start with "--". A grep batch with no match exits 1, which is fine; a find
-  # or read error fails the scan, since an undercount would overstate what is
-  # left (fail open).
-  # shellcheck disable=SC2016 # jq program text, not shell
-  if ! spent=$(
-    (
-      rc=0
-      for d in "${dirs[@]}"; do
-        find "$d" -type f -name '*.jsonl' -newermt "@$((as_of - 1))" -print0 || rc=1
-      done
-      exit "$rc"
-    ) | xargs -0 -r "$BASH" -c 'grep -h -E -e "$0" -- "$@"; [ "$?" -le 1 ]' '"provider"[[:space:]]*:[[:space:]]*"anthropic"' |
-      jq -nR --argjson asof "$as_of" "$iso_epoch_def"'
-      reduce (inputs | fromjson? | objects
-        | select(.type == "message" and (.message | type) == "object" and .message.provider == "anthropic")
-        | select((.timestamp | iso_epoch) as $t | $t != null and $t >= $asof)
-        | (try .message.usage.cost.total catch null) | numbers) as $c (0; . + $c)'
-  ) || [[ ! $spent =~ ^-?[0-9] ]]; then
+  if ! spent=$(_pi_provider_spend anthropic "$as_of"); then
     warn "anthropic credit unknown — scanning pi session records failed"
     return 1
   fi
@@ -802,6 +839,44 @@ anthropic_credit() {
     }'
 }
 
+# gemini_budget <monthly_usd> — print the engines.pi.gemini object for pi's
+# direct google/* models, estimated from pi's session logs over the current UTC
+# calendar month. Fails closed when the target is non-positive, no Gemini API
+# key is present, or the session scan fails.
+gemini_budget() {
+  local raw="$1" target now bounds start next spent
+  target=$(jq -en --arg v "$raw" '$v | tonumber | select(isfinite and . > 0)' 2>/dev/null) || {
+    warn "gemini budget unknown — gemini.monthlyUsd ($raw) must be a positive number"
+    return 1
+  }
+  if ! _has_gemini_key; then
+    warn "gemini budget skipped — set GEMINI_API_KEY or configure google in pi auth.json"
+    return 1
+  fi
+  now=$(date +%s)
+  bounds=$(jq -nr --argjson now "$now" '
+    ($now | gmtime) as $g | ($g[0]) as $y | ($g[1]) as $m
+    | [([$y, $m, 1, 0, 0, 0, 0, 0] | mktime),
+       ((if $m == 11 then [$y + 1, 0, 1, 0, 0, 0, 0, 0] else [$y, $m + 1, 1, 0, 0, 0, 0, 0] end) | mktime)]
+    | @tsv')
+  IFS=$'\t' read -r start next <<<"$bounds"
+  if ! spent=$(_pi_provider_spend google "$start"); then
+    warn "gemini budget unknown — scanning pi session records failed"
+    return 1
+  fi
+  # shellcheck disable=SC2016 # jq program text, not shell
+  jq -n --argjson tgt "$target" --argjson spent "$spent" --argjson s "$start" --argjson e "$next" '
+    def r6: (. * 1000000 | round) / 1000000;
+    {
+      target_usd: $tgt,
+      spent_usd: ($spent | r6),
+      remaining_usd: ($tgt - $spent | r6),
+      used_pct: ((100 * $spent / $tgt * 10 | round) / 10),
+      starts_at: $s,
+      resets_at: $e
+    }'
+}
+
 main() {
   # DISPATCH_OPENROUTER_MONTHLY_USD / DISPATCH_OPENROUTER_KEY_FILE may come
   # from the settings resolver (dispatch-config) when unset in the
@@ -811,6 +886,7 @@ main() {
   settings="$("${DISPATCH_CONFIG_BIN:-@dispatchConfig@}")"
   [[ -n ${DISPATCH_OPENROUTER_MONTHLY_USD:-} ]] || DISPATCH_OPENROUTER_MONTHLY_USD="$(jq -r '.openrouter.monthlyUsd // "" | tostring' <<<"$settings")"
   [[ -n ${DISPATCH_OPENROUTER_KEY_FILE:-} ]] || DISPATCH_OPENROUTER_KEY_FILE="$(jq -r '.openrouter.keyFile // ""' <<<"$settings")"
+  [[ -n ${DISPATCH_GEMINI_MONTHLY_USD:-} ]] || DISPATCH_GEMINI_MONTHLY_USD="$(jq -r '.gemini.monthlyUsd // "" | tostring' <<<"$settings")"
 
   local claude='null' codex='null' cursor='null' pi='null' probe
   if probe=$(probe_claude); then
@@ -850,6 +926,10 @@ main() {
   credits=$(jq -c '.anthropicCredits | objects' <<<"$settings")
   if [[ -n $credits ]] && credit=$(anthropic_credit "$credits"); then
     pi=$(jq -c --argjson a "$credit" '(. // {}) + {anthropic: $a}' <<<"$pi")
+  fi
+  local gem
+  if [[ -n ${DISPATCH_GEMINI_MONTHLY_USD:-} ]] && gem=$(gemini_budget "$DISPATCH_GEMINI_MONTHLY_USD"); then
+    pi=$(jq -c --argjson g "$gem" '(. // {}) + {gemini: $g}' <<<"$pi")
   fi
 
   mkdir -p "$OUT_DIR"

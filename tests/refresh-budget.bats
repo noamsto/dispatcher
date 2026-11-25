@@ -2310,3 +2310,28 @@ EOF
   [ "$a" = "$b" ]
   [ "$a" = "$c" ]
 }
+
+@test "gemini budget: sums google provider spend in the current UTC month when key and monthlyUsd are set" {
+  mkdir -p "$XDG_CONFIG_HOME/dispatcher"
+  printf '{"gemini":{"monthlyUsd":20}}\n' >"$XDG_CONFIG_HOME/dispatcher/settings.json"
+  local w="$HOME/.pi/dispatcher-worker/sessions/--home-u-git-c--"
+  mkdir -p "$w"
+  printf '%s\n' \
+    '{"type":"message","timestamp":"2026-10-04T00:00:00Z","message":{"provider":"google","usage":{"cost":{"total":3.5}}}}' \
+    '{"type":"message","timestamp":"2026-10-04T01:00:00Z","message":{"provider":"openrouter","usage":{"cost":{"total":9.0}}}}' \
+    '{"type":"message","timestamp":"2026-09-30T23:59:59Z","message":{"provider":"google","usage":{"cost":{"total":5.0}}}}' \
+    >"$w/s.jsonl"
+  GEMINI_API_KEY="test-key" SHIM_NOW=$CREDIT_NOW run --separate-stderr bash "$SCRIPT"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"pi: gemini month \$16.50 of \$20.00 left (17.5% used"* ]]
+  jq -e '.engines.pi.gemini.target_usd == 20 and .engines.pi.gemini.spent_usd == 3.5 and .engines.pi.gemini.remaining_usd == 16.5' "$XDG_DATA_HOME/crew/engine-budget.json"
+}
+
+@test "gemini budget: skipped without GEMINI_API_KEY or pi google auth" {
+  mkdir -p "$XDG_CONFIG_HOME/dispatcher"
+  printf '{"gemini":{"monthlyUsd":20}}\n' >"$XDG_CONFIG_HOME/dispatcher/settings.json"
+  GEMINI_API_KEY="" SHIM_NOW=$CREDIT_NOW run --separate-stderr bash "$SCRIPT"
+  [ "$status" -eq 0 ]
+  [[ "$stderr" == *"gemini budget skipped"* ]]
+  jq -e '.engines.pi == null' "$XDG_DATA_HOME/crew/engine-budget.json"
+}

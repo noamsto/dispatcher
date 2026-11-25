@@ -63,12 +63,7 @@
       },
       "trivial": {
         "default": "gpt-5.6-luna",
-        "models": [
-          "gpt-5.6-luna",
-          "gpt-5.5",
-          "gpt-5.4",
-          "gpt-5.4-mini"
-        ],
+        "models": ["gpt-5.6-luna", "gpt-5.5", "gpt-5.4", "gpt-5.4-mini"],
         "expected": "gpt-5.6-luna or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)"
       }
     },
@@ -160,9 +155,15 @@
       "standard": ["sonnet", "claude-sonnet-*"],
       "premium": ["opus", "claude-opus-*"],
       "tiers": {
-        "deep": {"class": "premium", "admits": ["standard", "premium"]},
-        "standard": {"class": "standard", "admits": ["cheap", "standard", "premium"]},
-        "trivial": {"class": "cheap", "admits": ["cheap", "standard", "premium"]}
+        "deep": { "class": "premium", "admits": ["standard", "premium"] },
+        "standard": {
+          "class": "standard",
+          "admits": ["cheap", "standard", "premium"]
+        },
+        "trivial": {
+          "class": "cheap",
+          "admits": ["cheap", "standard", "premium"]
+        }
       }
     },
     "codex": {
@@ -170,19 +171,35 @@
       "standard": ["gpt-*-terra"],
       "premium": ["gpt-*-sol"],
       "tiers": {
-        "deep": {"class": "premium", "admits": ["standard", "premium"]},
-        "standard": {"class": "standard", "admits": ["cheap", "standard"]},
-        "trivial": {"class": "cheap", "admits": ["cheap"]}
+        "deep": { "class": "premium", "admits": ["standard", "premium"] },
+        "standard": { "class": "standard", "admits": ["cheap", "standard"] },
+        "trivial": { "class": "cheap", "admits": ["cheap"] }
       }
     },
     "cursor": {
-      "cheap": ["grok-*-low", "grok-*-low-fast", "cursor-grok-*-low", "cursor-grok-*-low-fast"],
-      "standard": ["grok-*-medium", "grok-*-medium-fast", "cursor-grok-*-medium", "cursor-grok-*-medium-fast"],
-      "premium": ["kimi-*-high", "grok-*-high", "grok-*-high-fast", "cursor-grok-*-high", "cursor-grok-*-high-fast"],
+      "cheap": [
+        "grok-*-low",
+        "grok-*-low-fast",
+        "cursor-grok-*-low",
+        "cursor-grok-*-low-fast"
+      ],
+      "standard": [
+        "grok-*-medium",
+        "grok-*-medium-fast",
+        "cursor-grok-*-medium",
+        "cursor-grok-*-medium-fast"
+      ],
+      "premium": [
+        "kimi-*-high",
+        "grok-*-high",
+        "grok-*-high-fast",
+        "cursor-grok-*-high",
+        "cursor-grok-*-high-fast"
+      ],
       "tiers": {
-        "deep": {"class": "premium", "admits": ["standard", "premium"]},
-        "standard": {"class": "standard", "admits": ["cheap", "standard"]},
-        "trivial": {"class": "cheap", "admits": ["cheap"]}
+        "deep": { "class": "premium", "admits": ["standard", "premium"] },
+        "standard": { "class": "standard", "admits": ["cheap", "standard"] },
+        "trivial": { "class": "cheap", "admits": ["cheap"] }
       }
     },
     "pi": {
@@ -190,16 +207,24 @@
         "openrouter/deepseek/deepseek-v*-flash",
         "openrouter/z-ai/glm-*-flash",
         "openrouter/qwen/qwen*-flash",
-        {"glob": "anthropic/claude-sonnet-*", "requires": "anthropic_credits"}
+        {
+          "glob": "anthropic/claude-sonnet-*",
+          "requires": "anthropic_credits"
+        },
+        { "glob": "google/gemini-4-hydrogen", "requires": "gemini_budget" }
       ],
       "premium": [
-        {"glob": "openrouter/anthropic/claude-opus-*", "requires": "pi_month_target"},
-        {"glob": "anthropic/claude-opus-*", "requires": "anthropic_credits"}
+        {
+          "glob": "openrouter/anthropic/claude-opus-*",
+          "requires": "pi_month_target"
+        },
+        { "glob": "anthropic/claude-opus-*", "requires": "anthropic_credits" },
+        { "glob": "google/gemini-4-argon", "requires": "gemini_budget" }
       ],
       "tiers": {
-        "deep": {"class": "standard", "admits": ["standard", "premium"]},
-        "standard": {"class": "standard", "admits": ["standard"]},
-        "trivial": {"class": "standard", "admits": ["standard"]}
+        "deep": { "class": "standard", "admits": ["standard", "premium"] },
+        "standard": { "class": "standard", "admits": ["standard"] },
+        "trivial": { "class": "standard", "admits": ["standard"] }
       }
     }
   },
@@ -207,154 +232,89 @@
     "claude": {
       "deep": [
         {
-          "failed": [
-            "sonnet",
-            "claude-sonnet-*"
-          ],
+          "failed": ["sonnet", "claude-sonnet-*"],
           "baseline": "sonnet",
-          "inRow": [
-            "opus",
-            "claude-opus-*"
-          ]
+          "inRow": ["opus", "claude-opus-*"]
         },
         {
-          "failed": [
-            "opus",
-            "claude-opus-*"
-          ],
+          "failed": ["opus", "claude-opus-*"],
           "baseline": "opus",
-          "inRow": [
-            "fable",
-            "claude-fable-*"
-          ]
+          "inRow": ["fable", "claude-fable-*"]
         }
       ],
       "standard": [
         {
-          "failed": [
-            "haiku",
-            "claude-haiku-*"
-          ],
+          "failed": ["haiku", "claude-haiku-*"],
           "baseline": "haiku",
-          "inRow": [
-            "sonnet",
-            "claude-sonnet-*"
-          ]
+          "inRow": ["sonnet", "claude-sonnet-*"]
         },
         {
-          "failed": [
-            "sonnet",
-            "claude-sonnet-*"
-          ],
+          "failed": ["sonnet", "claude-sonnet-*"],
           "baseline": "sonnet",
-          "inRow": [
-            "opus",
-            "claude-opus-*"
-          ]
+          "inRow": ["opus", "claude-opus-*"]
         }
       ],
       "trivial": [
         {
-          "failed": [
-            "haiku",
-            "claude-haiku-*"
-          ],
+          "failed": ["haiku", "claude-haiku-*"],
           "baseline": "haiku",
-          "inRow": [
-            "sonnet",
-            "claude-sonnet-*"
-          ]
+          "inRow": ["sonnet", "claude-sonnet-*"]
         },
         {
-          "failed": [
-            "sonnet",
-            "claude-sonnet-*"
-          ],
+          "failed": ["sonnet", "claude-sonnet-*"],
           "baseline": "sonnet",
-          "inRow": [
-            "opus",
-            "claude-opus-*"
-          ]
+          "inRow": ["opus", "claude-opus-*"]
         }
       ]
     },
     "codex": {
       "deep": [
         {
-          "failed": [
-            "gpt-5.6-terra"
-          ],
+          "failed": ["gpt-5.6-terra"],
           "baseline": "terra",
-          "inRow": [
-            "gpt-5.6-sol"
-          ]
+          "inRow": ["gpt-5.6-sol"]
         }
       ],
       "standard": [
         {
-          "failed": [
-            "gpt-5.6-luna"
-          ],
+          "failed": ["gpt-5.6-luna"],
           "baseline": "luna",
-          "inRow": [
-            "gpt-5.6-terra"
-          ]
+          "inRow": ["gpt-5.6-terra"]
         },
         {
-          "failed": [
-            "gpt-5.6-terra"
-          ],
+          "failed": ["gpt-5.6-terra"],
           "baseline": "terra",
-          "outOfRow": [
-            "gpt-5.6-sol"
-          ]
+          "outOfRow": ["gpt-5.6-sol"]
         }
       ]
     },
     "cursor": {
       "deep": [
         {
-          "failed": [
-            "cursor-grok-4.6-medium*"
-          ],
+          "failed": ["cursor-grok-4.6-medium*"],
           "baseline": "medium",
-          "inRow": [
-            "cursor-grok-4.6-high*"
-          ]
+          "inRow": ["cursor-grok-4.6-high*"]
         }
       ],
       "standard": [
         {
-          "failed": [
-            "cursor-grok-4.6-low*"
-          ],
+          "failed": ["cursor-grok-4.6-low*"],
           "baseline": "low",
-          "inRow": [
-            "cursor-grok-4.6-medium*"
-          ]
+          "inRow": ["cursor-grok-4.6-medium*"]
         },
         {
-          "failed": [
-            "cursor-grok-4.6-medium*"
-          ],
+          "failed": ["cursor-grok-4.6-medium*"],
           "baseline": "medium",
-          "outOfRow": [
-            "cursor-grok-4.6-high",
-            "cursor-grok-4.6-high-fast"
-          ]
+          "outOfRow": ["cursor-grok-4.6-high", "cursor-grok-4.6-high-fast"]
         }
       ]
     },
     "pi": {
       "standard": [
         {
-          "failed": [
-            "openrouter/deepseek/deepseek-v4-flash"
-          ],
+          "failed": ["openrouter/deepseek/deepseek-v4-flash"],
           "baseline": "v4-flash",
-          "inRow": [
-            "openrouter/deepseek/deepseek-v4.1-flash"
-          ]
+          "inRow": ["openrouter/deepseek/deepseek-v4.1-flash"]
         }
       ]
     }
@@ -362,26 +322,17 @@
   "paceDowngrades": {
     "claude": [
       {
-        "models": [
-          "opus",
-          "claude-opus-*",
-          "fable",
-          "claude-fable-*"
-        ],
+        "models": ["opus", "claude-opus-*", "fable", "claude-fable-*"],
         "to": "sonnet"
       }
     ],
     "codex": [
       {
-        "models": [
-          "gpt-5.6-sol"
-        ],
+        "models": ["gpt-5.6-sol"],
         "to": "gpt-5.6-terra"
       },
       {
-        "models": [
-          "@premium"
-        ],
+        "models": ["@premium"],
         "to": "@standard"
       }
     ],
@@ -405,10 +356,7 @@
         "to": "cursor-grok-4.6-medium"
       },
       {
-        "models": [
-          "@premium:grok-*-high",
-          "@premium:grok-*-high-fast"
-        ],
+        "models": ["@premium:grok-*-high", "@premium:grok-*-high-fast"],
         "to": "grok-4.7-medium"
       },
       {
@@ -421,16 +369,16 @@
     ],
     "pi": [
       {
-        "models": [
-          "openrouter/anthropic/claude-opus-*"
-        ],
+        "models": ["openrouter/anthropic/claude-opus-*"],
         "to": "@standard"
       },
       {
-        "models": [
-          "anthropic/claude-opus-*"
-        ],
+        "models": ["anthropic/claude-opus-*"],
         "to": "anthropic/claude-sonnet-5-5"
+      },
+      {
+        "models": ["google/gemini-4-argon"],
+        "to": "google/gemini-4-hydrogen"
       }
     ]
   },
@@ -438,39 +386,54 @@
     {
       "match": "*opus*",
       "byEffort": {
-        "low": {"class": "standard", "weight": 2},
-        "medium": {"class": "premium", "weight": 4},
-        "xhigh": {"class": "premium", "weight": 6},
-        "max": {"class": "premium", "weight": 8},
-        "default": {"class": "premium", "weight": 4}
+        "low": { "class": "standard", "weight": 2 },
+        "medium": { "class": "premium", "weight": 4 },
+        "xhigh": { "class": "premium", "weight": 6 },
+        "max": { "class": "premium", "weight": 8 },
+        "default": { "class": "premium", "weight": 4 }
       }
     },
-    {"match": "composer-2.5*", "class": "free", "weight": 0},
-    {"match": "*haiku*", "class": "cheap", "weight": 1},
-    {"match": "gpt-5.6-luna", "class": "cheap", "weight": 1},
-    {"match": "*grok-4.[0-9]-low", "class": "cheap", "weight": 1},
-    {"match": "*sonnet*", "class": "standard", "weight": 2},
-    {"match": "gpt-5.6-terra", "class": "standard", "weight": 2},
-    {"match": "*grok-4.[0-9]-medium", "class": "standard", "weight": 2},
-    {"match": "*grok-4.[0-9]-low-fast", "class": "standard", "weight": 2},
-    {"match": "gpt-5.6-sol", "class": "premium", "weight": 4},
-    {"match": "*grok-4.[0-9]-high", "class": "premium", "weight": 4},
-    {"match": "*grok-4.[0-9]-medium-fast", "class": "premium", "weight": 4},
-    {"match": "*grok-4.[0-9]-xhigh", "class": "premium", "weight": 6},
-    {"match": "*grok-4.[0-9]-high-fast", "class": "premium", "weight": 8},
-    {"match": "*grok-4.[0-9]-xhigh-fast", "class": "premium", "weight": 12},
-    {"match": "*fable*", "class": "fable", "weight": 8}
+    { "match": "composer-2.5*", "class": "free", "weight": 0 },
+    { "match": "*haiku*", "class": "cheap", "weight": 1 },
+    { "match": "gpt-5.6-luna", "class": "cheap", "weight": 1 },
+    { "match": "*grok-4.[0-9]-low", "class": "cheap", "weight": 1 },
+    { "match": "*sonnet*", "class": "standard", "weight": 2 },
+    { "match": "gpt-5.6-terra", "class": "standard", "weight": 2 },
+    { "match": "*grok-4.[0-9]-medium", "class": "standard", "weight": 2 },
+    { "match": "*grok-4.[0-9]-low-fast", "class": "standard", "weight": 2 },
+    { "match": "gpt-5.6-sol", "class": "premium", "weight": 4 },
+    { "match": "*grok-4.[0-9]-high", "class": "premium", "weight": 4 },
+    { "match": "*grok-4.[0-9]-medium-fast", "class": "premium", "weight": 4 },
+    { "match": "*grok-4.[0-9]-xhigh", "class": "premium", "weight": 6 },
+    { "match": "*grok-4.[0-9]-high-fast", "class": "premium", "weight": 8 },
+    { "match": "*grok-4.[0-9]-xhigh-fast", "class": "premium", "weight": 12 },
+    { "match": "*fable*", "class": "fable", "weight": 8 }
   ],
   "orchestratorDefaults": {
-    "claude": {"model": "opus", "effort": "high", "autoCompact": 300000},
-    "codex": {"model": "gpt-5.6-sol", "effort": "high", "autoCompact": 300000},
-    "cursor": {"model": "kimi-k3-high"},
-    "pi": {"model": "openrouter/deepseek/deepseek-v4.1-flash", "effort": "high"}
+    "claude": { "model": "opus", "effort": "high", "autoCompact": 300000 },
+    "codex": {
+      "model": "gpt-5.6-sol",
+      "effort": "high",
+      "autoCompact": 300000
+    },
+    "cursor": { "model": "kimi-k3-high" },
+    "pi": {
+      "model": "openrouter/deepseek/deepseek-v4.1-flash",
+      "effort": "high"
+    }
   },
-  "rosterDiagram": {"autoOpen": true},
-  "workerDeniedMcpServers": ["plugin_hm_playwright", "plugin_hm_firefox-devtools"],
+  "rosterDiagram": { "autoOpen": true },
+  "workerDeniedMcpServers": [
+    "plugin_hm_playwright",
+    "plugin_hm_firefox-devtools"
+  ],
   "dispatcherAgent": "claude",
-  "disabledEngines": {"claude": false, "codex": false, "cursor": false, "pi": false},
+  "disabledEngines": {
+    "claude": false,
+    "codex": false,
+    "cursor": false,
+    "pi": false
+  },
   "dispatcherChrome": false,
   "freshSeams": false,
   "crewLayout": 2,
@@ -479,21 +442,44 @@
   "dashPlacement": "side",
   "dispatcherMcp": {},
   "mcpServers": {
-    "sentry": {"url": "https://mcp.sentry.dev/mcp", "description": "Sentry issues, events and releases"},
-    "posthog": {"url": "https://mcp.posthog.com/mcp", "description": "PostHog product analytics, insights and feature flags"},
-    "elevenlabs": {"url": "https://api.elevenlabs.io/v1/mcp", "description": "ElevenLabs voices, speech and agents"}
+    "sentry": {
+      "url": "https://mcp.sentry.dev/mcp",
+      "description": "Sentry issues, events and releases"
+    },
+    "posthog": {
+      "url": "https://mcp.posthog.com/mcp",
+      "description": "PostHog product analytics, insights and feature flags"
+    },
+    "elevenlabs": {
+      "url": "https://api.elevenlabs.io/v1/mcp",
+      "description": "ElevenLabs voices, speech and agents"
+    }
   },
   "fleetBudget": 8,
   "fleetBackfillAfter": 1200,
   "fleetHeadTimeout": 900,
-  "cleanup": {"auto": true, "autoAfterDays": 14, "archiveDays": 365},
-  "overseer": {"autoRelaunch": false, "autoStart": false, "acceptTrust": false, "digestEvery": 14400},
+  "cleanup": { "auto": true, "autoAfterDays": 14, "archiveDays": 365 },
+  "overseer": {
+    "autoRelaunch": false,
+    "autoStart": false,
+    "acceptTrust": false,
+    "digestEvery": 14400
+  },
   "taskProfiles": {
-    "ui": {"tier": "standard", "engine": "claude", "effort": "medium"},
-    "docs": {"tier": "trivial", "effort": "low"},
-    "mechanical-refactor": {"tier": "standard", "engine": "codex", "effort": "medium"},
-    "security": {"tier": "deep", "engine": "claude", "class": "premium", "effort": "high"},
-    "eval": {"tier": "standard", "engine": "cursor", "effort": "medium"},
-    "trivial-fix": {"tier": "trivial", "effort": "low"}
+    "ui": { "tier": "standard", "engine": "claude", "effort": "medium" },
+    "docs": { "tier": "trivial", "effort": "low" },
+    "mechanical-refactor": {
+      "tier": "standard",
+      "engine": "codex",
+      "effort": "medium"
+    },
+    "security": {
+      "tier": "deep",
+      "engine": "claude",
+      "class": "premium",
+      "effort": "high"
+    },
+    "eval": { "tier": "standard", "engine": "cursor", "effort": "medium" },
+    "trivial-fix": { "tier": "trivial", "effort": "low" }
   }
 }

@@ -231,6 +231,10 @@
         {
           "glob": "anthropic/claude-sonnet-*",
           "requires": "anthropic_credits"
+        },
+        {
+          "glob": "google/gemini-4-hydrogen",
+          "requires": "gemini_budget"
         }
       ],
       "premium": [
@@ -241,6 +245,10 @@
         {
           "glob": "anthropic/claude-opus-*",
           "requires": "anthropic_credits"
+        },
+        {
+          "glob": "google/gemini-4-argon",
+          "requires": "gemini_budget"
         }
       ],
       "tiers": {

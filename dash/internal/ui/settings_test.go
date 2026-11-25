@@ -24,8 +24,9 @@ const (
 	rowFreshSeams      = 3
 	rowAutoOpen        = 8
 	rowMonthlyUsd      = 12
-	rowClaudeModel     = 13
-	rowClaudeEff       = 17
+	rowGeminiUsd       = 13
+	rowClaudeModel     = 14
+	rowClaudeEff       = 18
 )
 
 type knobHarness struct {

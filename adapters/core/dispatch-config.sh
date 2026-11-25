@@ -531,6 +531,7 @@ env_layer=$(jq -cn '
   | from_env("DISPATCH_GRANT_ROOTS"; ["grantRoots"]; split(":") | map(select(. != "")))
   | from_env("DISPATCH_OPENROUTER_MONTHLY_USD"; ["openrouter", "monthlyUsd"]; .)
   | from_env("DISPATCH_OPENROUTER_KEY_FILE"; ["openrouter", "keyFile"]; .)
+  | from_env("DISPATCH_GEMINI_MONTHLY_USD"; ["gemini", "monthlyUsd"]; .)
   | from_env("DISPATCH_PROFILE"; ["profile"]; .)
   | from_env("DISPATCH_FLEET_BUDGET"; ["fleetBudget"]; tonumber? // .)
   | from_env_nonempty("DISPATCH_REPO_TRACKERS"; ["repoTrackers"]; trackers)
@@ -567,13 +568,13 @@ printf '%s\n' "$base" "$user" "$locked" "$env_layer" | jq -n --argjson show_orig
                   else
                     (($list | to_entries[]) as {key: $i, value: $x}
                       | $p + [$i] as $pp
-                      | if ($x | type) == "string" or (($x | type) == "object" and ($x | keys) == ["glob", "requires"] and ($x.glob | type) == "string" and ($x.requires | IN("pi_month_target", "anthropic_credits")))
+                      | if ($x | type) == "string" or (($x | type) == "object" and ($x | keys) == ["glob", "requires"] and ($x.glob | type) == "string" and ($x.requires | IN("pi_month_target", "anthropic_credits", "gemini_budget")))
                         then ($x | pat) as $g
                           | if ($g | test("\\A[A-Za-z0-9._/*?-]+\\z") | not) then [$pp, "a glob of letters, digits, \".\", \"_\", \"/\", \"-\", \"*\" and \"?\""]
                             elif $e == "pi" and ($g | test("\\A[a-z0-9][a-z0-9._-]*/") | not) then [$pp, "a pi pattern with a literal provider (e.g. openrouter/...)"]
                             else empty
                             end
-                        else [$pp, "a glob string or {glob, requires: \"pi_month_target\" or \"anthropic_credits\"}"]
+                        else [$pp, "a glob string or {glob, requires: \"pi_month_target\", \"anthropic_credits\" or \"gemini_budget\"}"]
                         end)
                   end),
               (select($v | has("tiers"))
@@ -740,6 +741,8 @@ printf '%s\n' "$base" "$user" "$locked" "$env_layer" | jq -n --argjson show_orig
   | need(["openrouter"]; "an object"; type == "object")
   | need(["openrouter", "keyFile"]; "a string"; type == "string")
   | need(["openrouter", "monthlyUsd"]; "a number or string"; type == "number" or type == "string")
+  | need(["gemini"]; "an object"; type == "object")
+  | need(["gemini", "monthlyUsd"]; "a number or string"; type == "number" or type == "string")
   | need(["profile"]; "a string"; type == "string")
   | need(["fleetBudget"]; "a non-negative integer"; type == "number" and . == floor and . >= 0)
   | need(["fleetBackfillAfter"]; "a non-negative integer"; type == "number" and . == floor and . >= 0)
