@@ -1,0 +1,40 @@
+ 1 Graph   2 List   Tab switch, q quit
+critical failed        exit 1 after test failure
+critical dead          dead: quiet: no output 20m
+critical role_failed   reviewer: role reviewer engine exited (pane %9)
+critical lane_dead     crew stream lane is dead
+warning  blocked       need the staging db password
+warning  blocked       which schema should the migration target?
+warning  stall         quiet: no output 4m
+warning  prompt        prompt: permission dialog
+warning  watchdog      runaway: 900 tool calls in 10m
+warning  hold_matured  hold h-due matured: matured task
+warning  blocked       blocked
+ready    merge_ready   PR #12 checks green, mergeable
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
