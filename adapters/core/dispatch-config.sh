@@ -14,7 +14,8 @@
 #            if it names a different path.
 #   env    — DISPATCH_ENGINES (whitespace-split), DISPATCH_GRANT_ROOTS
 #            (colon-split), DISPATCH_OPENROUTER_MONTHLY_USD,
-#            DISPATCH_OPENROUTER_KEY_FILE, DISPATCH_PROFILE,
+#            DISPATCH_OPENROUTER_KEY_FILE, DISPATCH_ANTHROPIC_ADMIN_KEY_FILE,
+#            DISPATCH_PROFILE,
 #            DISPATCH_FLEET_BUDGET (integer),
 #            DISPATCH_REPO_TRACKERS/DISPATCH_ORG_TRACKERS (whitespace-separated
 #            key=value pairs, split at the first "="; a repeated key is
@@ -24,9 +25,10 @@
 #            is false; any other value is true), DISPATCH_DASH_PLACEMENT
 #            (side or float); an empty var contributes nothing.
 #
-# Security: grantRoots and openrouter.keyFile widen what a worker can read, so
-# they are honoured only from the locked layer or the environment — a copy in
-# the base or user layer is dropped with a warning on stderr.
+# Security: grantRoots, openrouter.keyFile and anthropic.adminKeyFile widen what
+# a worker can read, so they are honoured only from the locked layer or the
+# environment — a copy in the base or user layer is dropped with a warning on
+# stderr.
 #
 # localModels maps "<provider>/<model>" dispatch ids to local OpenAI-compatible
 # endpoints for pi; it is validated on the merged tree and has no env var.
@@ -396,12 +398,14 @@ strip_task_profile_tiers() {
 # strip <json> <path> — drop the keys only the locked and env layers may set.
 strip() {
   local key
-  for key in grantRoots openrouter.keyFile; do
+  for key in grantRoots openrouter.keyFile anthropic.adminKeyFile; do
     if jq -e --arg k "$key" "$jq_defs"' holds($k | split("."))' <<<"$1" >/dev/null; then
       echo "dispatch-config: ignoring $key from $2 — it is honoured only from the locked settings or the environment" >&2
     fi
   done
-  jq -c 'del(.grantRoots) | if (.openrouter | type) == "object" then del(.openrouter.keyFile) else . end' <<<"$1"
+  jq -c 'del(.grantRoots)
+    | if (.openrouter | type) == "object" then del(.openrouter.keyFile) else . end
+    | if (.anthropic | type) == "object" then del(.anthropic.adminKeyFile) else . end' <<<"$1"
 }
 
 base_file="@defaultsJson@"
@@ -532,6 +536,7 @@ env_layer=$(jq -cn '
   | from_env("DISPATCH_OPENROUTER_MONTHLY_USD"; ["openrouter", "monthlyUsd"]; .)
   | from_env("DISPATCH_OPENROUTER_KEY_FILE"; ["openrouter", "keyFile"]; .)
   | from_env("DISPATCH_GEMINI_MONTHLY_USD"; ["gemini", "monthlyUsd"]; .)
+  | from_env("DISPATCH_ANTHROPIC_ADMIN_KEY_FILE"; ["anthropic", "adminKeyFile"]; .)
   | from_env("DISPATCH_PROFILE"; ["profile"]; .)
   | from_env("DISPATCH_FLEET_BUDGET"; ["fleetBudget"]; tonumber? // .)
   | from_env_nonempty("DISPATCH_REPO_TRACKERS"; ["repoTrackers"]; trackers)
@@ -740,6 +745,8 @@ printf '%s\n' "$base" "$user" "$locked" "$env_layer" | jq -n --argjson show_orig
   | need(["grantRoots"]; "an array of strings without \":\""; string_array and all(.[]; contains(":") | not))
   | need(["openrouter"]; "an object"; type == "object")
   | need(["openrouter", "keyFile"]; "a string"; type == "string")
+  | need(["anthropic"]; "an object"; type == "object")
+  | need(["anthropic", "adminKeyFile"]; "a string"; type == "string")
   | need(["openrouter", "monthlyUsd"]; "a number or string"; type == "number" or type == "string")
   | need(["gemini"]; "an object"; type == "object")
   | need(["gemini", "monthlyUsd"]; "a number or string"; type == "number" or type == "string")

@@ -57,11 +57,22 @@
 #     null (informational, never blocking).
 #
 # anthropicCredits ({balance_usd, expires, as_of} in the settings) adds
-# engines.pi.anthropic = {balance_usd, spent_usd, remaining_usd, used_pct,
-# starts_at, resets_at, expired}: the prepaid Anthropic credit pi's direct
-# anthropic/* models draw on, estimated from pi's own session records (no API
-# returns the balance). spent_usd sums message.usage.cost.total over message
-# lines whose provider is exactly "anthropic" (openrouter lines naming an
+# engines.pi.anthropic = {balance_usd, spent_usd, spend_source, remaining_usd,
+# used_pct, starts_at, resets_at, expired}: the prepaid Anthropic credit pi's
+# direct anthropic/* models draw on (no API returns the balance). With an Admin
+# key file (DISPATCH_ANTHROPIC_ADMIN_KEY_FILE, exclusive when set, else the
+# settings' anthropic.adminKeyFile; first line is the key, sent to curl via -K -
+# on stdin only, never argv, printed or cached) spent_usd is the organization's
+# spend from GET /v1/organizations/cost_report (spend_source "cost_report"),
+# which sees every client of the org, not just pi. Buckets are whole UTC days:
+# starting_at is as_of floored to its UTC day, so that day's bucket is counted
+# in full (a conservative overestimate; set as_of at a day boundary for
+# exactness); starts_at stays the exact as_of. amount is cents, summed over
+# has_more/next_page (at most 24 pages). No key configured, or an unreadable or
+# empty key file, HTTP/transport/timeout failure, partial paging or unparseable
+# body (one warning naming the cause) falls back to the estimate from pi's own
+# session records (spend_source "sessions"). That estimate sums
+# message.usage.cost.total over message lines whose provider is exactly "anthropic" (openrouter lines naming an
 # anthropic/ model bill OpenRouter) with a timestamp at or after as_of, in
 # <dir>/sessions/*/*.jsonl of the worker agent dir (~/.pi/dispatcher-worker,
 # what `crew pi-agent-dir` prints) and the interactive one
@@ -155,7 +166,7 @@ JQ_DEFS='
   # credit_elapsed / credit_line / gemini_line: pi direct-provider summaries.
   def credit_elapsed($a): ((elapsed_pct($a.resets_at; $a.resets_at - $a.starts_at) * 10 | round) / 10);
   def credit_line($a):
-    "pi: anthropic credit $\(if $a.remaining_usd > 0 then $a.remaining_usd else 0 end | usd) of $\($a.balance_usd | usd) left (\($a.used_pct)% used, "
+    "pi: anthropic credit $\(if $a.remaining_usd > 0 then $a.remaining_usd else 0 end | usd) of $\($a.balance_usd | usd) left (\($a.used_pct)% used, spend from \(if $a.spend_source == "cost_report" then "cost report" else "sessions" end), "
     + (if $a.resets_at > $now
        then "\(credit_elapsed($a))% of grant period elapsed, expires \($a.resets_at | todateiso8601), in \(($a.resets_at - $now) | reltime))"
        else "expired \($a.resets_at | todateiso8601))" end);
@@ -807,12 +818,81 @@ _has_gemini_key() {
   return 1
 }
 
-# anthropic_credit <grant> — print the engines.pi.anthropic object for the
+# anthropic_cost_report <as_of_epoch> — print the organization's spend in USD
+# since the UTC day containing as_of, from the Admin API cost report (amounts
+# are decimal strings in cents). Return 1, with one warning naming the cause
+# (never the key), on an unreadable/empty key file, an HTTP/transport/timeout
+# failure, or an unparseable body: no partial sums.
+anthropic_cost_report() {
+  local as_of="$1" key="" start page="" url body rc pages=0 total=0 parsed sum more next
+  if [[ -r $DISPATCH_ANTHROPIC_ADMIN_KEY_FILE ]]; then
+    IFS= read -r key <"$DISPATCH_ANTHROPIC_ADMIN_KEY_FILE" || true
+    key="${key//$'\r'/}"
+    key="${key#"${key%%[![:space:]]*}"}"
+    key="${key%"${key##*[![:space:]]}"}"
+  fi
+  if [[ -z $key ]]; then
+    warn "anthropic cost report skipped — DISPATCH_ANTHROPIC_ADMIN_KEY_FILE ($DISPATCH_ANTHROPIC_ADMIN_KEY_FILE) is unreadable or empty; using pi session records"
+    return 1
+  fi
+  start=$(date -u -d "@$((as_of - as_of % 86400))" +%Y-%m-%dT%H:%M:%SZ)
+  while :; do
+    if ((++pages > 24)); then
+      warn "anthropic cost report skipped — more than 24 pages; using pi session records"
+      return 1
+    fi
+    url="https://api.anthropic.com/v1/organizations/cost_report?starting_at=$start&bucket_width=1d&limit=31"
+    [[ -z $page ]] || url+="&page=$page"
+    body=$(curl -sf --max-time 15 -K - "$url" <<<"header = \"x-api-key: $key\"
+header = \"anthropic-version: 2023-06-01\"") && rc=0 || rc=$?
+    if [[ $rc -ne 0 ]]; then
+      case $rc in
+      22) rc="HTTP error" ;;
+      28) rc="timeout" ;;
+      *) rc="transport error" ;;
+      esac
+      warn "anthropic cost report skipped — API call failed ($rc); using pi session records"
+      return 1
+    fi
+    # shellcheck disable=SC2016 # jq program text, not shell
+    if ! parsed=$(jq -er '
+      if (.data | type) != "array" then error("data") else . end
+      | ([.data[] | (.results | if type == "array" then .[] else error("results") end)
+          | if .currency == "USD" and (.amount | type) == "string" then (.amount | tonumber) else error("amount") end] | add // 0) as $s
+      | (.has_more // false) as $m
+      | if ($m | type) != "boolean" then error("has_more") else . end
+      | [$s, $m, (.next_page // "" | if type == "string" then @uri else error("next_page") end)] | @tsv' <<<"$body" 2>/dev/null); then
+      warn "anthropic cost report skipped — unparseable response; using pi session records"
+      return 1
+    fi
+    IFS=$'\t' read -r sum more next <<<"$parsed"
+    total=$(jq -n --argjson t "$total" --argjson s "$sum" '$t + $s')
+    [[ $more == true ]] || break
+    if [[ -z $next ]]; then
+      warn "anthropic cost report skipped — unparseable response (has_more without next_page); using pi session records"
+      return 1
+    fi
+    page=$next
+  done
+  jq -n --argjson t "$total" '$t / 100'
+}
+
+# anthropic_session_spend <as_of_epoch> — print pi's recorded anthropic spend
+# since as_of; return 1, with a warning, when the scan fails.
+anthropic_session_spend() {
+  local spent
+  if ! spent=$(_pi_provider_spend anthropic "$1"); then
+    warn "anthropic credit unknown — scanning pi session records failed"
+    return 1
+  fi
+  printf '%s\n' "$spent"
+}
+
 # settings' anthropicCredits grant (see the header); return 1, with a warning,
 # when its dates do not parse or the session scan fails, so no estimate is
 # written and dispatch's admission check refuses (fail closed).
 anthropic_credit() {
-  local grant="$1" epochs as_of expires spent
+  local grant="$1" epochs as_of expires spent source=sessions
   # shellcheck disable=SC2016 # jq program text, not shell
   epochs=$(jq -r "$iso_epoch_def"' [(.as_of | iso_epoch), (.expires | iso_epoch)]
     | if all(. != null) and .[0] < .[1] then @tsv else empty end' <<<"$grant" 2>/dev/null) || epochs=""
@@ -821,16 +901,18 @@ anthropic_credit() {
     return 1
   fi
   IFS=$'\t' read -r as_of expires <<<"$epochs"
-  if ! spent=$(_pi_provider_spend anthropic "$as_of"); then
-    warn "anthropic credit unknown — scanning pi session records failed"
-    return 1
+  if [[ -n ${DISPATCH_ANTHROPIC_ADMIN_KEY_FILE:-} ]] && spent=$(anthropic_cost_report "$as_of"); then
+    source=cost_report
+  else
+    spent=$(anthropic_session_spend "$as_of") || return 1
   fi
   # shellcheck disable=SC2016 # jq program text, not shell
-  jq -n --argjson g "$grant" --argjson spent "$spent" --argjson s "$as_of" --argjson e "$expires" --argjson now "$(date +%s)" '
+  jq -n --argjson g "$grant" --argjson spent "$spent" --argjson s "$as_of" --argjson e "$expires" --argjson now "$(date +%s)" --arg src "$source" '
     def r6: (. * 1000000 | round) / 1000000;
     {
       balance_usd: $g.balance_usd,
       spent_usd: ($spent | r6),
+      spend_source: $src,
       remaining_usd: ($g.balance_usd - $spent | r6),
       used_pct: ((100 * $spent / $g.balance_usd * 10 | round) / 10),
       starts_at: $s,
@@ -887,6 +969,7 @@ main() {
   [[ -n ${DISPATCH_OPENROUTER_MONTHLY_USD:-} ]] || DISPATCH_OPENROUTER_MONTHLY_USD="$(jq -r '.openrouter.monthlyUsd // "" | tostring' <<<"$settings")"
   [[ -n ${DISPATCH_OPENROUTER_KEY_FILE:-} ]] || DISPATCH_OPENROUTER_KEY_FILE="$(jq -r '.openrouter.keyFile // ""' <<<"$settings")"
   [[ -n ${DISPATCH_GEMINI_MONTHLY_USD:-} ]] || DISPATCH_GEMINI_MONTHLY_USD="$(jq -r '.gemini.monthlyUsd // "" | tostring' <<<"$settings")"
+  [[ -n ${DISPATCH_ANTHROPIC_ADMIN_KEY_FILE:-} ]] || DISPATCH_ANTHROPIC_ADMIN_KEY_FILE="$(jq -r '.anthropic.adminKeyFile // ""' <<<"$settings")"
 
   local claude='null' codex='null' cursor='null' pi='null' probe
   if probe=$(probe_claude); then

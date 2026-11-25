@@ -190,6 +190,7 @@ let
       monthlyTarget = 50;
       keyFile = "/run/agenix/openrouter";
     };
+    anthropic.adminKeyFile = "/run/agenix/anthropic-admin";
     anthropicCredits = {
       balanceUsd = 200;
       expires = "2026-11-17";
@@ -984,6 +985,18 @@ worktree_git_lib_crew_go_row() { # bin
 
 @test "the module declares the openrouter option" {
   run jq -e '(.options | index("openrouter")) != null' "$EVAL"
+  [ "$status" -eq 0 ]
+}
+
+@test "the module declares the anthropic option" {
+  run jq -e '(.options | index("anthropic")) != null' "$EVAL"
+  [ "$status" -eq 0 ]
+}
+
+@test "anthropic.adminKeyFile lands in the locked layer only when set" {
+  run jq -e '.full.locked.anthropic == {"adminKeyFile": "/run/agenix/anthropic-admin"}' "$EVAL"
+  [ "$status" -eq 0 ]
+  run jq -e '.minimal.locked | has("anthropic") | not' "$EVAL"
   [ "$status" -eq 0 ]
 }
 

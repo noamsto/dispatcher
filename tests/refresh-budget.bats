@@ -16,7 +16,7 @@ setup() {
   export HOME="$(mktemp -d)"
   mkdir -p "$HOME/.claude"
   printf '%s\n' '{"claudeAiOauth":{"accessToken":"test-token"}}' >"$HOME/.claude/.credentials.json"
-  unset OPENROUTER_API_KEY DISPATCH_OPENROUTER_KEY_FILE DISPATCH_OPENROUTER_MONTHLY_USD PI_CODING_AGENT_DIR
+  unset OPENROUTER_API_KEY DISPATCH_ANTHROPIC_ADMIN_KEY_FILE DISPATCH_OPENROUTER_KEY_FILE DISPATCH_OPENROUTER_MONTHLY_USD PI_CODING_AGENT_DIR
   write_fixtures
   write_curl_shim
   write_codex_shim
@@ -123,6 +123,26 @@ case "${@: -1}" in
       printf 'openrouter_key_on_stdin=no\n' >>"$STUB_LOG"
     fi
     cat "$FIXTURE_DIR/or_key.json"
+    ;;
+  *organizations/cost_report*)
+    # The admin key arrives on stdin (-K -) only; log whether it did, never it.
+    stdin_content="$(cat)"
+    expect="${SHIM_CR_EXPECT_KEY:-sk-ant-admin01-SENTINELKEY456}"
+    if [[ "$stdin_content" == *"x-api-key: $expect"* && "$stdin_content" == *"anthropic-version: 2023-06-01"* ]]; then
+      printf 'cr_key_on_stdin=yes\n' >>"$STUB_LOG"
+    else
+      printf 'cr_key_on_stdin=no\n' >>"$STUB_LOG"
+    fi
+    [[ -z "${SHIM_CR_FAIL:-}" ]] || exit "$SHIM_CR_FAIL"
+    if [[ -n "${SHIM_CR_MALFORMED:-}" ]]; then
+      printf '%s\n' 'not json {'
+      exit 0
+    fi
+    if [[ "${@: -1}" == *"page="* ]]; then
+      cat "$FIXTURE_DIR/cr_page2.json"
+    else
+      cat "$FIXTURE_DIR/cr_page1.json"
+    fi
     ;;
   *) exit 22 ;;
 esac
@@ -1637,7 +1657,7 @@ EOF
 EOF
   run --separate-stderr bash "$SCRIPT" --report
   [ "$status" -eq 0 ]
-  [ -z "$stderr" ]
+  ! grep -q 'cost report' <<<"$stderr"
   run bash "$SCRIPT" --report --json
   [ "$status" -eq 0 ]
   run jq -e '.engines.pi.projection == null' <<<"$output"
@@ -1695,7 +1715,7 @@ EOF
 
   run --separate-stderr bash "$SCRIPT" --report --json
   [ "$status" -eq 0 ]
-  [ -z "$stderr" ]
+  ! grep -q 'cost report' <<<"$stderr"
   json_out="$output"
   run jq -e '.engines.cursor.windows[] | select(.key == "month")
     | .ahead_pts == 40 and .resets_in_s == 1296000
@@ -2173,16 +2193,16 @@ CREDIT_NOW=1793404800
   credit_grant
   SHIM_NOW=$CREDIT_NOW run --separate-stderr bash "$SCRIPT"
   [ "$status" -eq 0 ]
-  jq -e '.engines.pi == {anthropic: {balance_usd: 200, spent_usd: 3.75, remaining_usd: 196.25, used_pct: 1.9,
+  jq -e '.engines.pi == {anthropic: {balance_usd: 200, spent_usd: 3.75, spend_source: "sessions", remaining_usd: 196.25, used_pct: 1.9,
     starts_at: 1790812800, resets_at: 1796083200, expired: false}}' "$XDG_DATA_HOME/crew/engine-budget.json"
   # No OpenRouter key: the OpenRouter side stays unknown, then the credit line.
-  [[ "$output" == *$'pi: unknown\npi: anthropic credit $196.25 of $200.00 left (1.9% used, 49.2% of grant period elapsed, expires 2026-12-01T00:00:00Z, in 31d 0h)'* ]]
+  [[ "$output" == *$'pi: unknown\npi: anthropic credit $196.25 of $200.00 left (1.9% used, spend from sessions, 49.2% of grant period elapsed, expires 2026-12-01T00:00:00Z, in 31d 0h)'* ]]
   SHIM_NOW=$CREDIT_NOW run --separate-stderr bash "$SCRIPT" --report --json
   [ "$status" -eq 0 ]
   jq -e '.engines.pi == null
     and .anthropic_credit == {balance_usd: 200, spent_usd: 3.75, remaining_usd: 196.25, used_pct: 1.9, elapsed_pct: 49.2,
       starts_at: 1790812800, resets_at: 1796083200, resets_in_s: 2678400, expired: false,
-      summary: "pi: anthropic credit $196.25 of $200.00 left (1.9% used, 49.2% of grant period elapsed, expires 2026-12-01T00:00:00Z, in 31d 0h)"}' <<<"$output"
+      summary: "pi: anthropic credit $196.25 of $200.00 left (1.9% used, spend from sessions, 49.2% of grant period elapsed, expires 2026-12-01T00:00:00Z, in 31d 0h)"}' <<<"$output"
 }
 
 @test "anthropic credit: with an OpenRouter key the entry sits beside the openrouter fields, outside windows" {
@@ -2250,7 +2270,7 @@ ROWS
   SHIM_NOW=1796083200 run --separate-stderr bash "$SCRIPT"
   [ "$status" -eq 0 ]
   jq -e '.engines.pi.anthropic | .remaining_usd == -0.75 and .used_pct == 125 and .expired == true' "$XDG_DATA_HOME/crew/engine-budget.json"
-  [[ "$output" == *'pi: anthropic credit $0.00 of $3.00 left (125% used, expired 2026-12-01T00:00:00Z)'* ]]
+  [[ "$output" == *'pi: anthropic credit $0.00 of $3.00 left (125% used, spend from sessions, expired 2026-12-01T00:00:00Z)'* ]]
 }
 
 @test "anthropic credit: a failed session sum writes no estimate, with a warning" {
@@ -2299,6 +2319,154 @@ EOF
   [ "$status" -eq 0 ]
   [[ "$stderr" == *"scanning pi session records failed"* ]]
   jq -e '.engines.pi == null' "$XDG_DATA_HOME/crew/engine-budget.json"
+}
+
+# The cost report (#1825): cr_fixture writes a two-page report. Page 1 sums to
+# 250 cents, page 2 to 125.5, so org spend is $3.755; as_of is 2026-10-01.
+cr_fixture() {
+  cat >"$FIXTURE_DIR/cr_page1.json" <<'J'
+{"data":[{"starting_at":"2026-10-01T00:00:00Z","ending_at":"2026-10-02T00:00:00Z","results":[{"currency":"USD","amount":"100.5"},{"currency":"USD","amount":"50"}]},{"starting_at":"2026-10-02T00:00:00Z","ending_at":"2026-10-03T00:00:00Z","results":[{"currency":"USD","amount":"99.5"}]}],"has_more":true,"next_page":"pg/2=="}
+J
+  cat >"$FIXTURE_DIR/cr_page2.json" <<'J'
+{"data":[{"starting_at":"2026-10-03T00:00:00Z","ending_at":"2026-10-04T00:00:00Z","results":[{"currency":"USD","amount":"125.5"}]}],"has_more":false,"next_page":null}
+J
+  CR_KEY=sk-ant-admin01-SENTINELKEY456
+  printf '%s\r\n' "  $CR_KEY " >"$HOME/admin.key"
+  export DISPATCH_ANTHROPIC_ADMIN_KEY_FILE="$HOME/admin.key"
+}
+
+# cr_assert_fell_back <cause> — one warning naming the cause, no key anywhere,
+# and the sessions estimate in the cache.
+cr_assert_fell_back() {
+  [ "$status" -eq 0 ]
+  [[ "$stderr" == *"anthropic cost report skipped"*"$1"* ]]
+  [ "$(grep -c 'anthropic cost report' <<<"$stderr")" -eq 1 ]
+  jq -e '.engines.pi.anthropic | .spend_source == "sessions" and .spent_usd == 3.75' "$XDG_DATA_HOME/crew/engine-budget.json"
+  ! grep -q "$CR_KEY" <<<"$stderr"
+  ! grep -q "$CR_KEY" "$STUB_LOG"
+  ! grep -q "$CR_KEY" "$XDG_DATA_HOME/crew/engine-budget.json"
+}
+
+@test "anthropic credit: the cost report pages, sums cents to dollars and replaces the session scan" {
+  credit_fixture
+  credit_grant
+  cr_fixture
+  SHIM_NOW=$CREDIT_NOW run --separate-stderr bash "$SCRIPT"
+  [ "$status" -eq 0 ]
+  ! grep -q 'cost report' <<<"$stderr"
+  jq -e '.engines.pi.anthropic == {balance_usd: 200, spent_usd: 3.755, spend_source: "cost_report", remaining_usd: 196.245,
+    used_pct: 1.9, starts_at: 1790812800, resets_at: 1796083200, expired: false}' "$XDG_DATA_HOME/crew/engine-budget.json"
+  [[ "$output" == *"pi: anthropic credit \$196.25 of \$200.00 left (1.9% used, spend from cost report, 49.2% of grant"* ]]
+  [ "$(grep -c 'organizations/cost_report' "$STUB_LOG")" -eq 2 ]
+  grep -q -- '-sf --max-time 15 -K - https://api.anthropic.com/v1/organizations/cost_report?starting_at=2026-10-01T00:00:00Z&bucket_width=1d&limit=31$' "$STUB_LOG"
+  grep -q -- 'limit=31&page=pg%2F2%3D%3D$' "$STUB_LOG"
+  [ "$(grep -c '^cr_key_on_stdin=yes$' "$STUB_LOG")" -eq 2 ]
+  # A mid-day as_of floors the query to its UTC day; starts_at keeps the exact as_of.
+  credit_grant '{"anthropicCredits":{"balance_usd":200,"expires":"2026-12-01","as_of":"2026-10-01T15:30:00Z"}}'
+  : >"$STUB_LOG"
+  SHIM_NOW=$CREDIT_NOW run --separate-stderr bash "$SCRIPT"
+  grep -q 'starting_at=2026-10-01T00:00:00Z&' "$STUB_LOG"
+  jq -e '.engines.pi.anthropic.starts_at == 1790868600' "$XDG_DATA_HOME/crew/engine-budget.json"
+}
+
+@test "anthropic credit: no admin key file leaves the sessions path, with spend_source sessions" {
+  credit_fixture
+  credit_grant
+  cr_fixture
+  unset DISPATCH_ANTHROPIC_ADMIN_KEY_FILE
+  SHIM_NOW=$CREDIT_NOW run --separate-stderr bash "$SCRIPT"
+  [ "$status" -eq 0 ]
+  ! grep -q 'cost report' <<<"$stderr"
+  jq -e '.engines.pi.anthropic | .spend_source == "sessions" and .spent_usd == 3.75' "$XDG_DATA_HOME/crew/engine-budget.json"
+  ! grep -q cost_report "$STUB_LOG"
+}
+
+@test "anthropic credit: an old cache without spend_source reports sessions" {
+  credit_fixture
+  credit_grant
+  SHIM_NOW=$CREDIT_NOW run --separate-stderr bash "$SCRIPT"
+  jq 'del(.engines.pi.anthropic.spend_source)' "$XDG_DATA_HOME/crew/engine-budget.json" >"$STUB_DIR/old.json"
+  mv "$STUB_DIR/old.json" "$XDG_DATA_HOME/crew/engine-budget.json"
+  SHIM_NOW=$CREDIT_NOW run --separate-stderr bash "$SCRIPT" --report
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"spend from sessions"* ]]
+}
+
+@test "anthropic credit: an unreadable or empty admin key file warns and falls back to sessions" {
+  credit_fixture
+  credit_grant
+  cr_fixture
+  export DISPATCH_ANTHROPIC_ADMIN_KEY_FILE="$HOME/missing.key"
+  SHIM_NOW=$CREDIT_NOW run --separate-stderr bash "$SCRIPT"
+  cr_assert_fell_back "unreadable or empty"
+  : >"$HOME/empty.key"
+  export DISPATCH_ANTHROPIC_ADMIN_KEY_FILE="$HOME/empty.key"
+  SHIM_NOW=$CREDIT_NOW run --separate-stderr bash "$SCRIPT"
+  cr_assert_fell_back "unreadable or empty"
+  ! grep -q cost_report "$STUB_LOG"
+}
+
+@test "anthropic credit: a cost report HTTP 401 warns and falls back to sessions" {
+  credit_fixture
+  credit_grant
+  cr_fixture
+  SHIM_CR_FAIL=22 SHIM_NOW=$CREDIT_NOW run --separate-stderr bash "$SCRIPT"
+  cr_assert_fell_back "HTTP error"
+}
+
+@test "anthropic credit: a cost report timeout warns and falls back to sessions" {
+  credit_fixture
+  credit_grant
+  cr_fixture
+  SHIM_CR_FAIL=28 SHIM_NOW=$CREDIT_NOW run --separate-stderr bash "$SCRIPT"
+  cr_assert_fell_back "timeout"
+}
+
+@test "anthropic credit: a malformed cost report warns and falls back to sessions" {
+  credit_fixture
+  credit_grant
+  cr_fixture
+  SHIM_CR_MALFORMED=1 SHIM_NOW=$CREDIT_NOW run --separate-stderr bash "$SCRIPT"
+  cr_assert_fell_back "unparseable response"
+}
+
+@test "anthropic credit: a non-USD or non-numeric amount, or has_more without next_page, is a failure, never a partial sum" {
+  credit_fixture
+  credit_grant
+  cr_fixture
+  jq -c '.has_more = false | .data[0].results[0].currency = "EUR"' "$FIXTURE_DIR/cr_page1.json" >"$STUB_DIR/p" && mv "$STUB_DIR/p" "$FIXTURE_DIR/cr_page1.json"
+  SHIM_NOW=$CREDIT_NOW run --separate-stderr bash "$SCRIPT"
+  cr_assert_fell_back "unparseable response"
+  cr_fixture
+  jq -c '.has_more = false | .data[0].results[0].amount = "abc"' "$FIXTURE_DIR/cr_page1.json" >"$STUB_DIR/p" && mv "$STUB_DIR/p" "$FIXTURE_DIR/cr_page1.json"
+  SHIM_NOW=$CREDIT_NOW run --separate-stderr bash "$SCRIPT"
+  cr_assert_fell_back "unparseable response"
+  cr_fixture
+  jq -c '.next_page = ""' "$FIXTURE_DIR/cr_page1.json" >"$STUB_DIR/p" && mv "$STUB_DIR/p" "$FIXTURE_DIR/cr_page1.json"
+  SHIM_NOW=$CREDIT_NOW run --separate-stderr bash "$SCRIPT"
+  cr_assert_fell_back "has_more without next_page"
+}
+
+@test "anthropic credit: an endless has_more stops at 24 pages and falls back" {
+  credit_fixture
+  credit_grant
+  cr_fixture
+  cp "$FIXTURE_DIR/cr_page1.json" "$FIXTURE_DIR/cr_page2.json"
+  SHIM_NOW=$CREDIT_NOW run --separate-stderr bash "$SCRIPT"
+  cr_assert_fell_back "more than 24 pages"
+  [ "$(grep -c 'organizations/cost_report' "$STUB_LOG")" -eq 24 ]
+}
+
+@test "anthropic credit: the admin key never reaches curl's argv, stderr or the cache" {
+  credit_fixture
+  credit_grant
+  cr_fixture
+  SHIM_NOW=$CREDIT_NOW run --separate-stderr bash "$SCRIPT"
+  [ "$status" -eq 0 ]
+  ! grep -q "$CR_KEY" "$STUB_LOG"
+  ! grep -q "$CR_KEY" <<<"$stderr$output"
+  ! grep -q "$CR_KEY" "$XDG_DATA_HOME/crew/engine-budget.json"
+  grep -q '^cr_key_on_stdin=yes$' "$STUB_LOG"
 }
 
 @test "anthropic credit: dispatch-config, dispatch and refresh-budget carry the same iso_epoch" {

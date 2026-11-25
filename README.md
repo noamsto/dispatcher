@@ -710,8 +710,23 @@ and before `expires`, paces direct opus against the grant period, and the
 `refresh-budget` summary shows what is left. The estimate counts only the
 spend this host's pi recorded, so set the grant on one host; a `dispatch
 --host` launch never admits the credit patterns, and a set but invalid locked
-grant means no grant, never the user file's. Spend outside pi is unseen, so
+grant means no grant, never the user file's. Without an Admin key, spend outside pi is unseen, so
 update `asOf` and `balanceUsd` after checking the Anthropic Console.
+
+`anthropic.adminKeyFile` (string, not a path; env
+`DISPATCH_ANTHROPIC_ADMIN_KEY_FILE`, exclusive when set; HM option
+`programs.dispatcher.anthropic.adminKeyFile`; locked, env-only) is optional. Its
+first line is an Anthropic Admin key. With it, `refresh-budget` takes
+`spent_usd` from the org-wide Admin API cost report (`GET
+/v1/organizations/cost_report`, daily UTC buckets, amounts in cents) since
+`asOf`, so spend from any client of the org is seen. The UTC day containing
+`asOf` is counted in full, a conservative overestimate; set `asOf` at a day
+boundary for exactness. `engines.pi.anthropic.spend_source` is `cost_report` or
+`sessions` and shows on the summary line. With no key, or an unreadable key, an
+HTTP error, a timeout or a malformed reply, `refresh-budget` warns (never
+printing the key) and falls back to the pi-session estimate
+(`spend_source: sessions`), which sees only this host's pi spend. With the cost
+report in use, re-enter `asOf` and `balanceUsd` only per grant.
 
 Claude workers also get the protocol, skills, reviewers and critics dirs
 granted read-only (an `Edit` deny rule alongside the `--add-dir`), so a

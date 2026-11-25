@@ -4,7 +4,7 @@ setup() {
   load helpers
   CONFIG="$BATS_TEST_DIRNAME/../adapters/core/dispatch-config.sh"
   DEFAULTS="$BATS_TEST_DIRNAME/../adapters/core/defaults.json"
-  unset DISPATCH_ENGINES DISPATCH_GRANT_ROOTS DISPATCH_OPENROUTER_MONTHLY_USD DISPATCH_OPENROUTER_KEY_FILE
+  unset DISPATCH_ENGINES DISPATCH_GRANT_ROOTS DISPATCH_OPENROUTER_MONTHLY_USD DISPATCH_OPENROUTER_KEY_FILE DISPATCH_ANTHROPIC_ADMIN_KEY_FILE
   unset DISPATCH_PROFILE DISPATCH_REPO_TRACKERS DISPATCH_ORG_TRACKERS DISPATCH_ROSTER_AUTO_OPEN DISPATCH_DISPATCHER_MCP
   unset DISPATCH_DASH_PLACEMENT
   export XDG_CONFIG_HOME="$BATS_TEST_TMPDIR/config"
@@ -68,6 +68,31 @@ locked_settings() {
   jq -e '.grantRoots == ["/a","/b"]' <<<"$output"
   jq -e '.openrouter.monthlyUsd == "50"' <<<"$output"
   jq -e '.openrouter.keyFile == "/k"' <<<"$output"
+}
+
+@test "anthropic.adminKeyFile: env wins, user layer dropped with a warning, locked kept" {
+  user_settings '{"anthropic":{"adminKeyFile":"/uk"}}'
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 0 ]
+  jq -e '.anthropic | has("adminKeyFile") | not' <<<"$output"
+  [[ "$stderr" == *"ignoring anthropic.adminKeyFile from $USER_FILE"* ]]
+
+  locked_settings '{"anthropic":{"adminKeyFile":"/lk"}}'
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 0 ]
+  jq -e '.anthropic.adminKeyFile == "/lk"' <<<"$output"
+  [[ "$stderr" != *"$LOCKED_FILE"* ]]
+
+  DISPATCH_ANTHROPIC_ADMIN_KEY_FILE=/ek run --separate-stderr "$CONFIG"
+  [ "$status" -eq 0 ]
+  jq -e '.anthropic.adminKeyFile == "/ek"' <<<"$output"
+}
+
+@test "a non-string anthropic.adminKeyFile is refused" {
+  locked_settings '{"anthropic":{"adminKeyFile":5}}'
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *adminKeyFile* ]]
 }
 
 @test "an empty env var contributes nothing" {
