@@ -18,7 +18,7 @@ use crossterm::terminal::{
 };
 use ratatui::backend::{CrosstermBackend, TestBackend};
 use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::style::{Modifier, Style};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Widget};
 use ratatui::{Frame, Terminal};
@@ -82,6 +82,7 @@ struct App {
     fx: Fx,
     /// Node ids whose glow is fired at the next draw, once the viewport is final.
     pending_glow: Vec<(String, ratatui::style::Color)>,
+    feed_ended: bool,
 }
 
 impl App {
@@ -98,30 +99,15 @@ impl App {
             list: ListState::default(),
             fx: Fx::new(args.reduced_motion),
             pending_glow: Vec::new(),
+            feed_ended: false,
         }
     }
 
     fn set_graph_data(&mut self, workers: Vec<WorkerView>, roles: Vec<RoleView>) {
-        for c in diff_workers(&self.workers, &workers) {
-            let (w, active) = match &c {
-                WorkerChange::Added(w) => (w, true),
-                WorkerChange::Changed { worker, .. } => (worker, true),
-                WorkerChange::Removed(w) => (w, false),
-            };
-            if active {
-                self.pending_glow
-                    .push((graph::worker_id(w), state_color(Some(&w.state))));
-            }
-        }
-        for r in &roles {
-            let old = self
-                .roles
-                .iter()
-                .find(|o| graph::role_id(o) == graph::role_id(r));
-            if old.is_some_and(|o| o.state != r.state) {
-                self.pending_glow
-                    .push((graph::role_id(r), state_color(r.state.as_deref())));
-            }
+        let (workers, roles) = graph::dedupe(workers, roles);
+        // Glow only fires while the graph is visible; otherwise the queue would grow unbounded.
+        if self.tab == Tab::Graph && !self.reduced_motion {
+            self.queue_glow(&workers, &roles);
         }
         self.workers = workers;
         self.roles = roles;
@@ -131,13 +117,38 @@ impl App {
                 graph::refresh(flow, &self.workers, &self.roles, self.reduced_motion);
             }
             _ => {
-                self.flow = Some(graph::build(
+                let built = graph::build(
                     &self.workers,
                     &self.roles,
                     self.horizontal,
                     self.reduced_motion,
-                ));
-                self.topology = topo;
+                );
+                if built.is_some() {
+                    self.flow = built;
+                    self.topology = topo;
+                }
+            }
+        }
+    }
+
+    fn queue_glow(&mut self, workers: &[WorkerView], roles: &[RoleView]) {
+        for c in diff_workers(&self.workers, workers) {
+            let w = match &c {
+                WorkerChange::Added(w) => w,
+                WorkerChange::Changed { worker, .. } => worker,
+                WorkerChange::Removed(_) => continue,
+            };
+            self.pending_glow
+                .push((graph::worker_id(w), state_color(Some(&w.state))));
+        }
+        for r in roles {
+            let old = self
+                .roles
+                .iter()
+                .find(|o| graph::role_id(o) == graph::role_id(r));
+            if old.is_some_and(|o| o.state != r.state) {
+                self.pending_glow
+                    .push((graph::role_id(r), state_color(r.state.as_deref())));
             }
         }
     }
@@ -145,21 +156,22 @@ impl App {
     fn on_doc(&mut self, snap: Snapshot) {
         match snap {
             Snapshot::Map { workers } => {
-                let roles = std::mem::take(&mut self.roles);
+                let roles = self.roles.clone();
                 self.set_graph_data(workers, roles);
             }
             Snapshot::Overview { attention, roles } => {
                 let changes = diff_attention(&self.attention, &attention);
                 self.list.apply(&changes, self.reduced_motion);
                 self.attention = attention;
-                let workers = std::mem::take(&mut self.workers);
+                let workers = self.workers.clone();
                 self.set_graph_data(workers, roles);
             }
         }
     }
 
     fn animating_edges(&self) -> bool {
-        graph::any_animated(&self.workers, &self.roles, self.reduced_motion)
+        self.tab == Tab::Graph
+            && graph::any_animated(&self.workers, &self.roles, self.reduced_motion)
     }
 
     fn effects_active(&self) -> bool {
@@ -192,6 +204,14 @@ impl App {
             Span::raw(" "),
             tab(" 2 List ", Tab::List),
             Span::raw("  Tab switch, q quit"),
+            Span::styled(
+                if self.feed_ended {
+                    "  [feed ended]"
+                } else {
+                    ""
+                },
+                Style::default().fg(Color::Yellow),
+            ),
         ]))
         .render(area, buf);
     }
@@ -251,6 +271,10 @@ fn dump(app: &mut App, w: u16, h: u16) {
 
 fn main() -> io::Result<()> {
     let args = Args::parse();
+    if args.dump.is_some() && args.fixture.is_empty() && args.synthetic.is_none() {
+        eprintln!("error: --dump needs --fixture or --synthetic (a live feed never ends)");
+        std::process::exit(2);
+    }
     let mut app = App::new(&args);
     let (tx, rx) = mpsc::channel();
 
@@ -359,7 +383,10 @@ fn run(
                 terminal.autoresize()?;
                 redraw = true;
             }
-            Some(Msg::SourceEnded) => {}
+            Some(Msg::SourceEnded) => {
+                app.feed_ended = true;
+                redraw = true;
+            }
             None => {
                 if !app.reduced_motion {
                     if let Some(flow) = &mut app.flow {
@@ -369,5 +396,50 @@ fn run(
                 redraw = true;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn worker(branch: &str, state: &str) -> WorkerView {
+        WorkerView {
+            key: ("c".into(), branch.into()),
+            state: state.into(),
+            name: None,
+            detail: None,
+        }
+    }
+
+    fn map(states: &[(&str, &str)]) -> Snapshot {
+        Snapshot::Map {
+            workers: states.iter().map(|(b, s)| worker(b, s)).collect(),
+        }
+    }
+
+    #[test]
+    fn overview_after_map_glows_nothing_for_unchanged_workers() {
+        let mut app = App::new(&Args::parse_from(["dash-anim"]));
+        app.on_doc(map(&[("a", "working"), ("b", "done")]));
+        assert_eq!(app.pending_glow.len(), 2);
+        app.pending_glow.clear();
+
+        app.on_doc(Snapshot::Overview {
+            attention: Vec::new(),
+            roles: Vec::new(),
+        });
+        assert!(app.pending_glow.is_empty());
+        assert_eq!(app.workers.len(), 2);
+
+        app.on_doc(map(&[("a", "blocked"), ("b", "done")]));
+        assert_eq!(app.pending_glow.len(), 1);
+    }
+
+    #[test]
+    fn no_glow_queued_while_list_tab_is_shown() {
+        let mut app = App::new(&Args::parse_from(["dash-anim", "--tab", "list"]));
+        app.on_doc(map(&[("a", "working")]));
+        assert!(app.pending_glow.is_empty());
     }
 }

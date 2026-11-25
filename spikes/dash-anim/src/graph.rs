@@ -65,6 +65,20 @@ pub fn role_id(r: &RoleView) -> String {
     format!("r:{}/{}/{}", r.lead_key.0, r.lead_key.1, r.role)
 }
 
+/// Drops later workers and roles whose node id repeats; ids are what the flow keys on.
+pub fn dedupe(workers: Vec<WorkerView>, roles: Vec<RoleView>) -> (Vec<WorkerView>, Vec<RoleView>) {
+    let mut seen = std::collections::HashSet::new();
+    let workers = workers
+        .into_iter()
+        .filter(|w| seen.insert(worker_id(w)))
+        .collect();
+    let roles = roles
+        .into_iter()
+        .filter(|r| seen.insert(role_id(r)))
+        .collect();
+    (workers, roles)
+}
+
 /// Roles whose lead is not among `workers` are not drawn.
 fn visible_roles<'a>(workers: &[WorkerView], roles: &'a [RoleView]) -> Vec<&'a RoleView> {
     roles
@@ -112,7 +126,7 @@ pub fn build(
     roles: &[RoleView],
     horizontal: bool,
     reduced_motion: bool,
-) -> GraphFlow {
+) -> Option<GraphFlow> {
     let mut nodes = vec![node(ROOT.to_owned(), "dispatcher", None)];
     let mut edges = Vec::new();
     for w in workers {
@@ -136,14 +150,14 @@ pub fn build(
                 .with_animated(animated(r.state.as_deref(), reduced_motion)),
         );
     }
-    let mut flow = Flow::with_graph(nodes, edges).expect("ids are unique and edges resolve");
+    let mut flow = Flow::with_graph(nodes, edges).ok()?;
     flow.apply_layout(layout(horizontal));
     let ids: Vec<String> = flow.nodes().map(|n| n.id.clone()).collect();
     for id in ids {
         flow.set_handles_hidden(&id, true);
     }
     flow.request_fit_view();
-    flow
+    Some(flow)
 }
 
 /// Pushes new states and edge animation into an existing flow with unchanged topology.
@@ -246,7 +260,7 @@ mod tests {
     fn synth_20_builds_with_distinct_positions() {
         let (workers, roles) = synth(20);
         assert_eq!(workers.len(), 20);
-        let flow = build(&workers, &roles, false, false);
+        let flow = build(&workers, &roles, false, false).expect("unique ids");
         assert_eq!(flow.nodes().count(), 1 + 20 + roles.len());
         let mut seen = std::collections::HashSet::new();
         for n in flow.nodes() {
@@ -267,5 +281,32 @@ mod tests {
             topology(&workers, &roles).len(),
             3 + 1 /* synth(3) role at i=1 */ + 2
         );
+    }
+
+    #[test]
+    fn duplicate_and_colliding_ids_do_not_panic() {
+        let worker = |c: &str, b: &str| WorkerView {
+            key: (c.into(), b.into()),
+            state: "working".into(),
+            name: None,
+            detail: None,
+        };
+        let workers = vec![
+            worker("a", "x"),
+            worker("a", "x"),
+            worker("a/b", "c"),
+            worker("a", "b/c"),
+        ];
+        let role = |state: &str| RoleView {
+            lead_key: ("a".into(), "x".into()),
+            role: "reviewer".into(),
+            state: Some(state.into()),
+        };
+        let roles = vec![role("working"), role("blocked")];
+        let (workers, roles) = dedupe(workers, roles);
+        assert_eq!((workers.len(), roles.len()), (2, 1));
+        assert_eq!(roles[0].state.as_deref(), Some("working"));
+        let flow = build(&workers, &roles, false, false).expect("deduped ids are unique");
+        assert_eq!(flow.nodes().count(), 1 + 2 + 1);
     }
 }

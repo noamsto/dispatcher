@@ -88,7 +88,9 @@ pub fn spawn_live(views: &[&str], tx: &Sender<Msg>) -> std::io::Result<LiveSourc
     for view in views {
         let mut child = Command::new("crew")
             .args(["dash", "--json", "--view", view, "--watch"])
+            .stdin(Stdio::null())
             .stdout(Stdio::piped())
+            .stderr(Stdio::null())
             .spawn()?;
         let stdout = child.stdout.take().expect("stdout is piped");
         live.children.push(child);

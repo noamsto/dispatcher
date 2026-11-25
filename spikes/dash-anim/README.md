@@ -166,6 +166,11 @@ burst of changes finishes before the next poll. Vanish uses QuadIn so the row
 lingers briefly and then drops. The list is diffed by item id, so only changed
 rows animate; a rebuild does not replay everything.
 
+Node glow fires only while the Graph tab is shown and not under
+`--reduced-motion`; changes that arrive on the List tab are not replayed
+when switching back. An Overview document alone does not re-glow unchanged
+workers. When the feed ends, the header shows `[feed ended]`.
+
 Honest caveat: feel was judged from the timing parameters and frame
 captures, not from long interactive use. The release binary was run in a pty
 (see Idle CPU) but nobody watched the effects for an extended session.
@@ -186,6 +191,10 @@ effect is running and no edge is animating (`S` state, 0.00 %CPU over 30 s;
 the second thread is the blocked input reader). Animation costs about 0.5 to
 0.6 %CPU at the 120 ms edge tick, with a 33 ms tick only while an effect runs.
 The 20-worker case is not meaningfully dearer than the 2-worker one.
+
+The numbers above were measured before edge ticks were limited to the Graph
+tab; on the List tab the loop now parks in `recv()` regardless of working
+nodes (not re-measured).
 
 ### Binary size and build time
 
