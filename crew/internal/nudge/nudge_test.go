@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -45,8 +46,14 @@ type fakePane struct {
 	server      string
 	failWindows bool
 	failPanes   bool
-	enterFails  bool
-	keysFail    bool
+	failShow    bool
+	// failDisplay fails the per-pane `display-message -t` read.
+	failDisplay bool
+	// srv, when set, is the tmux server instead of the windows and panes rows: a
+	// test that sets an option to a forged value builds it by hand.
+	srv        *tmuxtest.Server
+	enterFails bool
+	keysFail   bool
 }
 
 func (f *fakePane) frameAt(i int) string {
@@ -73,23 +80,11 @@ func (f *fakePane) run(args []string) (string, error) {
 	}
 	f.tmux = append(f.tmux, strings.Join(args, " "))
 	switch args[0] {
-	case "list-windows":
-		if f.failWindows {
+	case "list-windows", "list-panes", "show-options", "display-message":
+		if f.failShow && args[0] == "show-options" || f.failDisplay && args[0] == "display-message" && len(args) > 2 && args[2] == "-t" {
 			return "", tmuxtest.ErrNoServer
 		}
-		// The bats stub answers per query: the arm asks for five columns including
-		// @crew_dir, the pane's own anchor gate for three. One fixture, projected.
-		if !strings.Contains(args[len(args)-1], "@crew_dir") {
-			return project(f.windows), nil
-		}
-		return f.windows, nil
-	case "list-panes":
-		if f.failPanes {
-			return "", tmuxtest.ErrNoServer
-		}
-		return f.panes, nil
-	case "display-message":
-		return f.server, nil
+		return f.model().Run(args)
 	case "send-keys":
 		enter := len(args) > 3 && args[3] == "Enter"
 		if enter && f.enterFails || !enter && f.keysFail {
@@ -97,6 +92,50 @@ func (f *fakePane) run(args []string) (string, error) {
 		}
 	}
 	return "", nil
+}
+
+// model is the tmux server the windows and panes rows describe: window rows are
+// id, branch, dir, crew id, codename; pane rows are window id, pane id, role,
+// foreground command. The rows are the test's own, so they are split, not
+// escaped; an injected value is set on a tmuxtest.Server directly.
+func (f *fakePane) model() *tmuxtest.Server {
+	if f.srv != nil {
+		return f.srv
+	}
+	srv := &tmuxtest.Server{Identity: f.server, FailWindows: f.failWindows, FailPanes: f.failPanes}
+	at := map[string]int{}
+	win := func(id string) *tmuxtest.Window {
+		i, ok := at[id]
+		if !ok {
+			i = len(srv.Windows)
+			at[id] = i
+			srv.Windows = append(srv.Windows, tmuxtest.Window{ID: id, Index: "1", Opts: map[string]string{}})
+		}
+		return &srv.Windows[i]
+	}
+	cols := func(row string, n int) []string {
+		return append(strings.Split(row, "\t"), make([]string, n)...)[:n]
+	}
+	for _, row := range strings.Split(f.windows, "\n") {
+		if row == "" {
+			continue
+		}
+		c := cols(row, 5)
+		w := win(c[0])
+		w.Opts["@crew_branch"], w.Opts["@crew_dir"], w.Opts["@crew_id"], w.Opts["@crew_name"] = c[1], c[2], c[3], c[4]
+	}
+	for _, row := range strings.Split(f.panes, "\n") {
+		if row == "" {
+			continue
+		}
+		c := cols(row, 4)
+		w := win(c[0])
+		w.Panes = append(w.Panes, tmuxtest.Pane{
+			ID: c[1], Index: strconv.Itoa(len(w.Panes) + 1), Command: c[3],
+			Opts: map[string]string{"@crew_role": c[2]},
+		})
+	}
+	return srv
 }
 
 // fakeBus is the anchor's fold input and the rows the call appended.
@@ -135,21 +174,6 @@ func newDeps(p *fakePane, b *fakeBus, getenv map[string]string) Deps {
 // feat/x window, its lead pane running claude.
 func anchored() (string, string) {
 	return "@7\tfeat/x\t/rep/crew\tc1\treef", "@7\t%9\tlead\tclaude"
-}
-
-// project drops the columns the anchor gate's shorter query does not ask for.
-func project(rows string) string {
-	if rows == "" {
-		return ""
-	}
-	var out []string
-	for _, r := range strings.Split(rows, "\n") {
-		f := strings.Split(r, "\t")
-		if len(f) >= 5 {
-			out = append(out, f[0]+"\t"+f[1]+"\t"+f[3])
-		}
-	}
-	return strings.Join(out, "\n")
 }
 
 // sessionRows is the raw bus a session's anchor check reads: a dispatch that opens
@@ -494,8 +518,12 @@ func TestPaneAcceptedClaude(t *testing.T) {
 	// The keystrokes are the whole contract: the fixed line typed literally, then
 	// one Enter, in that order, with the two anchor reads between the gates.
 	want := []string{
-		"list-windows -a -F #{window_id}\t#{@crew_branch}\t#{@crew_id}",
-		"list-panes -a -F #{window_id}\t#{pane_id}\t#{@crew_role}\t#{pane_current_command}",
+		"list-windows -a -F #{window_id}\t#{window_index}\t#{session_id}",
+		"list-panes -a -F #{window_id}\t#{pane_id}\t#{pane_index}",
+		"show-options -wqv -t @7 @crew_id",
+		"show-options -wqv -t @7 @crew_branch",
+		"show-options -pqv -t %9 @crew_role",
+		"display-message -p -t %9 #{pane_current_command}",
 		`send-keys -t %9 -l crew inbox "$CREW_WORKER_ID"`,
 		"send-keys -t %9 Enter",
 	}

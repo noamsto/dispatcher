@@ -34,8 +34,8 @@ exit 0
 `
 	tmuxStub = `#!/bin/sh
 printf '%s\n' "$*" >>"$TMUX_LOG"
-case "$1 $2" in
-"list-windows -a") [ -z "${TMUX_WINDOWS:-}" ] || printf '%s\n' "$TMUX_WINDOWS" ;;
+` + stampReadsHead + `case "$1 $2 $4" in
+` + stampReadsCases + `"list-windows -a "*) [ -z "${TMUX_WINDOWS:-}" ] || printf '%s\n' "$TMUX_WINDOWS" ;;
 esac
 exit 0
 `

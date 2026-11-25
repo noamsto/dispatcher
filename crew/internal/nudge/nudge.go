@@ -18,6 +18,8 @@ package nudge
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -29,6 +31,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/sessions"
 	"github.com/noamsto/dispatcher/crew/internal/stall/probe"
 	"github.com/noamsto/dispatcher/crew/internal/tmux"
+	"github.com/noamsto/dispatcher/crew/internal/tmuxstamp"
 )
 
 // line is `_nudge_line`, typed literally: the lead's own shell expands the variable its
@@ -440,39 +443,59 @@ func busyReason(plain, colored, why string) string {
 // nudging this directive rather than retry it.
 func anchorGate(ctx context.Context, d Deps, req PaneRequest) (string, bool) {
 	branch := strings.TrimPrefix(strings.TrimSuffix(req.Session, lastHash(req.Session)), "worker:")
-	wins, err := d.Tmux.Run(ctx, "list-windows", "-a", "-F", "#{window_id}\t#{@crew_branch}\t#{@crew_id}")
+	wins, err := tmuxstamp.Windows(ctx, d.Tmux)
 	if err != nil {
 		return "anchor: cannot read tmux windows", false
 	}
-	panes, err := d.Tmux.Run(ctx, "list-panes", "-a", "-F", "#{window_id}\t#{pane_id}\t#{@crew_role}\t#{pane_current_command}")
+	panes, err := tmuxstamp.Panes(ctx, d.Tmux)
 	if err != nil {
 		return "anchor: cannot read tmux panes", false
 	}
-	rows := tsvRows(panes)
-	prow := firstWhere(rows, func(r []string) bool { return field(r, 1) == req.Pane })
-	if prow == nil {
+	pi := slices.IndexFunc(panes, func(p tmuxstamp.Pane) bool { return p.ID == req.Pane })
+	if pi < 0 {
 		return "anchor: no pane " + req.Pane, false
 	}
-	wid, role, cmd := field(prow, 0), field(prow, 2), field(prow, 3)
-	wrow := firstWhere(tsvRows(wins), func(r []string) bool { return field(r, 0) == wid })
-	if req.Crew == "" || field(wrow, 2) != req.Crew {
+	wid := panes[pi].Window
+	// A stamp that cannot be read cleanly reads as "", which matches no crew or
+	// branch; a role that cannot is neither the lead's nor unlabelled.
+	var wcrew, wbranch string
+	if slices.ContainsFunc(wins, func(w tmuxstamp.Window) bool { return w.ID == wid }) {
+		var err1, err2 error
+		wcrew, _, err1 = tmuxstamp.WindowOption(ctx, d.Tmux, wid, "@crew_id")
+		wbranch, _, err2 = tmuxstamp.WindowOption(ctx, d.Tmux, wid, "@crew_branch")
+		if err := errors.Join(err1, err2); err != nil {
+			return "anchor: cannot read tmux window stamps", false
+		}
+	}
+	if req.Crew == "" || wcrew != req.Crew {
 		return "anchor: window " + wid + " of " + req.Pane + " is not anchored to crew " + req.Crew, false
 	}
-	if field(wrow, 1) != branch {
+	if wbranch != branch {
 		return "anchor: window " + wid + " of " + req.Pane + " is not " + branch + "'s window", false
+	}
+	role, ok, err := tmuxstamp.PaneOption(ctx, d.Tmux, req.Pane, "@crew_role")
+	if err != nil {
+		return "anchor: cannot read tmux pane stamps", false
+	}
+	if !ok {
+		role = "?"
 	}
 	if role != "lead" {
 		// A window with a single unlabelled pane is the lead's: that is what a
 		// pre-role worker window looks like.
 		n := 0
-		for _, r := range rows {
-			if field(r, 0) == wid {
+		for _, p := range panes {
+			if p.Window == wid {
 				n++
 			}
 		}
 		if role != "" || n != 1 {
 			return "anchor: " + req.Pane + " is not the lead pane of " + wid, false
 		}
+	}
+	cmd, _, err := tmuxstamp.Field(ctx, d.Tmux, req.Pane, "#{pane_current_command}")
+	if err != nil {
+		return "anchor: cannot read tmux pane command", false
 	}
 	if !roster.IsEngineCmd(cmd) {
 		who := cmd
@@ -522,14 +545,6 @@ func lastHash(sid string) string {
 		return sid[i:]
 	}
 	return ""
-}
-
-func tsvRows(out string) [][]string {
-	var rows [][]string
-	for _, l := range strings.Split(out, "\n") {
-		rows = append(rows, strings.Split(l, "\t"))
-	}
-	return rows
 }
 
 func firstWhere(rows [][]string, want func([]string) bool) []string {

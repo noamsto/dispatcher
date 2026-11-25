@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -23,19 +24,26 @@ func crewWin(dir, id, branch, crew, name, index, winName string) string {
 func TestWhereRefusesBeforeReadingTmux(t *testing.T) {
 	repo, _ := repoWithLog(t, nil, 0)
 	dir := filepath.Join(repo, ".git", "crew")
-	calls, reset := stubTmuxLogged(t,
+	calls, reset := stubCrewTmuxLogged(t,
 		crewWin(dir, "@624", "feat/1-a", "c1", "nova", "3", "win-a")+"\n",
 		"@624\t%204\tlead\t1\n")
 	t.Setenv("CREW_ID", "c1")
 	e := env{getwd: func() (string, error) { return repo, nil }, probes: noTouchProbes()}
 
-	// The stub is the tmux crew reads: a target that resolves asks it twice.
+	// The stub is the tmux crew reads: a target that resolves lists the windows and
+	// the panes, then reads each stamp of the windows one value per call.
 	var stdout, stderr bytes.Buffer
 	if code := run(context.Background(), []string{"where", "nova"}, &stdout, &stderr, e); code != 0 {
 		t.Fatalf("where nova: code %d stderr %q", code, stderr.String())
 	}
-	if got := strings.Count(calls(), "\n"); got != 2 {
-		t.Fatalf("a resolved target made %d tmux calls, want 2: %s", got, calls())
+	lines := strings.Split(strings.TrimSuffix(calls(), "\n"), "\n")
+	if len(lines) < 3 || !strings.HasPrefix(lines[0], "list-windows -a -F ") || !strings.HasPrefix(lines[1], "list-panes -a -F ") {
+		t.Fatalf("a resolved target's tmux calls = %q, want the two lists first", lines)
+	}
+	for _, l := range lines {
+		if !strings.HasPrefix(l, "list-") && !strings.HasPrefix(l, "show-options -") && !strings.HasPrefix(l, "display-message -p") {
+			t.Errorf("where made a tmux call that is not a read: %q", l)
+		}
 	}
 	reset()
 
@@ -66,7 +74,7 @@ func TestWhereRefusesBeforeReadingTmux(t *testing.T) {
 func TestWhereCrewFlagReplacesTheAmbientCrew(t *testing.T) {
 	repo, _ := repoWithLog(t, nil, 0)
 	dir := filepath.Join(repo, ".git", "crew")
-	stubTmuxLogged(t,
+	stubCrewTmuxLogged(t,
 		crewWin(dir, "@624", "feat/1-a", "c1", "nova", "3", "win-a")+"\n"+
 			crewWin(dir, "@625", "feat/2-b", "c2", "iris", "4", "win-b")+"\n",
 		"@624\t%204\tlead\t1\n@625\t%304\tlead\t1\n")
@@ -93,3 +101,44 @@ func TestWhereCrewFlagReplacesTheAmbientCrew(t *testing.T) {
 		}
 	}
 }
+
+// stubCrewTmuxLogged is stubTmuxLogged for the commands that read a window's stamps
+// one value per call: the stub answers each list and each per-target read from the
+// rows, as tmux would.
+func stubCrewTmuxLogged(t *testing.T, windows, panes string) (calls func() string, reset func()) {
+	t.Helper()
+	calls, reset = stubTmuxLogged(t, windows, panes)
+	t.Setenv("TMUX_WINDOWS", strings.TrimSuffix(windows, "\n"))
+	t.Setenv("TMUX_PANES", strings.TrimSuffix(panes, "\n"))
+	script := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$STUB_TMUX_LOG\"\n" + stampReadsHead +
+		"case \"$1 $2 $4\" in\n" + stampReadsCases + "esac\nexit 0\n"
+	if err := os.WriteFile(filepath.Join(os.Getenv("STUB_TMUX_DIR"), "tmux"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return calls, reset
+}
+
+// stampReadsHead and stampReadsCases make a tmux stub answer what crew nudge and
+// crew where read from a window's stamps: the two id-only lists and each stamp one
+// value per call, from $TMUX_WINDOWS (crewWin's rows) and $TMUX_PANES (rows of
+// window id, pane id, role, then the pane index or its foreground command).
+const (
+	stampReadsHead = `w=$(printf '#{window_id}\t#{window_index}\t#{session_id}')
+p=$(printf '#{window_id}\t#{pane_id}\t#{pane_index}')
+col() {
+  case "$1" in
+  @crew_branch) echo 2 ;; @crew_dir) echo 3 ;; @crew_id) echo 4 ;; @crew_name) echo 5 ;;
+  @bridge_crew_branch) echo 9 ;; @bridge_crew_id) echo 10 ;; '#{session_name}') echo 6 ;;
+  '#{window_name}') echo 8 ;; @crew_role) echo 3 ;; '#{pane_current_command}') echo 4 ;;
+  esac
+}
+pick() { printf '%s\n' "$1" | awk -F'\t' -v k="$2" -v t="$3" -v c="$4" '$k == t { print $c; exit }'; }
+`
+	stampReadsCases = `"list-windows -a $w") printf '%s\n' "$TMUX_WINDOWS" | awk -F'\t' 'NF { print $1 "\t" ($7 ~ /^[0-9]+$/ ? $7 : 1) "\t$0" }' ;;
+"list-panes -a $p") printf '%s\n' "$TMUX_PANES" | awk -F'\t' 'NF { print $1 "\t" $2 "\t" ($4 ~ /^[0-9]+$/ ? $4 : 1) }' ;;
+"show-options -wqv "*) pick "$TMUX_WINDOWS" 1 "$4" "$(col "$5")" ;;
+"show-options -pqv "*) pick "$TMUX_PANES" 2 "$4" "$(col "$5")" ;;
+"display-message -p "*"@"*) pick "$TMUX_WINDOWS" 1 "${4#*:}" "$(col "$5")" ;;
+"display-message -p %"*) pick "$TMUX_PANES" 2 "$4" "$(col "$5")" ;;
+`
+)

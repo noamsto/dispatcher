@@ -28,6 +28,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/remote"
 	"github.com/noamsto/dispatcher/crew/internal/resolve"
 	"github.com/noamsto/dispatcher/crew/internal/tmux"
+	"github.com/noamsto/dispatcher/crew/internal/tmuxstamp"
 )
 
 const (
@@ -44,14 +45,6 @@ const (
 	jump = "   jump: ! tmux switch-client -t "
 )
 
-// The arm's two tmux reads. A failed read is the arm's own refusal rather than
-// "the target is gone".
-var (
-	windowsArgs = []string{"list-windows", "-a", "-F",
-		"#{window_id}\t#{@crew_branch}\t#{@crew_dir}\t#{@crew_id}\t#{@crew_name}\t#{session_name}\t#{window_index}\t#{window_name}\t#{@bridge_crew_branch}\t#{@bridge_crew_id}"}
-	panesArgs = []string{"list-panes", "-a", "-F", "#{window_id}\t#{pane_id}\t#{@crew_role}\t#{pane_index}"}
-)
-
 // Options is everything Run reads beyond the bus: the crew the arm defaults to
 // (`_crew_id`), which `--crew` overrides, and tmux.
 type Options struct {
@@ -63,16 +56,10 @@ type Options struct {
 	Remote func(host, crew string, argv []string, stdout io.Writer, crewScope bool) int
 }
 
-// window is one crew-anchored window, in the six fields the arm kept from the
-// `list-windows` format: id, branch, codename, session, window index, name.
+// window is one crew-anchored window: id, branch, codename, session, window index,
+// name. The id and index come from tmux itself; the rest are read per window.
 type window struct {
 	id, branch, name, session, index, winName string
-}
-
-// pane is one line of the `list-panes` output — every pane of every window,
-// which is what the arm searched for a `%id` target: id, window, role, index.
-type pane struct {
-	id, window, role, index string
 }
 
 // say writes to a stream whose failure is reported elsewhere (the exit status,
@@ -223,24 +210,23 @@ func Run(ctx context.Context, req Request, paths bus.Paths, stdout, stderr io.Wr
 	}
 
 	// A tmux read failure is not "the target is gone".
-	winsRaw, err := o.Tmux.Run(ctx, windowsArgs...)
+	all, err := tmuxstamp.Windows(ctx, o.Tmux)
 	if err != nil {
 		return die(stderr, "cannot read tmux windows (is a tmux server running?)")
 	}
-	panesRaw, err := o.Tmux.Run(ctx, panesArgs...)
+	panes, err := tmuxstamp.Panes(ctx, o.Tmux)
 	if err != nil {
 		return die(stderr, "cannot read tmux panes (is a tmux server running?)")
 	}
-	panes := readPanes(panesRaw)
 	server := ""
 	if paths.Dir == "" {
 		if server, err = o.Tmux.Run(ctx, "display-message", "-p", "#{pid}:#{start_time}"); err != nil {
 			return die(stderr, "cannot read the tmux server identity (is a tmux server running?)")
 		}
 	}
-	wins, err := readWindows(winsRaw, paths, crew, server)
+	wins, err := readWindows(ctx, o.Tmux, all, paths, crew, server)
 	if err != nil {
-		return die(stderr, "cannot read the crew log: %v", err)
+		return die(stderr, "%v", err)
 	}
 
 	if o.Remote != nil {
@@ -257,7 +243,7 @@ func Run(ctx context.Context, req Request, paths bus.Paths, stdout, stderr io.Wr
 			}
 		}
 		if host != "" {
-			return whereRemote(host, branch, as, winsRaw, panes, paths, stdout, stderr, o)
+			return whereRemote(ctx, host, branch, as, all, panes, paths, stdout, stderr, o)
 		}
 	}
 
@@ -267,16 +253,18 @@ func Run(ctx context.Context, req Request, paths bus.Paths, stdout, stderr io.Wr
 	}
 
 	// A window addressed by branch or codename means its lead pane.
-	if hit.id == "" {
-		hit, code = leadPane(panes, win.id)
+	if hit.ID == "" {
+		var err error
+		if hit, code, err = leadPane(ctx, o.Tmux, panes, win.id); err != nil {
+			return die(stderr, "cannot read tmux pane stamps: %v", err)
+		}
 		if code != 0 {
 			return die(stderr, "no pane in the window for '%s'", target)
 		}
 	}
-	// A plain (non-grid) dispatch window stamps no @crew_role: its lone pane is lead.
-	role := hit.role
-	if role == "" {
-		role = "lead"
+	role, err := paneRole(ctx, o.Tmux, hit.ID)
+	if err != nil {
+		return die(stderr, "cannot read tmux pane stamps: %v", err)
 	}
 	// An older window stamped no @crew_name: the pool gives the codename dispatch
 	// would have stamped.
@@ -289,7 +277,7 @@ func Run(ctx context.Context, req Request, paths bus.Paths, stdout, stderr io.Wr
 	// before `jump:`, the window name raw between literal quotes (a quote is legal
 	// in a branch name, which is what the window is named from).
 	say(stdout, "%s — %s:%s.%s \"%s\" (%s pane)%s%s\n",
-		name, win.session, win.index, hit.index, win.winName, role, jump, hit.id)
+		name, win.session, win.index, hit.Index, win.winName, role, jump, hit.ID)
 	return 0
 }
 
@@ -313,8 +301,11 @@ func localMatch(wins []window, target string) string {
 // whereRemote answers for a worker dispatched on host. A mirror window on this
 // machine is the jump target, and its line is the usual one; with no mirror the
 // host is asked, and its line is passed on. Either way the line ends ` [host h]`.
-func whereRemote(host, branch, crew, winsRaw string, panes []pane, paths bus.Paths, stdout, stderr io.Writer, o Options) int {
-	mirror, ok := mirrorWindow(winsRaw, branch, crew)
+func whereRemote(ctx context.Context, host, branch, crew string, all []tmuxstamp.Window, panes []tmuxstamp.Pane, paths bus.Paths, stdout, stderr io.Writer, o Options) int {
+	mirror, ok, err := mirrorWindow(ctx, o.Tmux, all, branch, crew)
+	if err != nil {
+		return die(stderr, "cannot read tmux window stamps: %v", err)
+	}
 	if !ok {
 		var out bytes.Buffer
 		events, _ := bus.ReadEventsTolerant(paths.Log)
@@ -325,7 +316,10 @@ func whereRemote(host, branch, crew, winsRaw string, panes []pane, paths bus.Pat
 		say(stdout, "%s [host %s]\n", strings.TrimSuffix(out.String(), "\n"), host)
 		return 0
 	}
-	hit, code := leadPane(panes, mirror.id)
+	hit, code, err := leadPane(ctx, o.Tmux, panes, mirror.id)
+	if err != nil {
+		return die(stderr, "cannot read tmux pane stamps: %v", err)
+	}
 	if code != 0 {
 		return die(stderr, "no pane in the window for '%s'", branch)
 	}
@@ -340,100 +334,143 @@ func whereRemote(host, branch, crew, winsRaw string, panes []pane, paths bus.Pat
 	if name == "" {
 		name = poolName(branch)
 	}
-	role := hit.role
-	if role == "" {
-		role = "lead"
+	role, err := paneRole(ctx, o.Tmux, hit.ID)
+	if err != nil {
+		return die(stderr, "cannot read tmux pane stamps: %v", err)
 	}
 	say(stdout, "%s — %s:%s.%s \"%s\" (%s pane)%s%s [host %s]\n",
-		name, mirror.session, mirror.index, hit.index, mirror.winName, role, jump, hit.id, host)
+		name, mirror.session, mirror.index, hit.Index, mirror.winName, role, jump, hit.ID, host)
 	return 0
 }
 
 // mirrorWindow is the local window that mirrors a remote worker's: the one whose
 // @bridge_crew_branch is the branch and whose @bridge_crew_id is unset or this crew's.
-func mirrorWindow(raw, branch, crew string) (window, bool) {
-	for _, line := range strings.Split(raw, "\n") {
-		f := strings.Split(line, "\t")
-		if len(f) < 10 || f[8] != branch || (f[9] != "" && f[9] != crew) {
+func mirrorWindow(ctx context.Context, c tmux.Client, all []tmuxstamp.Window, branch, crew string) (window, bool, error) {
+	for _, w := range all {
+		b, ok, err := tmuxstamp.WindowOption(ctx, c, w.ID, "@bridge_crew_branch")
+		if err != nil {
+			return window{}, false, err
+		}
+		if !ok || b != branch {
 			continue
 		}
-		return window{id: f[0], name: f[4], session: f[5], index: f[6], winName: f[7]}, true
+		id, ok, err := tmuxstamp.WindowOption(ctx, c, w.ID, "@bridge_crew_id")
+		if err != nil {
+			return window{}, false, err
+		}
+		if !ok || id != "" && id != crew {
+			continue
+		}
+		win, ok, err := describe(ctx, c, w)
+		if err != nil {
+			return window{}, false, err
+		}
+		if ok {
+			return win, true, nil
+		}
 	}
-	return window{}, false
+	return window{}, false, nil
 }
 
-// readWindows is the arm's crew filter over `list-windows`: the ten format
-// fields, a non-empty branch, this repo's crew dir, and this crew's id when the
-// window carries one. An empty caller crew (no CREW_ID, no WORKER_TASK.md)
-// filters nothing at all. A state-only call (dir "") has no checkout, so a
-// window is this crew's only when its id says so and the crew's own dispatch,
-// resume or window row for its branch names its tmux window id, and (a row that
-// recorded one) the identity of this tmux server, which the row's id is unique
-// within: any process on the tmux server can stamp a window with a crew's id, so
-// the stamp alone binds nothing (remote.WindowBound). The identity is `server`,
-// read once from its own `display-message`, which no window option can shift.
-func readWindows(raw string, paths bus.Paths, crew string, server string) ([]window, error) {
+// describe fills a window's display fields: its codename, session and name, each its
+// own read. The session name is asked of the winlink the index came from. A window
+// whose value is unclean is not one to point at.
+func describe(ctx context.Context, c tmux.Client, w tmuxstamp.Window) (window, bool, error) {
+	name, ok1, err1 := tmuxstamp.WindowOption(ctx, c, w.ID, "@crew_name")
+	session, ok2, err2 := tmuxstamp.Field(ctx, c, w.Target(), "#{session_name}")
+	winName, ok3, err3 := tmuxstamp.Field(ctx, c, w.Target(), "#{window_name}")
+	return window{id: w.ID, name: name, session: session, index: w.Index, winName: winName},
+		ok1 && ok2 && ok3, errors.Join(err1, err2, err3)
+}
+
+// readWindows is the arm's crew filter over the server's windows: a non-empty
+// branch, this repo's crew dir, and this crew's id when the window carries one.
+// An empty caller crew (no CREW_ID, no WORKER_TASK.md) filters nothing at all. A
+// state-only call (dir "") has no checkout, so a window is this crew's only when
+// its id says so and the crew's own dispatch, resume or window row for its branch
+// names its tmux window id, and (a row that recorded one) the identity of this tmux
+// server, which the row's id is unique within: any process on the tmux server can
+// stamp a window with a crew's id, so the stamp alone binds nothing
+// (remote.WindowBound). The identity is `server`, read once from its own
+// `display-message`, which no window option can shift.
+func readWindows(ctx context.Context, c tmux.Client, all []tmuxstamp.Window, paths bus.Paths, crew string, server string) ([]window, error) {
 	dir := paths.Dir
 	var events []bus.Event
 	if dir == "" && crew != "" {
 		var err error
 		if events, err = remote.BoundRows(paths.Log); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("cannot read the crew log: %w", err)
 		}
 	}
 	var wins []window
-	for _, line := range strings.Split(raw, "\n") {
-		f := strings.Split(line, "\t")
-		if len(f) < 8 || f[1] == "" {
-			continue
+	for _, w := range all {
+		var v [3]string
+		skip := false
+		for i, name := range []string{"@crew_branch", "@crew_id", "@crew_dir"} {
+			val, ok, err := tmuxstamp.WindowOption(ctx, c, w.ID, name)
+			if err != nil {
+				return nil, fmt.Errorf("cannot read tmux window stamps: %w", err)
+			}
+			v[i] = val
+			if !ok || i == 0 && val == "" || i == 1 && crew != "" && val != "" && val != crew {
+				skip = true
+				break
+			}
 		}
-		if dir == "" {
-			if crew == "" || f[3] != crew || !remote.WindowBound(events, f[1], crew, f[0], f[2], server) {
+		branch, id, wdir := v[0], v[1], v[2]
+		switch {
+		case skip:
+			continue
+		case dir == "":
+			if crew == "" || id != crew || !remote.WindowBound(events, branch, crew, w.ID, wdir, server) {
 				continue
 			}
-		} else if f[2] != dir {
+		case wdir != dir:
 			continue
 		}
-		if crew != "" && f[3] != "" && f[3] != crew {
-			continue
+		win, ok, err := describe(ctx, c, w)
+		if err != nil {
+			return nil, fmt.Errorf("cannot read tmux window stamps: %w", err)
 		}
-		wins = append(wins, window{
-			id: f[0], branch: f[1], name: f[4], session: f[5], index: f[6], winName: f[7],
-		})
+		if ok {
+			win.branch = branch
+			wins = append(wins, win)
+		}
 	}
 	return wins, nil
 }
 
-// readPanes is the raw `list-panes` list: the arm searched every pane, not just
-// this crew's, so another crew's `%id` reaches the "not a pane of this crew"
-// refusal rather than "no pane".
-func readPanes(raw string) []pane {
-	var panes []pane
-	for _, line := range strings.Split(raw, "\n") {
-		f := strings.Split(line, "\t")
-		if len(f) < 4 {
-			continue
-		}
-		panes = append(panes, pane{id: f[1], window: f[0], role: f[2], index: f[3]})
+// paneRole is what a pane's label prints: its @crew_role, "lead" for a plain
+// (non-grid) dispatch window's lone pane, which stamps none, and "unknown" for a
+// value that cannot be read cleanly.
+func paneRole(ctx context.Context, c tmux.Client, id string) (string, error) {
+	role, ok, err := tmuxstamp.PaneOption(ctx, c, id, "@crew_role")
+	switch {
+	case err != nil:
+		return "", err
+	case !ok:
+		return "unknown", nil
+	case role == "":
+		return "lead", nil
 	}
-	return panes
+	return role, nil
 }
 
 // resolveTarget is the arm's resolution: a `%pane` id keeps that exact pane,
 // else the branch, else the codename, else whatever the bus says about it. The
 // zero pane means "this window's lead pane".
-func resolveTarget(wins []window, panes []pane, target, crew string, paths bus.Paths, stderr io.Writer) (window, pane, int) {
+func resolveTarget(wins []window, panes []tmuxstamp.Pane, target, crew string, paths bus.Paths, stderr io.Writer) (window, tmuxstamp.Pane, int) {
 	if isPaneID(target) {
-		hit, ok := findPane(panes, func(p pane) bool { return p.id == target })
+		hit, ok := findPane(panes, func(p tmuxstamp.Pane) bool { return p.ID == target })
 		if !ok {
-			return window{}, pane{}, die(stderr, "no pane %s", target)
+			return window{}, tmuxstamp.Pane{}, die(stderr, "no pane %s", target)
 		}
 		for _, w := range wins {
-			if w.id == hit.window {
+			if w.id == hit.Window {
 				return w, hit, 0
 			}
 		}
-		return window{}, pane{}, die(stderr, "pane %s is not a pane of this crew", target)
+		return window{}, tmuxstamp.Pane{}, die(stderr, "pane %s is not a pane of this crew", target)
 	}
 
 	var byBranch []window
@@ -445,10 +482,10 @@ func resolveTarget(wins []window, panes []pane, target, crew string, paths bus.P
 	// A state-only call picks windows by stamp and dispatch row alone, so two for
 	// one branch (a copied stamp, a stale window) is refused rather than guessed.
 	if len(byBranch) > 1 && paths.Dir == "" {
-		return window{}, pane{}, die(stderr, "ambiguous branch '%s' — %d windows carry it", target, len(byBranch))
+		return window{}, tmuxstamp.Pane{}, die(stderr, "ambiguous branch '%s' — %d windows carry it", target, len(byBranch))
 	}
 	if len(byBranch) > 0 {
-		return byBranch[0], pane{}, 0
+		return byBranch[0], tmuxstamp.Pane{}, 0
 	}
 
 	var matches []window
@@ -458,11 +495,11 @@ func resolveTarget(wins []window, panes []pane, target, crew string, paths bus.P
 		}
 	}
 	if len(matches) > 1 {
-		return window{}, pane{}, die(stderr, "ambiguous codename '%s' — matches %s; pass a branch or %%pane",
+		return window{}, tmuxstamp.Pane{}, die(stderr, "ambiguous codename '%s' — matches %s; pass a branch or %%pane",
 			target, joinBranches(matches, ","))
 	}
 	if len(matches) == 1 {
-		return matches[0], pane{}, 0
+		return matches[0], tmuxstamp.Pane{}, 0
 	}
 
 	// No window carries it: the bus knows the target, or nothing does. The arm
@@ -474,25 +511,36 @@ func resolveTarget(wins []window, panes []pane, target, crew string, paths bus.P
 	dbr := strings.Join(branches, ",")
 	switch {
 	case strings.Contains(dbr, ","):
-		return window{}, pane{}, die(stderr, "ambiguous target '%s' — matches %s; pass a branch or %%pane", target, dbr)
+		return window{}, tmuxstamp.Pane{}, die(stderr, "ambiguous target '%s' — matches %s; pass a branch or %%pane", target, dbr)
 	case dbr != "":
-		return window{}, pane{}, die(stderr, "no live pane for '%s' (branch %s) — its window is gone", target, dbr)
+		return window{}, tmuxstamp.Pane{}, die(stderr, "no live pane for '%s' (branch %s) — its window is gone", target, dbr)
 	}
-	return window{}, pane{}, die(stderr, "no worker matches '%s'", target)
+	return window{}, tmuxstamp.Pane{}, die(stderr, "no worker matches '%s'", target)
 }
 
-// leadPane is the arm's two awk passes over the window's panes: the pane the
-// grid stamped lead, else the window's first pane. ok is false for a window with
-// no pane at all, which the arm refused.
-func leadPane(panes []pane, winID string) (pane, int) {
-	if hit, ok := findPane(panes, func(p pane) bool { return p.window == winID && p.role == "lead" }); ok {
-		return hit, 0
+// leadPane is the pane the grid stamped lead, else the window's first pane. The
+// exit status is non-zero for a window with no pane at all.
+func leadPane(ctx context.Context, c tmux.Client, panes []tmuxstamp.Pane, winID string) (tmuxstamp.Pane, int, error) {
+	var first tmuxstamp.Pane
+	for _, p := range panes {
+		if p.Window != winID {
+			continue
+		}
+		if first.ID == "" {
+			first = p
+		}
+		role, _, err := tmuxstamp.PaneOption(ctx, c, p.ID, "@crew_role")
+		if err != nil {
+			return tmuxstamp.Pane{}, exitFailure, err
+		}
+		if role == "lead" {
+			return p, 0, nil
+		}
 	}
-	hit, ok := findPane(panes, func(p pane) bool { return p.window == winID })
-	if !ok {
-		return pane{}, exitFailure
+	if first.ID == "" {
+		return tmuxstamp.Pane{}, exitFailure, nil
 	}
-	return hit, 0
+	return first, 0, nil
 }
 
 // isPaneID is the arm's `'%'[0-9]*` case: a `%` and then a digit, so `%lead` or
@@ -501,15 +549,14 @@ func isPaneID(target string) bool {
 	return len(target) >= 2 && target[0] == '%' && target[1] >= '0' && target[1] <= '9'
 }
 
-// findPane is the arm's `awk … { print $2; exit }`: the first pane matching, and
-// whether there was one at all.
-func findPane(panes []pane, match func(pane) bool) (pane, bool) {
+// findPane is the first pane matching, and whether there was one at all.
+func findPane(panes []tmuxstamp.Pane, match func(tmuxstamp.Pane) bool) (tmuxstamp.Pane, bool) {
 	for _, p := range panes {
 		if match(p) {
 			return p, true
 		}
 	}
-	return pane{}, false
+	return tmuxstamp.Pane{}, false
 }
 
 func joinBranches(wins []window, sep string) string {
