@@ -1306,7 +1306,7 @@ ROWS
   user_settings '{"classes":{"pi":{"standard":[{"glob":"anthropic/claude-haiku-*","requires":"credits"}]}}}'
   run --separate-stderr "$CONFIG"
   [ "$status" -eq 1 ]
-  [[ "$stderr" == *'{glob, requires: "pi_month_target" or "anthropic_credits"}'* ]]
+  [[ "$stderr" == *'{glob, requires: "pi_month_target", "anthropic_credits" or "gemini_budget"}'* ]]
 }
 
 @test "taskProfiles: a user override wins per field and keeps the shipped profile's other fields; a new profile is added" {
@@ -1495,4 +1495,20 @@ ROWS
   run --separate-stderr "$CONFIG" unset disabledEngines.claude
   [ "$status" -eq 0 ]
   [[ "$stderr" == *"is not set"* ]]
+}
+
+@test "gemini.monthlyUsd accepts number/string and DISPATCH_GEMINI_MONTHLY_USD overrides it" {
+  user_settings '{"gemini":{"monthlyUsd":25}}'
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 0 ]
+  jq -e '.gemini.monthlyUsd == 25' <<<"$output"
+
+  DISPATCH_GEMINI_MONTHLY_USD=40 run --separate-stderr "$CONFIG"
+  [ "$status" -eq 0 ]
+  jq -e '.gemini.monthlyUsd == "40"' <<<"$output"
+
+  user_settings '{"gemini":"bad"}'
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"gemini must be an object"* ]]
 }

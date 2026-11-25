@@ -82,6 +82,7 @@ var quickKnobs = []knob{
 	{path: kpath("overseer", "autoStart"), kind: knobBool},
 	{path: kpath("overseer", "acceptTrust"), kind: knobBool},
 	{path: kpath("openrouter", "monthlyUsd"), kind: knobNumber, min: 0},
+	{path: kpath("gemini", "monthlyUsd"), kind: knobNumber, min: 0},
 	{path: kpath("orchestratorDefaults", "*", "model"), kind: knobString},
 	{path: kpath("orchestratorDefaults", "*", "effort"), kind: knobEnum, choices: efforts},
 }
