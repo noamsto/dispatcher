@@ -55,6 +55,34 @@
       "timeout_ms": 4000
     },
     {
+      "id": "dispatcher-pi-session-start",
+      "exec": "adapters/core/dispatcher-hook.sh",
+      "events": ["session_start"],
+      "engines": ["pi"],
+      "timeout_ms": 4000
+    },
+    {
+      "id": "dispatcher-pi-input",
+      "exec": "adapters/core/dispatcher-hook.sh",
+      "events": ["prompt_submit"],
+      "engines": ["pi"],
+      "lane": "fire_and_forget"
+    },
+    {
+      "id": "dispatcher-pi-compact",
+      "exec": "adapters/core/dispatcher-hook.sh",
+      "events": ["pre_compact"],
+      "engines": ["pi"],
+      "lane": "fire_and_forget"
+    },
+    {
+      "id": "dispatcher-pi-relay",
+      "exec": "adapters/core/dispatcher-hook.sh",
+      "events": ["post_tool"],
+      "engines": ["pi"],
+      "timeout_ms": 4000
+    },
+    {
       "id": "directive-delivery",
       "exec": "adapters/core/directive-delivery.sh",
       "events": ["post_tool"],

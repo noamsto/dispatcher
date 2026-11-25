@@ -294,7 +294,7 @@ Two reads remain for detail:
 On claude and pi (`dispatcher --fresh` refuses codex and cursor), swap yourself for a new dispatcher session instead of carrying a context that only grows: the bus holds the crew's state, so a fresh session loses little.
 
 <!-- only:claude,pi -->
-**When.** Only at a quiet point: no batch half-handled, no dispatch half-done, the human not awaiting your answer. Either (a) a batch boundary: a batch left the roster DRAINED, retro synthesis is done, and this session has handled a batch; or (b) context pressure: you auto-compacted or the engine warns of it (on claude, the `PreCompact` reminder is that warning), with live workers or not.
+**When.** Only at a quiet point: no batch half-handled, no dispatch half-done, the human not awaiting your answer. Either (a) a batch boundary: a batch left the roster DRAINED, retro synthesis is done, and this session has handled a batch; or (b) context pressure: you auto-compacted or the engine warns of it (on claude, the `PreCompact` reminder is that warning; on pi, hookyard relays the same reminder as a `[hookyard advisory]` on the first tool result after compaction starts), with live workers or not.
 
 **The note** carries only what the bus does not hold, under these headings:
 - Standing instructions: the human's words, quoted where the wording matters, with when they said it.

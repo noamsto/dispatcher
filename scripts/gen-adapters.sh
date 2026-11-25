@@ -165,6 +165,12 @@ for d in "$root/adapters/claude-code/plugin" "$root/adapters/codex/plugin"; do
   cp -r "$reviewers" "$d/reviewers"
 done
 
+# The dispatcher-session hooks and their shared gate ship to the claude plugin only
+# (crew-bus-monitor.sh sources the gate from its own dir); pi runs them from core.
+cp "$root/adapters/core/dispatcher-session.sh" "$root/adapters/claude-code/plugin/scripts/dispatcher-session.sh"
+cp "$root/adapters/core/dispatcher-hook.sh" "$root/adapters/claude-code/plugin/scripts/dispatcher-hook.sh"
+chmod +x "$root/adapters/claude-code/plugin/scripts/dispatcher-hook.sh"
+
 # The claude plugin's local fallback is claude-only; codex keeps the core copy.
 for stem in "${worker_stems[@]}"; do
   cp "$protocols/$stem.claude.md" "$root/adapters/claude-code/plugin/protocols/$stem.md"

@@ -1,5 +1,5 @@
-# Hand-kept (not generated from adapters/core): shared gate for the dispatcher-session
-# monitor and hooks. Source it; it defines functions only.
+# Shared gate for the dispatcher-session monitor and hooks (claude plugin and pi
+# hookyard). Source it; it defines functions only.
 # shellcheck shell=bash
 
 # dispatcher_crew_id — print $CREW_ID and return 0 only inside a dispatcher launched
