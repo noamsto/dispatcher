@@ -1,0 +1,19 @@
+[package]
+name = "dash-anim"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+clap = { version = "4.6.10", features = ["derive"] }
+crossterm = "0.29.0"
+rataflow = "0.1.0"
+ratatui = "0.30.2"
+serde_json = "1.0.154"
+tachyonfx = "0.25.2"
+
+[profile.release]
+lto = true
+opt-level = "z"
+strip = true
+codegen-units = 1
