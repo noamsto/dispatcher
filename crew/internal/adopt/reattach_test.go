@@ -232,36 +232,6 @@ func TestReattachWrites(t *testing.T) {
 	}
 }
 
-func TestReattachRewritesEngineFile(t *testing.T) {
-	cases := []struct {
-		name string
-		env  string // CREW_ENGINE; "" = unset
-		want string // "" = no file
-	}{
-		{"unset removes the stale file", "", ""},
-		{"set replaces the stale file", "cursor", "cursor\n"},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			p := testPaths(t)
-			registerCrew(t, p, "c-re", "4321")
-			if err := os.WriteFile(enginePath(p, "c-re"), []byte("pi\n"), 0o644); err != nil {
-				t.Fatal(err)
-			}
-			s := reattachWorld()
-			if tc.env != "" {
-				s.env["CREW_ENGINE"] = tc.env
-			}
-			if got := run(t, s, p, reattachReq("c-re")); got.code != 0 {
-				t.Fatalf("code = %d, stderr = %q", got.code, got.stderr)
-			}
-			if got, _ := fileText(t, enginePath(p, "c-re")); got != tc.want {
-				t.Errorf("engine file = %q, want %q", got, tc.want)
-			}
-		})
-	}
-}
-
 func gitRepo(t *testing.T) bus.Paths {
 	t.Helper()
 	dir := t.TempDir()

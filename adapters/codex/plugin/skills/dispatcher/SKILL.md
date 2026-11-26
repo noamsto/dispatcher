@@ -21,7 +21,7 @@ crew crews
   the mint below.
 - Otherwise — no crews, or none of them is yours — mint fresh and register:
   ```
-  export CREW_ID=$(crew new); CREW_ENGINE=codex crew register; echo "crew id: $CREW_ID"
+  export CREW_ID=$(crew new); crew register; echo "crew id: $CREW_ID"
   ```
 
 Registration is **non-exclusive** — several crews can share a repo. `crew register`
