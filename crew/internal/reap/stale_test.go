@@ -444,3 +444,29 @@ func TestStaleTipPast(t *testing.T) {
 		t.Fatalf("young went stale: %v", y.appended)
 	}
 }
+
+// A detached worktree elsewhere in the repo must not pin a ghost whose PR has
+// landed; an open or unknown PR still keeps it.
+func TestGhostDetachedWorktreePRSettled(t *testing.T) {
+	list := "pr list --head " + rb + " --state all --json url,state,headRefOid,isCrossRepository"
+	for _, tc := range []struct {
+		name, list, view string
+		retired          bool
+	}{
+		{"merged", `[{"url":"` + prURL + `","state":"MERGED","headRefOid":"abc","isCrossRepository":false}]`, "MERGED", true},
+		{"closed", `[{"url":"` + prURL + `","state":"CLOSED","headRefOid":"abc","isCrossRepository":false}]`, "CLOSED", true},
+		{"open", `[{"url":"` + prURL + `","state":"OPEN","headRefOid":"abc","isCrossRepository":false}]`, "OPEN", false},
+		{"none", "[]", "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := ghostFx(t)
+			runGit(t, f.main, "worktree", "add", "-q", "--detach", filepath.Join(f.root, "det"))
+			f.gh[list] = tc.list
+			f.gh["pr view "+prURL+" --json state --jq .state"] = tc.view
+			f.reap(f.main, Request{})
+			if got := len(f.reapedRows()) == 1; got != tc.retired {
+				t.Fatalf("retired=%v want %v: %v\n%s", got, tc.retired, f.appended, f.stdout.String())
+			}
+		})
+	}
+}
