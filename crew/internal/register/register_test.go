@@ -193,20 +193,21 @@ func TestRegisterOK(t *testing.T) {
 	}
 }
 
-// The pid a crew records claims no exclusivity over it: the same pid may run
-// two dispatchers, one per crew, and each crew directory stands on its own.
 // CREW_ENGINE records the dispatcher's engine beside the pid so the dash can
 // tell a parked pi/codex/cursor dispatcher from a dead lane (#1827). Written
-// verbatim like the pid, and only when the env is set.
+// verbatim like the pid, and only when the env is set; an unset env clears a
+// prior registrant's file.
 func TestRegisterEngineFile(t *testing.T) {
 	cases := []struct {
 		name string
 		env  string // CREW_ENGINE value; "" = unset
+		seed string // pre-existing engine file content; "" = none
 		want string // "" = no file
 	}{
-		{"recorded", "pi", "pi\n"},
-		{"verbatim", "pi --beta", "pi --beta\n"},
-		{"unset", "", ""},
+		{"recorded", "pi", "", "pi\n"},
+		{"verbatim", "pi --beta", "", "pi --beta\n"},
+		{"unset", "", "", ""},
+		{"unset clears a prior engine file", "", "pi\n", ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -215,13 +216,21 @@ func TestRegisterEngineFile(t *testing.T) {
 			if tc.env != "" {
 				w.env["CREW_ENGINE"] = tc.env
 			}
+			enginePath := p.CrewDir("c1") + "/engine"
+			if tc.seed != "" {
+				if err := os.MkdirAll(p.CrewDir("c1"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(enginePath, []byte(tc.seed), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
 			if code, stderr := run("register", "888", p, w); code != 0 || stderr != "" {
 				t.Fatalf("code=%d stderr=%q", code, stderr)
 			}
-			enginePath := p.CrewDir("c1") + "/engine"
 			if tc.want == "" {
 				if _, err := os.Stat(enginePath); err == nil {
-					t.Error("engine file written without CREW_ENGINE")
+					t.Error("engine file present without CREW_ENGINE")
 				}
 				return
 			}
@@ -232,6 +241,8 @@ func TestRegisterEngineFile(t *testing.T) {
 	}
 }
 
+// The pid a crew records claims no exclusivity over it: the same pid may run
+// two dispatchers, one per crew, and each crew directory stands on its own.
 func TestRegisterNonExclusiveAcrossCrews(t *testing.T) {
 	p := testPaths(t)
 	for _, crew := range []string{"c1", "c2"} {

@@ -2,7 +2,9 @@ package adopt
 
 import (
 	"context"
+	"errors"
 	"io"
+	"io/fs"
 	"os"
 	"strconv"
 	"strings"
@@ -105,6 +107,16 @@ func reattach(ctx context.Context, req Request, paths bus.Paths, stderr io.Write
 		return exitFailure
 	}
 	if err := os.WriteFile(cdir+"/pane", []byte(pane+"\n"), 0o644); err != nil {
+		say(stderr, "crew: adopt: %v\n", err)
+		return exitFailure
+	}
+	enginefile := cdir + "/engine"
+	if eng := o.Getenv("CREW_ENGINE"); eng != "" {
+		if err := os.WriteFile(enginefile, []byte(eng+"\n"), 0o644); err != nil {
+			say(stderr, "crew: adopt: %v\n", err)
+			return exitFailure
+		}
+	} else if err := os.Remove(enginefile); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		say(stderr, "crew: adopt: %v\n", err)
 		return exitFailure
 	}

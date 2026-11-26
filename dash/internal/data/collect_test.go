@@ -553,22 +553,31 @@ func TestCollectRosterLaneParked(t *testing.T) {
 		name      string
 		state     string // stream --status state; "" = unparseable probe
 		engine    string // engine file content; "" = no engine file
+		layout1   bool   // engine file under <events dir>/crews/c1, `crew where` unstubbed
 		wantState string
 		wantErr   bool
 	}{
-		{"pi dead parks", "dead", "pi", "parked", false},
-		{"codex dead parks", "dead", "codex", "parked", false},
-		{"cursor dead parks", "dead", "cursor", "parked", false},
-		{"claude dead stays dead", "dead", "claude", "dead", false},
-		{"no engine file stays dead", "dead", "", "dead", false},
-		{"engine value trimmed", "dead", "  pi \n", "parked", false},
-		{"pi alive stays alive", "alive", "pi", "alive", false},
-		{"pi stale stays stale", "stale", "pi", "stale", false},
-		{"unknown stays unknown", "", "pi", "unknown", true},
+		{"pi dead parks", "dead", "pi", false, "parked", false},
+		{"codex dead parks", "dead", "codex", false, "parked", false},
+		{"cursor dead parks", "dead", "cursor", false, "parked", false},
+		{"claude dead stays dead", "dead", "claude", false, "dead", false},
+		{"no engine file stays dead", "dead", "", false, "dead", false},
+		{"engine value trimmed", "dead", "  pi \n", false, "parked", false},
+		{"pi alive stays alive", "alive", "pi", false, "alive", false},
+		{"pi stale stays stale", "stale", "pi", false, "stale", false},
+		{"unknown stays unknown", "", "pi", false, "unknown", true},
+		{"layout-1 crews dir parks without crew where", "dead", "pi", true, "parked", false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			dir := t.TempDir()
+			root := t.TempDir()
+			dir := root
+			if tc.layout1 {
+				dir = filepath.Join(root, "crew", "crews", "c1")
+				if err := os.MkdirAll(dir, 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
 			if tc.engine != "" {
 				if err := os.WriteFile(filepath.Join(dir, "engine"), []byte(tc.engine), 0o644); err != nil {
 					t.Fatal(err)
@@ -580,7 +589,11 @@ func TestCollectRosterLaneParked(t *testing.T) {
 			}
 			r.Responses["crew roster c1 --peers"] = FakeResponse{Stdout: []byte("[]")}
 			r.Responses["crew hold list --crew c1 --json"] = FakeResponse{Stdout: []byte("[]")}
-			r.Responses["crew where --dir --crew c1"] = FakeResponse{Stdout: []byte(dir + "\n")}
+			if tc.layout1 {
+				r.Responses["git rev-parse --path-format=absolute --git-common-dir"] = FakeResponse{Stdout: []byte(root + "\n")}
+			} else {
+				r.Responses["crew where --dir --crew c1"] = FakeResponse{Stdout: []byte(dir + "\n")}
+			}
 			switch tc.state {
 			case "dead":
 				r.Responses["crew stream --crew c1 --status"] = FakeResponse{
