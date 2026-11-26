@@ -504,8 +504,9 @@ lists it and it matches a pattern of a class the row admits
 `refresh-budget`). A pattern with `requires: "anthropic_credits"` (pi's direct
 `anthropic/claude-opus-*` premium and `anthropic/claude-sonnet-*` standard)
 needs pi's Anthropic credit instead: `engines.pi.anthropic` (`refresh-budget`'s
-estimate from pi's session spend since `anthropicCredits.as_of`, same 2h and
-future-dated guards, and its `balance_usd`, `starts_at` and `resets_at` must
+estimate of spend since `anthropicCredits.as_of`, from the org-wide cost
+report with `anthropic.adminKeyFile`, else from pi's session records, same 2h
+and future-dated guards, and its `balance_usd`, `starts_at` and `resets_at` must
 match the current `anthropicCredits` grant) with `remaining_usd` above 0 and
 `resets_at` in the future; the refusal names why (no fresh cache, no grant
 recorded, a grant mismatch, spent, expired). The remote side of a `--host`

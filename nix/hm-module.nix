@@ -20,6 +20,9 @@ self: {
     inherit (cfg.openrouter) keyFile;
     monthlyUsd = cfg.openrouter.monthlyTarget;
   };
+  anthropicLocked = lib.filterAttrs (_: v: v != null) {
+    inherit (cfg.anthropic) adminKeyFile;
+  };
   overseerLocked = lib.filterAttrs (_: v: v != null) {
     inherit (cfg.overseer) autoRelaunch autoStart acceptTrust digestEvery root;
   };
@@ -36,6 +39,7 @@ self: {
     // lib.optionalAttrs (cfg.repoTrackers != null) {inherit (cfg) repoTrackers;}
     // lib.optionalAttrs (cfg.orgTrackers != null) {inherit (cfg) orgTrackers;}
     // lib.optionalAttrs (openrouterLocked != {}) {openrouter = openrouterLocked;}
+    // lib.optionalAttrs (anthropicLocked != {}) {anthropic = anthropicLocked;}
     // lib.optionalAttrs (cleanupLocked != {}) {cleanup = cleanupLocked;}
     // lib.optionalAttrs (overseerLocked != {}) {overseer = overseerLocked;}
     // lib.optionalAttrs (cfg.anthropicCredits != null) {
@@ -544,6 +548,22 @@ in {
           `pi auth print-api-key --provider openrouter`, pi 0.83+,
           timeout-bounded). A set keyFile is exclusive:
           pi's login is never consulted.
+        '';
+      };
+    };
+
+    anthropic = {
+      adminKeyFile = lib.mkOption {
+        type = lib.types.nullOr (lib.types.strMatching "/.*");
+        default = null;
+        example = "/run/agenix/anthropic-admin";
+        description = ''
+          Absolute path to a file whose first line is an Anthropic Admin API
+          key (e.g. an agenix/sops secret path). A string, never
+          `types.path` -- a path would copy the secret into the Nix store.
+          Set, it lands as `anthropic.adminKeyFile` in the locked settings
+          layer (the user settings file cannot set this key). Unset, the key
+          is left out.
         '';
       };
     };
