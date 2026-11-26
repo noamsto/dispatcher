@@ -103,13 +103,14 @@ func run() int {
 			Crew:            cfg.Crew,
 			InTmux:          os.Getenv("TMUX") != "",
 			EventsPath:      eventsPath,
+			BusWatchPaths:   bus.watch,
 			EventsPathErr:   eventsErr,
 			Repo:            bus.repo,
 			Now:             cfg.Now,
 			Narrow:          o.narrow,
 			Map:             mapDeps,
 			DispatchConfig:  cfg.DispatchConfigBin,
-			FleetWatchPaths: func() []string { return watchPaths(fleet.knownCommons()) },
+			FleetWatchPaths: func() []string { return fleetWatchPaths(fleet.knownCommons()) },
 		}
 		if err := ui.Run(deps); err != nil {
 			fmt.Fprintln(os.Stderr, "crew dash: "+err.Error())
@@ -195,7 +196,7 @@ func runView(ctx context.Context, cfg data.Config, o opts) int {
 	if o.view == "fleet" {
 		fc := newFleetCollector(runner, cfg)
 		fc.background = o.watch
-		watch = func() []string { return watchPaths(fc.knownCommons()) }
+		watch = func() []string { return fleetWatchPaths(fc.knownCommons()) }
 		collect = func(ctx context.Context) (any, error) {
 			if o.keeps {
 				fc.blockReapKeeps(ctx)
@@ -283,7 +284,9 @@ type busInfo struct {
 // resolveBus asks `crew where` for the bus of cfg.CrewID. A layout-2 crew
 // reads its log under crew state and a refused crew (exit 3) is an error;
 // every other outcome (no crew, layout 1, a resolver failure or empty answer)
-// keeps the repo's git-common-dir bus.
+// keeps the repo's git-common-dir bus. That fallback also polls every
+// layout-2 crew's log on the machine, so an overview re-collects on any
+// crew's dispatch; a layout-2 log carries no repo to filter on.
 func resolveBus(ctx context.Context, r data.Runner, cfg data.Config) busInfo {
 	if cfg.CrewID != "" {
 		b, err := data.ResolveCrewBus(ctx, r, cfg, cfg.CrewID)
@@ -311,7 +314,7 @@ func resolveBus(ctx context.Context, r data.Runner, cfg data.Config) busInfo {
 	return busInfo{
 		eventsPath: eventsPath,
 		repo:       ui.RepoOfEvents(eventsPath),
-		watch:      func() []string { return watchPaths([]string{common}) },
+		watch:      func() []string { return fleetWatchPaths([]string{common}) },
 	}
 }
 
@@ -332,6 +335,30 @@ func watchPaths(commons []string) []string {
 		)
 	}
 	return paths
+}
+
+// layout2WatchPaths lists the crew-state change sources of layout-2 crews,
+// whose bus lives outside every repo common: a dispatch appends to
+// <state>/crew/crews/<id>/events.jsonl, which watchPaths never sees.
+func layout2WatchPaths() []string {
+	state := os.Getenv("XDG_STATE_HOME")
+	if !filepath.IsAbs(state) {
+		home := os.Getenv("HOME")
+		if home == "" {
+			return nil
+		}
+		state = filepath.Join(home, ".local", "state")
+	}
+	crews := filepath.Join(state, "crew", "crews", "*")
+	return []string{
+		filepath.Join(crews, "events.jsonl"),
+		filepath.Join(crews, "relay", "*.cursor"),
+	}
+}
+
+// fleetWatchPaths is watchPaths plus the layout-2 crew state.
+func fleetWatchPaths(commons []string) []string {
+	return append(watchPaths(commons), layout2WatchPaths()...)
 }
 
 // fleetCollector gathers the fleet view's inputs. One instance serves every

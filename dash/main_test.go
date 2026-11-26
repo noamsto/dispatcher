@@ -1095,7 +1095,7 @@ func TestResolveBus(t *testing.T) {
 	if b.err != nil || b.eventsPath != "/h/proj/.git/crew/events.jsonl" || b.repo != "proj" {
 		t.Fatalf("layout 1 = %+v", b)
 	}
-	if got, want := b.watch(), watchPaths([]string{"/h/proj/.git"}); !slices.Equal(got, want) {
+	if got, want := b.watch(), fleetWatchPaths([]string{"/h/proj/.git"}); !slices.Equal(got, want) {
 		t.Errorf("watch = %v, want %v", got, want)
 	}
 }
