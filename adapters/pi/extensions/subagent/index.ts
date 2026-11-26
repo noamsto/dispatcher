@@ -41,6 +41,7 @@ import {
 import { Container, Markdown, Spacer, Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { type AgentConfig, type AgentScope, discoverAgents } from "./agents.ts";
+import { laneModel } from "./lane.ts";
 // dispatcher patch: crew-bus spawn/finish records live in a pi-free module so node:test can run them.
 import { finishBody, finishOutcome, nextRunId, postSubagent, spawnBody, splitModel, subagentLabel } from "./crewbus.ts";
 // dispatcher patch: the child's kill escalation and signal-exit classification live in
@@ -312,7 +313,10 @@ async function runSingleAgent(
 	// dispatcher patch: like every dispatcher pi launch, ignore project-local .pi files
 	const args: string[] = ["--mode", "json", "-p", "--no-session", "--no-approve"];
 	const inheritsDispatchConfig = !agent.model;
-	const model = agent.model ?? dispatchDefaults.model;
+	const laneEnv = process.env;
+	const model =
+		laneModel(agent.model, laneEnv.DISPATCHER_PI_SUBAGENT_MODEL, laneEnv.DISPATCHER_PI_SUBAGENT_LEVELS !== "0") ??
+		dispatchDefaults.model;
 	if (model) args.push("--model", model);
 	if (inheritsDispatchConfig && dispatchDefaults.thinkingLevel) {
 		args.push("--thinking", dispatchDefaults.thinkingLevel);

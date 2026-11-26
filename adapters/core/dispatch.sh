@@ -6131,7 +6131,7 @@ elif [ "$agent" = pi ]; then
   else
     lead_prompt_arg=" $quoted_prompt"
   fi
-  launch_cmd="${git_env}$(worker_browser_env "$branch" "$wt_path" "$agent_browser_worker_config")${tmux_env}PI_CODING_AGENT_DIR=$quoted_dir ${fresh_prefix}pi --name $q_agent_name --model $model --thinking $(_local_thinking "$settings" "$model" "$effort")$lead_sid_args --append-system-prompt $PROTOCOL_DIR/WORKER_PROTOCOL.pi.md --no-approve -e $q_pi_ext$(pi_skill_args "$wt_path")$mcp_args$lead_prompt_arg"
+  launch_cmd="${git_env}$(worker_browser_env "$branch" "$wt_path" "$agent_browser_worker_config")${tmux_env}PI_CODING_AGENT_DIR=$quoted_dir $(_pi_subagent_lane_env "$settings" "$model")${fresh_prefix}pi --name $q_agent_name --model $model --thinking $(_local_thinking "$settings" "$model" "$effort")$lead_sid_args --append-system-prompt $PROTOCOL_DIR/WORKER_PROTOCOL.pi.md --no-approve -e $q_pi_ext$(pi_skill_args "$wt_path")$mcp_args$lead_prompt_arg"
 else
   prompt="Read WORKER_TASK.md and run it end-to-end.${first_action_note}${push_mandate}${plan_note}${resume_note}${grid_note}${protocol_note}${owner_note}${migrate_note}"
   if [ "$engine_context" = resumed ]; then

@@ -71,6 +71,22 @@ _local_thinking() {
   jq -r --arg id "$2" --arg e "$3" '.localModels[$id].effortThinking[$e] // $e' <<<"$1"
 }
 
+# _pi_subagent_lane_env <settings-json> <lead-model> — the env prefix that moves
+# a pi lead's native subagents onto the lead's billing lane (the roster pins an
+# OpenRouter model; the extension swaps it for DISPATCHER_PI_SUBAGENT_MODEL).
+# Empty for an OpenRouter lead, whose roster pins already bill the lane the
+# OpenRouter stops gate. Every other lead's subagents run on its own model, so
+# they never depend on an OpenRouter key or limit; a local id also drops the
+# agents' thinking suffix, which local endpoints do not take. dispatch and
+# dispatch-resume both launch a pi lead with the extension and both call this.
+_pi_subagent_lane_env() {
+  local out
+  case "$2" in openrouter/*) return 0 ;; esac
+  printf -v out 'DISPATCHER_PI_SUBAGENT_MODEL=%q ' "$2"
+  if [ -n "$(_local_entry "$1" "$2")" ]; then out+='DISPATCHER_PI_SUBAGENT_LEVELS=0 '; fi
+  printf '%s' "$out"
+}
+
 # _local_pi_models_json <settings-json> — print pi's models.json document for
 # every localModels entry, grouped by provider (key text before the first `/`;
 # the rest is the model id). The apiKey is a dummy pi requires; local endpoints
