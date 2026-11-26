@@ -1006,14 +1006,33 @@ func budgetLine(ov vm.OverviewView, it placed, s *spans, iw int) string {
 	return budgetBar(ov.Monitors.Budgets[it.idx], s, iw)
 }
 
-// gaugeLabelW is the label column of a gauge row (budget windows, capacity).
-// It fits "pi openrouter", the longest budget row label.
-const gaugeLabelW = 13
+// gaugeLabelW is the widest label column of a budget row; it fits "claude
+// subscription 5h". Narrow panels shrink the label so the percent stays.
+const gaugeLabelW = 22
+
+// fitLabel shortens a budget label to w cells keeping its last word (the
+// window key), which plain truncation would cut off.
+func fitLabel(label string, w int) string {
+	if ansi.StringWidth(label) <= w {
+		return label
+	}
+	label = strings.Replace(label, "claude subscription ", "claude sub ", 1)
+	if ansi.StringWidth(label) <= w {
+		return label
+	}
+	i := strings.LastIndex(label, " ")
+	if i < 0 {
+		return label
+	}
+	key := label[i+1:]
+	return ansi.Truncate(label[:i], max(w-ansi.StringWidth(key)-1, 1), "…") + " " + key
+}
 
 // budgetBar is one budget window: label, usage gauge, percent and pace arrow.
 func budgetBar(b vm.BudgetRow, s *spans, iw int) string {
 	const pctW = 5
-	barW := clamp(iw-1-gaugeLabelW-1-pctW-2, 4, 20)
+	labelW := clamp(iw-1-1-pctW-2-4, 8, gaugeLabelW)
+	barW := clamp(iw-1-labelW-1-pctW-2, 4, 20)
 	filled := clamp(int(b.UsedPct/100*float64(barW)+0.5), 0, barW)
 	pace := ""
 	switch b.Pace {
@@ -1027,7 +1046,7 @@ func budgetBar(b vm.BudgetRow, s *spans, iw int) string {
 		pct = 100
 	}
 	c := lipgloss.Color(gaugeColor(pct))
-	row := s.col(b.Label, gaugeLabelW, fg(colText), false).
+	row := s.col(fitLabel(b.Label, labelW), labelW, fg(colText), false).
 		add(" ", lipgloss.NewStyle()).
 		add(strings.Repeat("█", filled), fg(c)).
 		add(strings.Repeat("░", barW-filled), fg(colBorderOff)).

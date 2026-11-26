@@ -727,6 +727,8 @@ report_json() {
               unlimited: ($v.unlimited == true),
               spend_usd: ($v.spend_usd // null),
               target_usd: ($v.target_usd // null),
+              key_limit_usd: ($v.key_limit_usd // null),
+              key_limit_remaining_usd: ($v.key_limit_remaining_usd // null),
               elapsed_pct: ($v.elapsed_pct // null),
               projected_month_end_usd: ($v.projected_month_end_usd // null),
               windows: [$rows[] | select(.e == $e) | {

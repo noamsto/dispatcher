@@ -159,8 +159,12 @@ func (v budgetView) tableView(w int) string {
 		lines = append(lines, v.engineLines(e, v.report.Engines[e], w)...)
 	}
 	if c := v.report.AnthropicCredit; c != nil {
-		lines = append(lines, truncateLine(headerStyle.Render("pi anthropic (prepaid credit)"), w),
+		lines = append(lines, truncateLine(headerStyle.Render(data.LabelAnthropicKey+" (prepaid credit)"), w),
 			truncateLine(creditStyle(c).Render("  "+c.Detail()), w))
+	}
+	if g := v.report.GeminiBudget; g != nil {
+		lines = append(lines, truncateLine(headerStyle.Render(data.LabelGemini+" (monthly budget)"), w),
+			truncateLine(exhaustedStyle(g.Exhausted()).Render("  "+g.Detail()), w))
 	}
 	return strings.Join(lines, "\n")
 }
@@ -188,12 +192,15 @@ func (v budgetView) engineLines(e string, eb *data.EngineBudget, w int) []string
 		}
 	}
 	if eb.Source == "openrouter_key" {
-		if eb.TargetUSD != nil {
+		if target := eb.LocalTarget(); target != nil {
 			out = append(out, truncateLine(
-				"  spend $"+usd(f64(eb.SpendUSD))+" of $"+usd(*eb.TargetUSD)+" target, "+
+				"  spend $"+usd(f64(eb.SpendUSD))+" of $"+usd(*target)+" local target, "+
 					formatNumber(f64(eb.ElapsedPct))+"% of month elapsed", w))
 		} else {
-			out = append(out, truncateLine("  spend $"+usd(f64(eb.SpendUSD))+" month-to-date (no target)", w))
+			out = append(out, truncateLine("  spend $"+usd(f64(eb.SpendUSD))+" month-to-date (no local target)", w))
+		}
+		if keyText := eb.KeyLimitText(); keyText != "" {
+			out = append(out, truncateLine("  "+keyText, w))
 		}
 		if eb.Projection != nil {
 			out = append(out, truncateLine("  "+cleanText(*eb.Projection), w))
@@ -210,7 +217,7 @@ func (v budgetView) engineLines(e string, eb *data.EngineBudget, w int) []string
 // verdict (truncated); the gauge takes what's left after the fixed columns,
 // floored at 10.
 func (v budgetView) windowLine(engine string, win data.Window, selected bool, w int) string {
-	const nameW, usedW, paceW, resetsW = 13, 5, 4, 8
+	const nameW, usedW, paceW, resetsW = 22, 5, 4, 8
 	prefix := "  "
 	if selected {
 		prefix = cursorStyle.Render("›") + " "
@@ -287,7 +294,11 @@ func (v budgetView) detailView(w int) string {
 
 // creditStyle paints an expired or spent credit in the danger colour.
 func creditStyle(c *data.AnthropicCredit) lipgloss.Style {
-	if c.Exhausted() {
+	return exhaustedStyle(c.Exhausted())
+}
+
+func exhaustedStyle(exhausted bool) lipgloss.Style {
+	if exhausted {
 		return lipgloss.NewStyle().Foreground(lipgloss.Color(gaugeDangerColor))
 	}
 	return lipgloss.NewStyle()

@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -171,5 +172,22 @@ func TestTabOrderFollowsLayout(t *testing.T) {
 				t.Errorf("%dx%d tab %d: focus %v, want %v", tc.w, tc.h, i+1, got, want)
 			}
 		}
+	}
+}
+
+func TestFitLabelKeepsWindowKey(t *testing.T) {
+	for label, want := range map[string]string{
+		"claude subscription 5h": "claude sub 5h",
+		"claude subscription 7d": "claude sub 7d",
+	} {
+		if got := fitLabel(label, 13); got != want {
+			t.Errorf("fitLabel(%q, 13) = %q, want %q", label, got, want)
+		}
+	}
+	if a, b := fitLabel("claude subscription 5h", 9), fitLabel("claude subscription 7d", 9); a == b || !strings.HasSuffix(a, "5h") || !strings.HasSuffix(b, "7d") {
+		t.Errorf("narrow labels %q, %q lost the window key", a, b)
+	}
+	if got := fitLabel("claude subscription 5h", 22); got != "claude subscription 5h" {
+		t.Errorf("wide label changed: %q", got)
 	}
 }

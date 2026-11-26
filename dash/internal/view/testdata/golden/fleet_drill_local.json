@@ -829,7 +829,7 @@
     "budgets": [
       {
         "engine": "claude",
-        "label": "claude 5h",
+        "label": "claude subscription 5h",
         "used_pct": 10,
         "ahead_pts": null,
         "pace": "n/a",
@@ -837,7 +837,7 @@
       },
       {
         "engine": "claude",
-        "label": "claude 7d",
+        "label": "claude subscription 7d",
         "used_pct": 62,
         "ahead_pts": 12,
         "pace": "ahead",

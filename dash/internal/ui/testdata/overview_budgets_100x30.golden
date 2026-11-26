@@ -1,0 +1,30 @@
+╭ ▸ ATTENTION ──────────────────────────────────────────────────────────────────── 12 need action ─╮
+│▌1 ✗ feat/h exit 1 after test failure                                               20m → peek    │
+│ 2 ✗ feat/g dead: quiet: no output 20m                                              15m → peek    │
+│ 3 ✗ otter  reviewer: role reviewer engine exited (pane %9)                          6m → peek    │
+│ 4 ✗ c2     crew stream lane is dead                                                now → inspect │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭ CHECKLISTS ─────────── 0 of 13 done ─╮╭ AGENTS ──────── 17 agents ─╮╭ MONITORS ───── 11 watched ─╮
+│ ● otter standard                 AC —││ ● otter sonnet standard    ││ WATCHDOG ──────────────────│
+│   ●─●─◉─○─○─○ execute                ││   roles ● pla ✗ rev   sub ●││ otter      ▁▁▁█▄ ok now    │
+│ ● heron standard               AC 5/5││ ● heron sonnet standard    ││ heron      ▁▁▁▁▁ ok 10m    │
+│   ●─●─●─●─●─● pr_open                ││   roles —                  ││ feat/c     ▁▁▁▁▁ ok 5m     │
+│ ● feat/c standard                AC —││ ● feat/c sonnet standard   ││ feat/d     ▁▁▁▁▁ prompt 3m │
+│   ○─○─○─○─○─○ blocked                ││   roles ✗ spe              ││ feat/e     ▁▁▁▁▁ stall 4m  │
+│ ● feat/d standard                AC —││ ● feat/d sonnet standard   ││ feat/f     ▁▁▁▁▁ runaway 2m│
+│   ○─○─○─○─○─○ blocked                ││   roles —                  ││ feat/r@ha… ····· ok 7m     │
+│ ● feat/e standard                AC —││ ● feat/e sonnet standard   ││ feat/j     █▁▁▁▁ ok now    │
+│   ○─○─○─○─○─○ blocked                ││   roles —                  ││ feat/p@mbp ····· ok        │
+│ ● feat/f standard                AC —││ ● feat/f sonnet standard   ││ feat/q@nuc ····· ?         │
+│   ○─○─○─○─○─○ blocked                ││   roles —                  ││ @halo      ····· ?         │
+│ ✗ feat/g standard                AC —││ ✗ feat/g sonnet standard   ││ PR CHECKS ─────────────────│
+│   ○─○─○─○─○─○ failed                 ││   roles —                  ││ #12 ● checks ● merge 10m   │
+│▌✗ feat/h standard                AC —││▌✗ feat/h sonnet standard   ││ BUDGET ────────────────────│
+│▌  ○─○─○─○─○─○ failed                 ││▌  roles —                  ││ claude sub 5h   ░░░░  10%  │
+│ ● feat/r@halo deep               AC —││ ● feat/r@halo gpt-5 deep   ││ claude sub 7d   ██░░  62%  │
+│   ?                                  ││   roles ?                  ││ claude 7d_opus  ██░░  40%  │
+│ ● feat/j standard                AC —││ ● feat/j sonnet standard   ││ clau… 7d_sonnet █░░░  25%  │
+│   ●─-─◉─○─○─○ execute                ││   roles —                  ││ openrouter      ████ 115% …│
+│ ● feat/p@mbp ?                   AC —││ ● feat/p@mbp ? ?           ││ claude api-key  ██░░  60% …│
+│   ?                                  ││   roles ?                  ││ google (gemini) █░░░  25% …│
+╰──────────────────────────────────────╯╰────────────────────────────╯╰────────────────────────────╯

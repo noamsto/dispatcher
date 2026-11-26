@@ -25,8 +25,8 @@
 │ ✗ feat/g standard                                    AC —││ ✗ feat/g sonnet standard                  ││ PR CHECKS ────────────────────────────────│
 │   ○─○─○─○─○─○ failed                                     ││   roles —                                 ││ #12 ● checks ● merge 10m                  │
 │▌✗ feat/h standard                                    AC —││▌✗ feat/h sonnet standard                  ││ BUDGET ───────────────────────────────────│
-│▌  ○─○─○─○─○─○ failed                                     ││▌  roles —                                 ││ claude 5h     ██░░░░░░░░░░░░░░░░░░  10%   │
-│ ● feat/r@halo deep                                   AC —││ ● feat/r@halo gpt-5 deep                  ││ claude 7d     ████████████░░░░░░░░  62% ↑ │
+│▌  ○─○─○─○─○─○ failed                                     ││▌  roles —                                 ││ claude subscription 5h █░░░░░░░░░░░  10%  │
+│ ● feat/r@halo deep                                   AC —││ ● feat/r@halo gpt-5 deep                  ││ claude subscription 7d ███████░░░░░  62% ↑│
 │   ?                                                      ││   roles ?                                 ││                                           │
 │ ● feat/j standard                                    AC —││ ● feat/j sonnet standard                  ││                                           │
 │   ●─-─◉─○─○─○ execute                                    ││   roles —                                 ││                                           │

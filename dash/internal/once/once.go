@@ -207,7 +207,10 @@ func budgetPane(snap data.Snapshot) []line {
 		out = append(out, engineLines(e, b.Report.Engines[e])...)
 	}
 	if c := b.Report.AnthropicCredit; c != nil {
-		out = append(out, line{style: "h", text: "pi anthropic (prepaid credit)"}, line{style: "n", text: "  " + c.Detail()})
+		out = append(out, line{style: "h", text: data.LabelAnthropicKey + " (prepaid credit)"}, line{style: "n", text: "  " + c.Detail()})
+	}
+	if g := b.Report.GeminiBudget; g != nil {
+		out = append(out, line{style: "h", text: data.LabelGemini + " (monthly budget)"}, line{style: "n", text: "  " + g.Detail()})
 	}
 	return out
 }
@@ -237,13 +240,16 @@ func engineLines(e string, v *data.EngineBudget) []line {
 	}
 
 	if v.Source == "openrouter_key" {
-		if v.TargetUSD != nil {
+		if target := v.LocalTarget(); target != nil {
 			out = append(out, line{style: "n", text: fmt.Sprintf(
-				"  spend $%s of $%s target, %s%% of month elapsed",
-				usd(f64(v.SpendUSD)), usd(*v.TargetUSD), formatNumber(f64(v.ElapsedPct)),
+				"  spend $%s of $%s local target, %s%% of month elapsed",
+				usd(f64(v.SpendUSD)), usd(*target), formatNumber(f64(v.ElapsedPct)),
 			)})
 		} else {
-			out = append(out, line{style: "n", text: "  spend $" + usd(f64(v.SpendUSD)) + " month-to-date (no target)"})
+			out = append(out, line{style: "n", text: "  spend $" + usd(f64(v.SpendUSD)) + " month-to-date (no local target)"})
+		}
+		if keyText := v.KeyLimitText(); keyText != "" {
+			out = append(out, line{style: "n", text: "  " + keyText})
 		}
 		if v.Projection != nil {
 			out = append(out, line{style: "n", text: "  " + cleanText(*v.Projection)})

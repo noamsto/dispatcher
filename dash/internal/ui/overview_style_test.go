@@ -199,9 +199,9 @@ func TestPhaseTrack(t *testing.T) {
 }
 
 func TestBudgetBarDollarTextTruncatesBeforePercent(t *testing.T) {
-	row := vm.BudgetRow{Label: "pi anthropic", UsedPct: 60, Text: "$20.00 left expired", Critical: true}
-	wide := ansi.Strip(budgetBar(row, newSpans(60, nil), 60))
-	if !strings.Contains(wide, "pi anthropic") || !strings.Contains(wide, "60%") || !strings.Contains(wide, "$20.00 left expired") {
+	row := vm.BudgetRow{Label: "claude api-key", UsedPct: 60, Text: "$20.00 left expired", Critical: true}
+	wide := ansi.Strip(budgetBar(row, newSpans(70, nil), 70))
+	if !strings.Contains(wide, "claude api-key") || !strings.Contains(wide, "60%") || !strings.Contains(wide, "$20.00 left expired") {
 		t.Errorf("wide row = %q", wide)
 	}
 	narrow := ansi.Strip(budgetBar(row, newSpans(30, nil), 30))
@@ -212,7 +212,7 @@ func TestBudgetBarDollarTextTruncatesBeforePercent(t *testing.T) {
 
 func TestBudgetBarCriticalIsRed(t *testing.T) {
 	trueColorProfile(t)
-	row := vm.BudgetRow{Label: "pi anthropic", UsedPct: 25, Text: "$37 left expired"}
+	row := vm.BudgetRow{Label: "claude api-key", UsedPct: 25, Text: "$37 left expired"}
 	healthy := budgetBar(row, newSpans(60, nil), 60)
 	row.Critical = true
 	if budgetBar(row, newSpans(60, nil), 60) == healthy {

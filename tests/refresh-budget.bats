@@ -1580,6 +1580,52 @@ EOF
   [ "$status" -eq 0 ]
 }
 
+@test "--report --json carries pi key_limit_usd and key_limit_remaining_usd, null when absent" {
+  mkdir -p "$XDG_DATA_HOME/crew"
+  SHIM_NOW=1700000000
+  export SHIM_NOW
+  start_epoch=$((SHIM_NOW - 900000))
+  reset_epoch=$((SHIM_NOW + 1800000))
+  for variant in "100 37.5" "null null"; do
+    read -r lim rem <<<"$variant"
+    cat >"$XDG_DATA_HOME/crew/engine-budget.json" <<EOF
+{
+  "fetched_at": "2026-01-01T00:00:00Z",
+  "fetched_epoch": $SHIM_NOW,
+  "engines": {
+    "claude": null,
+    "codex": null,
+    "cursor": null,
+    "pi": {
+      "source": "openrouter_key",
+      "plan_type": null,
+      "credits_cover": null,
+      "spend_usd": 10,
+      "target_usd": 50,
+      "elapsed_pct": 5,
+      "projected_month_end_usd": 20,
+      "key_limit_usd": $lim,
+      "key_limit_remaining_usd": $rem,
+      "starts_at": $start_epoch,
+      "resets_at": $reset_epoch,
+      "windows": {
+        "month": {"used_pct": 20, "starts_at": $start_epoch, "resets_at": $reset_epoch}
+      }
+    }
+  }
+}
+EOF
+    run bash "$SCRIPT" --report --json
+    [ "$status" -eq 0 ]
+    if [ "$lim" = null ]; then
+      run jq -e '.engines.pi | has("key_limit_usd") and .key_limit_usd == null and has("key_limit_remaining_usd") and .key_limit_remaining_usd == null' <<<"$output"
+    else
+      run jq -e '.engines.pi.key_limit_usd == 100 and .engines.pi.key_limit_remaining_usd == 37.5' <<<"$output"
+    fi
+    [ "$status" -eq 0 ]
+  done
+}
+
 @test "--report --json matches the text lever's pi projection line, and is null under target" {
   mkdir -p "$XDG_DATA_HOME/crew"
   SHIM_NOW=1700000000

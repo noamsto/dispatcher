@@ -574,7 +574,10 @@ func (v liveView) budgetLines(w int) []string {
 		segs = append(segs, engineSegment(name, b.Report.Engines[name]))
 	}
 	if c := b.Report.AnthropicCredit; c != nil {
-		segs = append(segs, budgetSeg{text: fmt.Sprintf("pi anthropic %.0f%%", c.UsedPct), color: gaugeColor(creditPct(c))})
+		segs = append(segs, budgetSeg{text: fmt.Sprintf("%s %.0f%%", data.LabelAnthropicKey, c.UsedPct), color: gaugeColor(creditPct(c))})
+	}
+	if g := b.Report.GeminiBudget; g != nil {
+		segs = append(segs, budgetSeg{text: fmt.Sprintf("%s %.0f%%", data.LabelGemini, g.UsedPct), color: gaugeColor(geminiPct(g))})
 	}
 	return flowSegments(segs, w, 2)
 }
@@ -997,4 +1000,12 @@ func creditPct(c *data.AnthropicCredit) float64 {
 		return 100
 	}
 	return c.UsedPct
+}
+
+// geminiPct is the usage that colours the Gemini budget: full once spent.
+func geminiPct(g *data.GeminiBudget) float64 {
+	if g.Exhausted() {
+		return 100
+	}
+	return g.UsedPct
 }
