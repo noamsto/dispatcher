@@ -122,3 +122,36 @@ func TestOverviewNotesDispatcherElsewhere(t *testing.T) {
 		t.Errorf("here crew renders the note:\n%s", got)
 	}
 }
+
+// providerBudgetInputs is the fixture with pi's OpenRouter month window (local
+// target and key limit), the Anthropic credit, Gemini and both per-model
+// subscription windows.
+func providerBudgetInputs() vm.Inputs {
+	spend, target, keyLimit, keyLeft := 34.59, 30.0, 100.0, 88.0
+	src := "config"
+	in := viewtest.Inputs()
+	in.Snap.Budget.Report = &data.BudgetReport{
+		Engines: map[string]*data.EngineBudget{
+			"claude": {Windows: []data.Window{
+				{Key: "5h", UsedPct: 10}, {Key: "7d", UsedPct: 62},
+				{Key: "7d_opus", UsedPct: 40}, {Key: "7d_sonnet", UsedPct: 25},
+			}},
+			"pi": {
+				SpendUSD: &spend, TargetUSD: &target, TargetSource: &src, KeyLimitUSD: &keyLimit, KeyLimitRemainingUSD: &keyLeft,
+				Windows: []data.Window{{Key: "month", UsedPct: 115.3}},
+			},
+		},
+		AnthropicCredit: &data.AnthropicCredit{BalanceUSD: 50, SpentUSD: 30, RemainingUSD: 20, UsedPct: 60},
+		GeminiBudget:    &data.GeminiBudget{TargetUSD: 40, SpentUSD: 10, RemainingUSD: 30, UsedPct: 25},
+	}
+	return in
+}
+
+func TestOverviewGoldenProviderBudgets(t *testing.T) {
+	asciiProfile(t)
+	for _, sz := range [][2]int{{100, 30}, {200, 60}} {
+		w, h := sz[0], sz[1]
+		v := newOverviewView(providerBudgetInputs(), overviewNow)
+		checkGolden(t, fmt.Sprintf("overview_budgets_%dx%d.golden", w, h), v.View(w, h), w, h)
+	}
+}

@@ -2,6 +2,7 @@ package data
 
 import (
 	"strconv"
+	"strings"
 )
 
 // AnthropicCredit decodes the report's anthropic_credit object: pi's prepaid
@@ -65,6 +66,8 @@ func (c *AnthropicCredit) LeftText() string {
 // against the monthly target.
 func WindowName(engine, key string) string {
 	switch {
+	case engine == "claude" && strings.HasPrefix(key, "7d_"):
+		return "claude " + key
 	case engine == "claude":
 		return "claude subscription " + key
 	case engine == "pi" && key == "month":
@@ -108,27 +111,33 @@ func limit(f float64) string {
 	return strconv.FormatFloat(f, 'f', -1, 64)
 }
 
-// SpendText is the engine's spend with whichever limits are set: the local
-// monthly target and the provider key's own limit. Without a limit it is just
-// the spend; without spend it is "".
+// LocalTarget is the operator's own monthly dollar target. A target whose
+// source is the key limit is not one: KeyLimitText covers it.
+func (e *EngineBudget) LocalTarget() *float64 {
+	if e.TargetSource == nil || *e.TargetSource != "config" {
+		return nil
+	}
+	return e.TargetUSD
+}
+
+// SpendText is the compact spend with whichever limits are set: the local
+// monthly target and what is left of the provider key's own limit. Without
+// spend it is "".
 func (e *EngineBudget) SpendText() string {
 	if e.SpendUSD == nil {
 		return ""
 	}
 	text := "$" + dollars(*e.SpendUSD)
-	if e.TargetUSD != nil {
-		text += "/$" + limit(*e.TargetUSD)
+	if t := e.LocalTarget(); t != nil {
+		text += "/$" + limit(*t)
 	}
-	if e.KeyLimitUSD != nil {
-		text += " · key $" + limit(*e.KeyLimitUSD)
-		if e.KeyLimitRemainingUSD != nil {
-			text += " ($" + dollars(max(*e.KeyLimitRemainingUSD, 0)) + " left)"
-		}
+	if e.KeyLimitUSD == nil {
+		return text
 	}
-	if e.TargetUSD == nil && e.KeyLimitUSD == nil {
-		text += " spent, no limit"
+	if e.KeyLimitRemainingUSD != nil {
+		return text + " · key $" + limit(max(*e.KeyLimitRemainingUSD, 0)) + " left"
 	}
-	return text
+	return text + " · key $" + limit(*e.KeyLimitUSD)
 }
 
 // KeyLimitText is the provider key's own limit and what is left of it, or ""

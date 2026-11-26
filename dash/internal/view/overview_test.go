@@ -499,12 +499,13 @@ func TestOverviewScopeErrorOnlyWhenProbeFailed(t *testing.T) {
 
 func TestBudgetRowsLabelPiBudgets(t *testing.T) {
 	spend, target, keyLimit, keyLeft := 34.59, 30.0, 100.0, 88.0
+	src := "config"
 	credit := &data.AnthropicCredit{BalanceUSD: 50, SpentUSD: 30, RemainingUSD: 20, UsedPct: 60}
 	in := viewtest.Inputs()
 	in.Snap.Budget.Report = &data.BudgetReport{
 		Engines: map[string]*data.EngineBudget{
 			"claude": {Windows: []data.Window{{Key: "7d", UsedPct: 62}}},
-			"pi":     {SpendUSD: &spend, TargetUSD: &target, KeyLimitUSD: &keyLimit, KeyLimitRemainingUSD: &keyLeft, Windows: []data.Window{{Key: "month", UsedPct: 115.3}}},
+			"pi":     {SpendUSD: &spend, TargetUSD: &target, TargetSource: &src, KeyLimitUSD: &keyLimit, KeyLimitRemainingUSD: &keyLeft, Windows: []data.Window{{Key: "month", UsedPct: 115.3}}},
 		},
 		AnthropicCredit: credit,
 		GeminiBudget:    &data.GeminiBudget{TargetUSD: 40, SpentUSD: 10, RemainingUSD: 30, UsedPct: 25},
@@ -516,7 +517,7 @@ func TestBudgetRowsLabelPiBudgets(t *testing.T) {
 	if len(rows) != 4 {
 		t.Fatalf("rows = %v, want claude subscription 7d, openrouter, claude api-key, google (gemini)", rows)
 	}
-	if got := rows["openrouter"].Text; got != "$34.59/$30 · key $100 ($88.00 left)" {
+	if got := rows["openrouter"].Text; got != "$34.59/$30 · key $88 left" {
 		t.Errorf("openrouter text = %q", got)
 	}
 	if got := rows["claude api-key"]; got.Text != "$30.00/$50.00 · $20.00 left" || got.UsedPct != 60 || got.Critical {

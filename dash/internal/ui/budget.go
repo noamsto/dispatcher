@@ -192,12 +192,12 @@ func (v budgetView) engineLines(e string, eb *data.EngineBudget, w int) []string
 		}
 	}
 	if eb.Source == "openrouter_key" {
-		if eb.TargetUSD != nil {
+		if target := eb.LocalTarget(); target != nil {
 			out = append(out, truncateLine(
-				"  spend $"+usd(f64(eb.SpendUSD))+" of $"+usd(*eb.TargetUSD)+" target, "+
+				"  spend $"+usd(f64(eb.SpendUSD))+" of $"+usd(*target)+" local target, "+
 					formatNumber(f64(eb.ElapsedPct))+"% of month elapsed", w))
 		} else {
-			out = append(out, truncateLine("  spend $"+usd(f64(eb.SpendUSD))+" month-to-date (no target)", w))
+			out = append(out, truncateLine("  spend $"+usd(f64(eb.SpendUSD))+" month-to-date (no local target)", w))
 		}
 		if keyText := eb.KeyLimitText(); keyText != "" {
 			out = append(out, truncateLine("  "+keyText, w))

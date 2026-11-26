@@ -49,6 +49,8 @@ func TestBudgetLabels(t *testing.T) {
 	for _, tc := range []struct{ engine, key, name, label string }{
 		{"claude", "7d", "claude subscription 7d", "claude subscription 7d"},
 		{"pi", "month", "openrouter", "openrouter"},
+		{"claude", "7d_sonnet", "claude 7d_sonnet", "claude 7d_sonnet"},
+		{"claude", "7d_opus", "claude 7d_opus", "claude 7d_opus"},
 		{"codex", "5h", "5h", "codex 5h"},
 	} {
 		if got := WindowName(tc.engine, tc.key); got != tc.name {
@@ -62,15 +64,16 @@ func TestBudgetLabels(t *testing.T) {
 
 func TestSpendText(t *testing.T) {
 	f := func(v float64) *float64 { return &v }
+	str := func(v string) *string { return &v }
 	for name, tc := range map[string]struct {
 		e    EngineBudget
 		want string
 	}{
-		"no spend":      {EngineBudget{TargetUSD: f(30)}, ""},
-		"no limits":     {EngineBudget{SpendUSD: f(12)}, "$12.00 spent, no limit"},
-		"local only":    {EngineBudget{SpendUSD: f(12), TargetUSD: f(50)}, "$12.00/$50"},
-		"key only":      {EngineBudget{SpendUSD: f(12), KeyLimitUSD: f(100)}, "$12.00 · key $100"},
-		"local and key": {EngineBudget{SpendUSD: f(12), TargetUSD: f(50), KeyLimitUSD: f(100), KeyLimitRemainingUSD: f(88)}, "$12.00/$50 · key $100 ($88.00 left)"},
+		"no spend":         {EngineBudget{TargetUSD: f(30), TargetSource: str("config")}, ""},
+		"local only":       {EngineBudget{SpendUSD: f(12), TargetUSD: f(50), TargetSource: str("config")}, "$12.00/$50"},
+		"key target only":  {EngineBudget{SpendUSD: f(12), TargetUSD: f(100), TargetSource: str("key_limit"), KeyLimitUSD: f(100), KeyLimitRemainingUSD: f(88)}, "$12.00 · key $88 left"},
+		"key without left": {EngineBudget{SpendUSD: f(12), KeyLimitUSD: f(100)}, "$12.00 · key $100"},
+		"local and key":    {EngineBudget{SpendUSD: f(12), TargetUSD: f(50), TargetSource: str("config"), KeyLimitUSD: f(100), KeyLimitRemainingUSD: f(88)}, "$12.00/$50 · key $88 left"},
 	} {
 		if got := tc.e.SpendText(); got != tc.want {
 			t.Errorf("%s: SpendText = %q, want %q", name, got, tc.want)

@@ -204,7 +204,7 @@ func TestBudgetBarDollarTextTruncatesBeforePercent(t *testing.T) {
 	if !strings.Contains(wide, "claude api-key") || !strings.Contains(wide, "60%") || !strings.Contains(wide, "$20.00 left expired") {
 		t.Errorf("wide row = %q", wide)
 	}
-	narrow := ansi.Strip(budgetBar(row, newSpans(36, nil), 36))
+	narrow := ansi.Strip(budgetBar(row, newSpans(30, nil), 30))
 	if !strings.Contains(narrow, "60%") || strings.Contains(narrow, "expired") {
 		t.Errorf("narrow row = %q, want the percent kept and the text cut", narrow)
 	}

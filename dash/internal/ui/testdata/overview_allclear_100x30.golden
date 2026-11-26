@@ -15,8 +15,8 @@
 │ ● feat/g standard                AC —││ ● feat/g sonnet standard   ││ PR CHECKS ─────────────────│
 │   ○─○─○─○─○─○ working                ││   roles —                  ││ #12 ● checks ● merge 10m   │
 │ ● feat/h standard                AC —││ ● feat/h sonnet standard   ││ BUDGET ────────────────────│
-│   ○─○─○─○─○─○ working                ││   roles —                  ││ claude subscription 5h ░░░░│
-│ ● feat/i standard                AC —││ ● feat/i sonnet standard   ││ claude subscription 7d ██░░│
+│   ○─○─○─○─○─○ working                ││   roles —                  ││ claude subscri… ░░░░  10%  │
+│ ● feat/i standard                AC —││ ● feat/i sonnet standard   ││ claude subscri… ██░░  62% ↑│
 │   ○─○─○─○─○─○ working                ││   roles —                  ││                            │
 │ ● feat/r@halo deep               AC —││ ● feat/r@halo gpt-5 deep   ││                            │
 │   ?                                  ││   roles ?                  ││                            │
