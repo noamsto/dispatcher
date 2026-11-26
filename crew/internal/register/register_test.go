@@ -194,7 +194,7 @@ func TestRegisterOK(t *testing.T) {
 }
 
 // CREW_ENGINE records the dispatcher's engine beside the pid so the dash can
-// tell a parked pi/codex/cursor dispatcher from a dead lane (#1827). Written
+// tell a parked pi/codex/cursor dispatcher from a dead lane. Written
 // verbatim like the pid, and only when the env is set; an unset env clears a
 // prior registrant's file.
 func TestRegisterEngineFile(t *testing.T) {

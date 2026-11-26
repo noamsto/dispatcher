@@ -517,7 +517,7 @@ func collectCrew(ctx context.Context, r Runner, cfg Config, id string, loc *Disp
 // probeLane reads `crew stream --crew <id> --status`. The command exits 2 for
 // a dead lane, so the state is taken from stdout whenever it parses,
 // regardless of the exit code. A dead lane whose dispatcher recorded a
-// park-lane engine (#1827) collects as `parked`: this probe only runs for a
+// park-lane engine collects as `parked`: this probe only runs for a
 // live local dispatcher (see collectCrew), so the engine file — never a
 // process-name guess — is the only extra evidence needed.
 func probeLane(ctx context.Context, r Runner, cfg Config, id, crewsDir string) *LaneStatus {

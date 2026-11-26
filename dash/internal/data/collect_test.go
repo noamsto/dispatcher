@@ -539,7 +539,7 @@ func TestCollectRosterLane(t *testing.T) {
 	}
 }
 
-// TestCollectRosterLaneParked covers #1827: pi, codex and cursor dispatchers
+// TestCollectRosterLaneParked: pi, codex and cursor dispatchers
 // park on `crew watch` instead of arming the stream lane, so their lane probe
 // answers dead while the dispatcher is alive. `crew register` records the
 // dispatcher's engine in <crew dir>/engine; a dead lane plus a park-lane
@@ -627,7 +627,7 @@ func TestCollectRosterLaneParked(t *testing.T) {
 }
 
 // TestCollectRosterLaneGoneDispatcherNotParked pins the liveness half of the
-// #1827 mapping: with the recorded dispatcher pid gone (crews alive=no) the
+// With the recorded dispatcher pid gone (crews alive=no) the
 // lane is not probed at all, so a dead park-lane engine is never collected as
 // parked — the crew keeps today's no-lane-here behavior, and `crew fleet
 // status`'s own lane column still reports the dead lane.

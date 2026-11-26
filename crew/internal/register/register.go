@@ -141,7 +141,7 @@ func Run(sub, pid string, paths bus.Paths, stderr io.Writer, o Options) int {
 		// The dispatcher's engine, recorded by the launcher (dispatcher.sh) for
 		// the dash: pi, codex and cursor dispatchers park on `crew watch`
 		// instead of arming a stream lane, and the dash needs the engine to
-		// read their dead lane as parked, not dead (#1827). Absent when the
+		// read their dead lane as parked, not dead. Absent when the
 		// caller names no engine, which readers must tolerate; a stale file from
 		// the previous registrant is removed so it cannot mislabel this one.
 		if engine := o.Getenv("CREW_ENGINE"); engine != "" {
