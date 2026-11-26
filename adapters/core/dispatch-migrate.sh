@@ -1,6 +1,6 @@
 # shellcheck shell=bash
 # dispatch-migrate — move a running local worker to another configured host:
-# quiesce it, carry its branch, uncommitted work, task settings and (claude)
+# quiesce it, carry its branch, uncommitted work, task settings and (claude or pi)
 # session transcript, release this machine's claim to that host only, and
 # resume it there through `dispatch --host`. Reached as `dispatch migrate`,
 # which execs this binary (dispatch.sh intercepts the subcommand). The shebang
@@ -24,7 +24,7 @@ _migrate_help() {
 usage: dispatch migrate <target> --host NAME [--now] [--wait S]
 
 Move a running local worker to settings host NAME: pause it, carry its branch,
-uncommitted work, task settings and (claude) session transcript there, release
+uncommitted work, task settings and (claude or pi) session transcript there, release
 this machine's claim to NAME only, and resume it under the same issue and
 branch, followed from here like any dispatch --host worker.
 
@@ -522,23 +522,24 @@ else
     echo $((4 * ((n + 2) / 3)))
   }
 
-  # Claude only: the lead's recorded session, at claude's key for this worktree.
+  # The lead's recorded session: claude's at its key for this worktree, pi's
+  # under the pi worker agent dir (sessions/<cwd key>/<ts>_<id>.jsonl).
   session=""
   transcript=""
   transcript_why=""
   lead_rec="$crew_dir/leads/$branch"
-  if [ "$agent" != claude ]; then
+  _uuid_re='^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+  if [ "$agent" != claude ] && [ "$agent" != pi ]; then
     transcript_why="the $agent lead has no transcript that travels"
   elif ! _lead_record_safe || [ ! -f "$lead_rec" ]; then
     transcript_why="no lead session record"
   else
     rec_engine="" rec_id="" rec_extra=""
     read -r rec_engine rec_id rec_extra <"$lead_rec" || true
-    projects="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects"
-    if [ "$rec_engine" != claude ] || [ -n "$rec_extra" ] ||
-      ! [[ $rec_id =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]]; then
-      transcript_why="the lead session record is not a claude session"
-    else
+    if [ "$rec_engine" != "$agent" ] || [ -n "$rec_extra" ] || ! [[ $rec_id =~ $_uuid_re ]]; then
+      transcript_why="the lead session record is not a $agent session"
+    elif [ "$agent" = claude ]; then
+      projects="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects"
       # A symlink would carry whatever it points at to the other host.
       transcript="$projects/${wt//[^A-Za-z0-9]/-}/$rec_id.jsonl"
       if [ ! -f "$transcript" ] || [ -L "$transcript" ]; then
@@ -549,6 +550,20 @@ else
       fi
       if [ -z "$transcript" ]; then
         transcript_why="the lead's claude session has no transcript"
+      else
+        session="$rec_id"
+      fi
+    else
+      pi_dir="$(crew pi-agent-dir 2>/dev/null)" || pi_dir=""
+      case "$pi_dir" in
+      /*)
+        for f in "$pi_dir"/sessions/*/*_"$rec_id".jsonl; do
+          [ -f "$f" ] && [ ! -L "$f" ] && transcript="$f"
+        done
+        ;;
+      esac
+      if [ -z "$transcript" ]; then
+        transcript_why="the lead's pi session has no transcript"
       else
         session="$rec_id"
       fi

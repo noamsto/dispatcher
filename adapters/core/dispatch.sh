@@ -5360,16 +5360,33 @@ lead_sid=""
 case "$agent" in
 claude | pi) lead_sid="$(_uuid)" ;;
 esac
-# A migrated claude lead resumes the transcript that travelled with it, written
-# to claude's project dir for this worktree at the launch below; an existing
-# file there is never overwritten. Every other migrated launch goes fresh.
+# A migrated claude or pi lead resumes the transcript that travelled with it,
+# written to the engine's session store for this worktree at the launch below;
+# an existing file there is never overwritten. Every other migrated launch
+# goes fresh.
 engine_context="" engine_context_why="" mig_transcript=""
 if [ -n "$migrate_dir" ]; then
   engine_context=fresh
-  if [ "$agent" != claude ]; then
+  if [ "$agent" != claude ] && [ "$agent" != pi ]; then
     engine_context_why="engine $agent carries no session between hosts"
   elif [ -z "$mig_session" ] || [ ! -f "$migrate_dir/transcript.jsonl" ]; then
     engine_context_why="no transcript travelled"
+  elif [ "$agent" = pi ]; then
+    # pi names a session file <ts>_<id>.jsonl under sessions/<cwd key>/; the key
+    # is the cwd with separators and colons as dashes, wrapped in --.
+    mig_pi_key="--$(printf '%s' "${wt_path#/}" | tr '/\\:' '---')--"
+    mig_pi_dir="$pi_agent_dir/sessions/$mig_pi_key"
+    mig_transcript="$mig_pi_dir/$(date -u +%Y-%m-%dT%H-%M-%S-000Z)_$mig_session.jsonl"
+    if [ -z "$pi_agent_dir" ]; then
+      engine_context_why="no pi agent dir"
+      mig_transcript=""
+    elif compgen -G "$mig_pi_dir/*_$mig_session.jsonl" >/dev/null; then
+      engine_context_why="transcript already present"
+      mig_transcript=""
+    else
+      engine_context=resumed
+      lead_sid="$mig_session"
+    fi
   else
     mig_transcript="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/${wt_path//[^A-Za-z0-9]/-}/$mig_session.jsonl"
     if [ -e "$mig_transcript" ] || [ -L "$mig_transcript" ]; then
@@ -6123,6 +6140,18 @@ elif [ "$agent" = pi ]; then
   printf -v quoted_dir '%q' "$pi_agent_dir"
   prompt="Read WORKER_TASK.md and run it end-to-end.${first_action_note}${push_mandate}${plan_note}${resume_note}${process_authority}${grid_note}${protocol_note}${owner_note}${migrate_note}"
   shell_quote quoted_prompt "$prompt"
+  if [ "$engine_context" = resumed ]; then
+    # pi opens the cwd's session with this id when its file exists. ln refuses
+    # an existing target, so a racing file is never overwritten.
+    (
+      umask 077
+      mkdir -p -- "${mig_transcript%/*}"
+      mig_tmp="$(mktemp "${mig_transcript%/*}/.migrate.XXXXXX")"
+      cat -- "$migrate_dir/transcript.jsonl" >"$mig_tmp"
+      ln -- "$mig_tmp" "$mig_transcript"
+      rm -f -- "$mig_tmp"
+    )
+  fi
   _record_lead_session pi "$lead_sid"
   printf -v q_pi_ext '%q' "$pi_subagent_ext"
   if [ "$fresh_seams" = true ]; then
