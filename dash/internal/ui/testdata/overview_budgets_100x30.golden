@@ -20,10 +20,10 @@
 │ ✗ feat/g standard                AC —││ ✗ feat/g sonnet standard   ││ PR CHECKS ─────────────────│
 │   ○─○─○─○─○─○ failed                 ││   roles —                  ││ #12 ● checks ● merge 10m   │
 │▌✗ feat/h standard                AC —││▌✗ feat/h sonnet standard   ││ BUDGET ────────────────────│
-│▌  ○─○─○─○─○─○ failed                 ││▌  roles —                  ││ claude subscri… ░░░░  10%  │
-│ ● feat/r@halo deep               AC —││ ● feat/r@halo gpt-5 deep   ││ claude subscri… ██░░  62%  │
+│▌  ○─○─○─○─○─○ failed                 ││▌  roles —                  ││ claude sub 5h   ░░░░  10%  │
+│ ● feat/r@halo deep               AC —││ ● feat/r@halo gpt-5 deep   ││ claude sub 7d   ██░░  62%  │
 │   ?                                  ││   roles ?                  ││ claude 7d_opus  ██░░  40%  │
-│ ● feat/j standard                AC —││ ● feat/j sonnet standard   ││ claude 7d_sonn… █░░░  25%  │
+│ ● feat/j standard                AC —││ ● feat/j sonnet standard   ││ clau… 7d_sonnet █░░░  25%  │
 │   ●─-─◉─○─○─○ execute                ││   roles —                  ││ openrouter      ████ 115% …│
 │ ● feat/p@mbp ?                   AC —││ ● feat/p@mbp ? ?           ││ claude api-key  ██░░  60% …│
 │   ?                                  ││   roles ?                  ││ google (gemini) █░░░  25% …│

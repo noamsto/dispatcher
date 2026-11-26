@@ -71,9 +71,10 @@ func TestSpendText(t *testing.T) {
 	}{
 		"no spend":         {EngineBudget{TargetUSD: f(30), TargetSource: str("config")}, ""},
 		"local only":       {EngineBudget{SpendUSD: f(12), TargetUSD: f(50), TargetSource: str("config")}, "$12.00/$50"},
-		"key target only":  {EngineBudget{SpendUSD: f(12), TargetUSD: f(100), TargetSource: str("key_limit"), KeyLimitUSD: f(100), KeyLimitRemainingUSD: f(88)}, "$12.00 · key $88 left"},
+		"key target only":  {EngineBudget{SpendUSD: f(12), TargetUSD: f(100), TargetSource: str("key_limit"), KeyLimitUSD: f(100), KeyLimitRemainingUSD: f(88)}, "$12.00 · key $88.00 left"},
 		"key without left": {EngineBudget{SpendUSD: f(12), KeyLimitUSD: f(100)}, "$12.00 · key $100"},
-		"local and key":    {EngineBudget{SpendUSD: f(12), TargetUSD: f(50), TargetSource: str("config"), KeyLimitUSD: f(100), KeyLimitRemainingUSD: f(88)}, "$12.00/$50 · key $88 left"},
+		"local and key":    {EngineBudget{SpendUSD: f(12), TargetUSD: f(50), TargetSource: str("config"), KeyLimitUSD: f(100), KeyLimitRemainingUSD: f(88)}, "$12.00/$50 · key $88.00 left"},
+		"fractional left":  {EngineBudget{SpendUSD: f(12), KeyLimitUSD: f(100), KeyLimitRemainingUSD: f(65.4123)}, "$12.00 · key $65.41 left"},
 	} {
 		if got := tc.e.SpendText(); got != tc.want {
 			t.Errorf("%s: SpendText = %q, want %q", name, got, tc.want)

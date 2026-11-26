@@ -517,7 +517,7 @@ func TestBudgetRowsLabelPiBudgets(t *testing.T) {
 	if len(rows) != 4 {
 		t.Fatalf("rows = %v, want claude subscription 7d, openrouter, claude api-key, google (gemini)", rows)
 	}
-	if got := rows["openrouter"].Text; got != "$34.59/$30 · key $88 left" {
+	if got := rows["openrouter"].Text; got != "$34.59/$30 · key $88.00 left" {
 		t.Errorf("openrouter text = %q", got)
 	}
 	if got := rows["claude api-key"]; got.Text != "$30.00/$50.00 · $20.00 left" || got.UsedPct != 60 || got.Critical {

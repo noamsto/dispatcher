@@ -135,7 +135,7 @@ func (e *EngineBudget) SpendText() string {
 		return text
 	}
 	if e.KeyLimitRemainingUSD != nil {
-		return text + " · key $" + limit(max(*e.KeyLimitRemainingUSD, 0)) + " left"
+		return text + " · key $" + dollars(max(*e.KeyLimitRemainingUSD, 0)) + " left"
 	}
 	return text + " · key $" + limit(*e.KeyLimitUSD)
 }
