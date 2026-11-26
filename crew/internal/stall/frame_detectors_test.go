@@ -1823,3 +1823,27 @@ func TestD9DoesNotTypeIntoMigratedWorker(t *testing.T) {
 		t.Errorf("%d continues typed into a migrated worker", r.continues)
 	}
 }
+
+// A pi usage or credit limit is not retryable: no continue is typed, and the
+// episode surfaces as quota: on the second stopped sample.
+func TestD9LimitPostsQuotaWithoutTyping(t *testing.T) {
+	for _, stopped := range []string{"pi_limit_402_idle.txt", "pi_limit_key_idle.txt"} {
+		t.Run(stopped, func(t *testing.T) {
+			r := newD9Rig(t, d9ID, "pi", Request{})
+			var at int64
+			if rows := r.tick(&at, stopped); rows != nil {
+				t.Fatalf("tick 1: rows %q, want none", rows)
+			}
+			rows := r.tick(&at, stopped)
+			if len(rows) != 1 || !strings.HasPrefix(rows[0], "blocked|quota: pi provider usage or credit limit") || r.continues != 0 {
+				t.Fatalf("tick 2: rows %q, %d continues", rows, r.continues)
+			}
+			if rows := r.tick(&at, stopped); rows != nil {
+				t.Fatalf("tick 3: rows %q, want none", rows)
+			}
+			if rows := r.tick(&at, "nudge_pi_idle.txt"); len(rows) != 1 || rows[0] != "working|quota: cleared" {
+				t.Fatalf("clear: rows %q", rows)
+			}
+		})
+	}
+}

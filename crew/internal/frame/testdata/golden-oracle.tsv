@@ -4959,3 +4959,127 @@ codemode_perm_prompt.txt	idle_reason.skip0.plain	rc=1 reason=prompt on screen
 codemode_perm_prompt.txt	idle_reason.skip0.color	rc=1 reason=prompt on screen
 codemode_perm_prompt.txt	idle_reason.skip1.plain	rc=1 reason=prompt on screen
 codemode_perm_prompt.txt	idle_reason.skip1.color	rc=1 reason=prompt on screen
+pi_limit_402_idle.txt	bg_wait	0
+pi_limit_402_idle.txt	box_any.out	\n Error: 402 Payment Required: insufficient credits for this request\n I will edit the file next.\n Here is the plan for the change.\n pi v1.1.0
+pi_limit_402_idle.txt	box_any.rc	0
+pi_limit_402_idle.txt	box_claude.out	
+pi_limit_402_idle.txt	box_claude.rc	1
+pi_limit_402_idle.txt	claude_idle_box.own0.color	0
+pi_limit_402_idle.txt	claude_idle_box.own0.plain	0
+pi_limit_402_idle.txt	claude_idle_box.own1.color	0
+pi_limit_402_idle.txt	claude_idle_box.own1.plain	0
+pi_limit_402_idle.txt	codex_hook_review	0
+pi_limit_402_idle.txt	idle_reason.skip0.color	rc=1 reason=live turn, unsent input, or no idle input box
+pi_limit_402_idle.txt	idle_reason.skip0.plain	rc=1 reason=live turn, unsent input, or no idle input box
+pi_limit_402_idle.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+pi_limit_402_idle.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+pi_limit_402_idle.txt	meter	
+pi_limit_402_idle.txt	permission_prompt@claude	0
+pi_limit_402_idle.txt	permission_prompt@codex	0
+pi_limit_402_idle.txt	permission_prompt@cursor	0
+pi_limit_402_idle.txt	permission_prompt@pi	0
+pi_limit_402_idle.txt	pi_idle_box	1
+pi_limit_402_idle.txt	pi_live_turn	0
+pi_limit_402_idle.txt	pi_working_label	0
+pi_limit_402_idle.txt	pi_working_row	0
+pi_limit_402_idle.txt	prompt@claude	0
+pi_limit_402_idle.txt	prompt@codex	0
+pi_limit_402_idle.txt	prompt@cursor	0
+pi_limit_402_idle.txt	prompt@pi	0
+pi_limit_402_idle.txt	quota_cursor_limit	0
+pi_limit_402_idle.txt	quota_prompt	0
+pi_limit_402_idle.txt	quota_session_limit	0
+pi_limit_402_idle.txt	subrow	0
+pi_limit_key_idle.txt	bg_wait	0
+pi_limit_key_idle.txt	box_any.out	\n Error: 403 Key limit exceeded (total limit). Manually increase the key limit\n I will edit the file next.\n Here is the plan for the change.\n pi v1.1.0
+pi_limit_key_idle.txt	box_any.rc	0
+pi_limit_key_idle.txt	box_claude.out	
+pi_limit_key_idle.txt	box_claude.rc	1
+pi_limit_key_idle.txt	claude_idle_box.own0.color	0
+pi_limit_key_idle.txt	claude_idle_box.own0.plain	0
+pi_limit_key_idle.txt	claude_idle_box.own1.color	0
+pi_limit_key_idle.txt	claude_idle_box.own1.plain	0
+pi_limit_key_idle.txt	codex_hook_review	0
+pi_limit_key_idle.txt	idle_reason.skip0.color	rc=1 reason=live turn, unsent input, or no idle input box
+pi_limit_key_idle.txt	idle_reason.skip0.plain	rc=1 reason=live turn, unsent input, or no idle input box
+pi_limit_key_idle.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+pi_limit_key_idle.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+pi_limit_key_idle.txt	meter	
+pi_limit_key_idle.txt	permission_prompt@claude	0
+pi_limit_key_idle.txt	permission_prompt@codex	0
+pi_limit_key_idle.txt	permission_prompt@cursor	0
+pi_limit_key_idle.txt	permission_prompt@pi	0
+pi_limit_key_idle.txt	pi_idle_box	1
+pi_limit_key_idle.txt	pi_live_turn	0
+pi_limit_key_idle.txt	pi_working_label	0
+pi_limit_key_idle.txt	pi_working_row	0
+pi_limit_key_idle.txt	prompt@claude	0
+pi_limit_key_idle.txt	prompt@codex	0
+pi_limit_key_idle.txt	prompt@cursor	0
+pi_limit_key_idle.txt	prompt@pi	0
+pi_limit_key_idle.txt	quota_cursor_limit	0
+pi_limit_key_idle.txt	quota_prompt	0
+pi_limit_key_idle.txt	quota_session_limit	0
+pi_limit_key_idle.txt	subrow	0
+pi_limit_live.txt	bg_wait	0
+pi_limit_live.txt	box_any.out	\n Error: 403 Key limit exceeded (total limit).\n I will edit the file next.\n Here is the plan for the change.\n pi v1.1.0
+pi_limit_live.txt	box_any.rc	0
+pi_limit_live.txt	box_claude.out	
+pi_limit_live.txt	box_claude.rc	1
+pi_limit_live.txt	claude_idle_box.own0.color	0
+pi_limit_live.txt	claude_idle_box.own0.plain	0
+pi_limit_live.txt	claude_idle_box.own1.color	0
+pi_limit_live.txt	claude_idle_box.own1.plain	0
+pi_limit_live.txt	codex_hook_review	0
+pi_limit_live.txt	idle_reason.skip0.color	rc=1 reason=live turn, unsent input, or no idle input box
+pi_limit_live.txt	idle_reason.skip0.plain	rc=1 reason=live turn, unsent input, or no idle input box
+pi_limit_live.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+pi_limit_live.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+pi_limit_live.txt	meter	
+pi_limit_live.txt	permission_prompt@claude	0
+pi_limit_live.txt	permission_prompt@codex	0
+pi_limit_live.txt	permission_prompt@cursor	0
+pi_limit_live.txt	permission_prompt@pi	0
+pi_limit_live.txt	pi_idle_box	0
+pi_limit_live.txt	pi_live_turn	1
+pi_limit_live.txt	pi_working_label	1
+pi_limit_live.txt	pi_working_row	0
+pi_limit_live.txt	prompt@claude	0
+pi_limit_live.txt	prompt@codex	0
+pi_limit_live.txt	prompt@cursor	0
+pi_limit_live.txt	prompt@pi	0
+pi_limit_live.txt	quota_cursor_limit	0
+pi_limit_live.txt	quota_prompt	0
+pi_limit_live.txt	quota_session_limit	0
+pi_limit_live.txt	subrow	0
+pi_rate_limit_429_idle.txt	bg_wait	0
+pi_rate_limit_429_idle.txt	box_any.out	\n Error: 429 Resource has been exhausted (check quota)\n Here is the plan.\n pi v1.1.0
+pi_rate_limit_429_idle.txt	box_any.rc	0
+pi_rate_limit_429_idle.txt	box_claude.out	
+pi_rate_limit_429_idle.txt	box_claude.rc	1
+pi_rate_limit_429_idle.txt	claude_idle_box.own0.color	0
+pi_rate_limit_429_idle.txt	claude_idle_box.own0.plain	0
+pi_rate_limit_429_idle.txt	claude_idle_box.own1.color	0
+pi_rate_limit_429_idle.txt	claude_idle_box.own1.plain	0
+pi_rate_limit_429_idle.txt	codex_hook_review	0
+pi_rate_limit_429_idle.txt	idle_reason.skip0.color	rc=1 reason=live turn, unsent input, or no idle input box
+pi_rate_limit_429_idle.txt	idle_reason.skip0.plain	rc=1 reason=live turn, unsent input, or no idle input box
+pi_rate_limit_429_idle.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+pi_rate_limit_429_idle.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+pi_rate_limit_429_idle.txt	meter	
+pi_rate_limit_429_idle.txt	permission_prompt@claude	0
+pi_rate_limit_429_idle.txt	permission_prompt@codex	0
+pi_rate_limit_429_idle.txt	permission_prompt@cursor	0
+pi_rate_limit_429_idle.txt	permission_prompt@pi	0
+pi_rate_limit_429_idle.txt	pi_idle_box	1
+pi_rate_limit_429_idle.txt	pi_live_turn	0
+pi_rate_limit_429_idle.txt	pi_working_label	0
+pi_rate_limit_429_idle.txt	pi_working_row	0
+pi_rate_limit_429_idle.txt	prompt@claude	0
+pi_rate_limit_429_idle.txt	prompt@codex	0
+pi_rate_limit_429_idle.txt	prompt@cursor	0
+pi_rate_limit_429_idle.txt	prompt@pi	0
+pi_rate_limit_429_idle.txt	quota_cursor_limit	0
+pi_rate_limit_429_idle.txt	quota_prompt	0
+pi_rate_limit_429_idle.txt	quota_session_limit	0
+pi_rate_limit_429_idle.txt	subrow	0

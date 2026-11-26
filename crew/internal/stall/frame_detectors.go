@@ -501,6 +501,14 @@ func (w *watch) d9() error {
 	}
 	fd.d9Kind = kind
 	fd.d9Hits++
+	if kind == "limit" {
+		// A continue line cannot clear a usage or credit limit: surface it as a
+		// quota: episode on the second stopped sample, type nothing.
+		if fd.d9Hits >= 2 && fd.d9At == 0 {
+			return w.d9Blocked("pi provider usage or credit limit — do not re-dispatch or retry; top up or switch provider, pane " + w.cfg.pane)
+		}
+		return nil
+	}
 	if fd.d9Hits >= 2 && !fd.d9Typed {
 		// Set before the call: a helper that crashes mid-type never retypes.
 		fd.d9Typed, fd.d9TypedHit = true, fd.d9Hits
@@ -535,15 +543,21 @@ func (w *watch) d9() error {
 }
 
 func (w *watch) d9Prefix() string {
-	if w.fd.d9Kind == "truncated" {
+	switch w.fd.d9Kind {
+	case "truncated":
 		return "truncated:"
+	case "limit":
+		return "quota:"
 	}
 	return "provider-error:"
 }
 
 func (w *watch) d9What() string {
-	if w.fd.d9Kind == "truncated" {
+	switch w.fd.d9Kind {
+	case "truncated":
 		return "response truncated at the output cap"
+	case "limit":
+		return "model provider usage or credit limit"
 	}
 	return "model provider error"
 }

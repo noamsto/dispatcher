@@ -1,0 +1,10 @@
+ pi v1.1.0
+ Here is the plan.
+
+ Error: 429 Resource has been exhausted (check quota)
+
+──────────────────────────────
+
+──────────────────────────────
+~/git/dispatcher
+0.0%/0 (auto)      unknown

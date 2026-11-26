@@ -84,9 +84,13 @@ description: Use when a watchdog detail prefix, a prompt dialog or a role-pane w
   discussing these strings; check `git log` for a good local commit; kill the window and
   re-dispatch (another engine if the model keeps derailing). Never escalates to `dead:`;
   clears when the sentinel leaves the frame. Own prefix, never `prompt:`/`quota:`.
+- `quota:` on a pi lead — an `Error:` row naming a usage, credit or key limit (HTTP 402,
+  `Key limit exceeded`) at an idle empty box. Never auto-continued (a retry can't clear it):
+  treat like any `quota:`: never re-dispatch the worker, send no new work to that provider;
+  the human tops up or switches. Posts after two samples; clears when the pane moves on.
 - `truncated:` / `provider-error:` — pi only. The lead's turn ended on the red
   `Response was truncated before completion.` (output cap) or `Error: <provider message>`
-  (provider failure, e.g. a local engine crash: "the next request restarts it") at an
+  (provider failure, except a usage/credit/key limit, which is the pi `quota:` bullet above; e.g. a local engine crash: "the next request restarts it") at an
   empty, idle input box. After two samples the watchdog types the constant line
   `continue from where you stopped; if a command's result is missing, re-run it` under
   the `unread:` auto-nudge gate (lead pane only; never a live turn, unsent input, a
