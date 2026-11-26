@@ -278,3 +278,35 @@ func TestWatchRelayCursor(t *testing.T) {
 		t.Fatalf("line n = %d, want 2 after a cursor rewrite", n)
 	}
 }
+
+// A dispatch into a layout-2 crew appends to the crew-state log, outside the
+// repo common the resolveBus fallback polls; the overview must still refresh.
+func TestWatchLayout2DispatchRefreshesOverview(t *testing.T) {
+	state := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", state)
+	log := filepath.Join(state, "crew", "crews", "c1", "events.jsonl")
+	if err := os.MkdirAll(filepath.Dir(log), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(log, []byte("{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	common := t.TempDir()
+	r := &data.FakeRunner{Responses: map[string]data.FakeResponse{
+		"git rev-parse --path-format=absolute --git-common-dir": {Stdout: []byte(common + "\n")},
+	}}
+	bus := resolveBus(context.Background(), r, data.Config{Crew: []string{"crew"}, Git: "git"})
+
+	w := buswatch.Merge(buswatch.NewPoll(bus.watch, 50*time.Millisecond))
+	t.Cleanup(func() { _ = w.Close() })
+	collect, _ := counter()
+	lines := startWatch(t, w.Events(), collect, testDebounce)
+	if n := decodeN(t, readLine(t, lines)); n != 1 {
+		t.Fatalf("start line n = %d, want 1", n)
+	}
+
+	appendEvent(t, log, viewtest.NowMS-1000)
+	if n := decodeN(t, readLine(t, lines)); n != 2 {
+		t.Fatalf("line n = %d, want 2 after a layout-2 dispatch row", n)
+	}
+}

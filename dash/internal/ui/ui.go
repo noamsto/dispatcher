@@ -42,6 +42,25 @@ type Deps struct {
 	// FleetWatchPaths is the glob list the Fleet tab's change poll watches,
 	// re-read every tick; nil disables it.
 	FleetWatchPaths func() []string
+
+	// BusWatchPaths is the glob list polled alongside EventsPath so the live
+	// Overview also refreshes on buses fsnotify of EventsPath alone misses
+	// (a layout-2 crew's log); nil disables it.
+	BusWatchPaths func() []string
+}
+
+// liveBusWatcher watches the bus log with fsnotify and, when paths is set,
+// merges in a poll of its globs. Nil without a bus log, so the Live view can
+// say why refresh is off.
+func liveBusWatcher(eventsPath string, paths func() []string, interval time.Duration) buswatch.Watcher {
+	if eventsPath == "" {
+		return nil
+	}
+	ws := []buswatch.Watcher{buswatch.New(eventsPath)}
+	if paths != nil {
+		ws = append(ws, buswatch.NewPoll(paths, interval))
+	}
+	return buswatch.Merge(ws...)
 }
 
 // Run starts the interactive dashboard. It resolves the roster's live bus
@@ -53,11 +72,9 @@ func Run(deps Deps) error {
 		lipgloss.SetColorProfile(termenv.Ascii)
 	}
 
-	var watcher buswatch.Watcher
+	watcher := liveBusWatcher(deps.EventsPath, deps.BusWatchPaths, time.Second)
 	liveOff := ""
-	if deps.EventsPath != "" {
-		watcher = buswatch.New(deps.EventsPath)
-	} else {
+	if deps.EventsPath == "" {
 		reason := "bus log path unavailable"
 		if deps.EventsPathErr != nil {
 			reason = deps.EventsPathErr.Error()
