@@ -1,6 +1,7 @@
 package view
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/noamsto/dispatcher/dash/internal/data"
@@ -42,6 +43,9 @@ func BuildEvents(host string, page data.EventPage, nowSec int64) EventsView {
 		SchemaVersion: SchemaVersion, View: "events", GeneratedAt: nowSec, Host: host,
 		Cursor: page.Cursor, Reset: page.Reset, More: page.More,
 		Events: make([]BusEvent, 0, len(page.Events)), Errors: []string{},
+	}
+	if page.Skipped > 0 {
+		v.Errors = append(v.Errors, fmt.Sprintf("skipped %d undecodable line(s)", page.Skipped))
 	}
 	for _, e := range page.Events {
 		re := data.RecentEvent{

@@ -142,10 +142,10 @@ Cursor-resumable tail of one crew's `events.jsonl`, schema version 1:
  "events":[{"id","host","ts","kind","from","to","crew","branch","text","row":{…raw row…}}]}
 ```
 
-- `id` is the first 16 hex digits of the SHA-256 of the row's raw line (newline excluded): stable across readers and runs.
+- `id` is `<start byte offset>-<first 16 hex digits of the SHA-256 of the raw line>`: stable across readers and runs, and unique within a log even for byte-identical lines.
 - `host` is the short hostname of the machine whose log was read.
 - No `--since`: the last `--limit` rows (default 200). `--since <cursor>`: rows after that cursor, at most `--limit` (`more: true` when rows remain; pass the returned `cursor` again).
-- The cursor is opaque (`<inode>:<byte offset>`); a torn last line is never consumed, so no row is missed or replayed. A cursor naming another inode or an offset past end of file (rotation, truncation) restarts from the top with `reset: true`.
+- The cursor is opaque (`<inode>:<byte offset>`); a torn last line is never consumed, so no row is missed or replayed. A cursor naming another inode or an offset past end of file (rotation, truncation) restarts from the top with `reset: true`. Logs are append-only: in-place truncation that regrows past the old offset is not detected. Complete lines that are not JSON are skipped and counted in `errors`.
 - `--watch` emits the first page, then one line per batch of new rows (nothing when none); resume a dropped stream with `--since` of the last line's `cursor`.
 
 `--view overview` workers also carry `session`, `live` and `exit_suspect`, and `dispatcher` carries `pid`, `pane` and `alive` (pid/pane files, signal-0 probe; `null` when unknown).

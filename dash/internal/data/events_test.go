@@ -28,7 +28,7 @@ func TestReadEventsTailThenResume(t *testing.T) {
 		t.Fatalf("tail = %+v, %v", page, err)
 	}
 	idB := page.Events[0].ID
-	if idB != EventID([]byte(`{"ts":2,"kind":"b"}`)) {
+	if idB != EventID(20, []byte(`{"ts":2,"kind":"b"}`)) {
 		t.Errorf("id = %q is not the line hash", idB)
 	}
 	// A torn trailing line is not consumed and not lost.
@@ -45,6 +45,19 @@ func TestReadEventsTailThenResume(t *testing.T) {
 	again, _ := ReadEvents(p, next.Cursor, 0)
 	if len(again.Events) != 0 {
 		t.Errorf("replayed %d rows", len(again.Events))
+	}
+}
+
+func TestReadEventsCorruptLineCountedAndMissingLogNoReset(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "events.jsonl")
+	missing, _ := ReadEvents(p, "", 5)
+	appendFile(t, p, `{"n":1}`+"\n"+`not json`+"\n"+"\n"+`{"n":1}`+"\n")
+	page, err := ReadEvents(p, missing.Cursor, 0)
+	if err != nil || page.Reset || len(page.Events) != 2 || page.Skipped != 1 {
+		t.Fatalf("page = %+v, %v", page, err)
+	}
+	if page.Events[0].ID == page.Events[1].ID {
+		t.Errorf("identical lines share id %q", page.Events[0].ID)
 	}
 }
 

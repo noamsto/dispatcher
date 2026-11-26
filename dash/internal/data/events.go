@@ -2,6 +2,7 @@ package data
 
 import (
 	"bufio"
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -30,15 +31,19 @@ type EventPage struct {
 	// Reset reports that the cursor named a different or shorter file (rotated
 	// or truncated log), so reading restarted from the top.
 	Reset bool
+	// Skipped counts complete lines consumed without a row: blank or not JSON.
+	Skipped int
 	// More reports rows past the limit remain unread.
 	More bool
 }
 
-// EventID is a row's stable id: the first 16 hex digits of the SHA-256 of its
-// raw line bytes (newline excluded), so every reader of the same log agrees.
-func EventID(line []byte) string {
+// EventID is a row's stable id: its starting byte offset in the log, then the
+// first 16 hex digits of the SHA-256 of its raw line (newline excluded). Every
+// reader of the same log agrees, and byte-identical lines still differ by
+// offset.
+func EventID(offset int64, line []byte) string {
 	sum := sha256.Sum256(line)
-	return hex.EncodeToString(sum[:8])
+	return strconv.FormatInt(offset, 10) + "-" + hex.EncodeToString(sum[:8])
 }
 
 // ErrBadCursor marks a cursor ReadEvents cannot parse.
@@ -91,6 +96,8 @@ func ReadEvents(path, cursor string, limit int) (EventPage, error) {
 	page := EventPage{}
 	switch {
 	case cursor == "":
+	case wantIno == 0 && off == 0:
+		// The cursor of a log that did not exist yet: nothing was rotated.
 	case wantIno != ino || off > fi.Size():
 		off, page.Reset = 0, true
 	}
@@ -99,6 +106,7 @@ func ReadEvents(path, cursor string, limit int) (EventPage, error) {
 	}
 	r := bufio.NewReaderSize(f, 64*1024)
 	pos := off
+	skipped := map[int64]bool{}
 	var all []RawEvent
 	for {
 		line, err := r.ReadBytes('\n')
@@ -108,13 +116,15 @@ func ReadEvents(path, cursor string, limit int) (EventPage, error) {
 		if err != nil {
 			return EventPage{}, err
 		}
+		start := pos
 		pos += int64(len(line))
 		raw := line[:len(line)-1]
 		if ev, ok := decodeLine(raw); ok {
-			all = append(all, RawEvent{ID: EventID(raw), Ev: ev, End: pos})
+			all = append(all, RawEvent{ID: EventID(start, raw), Ev: ev, End: pos})
 		} else {
-			// A blank or torn-in-the-middle line still consumes its bytes.
+			// A blank or corrupt line still consumes its bytes.
 			all = append(all, RawEvent{End: pos})
+			skipped[pos] = len(bytes.TrimSpace(raw)) > 0
 		}
 	}
 	if cursor == "" && limit > 0 && len(all) > limit {
@@ -129,6 +139,8 @@ func ReadEvents(path, cursor string, limit int) (EventPage, error) {
 	for _, e := range all {
 		if e.Ev != nil {
 			page.Events = append(page.Events, e)
+		} else if skipped[e.End] {
+			page.Skipped++
 		}
 	}
 	page.Cursor = fmt.Sprintf("%d:%d", ino, end)
