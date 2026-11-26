@@ -670,7 +670,7 @@ placeholder_two_row() { # token
   done <<ROWS
 worktree-git|@worktreeGitLib@|$OUT_DISPATCH/bin/dispatch|$OUT_DISPATCH_RESUME/bin/dispatch-resume|$OUT_PERMISSION_CHECK/bin/permission-check
 grant-check|@grantCheckLib@|$OUT_DISPATCH/bin/dispatch|$OUT_DISPATCH_RESUME/bin/dispatch-resume|$OUT_PERMISSION_CHECK/bin/permission-check
-local-models|@localModelsLib@|$OUT_DISPATCH/bin/dispatch|$OUT_REFRESH_BUDGET/bin/refresh-budget
+local-models|@localModelsLib@|$OUT_DISPATCH/bin/dispatch|$OUT_DISPATCH_RESUME/bin/dispatch-resume|$OUT_REFRESH_BUDGET/bin/refresh-budget
 openrouter-key|@openrouterKeyLib@|$OUT_REFRESH_BUDGET/bin/refresh-budget|$OUT_REFRESH_SCORES/bin/refresh-scores
 model-resolve|@modelResolve@|$OUT_DISPATCH/bin/dispatch|$OUT_DISPATCH_RESUME/bin/dispatch-resume
 ROWS

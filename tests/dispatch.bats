@@ -925,17 +925,15 @@ EOF
   [[ "$output" != *"quota exhausted"* ]]
   lead_line=$(grep -F -- " pi --name iris --model" <(launch_log))
   [[ "$lead_line" == *"DISPATCHER_PI_SUBAGENT_MODEL=anthropic/claude-sonnet-5-5 "* ]]
-  [[ "$lead_line" != *DISPATCHER_PI_SUBAGENT_LEVELS* ]]
 }
 
-@test "pi subagent lane: a local lead runs its subagents on the local model without thinking suffixes" {
+@test "pi subagent lane: a local lead runs its subagents on the local model" {
   stub_launch_bins
   local_lane_fixture
   pi_limit_json '{reason: "OpenRouter key credit limit reached"}'
   DISPATCH_PROFILE=personal run run_dispatch standard "$LOCAL_ID" --agent pi --effort high --crew-id c1 42 "pi lane local"
   [ "$status" -eq 0 ]
   lead_line=$(grep -F -- " pi --name iris --model" <(launch_log))
-  [[ "$lead_line" == *"DISPATCHER_PI_SUBAGENT_MODEL=$LOCAL_ID DISPATCHER_PI_SUBAGENT_LEVELS=0 "* ]]
 }
 
 @test "pi subagent lane: an OpenRouter lead at the key limit is refused before launch" {

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # The localModels lane's helpers: entry lookup, the live-slot holder scan, the
 # endpoint probe, and the pi models.json renderer. One definition sourced by
-# crew, dispatch and refresh-budget, so the three cannot drift.
+# crew, dispatch, dispatch-resume and refresh-budget, so they cannot drift.
 #
 # Baked into those as @localModelsLib@ by flake.nix; raw-source runs (bats)
 # point $LOCAL_MODELS_LIB at this file — the override is for raw-source test
@@ -71,20 +71,17 @@ _local_thinking() {
   jq -r --arg id "$2" --arg e "$3" '.localModels[$id].effortThinking[$e] // $e' <<<"$1"
 }
 
-# _pi_subagent_lane_env <settings-json> <lead-model> — the env prefix that moves
-# a pi lead's native subagents onto the lead's billing lane (the roster pins an
-# OpenRouter model; the extension swaps it for DISPATCHER_PI_SUBAGENT_MODEL).
-# Empty for an OpenRouter lead, whose roster pins already bill the lane the
-# OpenRouter stops gate. Every other lead's subagents run on its own model, so
-# they never depend on an OpenRouter key or limit; a local id also drops the
-# agents' thinking suffix, which local endpoints do not take. dispatch and
-# dispatch-resume both launch a pi lead with the extension and both call this.
+# _pi_subagent_lane_env <lead-model> — the env prefix that moves a pi lead's
+# native subagents onto the lead's billing lane (the roster pins an OpenRouter
+# model; the extension swaps it for DISPATCHER_PI_SUBAGENT_MODEL and runs it at
+# the lead's thinking level, not the pinned one). Empty for an OpenRouter lead,
+# whose roster pins already bill the lane the OpenRouter stops gate. Every other
+# lead's subagents run on its own model, so they never depend on an OpenRouter
+# key or limit. dispatch and dispatch-resume both launch a pi lead with the
+# extension and both call this.
 _pi_subagent_lane_env() {
-  local out
-  case "$2" in openrouter/*) return 0 ;; esac
-  printf -v out 'DISPATCHER_PI_SUBAGENT_MODEL=%q ' "$2"
-  if [ -n "$(_local_entry "$1" "$2")" ]; then out+='DISPATCHER_PI_SUBAGENT_LEVELS=0 '; fi
-  printf '%s' "$out"
+  case "$1" in openrouter/*) return 0 ;; esac
+  printf 'DISPATCHER_PI_SUBAGENT_MODEL=%q ' "$1"
 }
 
 # _local_pi_models_json <settings-json> — print pi's models.json document for

@@ -312,11 +312,10 @@ async function runSingleAgent(
 
 	// dispatcher patch: like every dispatcher pi launch, ignore project-local .pi files
 	const args: string[] = ["--mode", "json", "-p", "--no-session", "--no-approve"];
-	const inheritsDispatchConfig = !agent.model;
-	const laneEnv = process.env;
-	const model =
-		laneModel(agent.model, laneEnv.DISPATCHER_PI_SUBAGENT_MODEL, laneEnv.DISPATCHER_PI_SUBAGENT_LEVELS !== "0") ??
-		dispatchDefaults.model;
+	const laned = laneModel(agent.model, process.env);
+	// a lane-swapped child runs at the lead's thinking level, like an unpinned one
+	const inheritsDispatchConfig = !agent.model || laned !== agent.model;
+	const model = laned ?? dispatchDefaults.model;
 	if (model) args.push("--model", model);
 	if (inheritsDispatchConfig && dispatchDefaults.thinkingLevel) {
 		args.push("--thinking", dispatchDefaults.thinkingLevel);

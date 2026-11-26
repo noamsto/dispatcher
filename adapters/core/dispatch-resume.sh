@@ -89,6 +89,10 @@ fi
 # shellcheck source=/dev/null
 . "$launcher_common_lib"
 
+# The localModels lane helpers (_pi_subagent_lane_env on the pi relaunch).
+# shellcheck source=/dev/null
+. "${LOCAL_MODELS_LIB:-@localModelsLib@}"
+
 # Which side of a --host dispatch this process is on (a --host launch delivered
 # DISPATCH_TMUX_SESSION), derived once through the shared library as dispatch.sh does.
 wire_side="$(_wire_side)"
@@ -1078,10 +1082,6 @@ if [ -z "$pane" ]; then
   exit 1
 fi
 
-# The localModels lane helpers (_pi_subagent_lane_env on the pi relaunch).
-# shellcheck source=/dev/null
-. "${LOCAL_MODELS_LIB:-@localModelsLib@}"
-
 # Identity surfaces. Re-stamped on both paths: a hand-made window carries none,
 # and a reused worker window may have been renamed since.
 agent_color="$(crew identity "$branch" | jq -r .tmux)"
@@ -1354,7 +1354,7 @@ elif [ "$agent" = pi ]; then
   cont="$lead_cont"
   pi_sid=""
   [ -z "$lead_sid" ] || pi_sid=" --session-id $lead_sid"
-  launch_cmd="GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: $(worker_browser_env "$branch" "$wt_path" "$agent_browser_worker_config")${tmux_env}CREW_WORKER_ID=$q_worker_id CREW_ID=$q_crew_id PI_CODING_AGENT_DIR=$quoted_pi_dir $(_pi_subagent_lane_env "$settings" "$model")pi $cont --name $q_agent_name --model $q_model --thinking $q_effort$pi_sid --append-system-prompt $PROTOCOL_DIR/WORKER_PROTOCOL.pi.md --no-approve -e $q_pi_ext$(pi_skill_args "$wt_path")$mcp_args 'Read WORKER_TASK.md and continue it.${push_mandate}${plan_note}${reorient}${process_authority}${grid_note}${protocol_note}'"
+  launch_cmd="GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: $(worker_browser_env "$branch" "$wt_path" "$agent_browser_worker_config")${tmux_env}CREW_WORKER_ID=$q_worker_id CREW_ID=$q_crew_id PI_CODING_AGENT_DIR=$quoted_pi_dir $(_pi_subagent_lane_env "$model")pi $cont --name $q_agent_name --model $q_model --thinking $q_effort$pi_sid --append-system-prompt $PROTOCOL_DIR/WORKER_PROTOCOL.pi.md --no-approve -e $q_pi_ext$(pi_skill_args "$wt_path")$mcp_args 'Read WORKER_TASK.md and continue it.${push_mandate}${plan_note}${reorient}${process_authority}${grid_note}${protocol_note}'"
 else
   cont="$lead_cont"
   claude_sid=""
