@@ -81,6 +81,7 @@ map_file() {
   adapters/core/dispatch-resume.sh | adapters/core/dispatch.sh) add "${dispatch_set[@]}" remote-host dispatch-migrate ;;
   adapters/core/dispatch-migrate.sh) add dispatch-migrate remote-host ;;
   adapters/core/directive-delivery.sh) add adapters directive-delivery ;;
+  adapters/core/dispatcher-hook.sh | adapters/core/dispatcher-session.sh) add adapters dispatcher-plugin ;;
   adapters/core/dispatch-notify.sh) add adapters dispatch-notify dispatch ;;
   adapters/core/dispatcher.sh) add adapters dispatch dispatcher module ;;
   adapters/core/dispatcher-setup.sh) add dispatcher-setup dispatcher module ;;
@@ -112,7 +113,7 @@ map_file() {
   scripts/pi-subagent-contract.sh) add adapters ;;
   scripts/gen-model-map-doc.sh) add adapters model-map-doc ;;
   README.md) add adapters dispatch permission-check ;;
-  hookyard.json) add adapters directive-delivery phase-status public-leak-guard secret-read-guard test-scope-guard tmux-server-guard ;;
+  hookyard.json) add adapters dispatcher-plugin directive-delivery phase-status public-leak-guard secret-read-guard test-scope-guard tmux-server-guard ;;
   crew/*) add "${crew_set[@]}" fleet-holds remote-host overseer ;;
   dash/*) add module ;;
   docs/* | spikes/* | EVIDENCE-*.txt | LICENSE | .gitignore | .envrc | WORKER_TASK.md) ;;
