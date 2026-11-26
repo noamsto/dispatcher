@@ -2,9 +2,10 @@
 // claiming, and releasing, its crew directory — on the repo bus (layout 1) or
 // under the state root (layout 2, which register alone creates).
 //
-// The pid and pane files and `<state>/pidfile.log` are shared with the readers
-// in crews, adopt and dispatch, so their text is a contract: the pid is written
-// verbatim, whatever the caller passed.
+// The pid, pane and engine files and `<state>/pidfile.log` are shared with the
+// readers in crews, adopt and dispatch (and the engine file with the dash), so
+// their text is a contract: the pid and the engine are written verbatim,
+// whatever the caller passed.
 package register
 
 import (
@@ -137,6 +138,17 @@ func Run(sub, pid string, paths bus.Paths, stderr io.Writer, o Options) int {
 				return exitFailure
 			}
 		}
+		// The dispatcher's engine, recorded by the launcher (dispatcher.sh) for
+		// the dash: pi, codex and cursor dispatchers park on `crew watch`
+		// instead of arming a stream lane, and the dash needs the engine to
+		// read their dead lane as parked, not dead (#1827). Absent when the
+		// caller names no engine, which readers must tolerate.
+		if engine := o.Getenv("CREW_ENGINE"); engine != "" {
+			if err := os.WriteFile(cdir+"/engine", []byte(engine+"\n"), 0o644); err != nil {
+				say(stderr, "crew: register: %v\n", err)
+				return exitFailure
+			}
+		}
 		return 0
 	}
 
@@ -153,7 +165,7 @@ func Run(sub, pid string, paths bus.Paths, stderr io.Writer, o Options) int {
 	}
 	if bc.Layout == 2 {
 		// The dir, meta.json and log outlive the registration: they are the crew.
-		for _, name := range []string{"pid", "pid.start", "pane", "launch", "relaunch"} {
+		for _, name := range []string{"pid", "pid.start", "pane", "engine", "launch", "relaunch"} {
 			if err := os.Remove(cdir + "/" + name); err != nil && !errors.Is(err, fs.ErrNotExist) {
 				say(stderr, "crew: deregister: %v\n", err)
 				return exitFailure

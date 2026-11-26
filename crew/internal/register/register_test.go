@@ -195,6 +195,43 @@ func TestRegisterOK(t *testing.T) {
 
 // The pid a crew records claims no exclusivity over it: the same pid may run
 // two dispatchers, one per crew, and each crew directory stands on its own.
+// CREW_ENGINE records the dispatcher's engine beside the pid so the dash can
+// tell a parked pi/codex/cursor dispatcher from a dead lane (#1827). Written
+// verbatim like the pid, and only when the env is set.
+func TestRegisterEngineFile(t *testing.T) {
+	cases := []struct {
+		name string
+		env  string // CREW_ENGINE value; "" = unset
+		want string // "" = no file
+	}{
+		{"recorded", "pi", "pi\n"},
+		{"verbatim", "pi --beta", "pi --beta\n"},
+		{"unset", "", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := testPaths(t)
+			w := newWorld("c1")
+			if tc.env != "" {
+				w.env["CREW_ENGINE"] = tc.env
+			}
+			if code, stderr := run("register", "888", p, w); code != 0 || stderr != "" {
+				t.Fatalf("code=%d stderr=%q", code, stderr)
+			}
+			enginePath := p.CrewDir("c1") + "/engine"
+			if tc.want == "" {
+				if _, err := os.Stat(enginePath); err == nil {
+					t.Error("engine file written without CREW_ENGINE")
+				}
+				return
+			}
+			if got := readFile(t, enginePath); got != tc.want {
+				t.Errorf("engine file = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestRegisterNonExclusiveAcrossCrews(t *testing.T) {
 	p := testPaths(t)
 	for _, crew := range []string{"c1", "c2"} {

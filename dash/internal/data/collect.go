@@ -235,15 +235,9 @@ func crewArgs(cfg Config, subArgs ...string) []string {
 }
 
 // stampSince fills Since on every here-dispatcher from its crew pid file, which
-// crew register and adopt rewrite on each (re)launch.
-func stampSince(ctx context.Context, r Runner, cfg Config, ids []string, locs map[string]*DispatcherLoc) {
-	if !slices.ContainsFunc(ids, func(id string) bool { return locs[id].Where == "here" }) {
-		return
-	}
-	crewsDir := ""
-	if events, err := EventsPath(ctx, r, cfg.Git); err == nil {
-		crewsDir = filepath.Join(filepath.Dir(events), "crews")
-	}
+// crew register and adopt rewrite on each (re)launch. crewsDir is the resolved
+// layout-1 crews directory ("" when unresolvable), shared with crewEngine.
+func stampSince(ctx context.Context, r Runner, cfg Config, ids []string, locs map[string]*DispatcherLoc, crewsDir string) {
 	for _, id := range ids {
 		if locs[id].Where != "here" {
 			continue
@@ -275,6 +269,44 @@ func pidSince(crewsDir, id string) *int64 {
 	}
 	since := fi.ModTime().Unix()
 	return &since
+}
+
+// parkLaneEngines are the dispatcher engines that park on a blocking
+// `crew watch` instead of arming a `crew stream` lane (DISPATCHER_PROTOCOL:
+// "codex / pi — blocking park", "cursor — background park"). Their crews'
+// lanes are legitimately never taken, so a dead lane probe on a live one
+// reads as `parked`, not `dead`.
+var parkLaneEngines = []string{"codex", "cursor", "pi"}
+
+func parkLaneEngine(engine string) bool {
+	return slices.Contains(parkLaneEngines, engine)
+}
+
+// crewEngine reads the dispatcher engine `crew register` recorded beside the
+// pid file: the layout-1 crew dirs under crewsDir first, then on a miss the
+// cached `crew where --dir` answer (the same resolution as crewPidSince).
+// "" when no engine was recorded or nothing could be read — never guessed
+// from process names.
+func crewEngine(ctx context.Context, r Runner, cfg Config, crewsDir, id string) string {
+	if engine := engineFile(crewsDir, id); engine != "" {
+		return engine
+	}
+	dir, err := cfg.Dirs.Resolve(ctx, r, cfg, "/", id)
+	if err != nil {
+		return ""
+	}
+	return engineFile(filepath.Dir(dir), filepath.Base(dir))
+}
+
+func engineFile(crewsDir, id string) string {
+	if crewsDir == "" {
+		return ""
+	}
+	data, err := os.ReadFile(filepath.Join(crewsDir, id, "engine"))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
 }
 
 // CollectRoster re-runs only the roster sources (crew crews / roster / hold
@@ -327,7 +359,13 @@ func CollectRoster(ctx context.Context, r Runner, cfg Config) RosterSection {
 			}
 		}
 	}
-	stampSince(ctx, r, cfg, ids, locs)
+	var crewsDir string
+	if slices.ContainsFunc(ids, func(id string) bool { return locs[id].Where == "here" }) {
+		if events, err := EventsPath(ctx, r, cfg.Git); err == nil {
+			crewsDir = filepath.Join(filepath.Dir(events), "crews")
+		}
+	}
+	stampSince(ctx, r, cfg, ids, locs, crewsDir)
 	crews := make([]RosterCrew, len(ids))
 	peerRows := make([][]map[string]any, len(ids))
 	var wg sync.WaitGroup
@@ -335,7 +373,7 @@ func CollectRoster(ctx context.Context, r Runner, cfg Config) RosterSection {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			crews[i], peerRows[i] = collectCrew(ctx, r, cfg, id, locs[id])
+			crews[i], peerRows[i] = collectCrew(ctx, r, cfg, id, locs[id], crewsDir)
 		}()
 	}
 	wg.Wait()
@@ -436,8 +474,9 @@ func peerKey(row map[string]any) string {
 // collectCrew runs one crew's roster, hold list and lane probe concurrently.
 // The roster's peer rows come back separately from the crew's own workers.
 // A crew whose dispatcher lives elsewhere skips the lane probe: this bus has no
-// pid for it, so the probe would read a false dead lane.
-func collectCrew(ctx context.Context, r Runner, cfg Config, id string, loc *DispatcherLoc) (RosterCrew, []map[string]any) {
+// pid for it, so the probe would read a false dead lane — that gate is also
+// the dispatcher-liveness precondition of the parked mapping in probeLane.
+func collectCrew(ctx context.Context, r Runner, cfg Config, id string, loc *DispatcherLoc, crewsDir string) (RosterCrew, []map[string]any) {
 	var holds []map[string]any
 	var hErr *string
 	var lane *LaneStatus
@@ -451,7 +490,7 @@ func collectCrew(ctx context.Context, r Runner, cfg Config, id string, loc *Disp
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			lane = probeLane(ctx, r, cfg, id)
+			lane = probeLane(ctx, r, cfg, id, crewsDir)
 		}()
 	}
 	rows, wErr := fetchRosterList(ctx, r, cfg, crewArgs(cfg, "roster", id, "--peers"))
@@ -477,13 +516,19 @@ func collectCrew(ctx context.Context, r Runner, cfg Config, id string, loc *Disp
 
 // probeLane reads `crew stream --crew <id> --status`. The command exits 2 for
 // a dead lane, so the state is taken from stdout whenever it parses,
-// regardless of the exit code.
-func probeLane(ctx context.Context, r Runner, cfg Config, id string) *LaneStatus {
+// regardless of the exit code. A dead lane whose dispatcher recorded a
+// park-lane engine (#1827) collects as `parked`: this probe only runs for a
+// live local dispatcher (see collectCrew), so the engine file — never a
+// process-name guess — is the only extra evidence needed.
+func probeLane(ctx context.Context, r Runner, cfg Config, id, crewsDir string) *LaneStatus {
 	out, errb, err := r.Run(ctx, cfg.Crew[0], crewArgs(cfg, "stream", "--crew", id, "--status")...)
 	var parsed struct {
 		State string `json:"state"`
 	}
 	if json.Unmarshal(out, &parsed) == nil && parsed.State != "" {
+		if parsed.State == "dead" && parkLaneEngine(crewEngine(ctx, r, cfg, crewsDir, id)) {
+			return &LaneStatus{State: "parked"}
+		}
 		return &LaneStatus{State: parsed.State}
 	}
 	msg := firstLineOrExit(errb, exitCode(err))

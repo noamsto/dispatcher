@@ -1,0 +1,27 @@
+# Issue (#1827): a parked pi/codex/cursor dispatcher renders as `dead` in the crew dash.
+# The dash decides liveness only from the stream lane; park-lane engines never arm one.
+direction: right
+
+pi-disp: "pi dispatcher (alive, parked)"
+
+dispatcher-sh: "adapters/core/dispatcher.sh\nCREW_ENGINE unset; crew register $$"
+
+crew-dir: "<crew dir>\npid · pid.start · pane\nno engine recorded"
+
+watch: "crew watch --timeout 270\nblocking park (pi/codex/cursor)"
+
+lane: "crew stream --crew <id> --status\nlane.State: no stream.lock.d → dead (exit 2)"
+
+probe: "dash/internal/data/collect.go\nprobeLane() → Lane.State = dead"
+
+header: "dash/internal/ui/crewheader.go\ncrew › dispatcher <id> · dead"
+
+pi-disp -> watch: parks instead of arming a stream lane
+dispatcher-sh -> crew-dir: writes pid + pane, never the engine
+watch -> crew-dir: never acquires stream.lock.d
+crew-dir -> lane: dash probes the lane
+lane -> probe: '{"state":"dead"}'
+probe -> header
+
+header.style.stroke: "#d40000"
+header.style.stroke-width: 3

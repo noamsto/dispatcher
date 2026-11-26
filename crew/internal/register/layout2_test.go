@@ -42,6 +42,7 @@ func TestRegisterLayout2InARepo(t *testing.T) {
 	p := statePaths(t)
 	w := layout2World("c1")
 	w.env["TMUX_PANE"] = "%3"
+	w.env["CREW_ENGINE"] = "pi"
 	if code, stderr := run("register", "888", p, w); code != 0 || stderr != "" {
 		t.Fatalf("code=%d stderr=%q", code, stderr)
 	}
@@ -68,6 +69,9 @@ func TestRegisterLayout2InARepo(t *testing.T) {
 	}
 	if got := readFile(t, dir+"/pane"); got != "%3\n" {
 		t.Errorf("pane = %q", got)
+	}
+	if got := readFile(t, dir+"/engine"); got != "pi\n" {
+		t.Errorf("engine = %q", got)
 	}
 	if got := readFile(t, dir+"/pidfile.log"); !strings.Contains(got, " register ok crew=c1 old=- new=888 ") {
 		t.Errorf("pidfile.log = %q", got)
@@ -248,7 +252,7 @@ func TestDeregisterLayout2KeepsTheCrew(t *testing.T) {
 	if got := readFile(t, dir+"/pid.start"); got != "888 tok\n" {
 		t.Fatalf("pid.start = %q", got)
 	}
-	for _, name := range []string{"launch", "relaunch", "events.jsonl", "keep"} {
+	for _, name := range []string{"launch", "relaunch", "engine", "events.jsonl", "keep"} {
 		if err := os.WriteFile(dir+"/"+name, []byte("x\n"), 0o644); err != nil {
 			t.Fatal(err)
 		}
@@ -256,7 +260,7 @@ func TestDeregisterLayout2KeepsTheCrew(t *testing.T) {
 	if code, stderr := run("deregister", "", p, newWorld("c1")); code != 0 || stderr != "" {
 		t.Fatalf("deregister: code=%d stderr=%q", code, stderr)
 	}
-	for _, name := range []string{"pid", "pid.start", "pane", "launch", "relaunch"} {
+	for _, name := range []string{"pid", "pid.start", "pane", "launch", "relaunch", "engine"} {
 		absent(t, dir+"/"+name)
 	}
 	for _, name := range []string{"meta.json", "events.jsonl", "keep"} {
