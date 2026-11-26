@@ -529,6 +529,10 @@
               # when either is missing.
               pkgs.resvg
               pkgs.source-sans
+              # d2: validate and render the plan's .d2 diagrams (`d2 --theme 0|200`).
+              # Not in the dispatch launcher list: launcherPath strips those dirs
+              # from the engine's PATH, so d2 would never reach a worker there.
+              pkgs.d2
               pkgs.git
               pkgs.tmux
               pkgs.gh

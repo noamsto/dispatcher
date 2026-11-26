@@ -25,6 +25,9 @@ Two small D2 diagrams give reviewers and the owner the mechanism and the intende
 <!-- only:claude -->
 - claude: also copy each file to `/tmp/claude-status/images/diagrams/src/<branch-slug>-{issue,plan}.d2`, only if that directory exists (the aeye carousel renders it), and load `aeye:diagrams` for style if the skill is listed. A refused or failed copy is skipped silently: not a blocker or a bus question.
 <!-- /only -->
+<!-- only:pi -->
+- pi: also copy each file to `/tmp/claude-status/images/diagrams/src/<branch-slug>-{issue,plan}.d2`, only if that directory exists (the aeye carousel renders it), and read a `diagrams` (or `aeye:diagrams`) skill for style if one is listed; `--no-approve` drops user skills, so absence is normal. A refused or failed copy is skipped silently: not a blocker or a bus question.
+<!-- /only -->
 - Cost guardrail: `d2` on PATH → `d2 validate` each file; a parse failure gets one fix attempt, then skip that diagram with a one-line note in the PR body; `d2` missing, or a render failing after one fix attempt → that diagram falls back to a fenced `d2` block in the PR body with a one-line note. A missing diagram never blocks `pr_open` and is not a ledger item. The PR body carries the committed renders (`WORKER_SHIP`, PR body contract).
 
 ## Orchestration consult (deep only)
