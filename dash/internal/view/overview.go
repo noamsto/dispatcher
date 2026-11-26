@@ -418,8 +418,14 @@ func budgetRows(r *data.BudgetReport) []BudgetRow {
 	}
 	if c := r.AnthropicCredit; c != nil {
 		rows = append(rows, BudgetRow{
-			Engine: "pi", Label: "pi anthropic", UsedPct: c.UsedPct, Pace: "n/a",
+			Engine: "pi", Label: data.LabelAnthropicKey, UsedPct: c.UsedPct, Pace: "n/a",
 			Text: c.LeftText(), Critical: c.Exhausted(),
+		})
+	}
+	if g := r.GeminiBudget; g != nil {
+		rows = append(rows, BudgetRow{
+			Engine: "pi", Label: data.LabelGemini, UsedPct: g.UsedPct, Pace: "n/a",
+			Text: g.LeftText(), Critical: g.Exhausted(),
 		})
 	}
 	return rows

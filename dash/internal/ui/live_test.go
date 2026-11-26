@@ -702,7 +702,7 @@ func TestLiveBudgetStrip(t *testing.T) {
 	snap := loadSnapshot(t)
 	v := testLiveView(snap, allLoaded, liveDeps{}, fixedNow(snap))
 	out := v.View(120, 24)
-	for _, want := range []string{"claude 7d 90%", "codex 5h 30%", "cursor month 60% LIMIT", "pi ?"} {
+	for _, want := range []string{"claude subscription 7d 90%", "codex 5h 30%", "cursor month 60% LIMIT", "pi ?"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("budget strip missing %q:\n%s", want, out)
 		}
@@ -711,8 +711,8 @@ func TestLiveBudgetStrip(t *testing.T) {
 		t.Errorf("engines not in name order:\n%s", out)
 	}
 
-	if wrapped := v.budgetLines(30); len(wrapped) != 2 || strings.Contains(wrapped[1], "…") {
-		t.Fatalf("strip at 30 cells should wrap onto 2 whole lines: %q", wrapped)
+	if wrapped := v.budgetLines(44); len(wrapped) != 2 || strings.Contains(wrapped[1], "…") {
+		t.Fatalf("strip at 44 cells should wrap onto 2 whole lines: %q", wrapped)
 	}
 	narrow := v.budgetLines(24)
 	if len(narrow) != 2 {

@@ -1007,8 +1007,8 @@ func budgetLine(ov vm.OverviewView, it placed, s *spans, iw int) string {
 }
 
 // gaugeLabelW is the label column of a gauge row (budget windows, capacity).
-// It fits "pi openrouter", the longest budget row label.
-const gaugeLabelW = 13
+// It fits "claude subscription 7d", the longest budget row label.
+const gaugeLabelW = 22
 
 // budgetBar is one budget window: label, usage gauge, percent and pace arrow.
 func budgetBar(b vm.BudgetRow, s *spans, iw int) string {

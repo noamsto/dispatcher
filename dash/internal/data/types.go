@@ -59,13 +59,13 @@ type BudgetSection struct {
 // fields dash reads; LimitReached is kept raw (json.RawMessage) so its
 // engine-specific shape — codex's absolute-limit signals vs cursor's
 // {reason,resets_at} vs pi's {reason} — round-trips a Go re-marshal unchanged.
-// Fields no renderer reads (target_source, limit_reset, pi's key_limit_* and
-// starts_at/resets_at, the credit's elapsed_pct/starts_at/summary) are intentionally unmodeled and are dropped on
+// Fields no renderer reads (target_source, limit_reset, pi's starts_at/resets_at, the credit's elapsed_pct/starts_at/summary) are intentionally unmodeled and are dropped on
 // re-marshal.
 type BudgetReport struct {
 	FetchedEpoch    int64                    `json:"fetched_epoch"`
 	Engines         map[string]*EngineBudget `json:"engines"`
 	AnthropicCredit *AnthropicCredit         `json:"anthropic_credit,omitempty"`
+	GeminiBudget    *GeminiBudget            `json:"gemini_budget,omitempty"`
 }
 
 type EngineBudget struct {
@@ -75,6 +75,8 @@ type EngineBudget struct {
 	Unlimited            bool            `json:"unlimited"`
 	SpendUSD             *float64        `json:"spend_usd"`
 	TargetUSD            *float64        `json:"target_usd"`
+	KeyLimitUSD          *float64        `json:"key_limit_usd,omitempty"`
+	KeyLimitRemainingUSD *float64        `json:"key_limit_remaining_usd,omitempty"`
 	ElapsedPct           *float64        `json:"elapsed_pct"`
 	ProjectedMonthEndUSD *float64        `json:"projected_month_end_usd"`
 	Windows              []Window        `json:"windows"`
