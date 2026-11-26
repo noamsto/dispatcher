@@ -19066,3 +19066,56 @@ _attach_nothing_scaffolded() {
   [ "$status" -ne 0 ]
   [ "$(ls -A "$att" | sort | tr '\n' ' ')" = "1-seed.png 3-b.png " ]
 }
+
+# #1809: direct pi ids bill their own provider, so an exhausted OpenRouter month
+# window or key limit must not stop them; OpenRouter ids stay gated.
+or_exhausted() {
+  local cache="$XDG_DATA_HOME/crew/engine-budget.json" now
+  now="$(date +%s)"
+  jq --argjson now "$now" \
+    '.engines.pi += {source: "openrouter_key", target_usd: 50,
+       windows: {month: {used_pct: 97, starts_at: ($now - 777600), resets_at: ($now + 1814400)}},
+       limit_reached: {reason: "OpenRouter key credit limit reached"}}
+     | .engines.pi.gemini = {target_usd: 25, remaining_usd: 20, resets_at: ($now + 1814400)}' \
+    "$cache" >"$cache.tmp" && mv "$cache.tmp" "$cache"
+}
+
+@test "1809: direct pi ids launch as lead and role while OpenRouter is exhausted" {
+  stub_launch_bins
+  anthropic_budget 180 10 1000000 1000000
+  or_exhausted
+  local id n=50
+  for id in anthropic/claude-sonnet-5-5 google/gemini-4-hydrogen; do
+    n=$((n + 10))
+    run --separate-stderr run_dispatch standard "$id" --agent pi --effort high --ignore-map --crew-id c1 $n "t"
+    [ "$status" -eq 0 ] || { echo "lead $id: $stderr"; false; }
+    [[ "$stderr" != *"quota exhausted"* ]]
+    run --separate-stderr run_dispatch standard sonnet --agent claude --ignore-map --roles "reviewer=pi:$id" --effort high --crew-id c1 $((n + 1)) "t"
+    [ "$status" -eq 0 ] || { echo "role $id: $stderr"; false; }
+    [[ "$stderr" != *"quota exhausted"* ]]
+  done
+}
+
+@test "1809: openrouter pi ids stay refused while OpenRouter is exhausted" {
+  anthropic_budget 180 10 1000000 1000000
+  or_exhausted
+  run --separate-stderr run_dispatch standard openrouter/deepseek/deepseek-v4-flash --agent pi --effort high --ignore-map --crew-id c1 42 "t"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"pi quota exhausted"* ]]
+  run --separate-stderr run_dispatch standard sonnet --agent claude --ignore-map --roles "reviewer=pi:openrouter/deepseek/deepseek-v4-flash" --effort high --crew-id c1 42 "t"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"role 'reviewer' (pi) quota exhausted"* ]]
+}
+
+@test "1809: --spawn-role admits a direct pi id and refuses openrouter under OpenRouter exhaustion" {
+  _spawn_role_fixture
+  anthropic_budget 180 10 1000000 1000000
+  or_exhausted
+  run run_dispatch --spawn-role reviewer
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"role 'reviewer' (pi) quota exhausted"* ]]
+  printf '{"reviewer":{"agent":"pi","model":"anthropic/claude-sonnet-5-5"}}\n' >"$roles_dir/roles.json"
+  run run_dispatch --spawn-role reviewer
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [[ "$output" != *"quota exhausted"* ]]
+}

@@ -513,8 +513,9 @@ recorded, a grant mismatch, spent, expired). The remote side of a `--host`
 launch never admits them: that host's cache counts only its own pi spend.
 A spent or expired credit refuses only the direct ids; it never sets
 `limit_reached` or stops OpenRouter pi work. pi's
-OpenRouter stops (≥95% month, `limit_reached`) still refuse every pi launch,
-direct ids included. pi premium (either opus) is admitted only at `deep`,
+OpenRouter stops (≥95% month, `limit_reached`) refuse only OpenRouter pi
+launches; direct `anthropic/*` and `google/gemini-*` ids skip them (lead and
+roles) and are judged by their own credit or budget. pi premium (either opus) is admitted only at `deep`,
 where `admits` includes premium. The catalog itself has no age check. With no
 catalog only the seed rows apply.
 
