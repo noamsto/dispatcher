@@ -1,0 +1,13 @@
+direction: right
+lead: "pi lead\n(anthropic/*, google/*, local)"
+dispatch: "dispatch.sh / dispatch-resume.sh\npi launch_cmd"
+ext: "subagent/index.ts\nspawn child"
+roster: "adapters/pi/agents/*.md\nmodel: openrouter/deepseek/...:max"
+or: "OpenRouter key" { style.stroke: red }
+gate: "budget_stop / absolute_limit_stop\nskipped for direct and local leads"
+dispatch -> lead: "launches"
+lead -> ext: "native subagent call"
+ext -> roster: "reads pinned model"
+roster -> or: "child bills OpenRouter,\nwhatever the lead's lane" { style.stroke: red }
+dispatch -> gate: "lead admitted without\nOpenRouter check"
+gate -> or: "limit_reached unseen:\nsubagents fail" { style.stroke-dash: 4 }

@@ -1,0 +1,14 @@
+direction: right
+lead: "pi lead\n(anthropic/*, google/*, local)"
+dispatch: "dispatch.sh / dispatch-resume.sh\npi launch_cmd"
+helper: "local-models.sh\n_pi_subagent_lane_env (new)" { style.stroke: green }
+ext: "subagent/index.ts\nspawn child"
+lane: "subagent/lane.ts\nlaneModel (new)" { style.stroke: green }
+roster: "adapters/pi/agents/*.md\nopenrouter pin (unchanged)"
+child: "child runs the lead's model\nat the lead's thinking level" { style.stroke: green }
+dispatch -> helper: "model"
+helper -> lead: "DISPATCHER_PI_SUBAGENT_MODEL=<lead model>\n(none for openrouter/* leads)"
+lead -> ext: "native subagent call"
+ext -> roster: "reads pinned model"
+ext -> lane: "swap openrouter pin for env lane"
+lane -> child
