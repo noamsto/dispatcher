@@ -907,7 +907,7 @@ EOF
   [ "$status" -ne 0 ]
 }
 
-# Subagent billing lane (#1832): the roster pins OpenRouter, so a lead on another
+# Subagent billing lane: the roster pins OpenRouter, so a lead on another
 # lane exports its own model for the extension to swap in.
 @test "pi subagent lane: an OpenRouter lead exports no lane override" {
   stub_launch_bins
