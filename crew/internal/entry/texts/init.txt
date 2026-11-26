@@ -1,0 +1,12 @@
+usage: crew init [<id>]
+
+Create a layout-2 crew directory under the crew state dir: meta.json and an
+empty events.jsonl. Claims nothing: no pid, pane or engine file is written
+(crew register does that), so a caller that only needs the directory never has
+to mkdir under the state dir itself.
+
+Without <id> the crew id comes from CREW_ID or the worktree's WORKER_TASK.md.
+Idempotent: an existing meta.json is kept and an existing log is never
+truncated. Prints one JSON line: {"id","dir","log","created"}.
+
+  crew init "$(crew new)"

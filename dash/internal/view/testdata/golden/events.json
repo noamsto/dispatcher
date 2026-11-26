@@ -1,0 +1,476 @@
+{
+  "schema_version": 1,
+  "view": "events",
+  "generated_at": 1000,
+  "host": "box",
+  "cursor": "INO:3890",
+  "reset": false,
+  "more": false,
+  "events": [
+    {
+      "id": "446b0af69797e406",
+      "host": "box",
+      "ts": 1794799200000,
+      "kind": "status",
+      "from": "worker:feat/a#s1",
+      "to": "dispatcher:c1",
+      "crew": "c1",
+      "branch": "feat/a",
+      "text": "working spec",
+      "row": {
+        "body": {
+          "detail": "spec",
+          "state": "working"
+        },
+        "crew_id": "c1",
+        "from": "worker:feat/a#s1",
+        "kind": "status",
+        "to": "dispatcher:c1",
+        "ts": 1794799200000
+      }
+    },
+    {
+      "id": "0768015ce76691a2",
+      "host": "box",
+      "ts": 1794799260000,
+      "kind": "status",
+      "from": "worker:feat/b#s1",
+      "to": "dispatcher:c1",
+      "crew": "c1",
+      "branch": "feat/b",
+      "text": "working spec",
+      "row": {
+        "body": {
+          "detail": "spec",
+          "state": "working"
+        },
+        "crew_id": "c1",
+        "from": "worker:feat/b#s1",
+        "kind": "status",
+        "to": "dispatcher:c1",
+        "ts": 1794799260000
+      }
+    },
+    {
+      "id": "9cb1052bd5b5c4a7",
+      "host": "box",
+      "ts": 1794799320000,
+      "kind": "status",
+      "from": "worker:feat/a#s1",
+      "to": "dispatcher:c1",
+      "crew": "c1",
+      "branch": "feat/a",
+      "text": "working plan",
+      "row": {
+        "body": {
+          "detail": "plan",
+          "state": "working"
+        },
+        "crew_id": "c1",
+        "from": "worker:feat/a#s1",
+        "kind": "status",
+        "to": "dispatcher:c1",
+        "ts": 1794799320000
+      }
+    },
+    {
+      "id": "22fb21ad12a56864",
+      "host": "box",
+      "ts": 1794799325000,
+      "kind": "status",
+      "from": "role:feat/a:plan-critic",
+      "to": "dispatcher:c1",
+      "crew": "c1",
+      "branch": "",
+      "text": "working plan review",
+      "row": {
+        "body": {
+          "detail": "plan review",
+          "state": "working"
+        },
+        "crew_id": "c1",
+        "from": "role:feat/a:plan-critic",
+        "kind": "status",
+        "to": "dispatcher:c1",
+        "ts": 1794799325000
+      }
+    },
+    {
+      "id": "ad364596ee575942",
+      "host": "box",
+      "ts": 1794799330000,
+      "kind": "msg",
+      "from": "role:feat/a:plan-critic",
+      "to": "dispatcher:c1",
+      "crew": "c1",
+      "branch": "",
+      "text": "seam plan: accept",
+      "row": {
+        "body": "{\"role\": \"plan-critic\", \"seam\": \"plan\", \"verdict\": \"accept\", \"findings\": []}",
+        "crew_id": "c1",
+        "from": "role:feat/a:plan-critic",
+        "kind": "msg",
+        "to": "dispatcher:c1",
+        "ts": 1794799330000
+      }
+    },
+    {
+      "id": "8d00d2aa609b50b2",
+      "host": "box",
+      "ts": 1794799380000,
+      "kind": "status",
+      "from": "worker:feat/b#s1",
+      "to": "dispatcher:c1",
+      "crew": "c1",
+      "branch": "feat/b",
+      "text": "working plan",
+      "row": {
+        "body": {
+          "detail": "plan",
+          "state": "working"
+        },
+        "crew_id": "c1",
+        "from": "worker:feat/b#s1",
+        "kind": "status",
+        "to": "dispatcher:c1",
+        "ts": 1794799380000
+      }
+    },
+    {
+      "id": "4d69e47f87faa110",
+      "host": "box",
+      "ts": 1794799500000,
+      "kind": "status",
+      "from": "worker:feat/a#s1",
+      "to": "dispatcher:c1",
+      "crew": "c1",
+      "branch": "feat/a",
+      "text": "working execute",
+      "row": {
+        "body": {
+          "detail": "execute",
+          "state": "working"
+        },
+        "crew_id": "c1",
+        "from": "worker:feat/a#s1",
+        "kind": "status",
+        "to": "dispatcher:c1",
+        "ts": 1794799500000
+      }
+    },
+    {
+      "id": "a4bfe8f17c2d0647",
+      "host": "box",
+      "ts": 1794799560000,
+      "kind": "status",
+      "from": "worker:feat/b#s1",
+      "to": "dispatcher:c1",
+      "crew": "c1",
+      "branch": "feat/b",
+      "text": "working execute",
+      "row": {
+        "body": {
+          "detail": "execute",
+          "state": "working"
+        },
+        "crew_id": "c1",
+        "from": "worker:feat/b#s1",
+        "kind": "status",
+        "to": "dispatcher:c1",
+        "ts": 1794799560000
+      }
+    },
+    {
+      "id": "e1f000731153cb6e",
+      "host": "box",
+      "ts": 1794799700000,
+      "kind": "status",
+      "from": "worker:feat/j#s1",
+      "to": "dispatcher:c2",
+      "crew": "c2",
+      "branch": "feat/j",
+      "text": "working spec",
+      "row": {
+        "body": {
+          "detail": "spec",
+          "state": "working"
+        },
+        "crew_id": "c2",
+        "from": "worker:feat/j#s1",
+        "kind": "status",
+        "to": "dispatcher:c2",
+        "ts": 1794799700000
+      }
+    },
+    {
+      "id": "c663146a2a81ebfd",
+      "host": "box",
+      "ts": 1794799800000,
+      "kind": "status",
+      "from": "worker:feat/b#s1",
+      "to": "dispatcher:c1",
+      "crew": "c1",
+      "branch": "feat/b",
+      "text": "working gate",
+      "row": {
+        "body": {
+          "detail": "gate",
+          "state": "working"
+        },
+        "crew_id": "c1",
+        "from": "worker:feat/b#s1",
+        "kind": "status",
+        "to": "dispatcher:c1",
+        "ts": 1794799800000
+      }
+    },
+    {
+      "id": "0cef4238d01f99e5",
+      "host": "box",
+      "ts": 1794799900000,
+      "kind": "status",
+      "from": "worker:feat/b#s1",
+      "to": "dispatcher:c1",
+      "crew": "c1",
+      "branch": "feat/b",
+      "text": "pr_open AC1 pass(go test); AC2-4 pass(bats); AC5 waived(dispatcher: n/a)",
+      "row": {
+        "body": {
+          "detail": "AC1 pass(go test); AC2-4 pass(bats); AC5 waived(dispatcher: n/a)",
+          "state": "pr_open"
+        },
+        "crew_id": "c1",
+        "from": "worker:feat/b#s1",
+        "kind": "status",
+        "to": "dispatcher:c1",
+        "ts": 1794799900000
+      }
+    },
+    {
+      "id": "4a2432032f31d2db",
+      "host": "box",
+      "ts": 1794799910000,
+      "kind": "msg",
+      "from": "pr-watch:12",
+      "to": "dispatcher:c1",
+      "crew": "c1",
+      "branch": "",
+      "text": "PR #12 changed checks",
+      "row": {
+        "body": "{\"ts\": 1, \"repo\": \"o/r\", \"pr\": 12, \"url\": \"https://github.com/o/r/pull/12\", \"changed\": [\"checks\"], \"state\": {\"state\": \"OPEN\", \"checks\": \"PENDING\", \"mergeable\": \"MERGEABLE\"}, \"was\": {}}",
+        "crew_id": "c1",
+        "from": "pr-watch:12",
+        "kind": "msg",
+        "to": "dispatcher:c1",
+        "ts": 1794799910000
+      }
+    },
+    {
+      "id": "5ae79e682c96f680",
+      "host": "box",
+      "ts": 1794799920000,
+      "kind": "status",
+      "from": "role:feat/c:spec-critic",
+      "to": "dispatcher:c1",
+      "crew": "c1",
+      "branch": "",
+      "text": "failed no assignment",
+      "row": {
+        "body": {
+          "detail": "no assignment",
+          "state": "failed"
+        },
+        "crew_id": "c1",
+        "from": "role:feat/c:spec-critic",
+        "kind": "status",
+        "to": "dispatcher:c1",
+        "ts": 1794799920000
+      }
+    },
+    {
+      "id": "e78334310f624ba1",
+      "host": "box",
+      "ts": 1794799990000,
+      "kind": "msg",
+      "from": "pr-watch:12",
+      "to": "dispatcher:c1",
+      "crew": "c1",
+      "branch": "",
+      "text": "PR #12 changed checks",
+      "row": {
+        "body": "{\"ts\": 1, \"repo\": \"o/r\", \"pr\": 12, \"url\": \"https://github.com/o/r/pull/12\", \"changed\": [\"checks\"], \"state\": {\"state\": \"OPEN\", \"checks\": \"SUCCESS\", \"mergeable\": \"MERGEABLE\"}, \"was\": {}}",
+        "crew_id": "c1",
+        "from": "pr-watch:12",
+        "kind": "msg",
+        "to": "dispatcher:c1",
+        "ts": 1794799990000
+      }
+    },
+    {
+      "id": "8e6454b61101c2d8",
+      "host": "box",
+      "ts": 1794800100000,
+      "kind": "msg",
+      "from": "worker:feat/a#s1",
+      "to": "dispatcher:c1",
+      "crew": "c1",
+      "branch": "feat/a",
+      "text": "progress note",
+      "row": {
+        "body": "progress note",
+        "crew_id": "c1",
+        "from": "worker:feat/a#s1",
+        "kind": "msg",
+        "to": "dispatcher:c1",
+        "ts": 1794800100000
+      }
+    },
+    {
+      "id": "4f0cc032a636088d",
+      "host": "box",
+      "ts": 1794800200000,
+      "kind": "status",
+      "from": "role:feat/a:reviewer",
+      "to": "dispatcher:c1",
+      "crew": "c1",
+      "branch": "",
+      "text": "blocked role reviewer engine exited (pane %9)",
+      "row": {
+        "body": {
+          "detail": "role reviewer engine exited (pane %9)",
+          "state": "blocked"
+        },
+        "crew_id": "c1",
+        "from": "role:feat/a:reviewer",
+        "kind": "status",
+        "to": "dispatcher:c1",
+        "ts": 1794800200000
+      }
+    },
+    {
+      "id": "ce920ce95cb266e9",
+      "host": "box",
+      "ts": 1794800300000,
+      "kind": "status",
+      "from": "worker:feat/d#s1",
+      "to": "dispatcher:c1",
+      "crew": "c1",
+      "branch": "feat/d",
+      "text": "blocked prompt: permission dialog",
+      "row": {
+        "body": {
+          "detail": "prompt: permission dialog",
+          "source": "watchdog",
+          "state": "blocked"
+        },
+        "crew_id": "c1",
+        "from": "worker:feat/d#s1",
+        "kind": "status",
+        "to": "dispatcher:c1",
+        "ts": 1794800300000
+      }
+    },
+    {
+      "id": "5b71f633fdd77b78",
+      "host": "box",
+      "ts": 1794800350000,
+      "kind": "status",
+      "from": "worker:feat/j#s1",
+      "to": "dispatcher:c2",
+      "crew": "c2",
+      "branch": "feat/j",
+      "text": "working execute",
+      "row": {
+        "body": {
+          "detail": "execute",
+          "state": "working"
+        },
+        "crew_id": "c2",
+        "from": "worker:feat/j#s1",
+        "kind": "status",
+        "to": "dispatcher:c2",
+        "ts": 1794800350000
+      }
+    },
+    {
+      "id": "035c5e25f991f506",
+      "host": "box",
+      "ts": 1794800500000,
+      "kind": "status",
+      "from": "worker:feat/a#s1",
+      "to": "dispatcher:c1",
+      "crew": "c1",
+      "branch": "feat/a",
+      "text": "working execute",
+      "row": {
+        "body": {
+          "detail": "execute",
+          "state": "working"
+        },
+        "crew_id": "c1",
+        "from": "worker:feat/a#s1",
+        "kind": "status",
+        "to": "dispatcher:c1",
+        "ts": 1794800500000
+      }
+    },
+    {
+      "id": "b61291e581febb4d",
+      "host": "box",
+      "ts": 1794800510000,
+      "kind": "msg",
+      "from": "worker:feat/a#s1",
+      "to": "subagent:c1",
+      "crew": "c1",
+      "branch": "feat/a",
+      "text": "msg: agent, effort, engine, id, label, model, subagent",
+      "row": {
+        "body": "{\"subagent\":\"spawn\",\"id\":\"t1\",\"engine\":\"claude\",\"label\":\"step 1\",\"agent\":\"general-purpose\",\"model\":\"sonnet\",\"effort\":\"medium\"}",
+        "crew_id": "c1",
+        "from": "worker:feat/a#s1",
+        "kind": "msg",
+        "to": "subagent:c1",
+        "ts": 1794800510000
+      }
+    },
+    {
+      "id": "83c781bb10b2e689",
+      "host": "box",
+      "ts": 1794800520000,
+      "kind": "msg",
+      "from": "worker:feat/a#s1",
+      "to": "subagent:c1",
+      "crew": "c1",
+      "branch": "feat/a",
+      "text": "msg: engine, id, label, model, subagent",
+      "row": {
+        "body": "{\"subagent\":\"spawn\",\"id\":\"t2\",\"engine\":\"claude\",\"label\":\"step 2\",\"model\":\"haiku\"}",
+        "crew_id": "c1",
+        "from": "worker:feat/a#s1",
+        "kind": "msg",
+        "to": "subagent:c1",
+        "ts": 1794800520000
+      }
+    },
+    {
+      "id": "24f1be4757e29a93",
+      "host": "box",
+      "ts": 1794800560000,
+      "kind": "msg",
+      "from": "worker:feat/a#s1",
+      "to": "subagent:c1",
+      "crew": "c1",
+      "branch": "feat/a",
+      "text": "msg: id, outcome, subagent",
+      "row": {
+        "body": "{\"subagent\":\"finish\",\"id\":\"t1\",\"outcome\":\"ok\"}",
+        "crew_id": "c1",
+        "from": "worker:feat/a#s1",
+        "kind": "msg",
+        "to": "subagent:c1",
+        "ts": 1794800560000
+      }
+    }
+  ],
+  "errors": []
+}

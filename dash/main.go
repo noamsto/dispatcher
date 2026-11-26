@@ -193,7 +193,10 @@ func runView(ctx context.Context, cfg data.Config, o opts) int {
 	eventsPath, eventsErr := bus.eventsPath, bus.err
 	var collect func(context.Context) (any, error)
 	watch := bus.watch
-	if o.view == "fleet" {
+	switch o.view {
+	case "events":
+		collect = eventsCollector(eventsPath, eventsErr, o)
+	case "fleet":
 		fc := newFleetCollector(runner, cfg)
 		fc.background = o.watch
 		watch = func() []string { return fleetWatchPaths(fc.knownCommons()) }
@@ -207,7 +210,7 @@ func runView(ctx context.Context, cfg data.Config, o opts) int {
 			}
 			return view.BuildFleet(fc.collect(ctx, now)), nil
 		}
-	} else {
+	default:
 		scanner := data.NewBusScanner(eventsPath)
 		var fc *fleetCollector
 		if o.keeps {
@@ -632,12 +635,14 @@ func busDigest(s *data.BusScanner, pathErr error, nowMS int64) data.BusDigest {
 type opts struct {
 	mode, view, crew string
 	watch            bool
-	keeps            bool // one-shot --json probes crew reap for keep reasons
-	narrow           bool // force the stacked narrow layout in the interactive UI
+	keeps            bool   // one-shot --json probes crew reap for keep reasons
+	since            string // events view: resume after this cursor
+	limit            int    // events view: rows per one-shot page, 0 = default
+	narrow           bool   // force the stacked narrow layout in the interactive UI
 }
 
 func usage() string {
-	return "usage: crew dash [--crew <id>] [--narrow | --once | --json [--view <name> [--watch] [--keeps]]]\n" +
+	return "usage: crew dash [--crew <id>] [--narrow | --once | --json [--view <name> [--watch] [--keeps] [--since <cursor>] [--limit <n>]]]\n" +
 		"views: " + strings.Join(view.Names, ", ") + "\n"
 }
 
@@ -673,6 +678,30 @@ func parseArgs(args []string) (opts, error) {
 				return opts{}, fmt.Errorf("unknown view %q (valid: %s)", o.view, strings.Join(view.Names, ", "))
 			}
 			continue
+		case "--since":
+			if o.since != "" {
+				return opts{}, errors.New("--since given twice")
+			}
+			if i+1 == len(args) || args[i+1] == "" {
+				return opts{}, errors.New("--since needs a cursor")
+			}
+			i++
+			o.since = args[i]
+			continue
+		case "--limit":
+			if o.limit != 0 {
+				return opts{}, errors.New("--limit given twice")
+			}
+			if i+1 == len(args) {
+				return opts{}, errors.New("--limit needs a number")
+			}
+			i++
+			n, err := strconv.Atoi(args[i])
+			if err != nil || n < 1 {
+				return opts{}, fmt.Errorf("--limit needs a positive number, got %q", args[i])
+			}
+			o.limit = n
+			continue
 		case "--crew":
 			if o.crew != "" {
 				return opts{}, errors.New("--crew given twice")
@@ -705,6 +734,10 @@ func parseArgs(args []string) (opts, error) {
 		return opts{}, errors.New("--keeps does not combine with --watch")
 	case o.keeps && (!jsonFlag || (o.view != "fleet" && o.view != "overview")):
 		return opts{}, errors.New("--keeps needs --json --view fleet or overview")
+	case (o.since != "" || o.limit != 0) && o.view != "events":
+		return opts{}, errors.New("--since and --limit need --view events")
+	case o.limit != 0 && o.watch:
+		return opts{}, errors.New("--limit does not combine with --watch")
 	case onceFlag:
 		o.mode = "once"
 	case jsonFlag:

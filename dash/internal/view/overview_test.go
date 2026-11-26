@@ -180,7 +180,20 @@ func TestGoldenViews(t *testing.T) {
 	for _, name := range view.Names {
 		t.Run(name, func(t *testing.T) {
 			v, err := view.Build(name, viewtest.Inputs())
-			if name == "fleet" {
+			switch name {
+			case "events":
+				if err == nil || !strings.Contains(err.Error(), "BuildEvents") {
+					t.Errorf("Build(events) err = %v, want a pointer to BuildEvents", err)
+				}
+				page, rerr := data.ReadEvents(filepath.Join("testdata", "events.jsonl"), "", 100)
+				if rerr != nil {
+					t.Fatal(rerr)
+				}
+				// The inode is machine-specific; the offset is the file's.
+				_, off, _ := strings.Cut(page.Cursor, ":")
+				page.Cursor = "INO:" + off
+				v, err = view.BuildEvents("box", page, 1000), nil
+			case "fleet":
 				if err == nil || !strings.Contains(err.Error(), "BuildFleet") {
 					t.Errorf("Build(fleet) err = %v, want a pointer to BuildFleet", err)
 				}
@@ -539,5 +552,21 @@ func TestBudgetRowsLabelPiBudgets(t *testing.T) {
 		if b.Label == "claude api-key" {
 			t.Errorf("anthropic row without a credit: %+v", b)
 		}
+	}
+}
+
+func TestOverviewDispatcherRegistration(t *testing.T) {
+	in := viewtest.Inputs()
+	pid, pane, alive := 4242, "%7", true
+	in.Snap.Roster.Crews[0].Dispatcher = &data.DispatcherLoc{Where: "here", PID: &pid, Pane: &pane, Alive: &alive}
+	v := view.BuildOverview(in)
+	var d *view.WorkerDispatcher
+	for _, w := range v.Workers {
+		if w.Crew == in.Snap.Roster.Crews[0].ID && w.Dispatcher != nil {
+			d = w.Dispatcher
+		}
+	}
+	if d == nil || d.PID == nil || *d.PID != 4242 || d.Pane == nil || *d.Pane != "%7" || d.Alive == nil || !*d.Alive {
+		t.Fatalf("dispatcher = %+v", d)
 	}
 }

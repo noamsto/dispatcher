@@ -179,7 +179,7 @@ func routeHelp(sub string, args []string, stdout, stderr io.Writer) (int, bool) 
 // revision and against what the grammar really admits.
 var subcommands = []string{
 	"id", "new", "engine-cmd", "occupants",
-	"where", "identity", "resolve-target", "crews", "register", "deregister", "log", "sessions", "inbox",
+	"where", "identity", "resolve-target", "crews", "register", "deregister", "init", "log", "sessions", "inbox",
 	"roster", "report", "retro", "rate", "fleet", "stack", "roster-render", "pi-agent-dir",
 	"adopt", "index", "await", "dash", "git-baseline", "merge",
 	"git-guard", "help", "hold", "msg", "nudge", "queue", "policy",
@@ -193,7 +193,7 @@ var subcommands = []string{
 var typedSubcommands = map[string]bool{
 	"engine-cmd": true, "id": true, "new": true, "occupants": true,
 	"where": true, "identity": true, "resolve-target": true, "crews": true, "register": true,
-	"deregister": true, "log": true, "sessions": true, "inbox": true,
+	"deregister": true, "init": true, "log": true, "sessions": true, "inbox": true,
 	"roster": true, "report": true, "retro": true, "rate": true, "fleet": true,
 	"stack": true, "roster-render": true, "pi-agent-dir": true,
 	"status": true, "msg": true, "reply": true, "hold": true, "queue": true, "policy": true,
@@ -238,6 +238,7 @@ type root struct {
 	Crews      crewsCmd      `cmd:"" name:"crews" help:"This repo's crews."`
 	Register   registerCmd   `cmd:"" name:"register" help:"Claim this crew directory."`
 	Deregister deregisterCmd `cmd:"" name:"deregister" help:"Release this crew directory."`
+	Init       initCmd       `cmd:"" name:"init" help:"Create a crew directory and its log without claiming it."`
 	Log        logCmd        `cmd:"" name:"log" help:"The crew's bus rows, invisible code points escaped (the bus log stays raw)."`
 	Sessions   sessionsCmd   `cmd:"" name:"sessions" help:"A branch's sessions."`
 	Inbox      inboxCmd      `cmd:"" name:"inbox" help:"Msgs addressed to one agent."`
@@ -528,7 +529,7 @@ func stallRequest(p crewArgs) stall.Request {
 // root alone: the crew lifecycle commands, which resolve layout-2 crews there.
 func repoOptional(p crewArgs) bool {
 	switch p.sub {
-	case "register", "deregister", "crews", "index":
+	case "register", "deregister", "init", "crews", "index":
 		return true
 	case "where":
 		return p.typed.Where.Log || p.typed.Where.Dir || p.typed.Where.JSON || p.typed.Where.Home
@@ -1404,6 +1405,15 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 			return status.RunStatus(ctx, status.StatusRequest{From: c.From, State: c.State, Detail: c.Detail, PR: c.PR, Restamp: c.Restamp, ToHost: c.ToHost}, paths, stderr, o)
 		}
 		return status.RunMsg(ctx, status.MsgRequest{From: word(0), To: word(1), Body: word(2)}, paths, stderr, o)
+	}
+
+	if sub == "init" {
+		return register.Init(parsed.typed.Init.ID, paths, stdout, stderr, register.Options{
+			CrewID:   func() string { return e.crewID(ctx, cwd, "", false) },
+			Clock:    clock.FromEnv(),
+			Hostname: os.Hostname,
+			Slug:     func(common string) string { return remote.CloneSlug(ctx, common) },
+		})
 	}
 
 	// register and deregister record the caller's own identity like adopt does.

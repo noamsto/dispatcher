@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -243,6 +244,7 @@ func stampSince(ctx context.Context, r Runner, cfg Config, ids []string, locs ma
 			continue
 		}
 		locs[id].Since = crewPidSince(ctx, r, cfg, crewsDir, "/", id)
+		locs[id].PID, locs[id].Pane, locs[id].Alive = crewRegistration(ctx, r, cfg, crewsDir, id)
 	}
 }
 
@@ -259,6 +261,44 @@ func crewPidSince(ctx context.Context, r Runner, cfg Config, crewsDir, repoDir, 
 		return nil
 	}
 	return pidSince(filepath.Dir(dir), filepath.Base(dir))
+}
+
+// crewRegistration reads the pid and pane files `crew register` wrote, from
+// the same dir crewPidSince stats, and probes the pid. Each result is nil when
+// its source is missing or unreadable.
+func crewRegistration(ctx context.Context, r Runner, cfg Config, crewsDir, id string) (pid *int, pane *string, alive *bool) {
+	dir := ""
+	if crewsDir != "" {
+		if _, err := os.Stat(filepath.Join(crewsDir, id, "pid")); err == nil {
+			dir = filepath.Join(crewsDir, id)
+		}
+	}
+	if dir == "" {
+		d, err := cfg.Dirs.Resolve(ctx, r, cfg, "/", id)
+		if err != nil {
+			return nil, nil, nil
+		}
+		dir = d
+	}
+	if b, err := os.ReadFile(filepath.Join(dir, "pid")); err == nil {
+		if n, err := strconv.Atoi(strings.TrimSpace(string(b))); err == nil && n > 0 {
+			pid = &n
+			a := pidAlive(n)
+			alive = &a
+		}
+	}
+	if b, err := os.ReadFile(filepath.Join(dir, "pane")); err == nil {
+		if p := strings.TrimSpace(string(b)); p != "" {
+			pane = &p
+		}
+	}
+	return pid, pane, alive
+}
+
+// pidAlive is a signal-0 probe: EPERM still means the process exists.
+func pidAlive(pid int) bool {
+	err := syscall.Kill(pid, 0)
+	return err == nil || errors.Is(err, syscall.EPERM)
 }
 
 // pidSince is the mtime of a crew's pid file in unix seconds, nil when unreadable.

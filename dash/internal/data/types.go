@@ -256,4 +256,10 @@ type DispatcherLoc struct {
 	// Since is the unix time the here-dispatcher last (re)launched, from the
 	// mtime of its crew pid file; nil when unknown.
 	Since *int64
+	// PID, Pane and Alive describe the here-dispatcher's registration, read
+	// from its crew dir's pid and pane files; nil when the file is absent or
+	// unreadable. Alive is a signal-0 probe of PID.
+	PID   *int
+	Pane  *string
+	Alive *bool
 }

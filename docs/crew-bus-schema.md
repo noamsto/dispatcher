@@ -115,7 +115,7 @@ Defined in `crew/internal/bus/meta.go`:
 | `home_repo`          | `string \| null` | yes      | `RepoTag` of home repo, or `null` if registered outside a repo. |
 | `home_slug`          | `string`         | no       | Optional repo slug (`omitempty`).                               |
 | `visiting`           | `boolean`        | yes      | Whether this crew is visiting from another host.                |
-| `created_by`         | `string`         | yes      | `"register"` or `"remote-dispatch"`.                            |
+| `created_by`         | `string`         | yes      | `"register"`, `"init"` or `"remote-dispatch"`.                  |
 | `dispatcher_session` | `string`         | no       | Optional dispatcher session id (`omitempty`).                   |
 
 ### Crew Resolution Order
@@ -127,3 +127,25 @@ Defined in `crew/internal/bus/meta.go`:
 3. `<state_root>/archive/<id>/meta.json` exists → **`ArchivedError`** (refused).
 4. Repo index lists `<id>` without a live layout-2 dir → **`IndexOnlyError`** (refused; never falls back to layout 1).
 5. Otherwise → **Layout 1** (`<git_common_dir>/crew/events.jsonl`, requires a git repo).
+
+### Creating a crew directory
+
+`crew init [<id>]` creates `<state_root>/crews/<id>/` with `meta.json` (`created_by: "init"`) and an empty `events.jsonl`, and claims nothing: no `pid`, `pane` or `engine` file (`crew register` writes those). It is idempotent (an existing `meta.json` is kept, an existing log is never truncated) and prints one JSON line `{"id","dir","log","created"}`. Consumers use it instead of `mkdir` under the state dir.
+
+### Reading the bus: `crew dash --json --view events`
+
+Cursor-resumable tail of one crew's `events.jsonl`, schema version 1:
+
+```
+{"schema_version":1,"view":"events","generated_at":<s>,"host":"<short host>",
+ "cursor":"<opaque>","reset":false,"more":false,"errors":[],
+ "events":[{"id","host","ts","kind","from","to","crew","branch","text","row":{…raw row…}}]}
+```
+
+- `id` is the first 16 hex digits of the SHA-256 of the row's raw line (newline excluded): stable across readers and runs.
+- `host` is the short hostname of the machine whose log was read.
+- No `--since`: the last `--limit` rows (default 200). `--since <cursor>`: rows after that cursor, at most `--limit` (`more: true` when rows remain; pass the returned `cursor` again).
+- The cursor is opaque (`<inode>:<byte offset>`); a torn last line is never consumed, so no row is missed or replayed. A cursor naming another inode or an offset past end of file (rotation, truncation) restarts from the top with `reset: true`.
+- `--watch` emits the first page, then one line per batch of new rows (nothing when none); resume a dropped stream with `--since` of the last line's `cursor`.
+
+`--view overview` workers also carry `session`, `live` and `exit_suspect`, and `dispatcher` carries `pid`, `pane` and `alive` (pid/pane files, signal-0 probe; `null` when unknown).
