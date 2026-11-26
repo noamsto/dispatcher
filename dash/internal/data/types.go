@@ -215,8 +215,10 @@ type RosterSection struct {
 }
 
 // LaneStatus is one crew's `crew stream --status` probe: State is alive,
-// stale (live pid, no ticks: notifications are not flowing), dead or unknown
-// (Error says why the probe could not tell).
+// stale (live pid, no ticks: notifications are not flowing), dead, parked
+// (a live dispatcher whose engine — pi, codex or cursor — parks on
+// `crew watch` and never arms a lane) or unknown (Error says why the
+// probe could not tell).
 type LaneStatus struct {
 	State string
 	Error *string

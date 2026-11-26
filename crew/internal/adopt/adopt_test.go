@@ -759,6 +759,35 @@ func TestOutsideTmuxDropsAStalePane(t *testing.T) {
 	}
 }
 
+func enginePath(p bus.Paths, id string) string { return p.CrewDir(id) + "/engine" }
+
+func TestAdoptRewritesEngineFile(t *testing.T) {
+	cases := []struct {
+		name string
+		env  map[string]string
+		want string // "" = no file
+	}{
+		{"unset removes the stale file", map[string]string{}, ""},
+		{"set replaces the stale file", map[string]string{"CREW_ENGINE": "codex"}, "codex\n"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := testPaths(t)
+			registerCrew(t, p, "c-eng", "4321")
+			if err := os.WriteFile(enginePath(p, "c-eng"), []byte("pi\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			s := &stub{now: time.Unix(1700000000, 0), env: tc.env}
+			if got := run(t, s, p, Request{ID: "c-eng", PID: "123"}); got.code != 0 {
+				t.Fatalf("code = %d, stderr = %q", got.code, got.stderr)
+			}
+			if got, _ := fileText(t, enginePath(p, "c-eng")); got != tc.want {
+				t.Errorf("engine file = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestPlainAdoptWritesHome(t *testing.T) {
 	p := testPaths(t)
 	registerCrew(t, p, "c-h", "4321")

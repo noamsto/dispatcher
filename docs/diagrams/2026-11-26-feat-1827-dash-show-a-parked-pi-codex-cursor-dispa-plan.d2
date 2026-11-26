@@ -1,0 +1,26 @@
+# Plan (#1827): the same scope with the change applied. NEW pieces are marked.
+direction: right
+
+dispatcher-sh: "adapters/core/dispatcher.sh\nCREW_ENGINE=\"$agent\" crew register $$  [NEW]"
+
+crew-register: "crew/internal/register/register.go\nwrites engine file verbatim;  [NEW]\nderegister removes it"
+
+crew-dir: "<crew dir>\npid · pid.start · pane · engine"
+
+lane: "crew stream --crew <id> --status\nunchanged: no stream.lock.d → dead (exit 2)"
+
+probe: "dash collect.go probeLane\nstate dead + engine in {pi,codex,cursor}\n→ parked  [NEW]"
+
+header: "dash crewheader.go\ncrew › dispatcher <id> · parked"
+
+gone: "dispatcher pid gone\nWhere != here → no probe → never parked\n(crew fleet status still: dead)"
+
+dispatcher-sh -> crew-register: CREW_ENGINE from $agent
+crew-register -> crew-dir: records the engine beside pid + pane
+crew-dir -> lane: dash probes the lane
+lane -> probe: '{"state":"dead"}' + engine=pi
+probe -> header: park-lane, live dispatcher (Where == here)
+crew-dir -> gone: liveness gate unchanged
+
+header.style.stroke: "#00aa00"
+header.style.stroke-width: 3

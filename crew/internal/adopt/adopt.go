@@ -232,6 +232,18 @@ func Run(ctx context.Context, req Request, paths bus.Paths, stdout, stderr io.Wr
 		say(stderr, "crew: adopt: %v\n", err)
 		return exitFailure
 	}
+	// The engine travels with the pid too: the dash reads it to show a parked
+	// pi/codex/cursor dispatcher as parked.
+	enginefile := cdir + "/engine"
+	if engine := o.Getenv("CREW_ENGINE"); engine != "" {
+		if err := os.WriteFile(enginefile, []byte(engine+"\n"), 0o644); err != nil {
+			say(stderr, "crew: adopt: %v\n", err)
+			return exitFailure
+		}
+	} else if err := os.Remove(enginefile); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		say(stderr, "crew: adopt: %v\n", err)
+		return exitFailure
+	}
 
 	// A crew adopted over a dead dispatcher picks up the labels its owner
 	// claimed and never released; one adopted from a live ancestor changes

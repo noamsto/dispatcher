@@ -539,6 +539,117 @@ func TestCollectRosterLane(t *testing.T) {
 	}
 }
 
+// TestCollectRosterLaneParked: pi, codex and cursor dispatchers
+// park on `crew watch` instead of arming the stream lane, so their lane probe
+// answers dead while the dispatcher is alive. `crew register` records the
+// dispatcher's engine in <crew dir>/engine; a dead lane plus a park-lane
+// engine collects as "parked". The Where=="here" probe gate is the
+// dispatcher-liveness precondition: a gone dispatcher is never parked (see
+// TestCollectRosterLaneGoneDispatcherNotParked), and every case the mapping
+// does not claim keeps the probed state — claude dispatchers and unrecorded
+// engines are unchanged.
+func TestCollectRosterLaneParked(t *testing.T) {
+	cases := []struct {
+		name      string
+		state     string // stream --status state; "" = unparseable probe
+		engine    string // engine file content; "" = no engine file
+		layout1   bool   // engine file under <events dir>/crews/c1, `crew where` unstubbed
+		wantState string
+		wantErr   bool
+	}{
+		{"pi dead parks", "dead", "pi", false, "parked", false},
+		{"codex dead parks", "dead", "codex", false, "parked", false},
+		{"cursor dead parks", "dead", "cursor", false, "parked", false},
+		{"claude dead stays dead", "dead", "claude", false, "dead", false},
+		{"no engine file stays dead", "dead", "", false, "dead", false},
+		{"engine value trimmed", "dead", "  pi \n", false, "parked", false},
+		{"pi alive stays alive", "alive", "pi", false, "alive", false},
+		{"pi stale stays stale", "stale", "pi", false, "stale", false},
+		{"unknown stays unknown", "", "pi", false, "unknown", true},
+		{"layout-1 crews dir parks without crew where", "dead", "pi", true, "parked", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			dir := root
+			if tc.layout1 {
+				dir = filepath.Join(root, "crew", "crews", "c1")
+				if err := os.MkdirAll(dir, 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if tc.engine != "" {
+				if err := os.WriteFile(filepath.Join(dir, "engine"), []byte(tc.engine), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			r := allOKRunner(t)
+			r.Responses["crew crews"] = FakeResponse{
+				Stdout: []byte("crew_id\tlast_event_s\tfirst_event_s\tworkers\tpid\talive\nc1\t0\t0\t0\t1\tyes\n"),
+			}
+			r.Responses["crew roster c1 --peers"] = FakeResponse{Stdout: []byte("[]")}
+			r.Responses["crew hold list --crew c1 --json"] = FakeResponse{Stdout: []byte("[]")}
+			if tc.layout1 {
+				r.Responses["git rev-parse --path-format=absolute --git-common-dir"] = FakeResponse{Stdout: []byte(root + "\n")}
+			} else {
+				r.Responses["crew where --dir --crew c1"] = FakeResponse{Stdout: []byte(dir + "\n")}
+			}
+			switch tc.state {
+			case "dead":
+				r.Responses["crew stream --crew c1 --status"] = FakeResponse{
+					Stdout: []byte(`{"stream":"status","state":"dead","crew":"c1","pid":null,"age_s":null}` + "\n"),
+					Err:    FakeExitError{Code: 2},
+				}
+			case "stale":
+				r.Responses["crew stream --crew c1 --status"] = FakeResponse{
+					Stdout: []byte(`{"stream":"status","state":"stale","crew":"c1","pid":null,"age_s":null}` + "\n"),
+					Err:    FakeExitError{Code: 1},
+				}
+			case "":
+				r.Responses["crew stream --crew c1 --status"] = FakeResponse{
+					Stdout: []byte("nope\n"), Stderr: []byte("bad\n"), Err: FakeExitError{Code: 1},
+				}
+			default:
+				r.Responses["crew stream --crew c1 --status"] = FakeResponse{
+					Stdout: []byte(`{"stream":"status","state":"` + tc.state + `","crew":"c1","pid":null,"age_s":null}` + "\n"),
+				}
+			}
+
+			lane := CollectRoster(context.Background(), r, baseConfig()).Crews[0].Lane
+			if lane == nil || lane.State != tc.wantState {
+				t.Fatalf("Lane = %+v, want state %q", lane, tc.wantState)
+			}
+			if (lane.Error != nil) != tc.wantErr {
+				t.Errorf("Lane.Error = %v, want set=%v", lane.Error, tc.wantErr)
+			}
+		})
+	}
+}
+
+// TestCollectRosterLaneGoneDispatcherNotParked pins the liveness half of the
+// With the recorded dispatcher pid gone (crews alive=no) the
+// lane is not probed at all, so a dead park-lane engine is never collected as
+// parked — the crew keeps today's no-lane-here behavior, and `crew fleet
+// status`'s own lane column still reports the dead lane.
+func TestCollectRosterLaneGoneDispatcherNotParked(t *testing.T) {
+	r := allOKRunner(t)
+	r.Responses["crew crews"] = FakeResponse{
+		Stdout: []byte("crew_id\tlast_event_s\tfirst_event_s\tworkers\tpid\talive\nc1\t0\t0\t0\t1\tno\n"),
+	}
+	r.Responses["crew roster c1 --peers"] = FakeResponse{Stdout: []byte("[]")}
+	r.Responses["crew hold list --crew c1 --json"] = FakeResponse{Stdout: []byte("[]")}
+	cfg := baseConfig()
+	cfg.CrewID = "c1"
+
+	sec := CollectRoster(context.Background(), r, cfg)
+	if len(sec.Crews) != 1 || sec.Crews[0].ID != "c1" {
+		t.Fatalf("crews = %+v, want the scoped c1 listed", sec.Crews)
+	}
+	if sec.Crews[0].Lane != nil {
+		t.Errorf("Lane = %+v, want nil: a gone dispatcher is never parked", sec.Crews[0].Lane)
+	}
+}
+
 func TestSnapshotJSONOmitsPeersAndLane(t *testing.T) {
 	snap := Snapshot{Roster: RosterSection{
 		Crews: []RosterCrew{{ID: "c1", Lane: &LaneStatus{State: "alive"}, Dispatcher: &DispatcherLoc{Where: "here"}}},

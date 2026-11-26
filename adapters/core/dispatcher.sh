@@ -804,7 +804,8 @@ elif [ ! -f "$protocol" ]; then
 fi
 
 # Crew layout: the env wins for one launch, else the settings key (default 2).
-# Go reads only CREW_LAYOUT, so `crew register` gets it exported.
+# Go's register reads only CREW_LAYOUT, so it gets it exported; CREW_ENGINE is
+# prefixed per call below, never exported.
 crew_layout=${CREW_LAYOUT:-}
 [ -n "$crew_layout" ] || crew_layout="$(jq -r '.crewLayout // 2 | tostring' <<<"$settings")"
 export CREW_LAYOUT=$crew_layout
@@ -1135,12 +1136,12 @@ registered=0
 if [ "$registers" = 1 ]; then
   registered=1
   if [ "$adopted_live" = 1 ]; then
-    crew register $$ || {
+    CREW_ENGINE="$agent" crew register $$ || {
       registered=0
       echo "dispatcher: crew $CREW_ID keeps its live dispatcher pid — 'crew adopt --force $CREW_ID' takes it over" >&2
     }
   else
-    crew register $$
+    CREW_ENGINE="$agent" crew register $$
   fi
   # A closed window (HUP) or a kill (TERM) deregisters, so the crew reads
   # closed, not crashed. Not INT: this launcher shares the pane's foreground
