@@ -71,7 +71,7 @@ var quickKnobs = []knob{
 	{path: kpath("fleetBudget"), kind: knobInt, min: 1},
 	{path: kpath("profile"), kind: knobEnum, choices: []string{"personal", "work"}, def: "personal"},
 	{path: kpath("dispatcherAgent"), kind: knobEnum, choices: agents, def: "claude"},
-	{path: kpath("disabledEngines", "*"), kind: knobBool},
+	{path: kpath("enabledEngines", "*"), kind: knobBool},
 	{path: kpath("freshSeams"), kind: knobBool},
 	{path: kpath("dispatcherChrome"), kind: knobBool},
 	{path: kpath("dashTailscale"), kind: knobBool},

@@ -777,28 +777,28 @@ func TestSettingsCycleDispatcherAgent(t *testing.T) {
 	}
 }
 
-func TestSettingsToggleDisabledEngine(t *testing.T) {
-	withDisabled := func(s *data.Snapshot) {
+func TestSettingsToggleEnabledEngine(t *testing.T) {
+	withEnabled := func(s *data.Snapshot) {
 		s.Settings.Rows = append(s.Settings.Rows,
-			data.SettingRow{Path: []string{"disabledEngines", "claude"}, Value: json.RawMessage("false"), Origin: "base", Editable: true},
-			data.SettingRow{Path: []string{"disabledEngines", "pi"}, Value: json.RawMessage("false"), Origin: "base", Editable: true},
+			data.SettingRow{Path: []string{"enabledEngines", "claude"}, Value: json.RawMessage("true"), Origin: "base", Editable: true},
+			data.SettingRow{Path: []string{"enabledEngines", "pi"}, Value: json.RawMessage("true"), Origin: "base", Editable: true},
 		)
 	}
-	h := newKnobHarness(t, "", withDisabled)
+	h := newKnobHarness(t, "", withEnabled)
 	idx := -1
 	for i, r := range h.v.rows {
-		if dotPath(r.row.Path) == "disabledEngines.claude" {
+		if dotPath(r.row.Path) == "enabledEngines.claude" {
 			idx = i
 			break
 		}
 	}
 	if idx < 0 {
-		t.Fatalf("disabledEngines.claude not found in rows")
+		t.Fatalf("enabledEngines.claude not found in rows")
 	}
 	h.at(idx).press(keyRune(' '))
-	de := h.fileDoc()["disabledEngines"].(map[string]any)
-	if de["claude"] != true {
-		t.Fatalf("disabledEngines.claude = %v, want true", de["claude"])
+	de := h.fileDoc()["enabledEngines"].(map[string]any)
+	if de["claude"] != false {
+		t.Fatalf("enabledEngines.claude = %v, want false", de["claude"])
 	}
 }
 

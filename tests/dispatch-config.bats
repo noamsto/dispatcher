@@ -1478,13 +1478,49 @@ ROWS
   user_settings '{"disabledEngines":{"claude":true,"pi":true}}'
   run --separate-stderr "$CONFIG"
   [ "$status" -eq 1 ]
-  [[ "$stderr" == *"disabledEngines leaves no enabled engines"* ]]
+  [[ "$stderr" == *"enabledEngines leaves no enabled engines"* ]]
 
   # Unknown engine or non-boolean is refused.
   user_settings '{"disabledEngines":{"bogus":true}}'
   run --separate-stderr "$CONFIG"
   [ "$status" -eq 1 ]
   [[ "$stderr" == *"disabledEngines must be"* ]]
+}
+
+@test "enabledEngines narrows, overrides legacy disabledEngines in the same layer, rejects all-off" {
+  user_settings '{"enabledEngines":{"claude":false}}'
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 0 ]
+  jq -e '.engines == ["codex","cursor","pi"] and (has("disabledEngines") | not)' <<<"$output"
+
+  # Explicit enabledEngines wins over legacy disabledEngines in the same layer.
+  user_settings '{"disabledEngines":{"claude":true,"pi":true},"enabledEngines":{"claude":true}}'
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 0 ]
+  jq -e '.engines == ["claude","codex","cursor"]' <<<"$output"
+
+  # Legacy false (enabled) does not re-enable a locked-off engine.
+  locked_settings '{"enabledEngines":{"cursor":false}}'
+  user_settings '{"disabledEngines":{"cursor":false}}'
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 0 ]
+  jq -e '.engines == ["claude","codex","pi"]' <<<"$output"
+
+  user_settings '{"enabledEngines":{"claude":false,"codex":false,"cursor":false,"pi":false}}'
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"enabledEngines leaves no enabled engines"* ]]
+
+  locked_settings '{}'
+  user_settings '{"disabledEngines":{"claude":true},"enabledEngines":5}'
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"enabledEngines must be"* ]]
+
+  user_settings '{"enabledEngines":{"bogus":false}}'
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"enabledEngines must be"* ]]
 }
 
 @test "disabledEngines narrows default all-four roster when engines is unset" {
@@ -1500,10 +1536,10 @@ ROWS
   [ "$output" = "dispatcherAgent = pi" ]
   jq -e '.dispatcherAgent == "pi"' "$USER_FILE"
 
-  run --separate-stderr "$CONFIG" set disabledEngines.claude true
+  run --separate-stderr "$CONFIG" set enabledEngines.claude false
   [ "$status" -eq 0 ]
-  [ "$output" = "disabledEngines.claude = true" ]
-  jq -e '.disabledEngines.claude == true' "$USER_FILE"
+  [ "$output" = "enabledEngines.claude = false" ]
+  jq -e '.enabledEngines.claude == false' "$USER_FILE"
 
   # Invalid value is refused and leaves user file untouched.
   run --separate-stderr "$CONFIG" set dispatcherAgent nope
@@ -1511,13 +1547,13 @@ ROWS
   jq -e '.dispatcherAgent == "pi"' "$USER_FILE"
 
   # Unset removes the key and prunes empty parent objects.
-  run --separate-stderr "$CONFIG" unset disabledEngines.claude
+  run --separate-stderr "$CONFIG" unset enabledEngines.claude
   [ "$status" -eq 0 ]
-  [ "$output" = "unset disabledEngines.claude" ]
-  jq -e 'has("disabledEngines") | not' "$USER_FILE"
+  [ "$output" = "unset enabledEngines.claude" ]
+  jq -e 'has("enabledEngines") | not' "$USER_FILE"
 
   # Unsetting an absent key is a clean no-op.
-  run --separate-stderr "$CONFIG" unset disabledEngines.claude
+  run --separate-stderr "$CONFIG" unset enabledEngines.claude
   [ "$status" -eq 0 ]
   [[ "$stderr" == *"is not set"* ]]
 }

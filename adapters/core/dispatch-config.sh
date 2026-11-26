@@ -739,7 +739,18 @@ printf '%s\n' "$base" "$user" "$locked" "$env_layer" | jq -n --argjson show_orig
   def lower_trackers:
     reduce ("repoTrackers", "orgTrackers", "dispatcherMcp") as $k
       (.; if (.[$k] | type) == "object" then .[$k] |= with_entries(.key |= ascii_downcase) else . end);
-  [inputs | lower_trackers] as [$base, $user, $locked, $env]
+  # Legacy disabledEngines.X=true means enabledEngines.X=false; translate per layer
+  # so layer order still decides, and an explicit enabledEngines.X in the same layer wins.
+  # Entries that are not valid (unknown engine, non-boolean) stay for validation below.
+  def lower_engines:
+    if (.disabledEngines | type) == "object" then
+      (if (.enabledEngines | type) == "object" then .enabledEngines else {} end) as $en
+      | (.disabledEngines | with_entries(select((.key | IN("claude", "codex", "cursor", "pi")) and (.value | type) == "boolean"))) as $ok
+      | .enabledEngines = (if (.enabledEngines | type) == "object" or (.enabledEngines | type) == "null" then (($ok | with_entries(.value |= not)) + $en) else .enabledEngines end)
+      | .disabledEngines |= with_entries(select(.key as $k | ($ok | has($k) | not)))
+      | if (.disabledEngines | length) == 0 then del(.disabledEngines) else . end
+    else . end;
+  [inputs | lower_trackers | lower_engines] as [$base, $user, $locked, $env]
   | $base * $user * $locked * $env
   | need(["engines"]; "a non-empty array of strings"; string_array and length > 0)
   | need(["grantRoots"]; "an array of strings without \":\""; string_array and all(.[]; contains(":") | not))
@@ -769,11 +780,12 @@ printf '%s\n' "$base" "$user" "$locked" "$env_layer" | jq -n --argjson show_orig
   | need(["workerDeniedMcpServers"]; "an array of MCP server names (letters, digits, \"_\", \"-\")"; string_array and all(.[]; test("^[A-Za-z0-9_-]+$")))
   | need(["dispatcherAgent"]; "one of claude, codex, cursor or pi"; IN("claude", "codex", "cursor", "pi"))
   | need(["disabledEngines"]; "an object of engine booleans (claude, codex, cursor, pi)"; type == "object" and all(keys[]; IN("claude", "codex", "cursor", "pi")) and all(.[]; type == "boolean"))
-  | if (($env | has("engines")) | not) and ((.disabledEngines // {} | to_entries | any(.value == true))) then
-      ([.disabledEngines | to_entries[] | select(.value == true) | .key]) as $off
+  | need(["enabledEngines"]; "an object of engine booleans (claude, codex, cursor, pi)"; type == "object" and all(keys[]; IN("claude", "codex", "cursor", "pi")) and all(.[]; type == "boolean"))
+  | if (($env | has("engines")) | not) and ((.enabledEngines // {} | to_entries | any(.value == false))) then
+      ([.enabledEngines | to_entries[] | select(.value == false) | .key]) as $off
       | ((.engines // ["claude", "codex", "cursor", "pi"]) | map(select(IN($off[]) | not))) as $eff
       | if ($eff | length) == 0 then
-          "dispatch-config: disabledEngines leaves no enabled engines (merged settings)\n" | halt_error(1)
+          "dispatch-config: enabledEngines leaves no enabled engines (merged settings)\n" | halt_error(1)
         else
           .engines = $eff
         end
