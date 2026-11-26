@@ -64,8 +64,12 @@ var (
 
 	rePiTruncated = regexp.MustCompile(`^ ?Response was truncated before completion\.`)
 	rePiError     = regexp.MustCompile(`^ ?Error: `)
-	rePiBugHint   = regexp.MustCompile(`^ ?If this looks like a `)
-	rePiAborted   = regexp.MustCompile(`^ ?(Operation aborted|Aborted after \d+ retry attempts?) *$`)
+	// rePiLimit pins pi's provider usage/credit limit wording: HTTP 402, an
+	// OpenRouter key limit (403), a usage limit or an exhausted quota or balance.
+	// A retry cannot clear these, so they are not a plain provider error.
+	rePiLimit   = regexp.MustCompile(`(?i)(\b402\b|payment required|key limit|usage limit|spend limit|quota (exhausted|exceeded)|(exhausted|exceeded) (your )?quota|insufficient (credits|funds|balance)|out of credits)`)
+	rePiBugHint = regexp.MustCompile(`^ ?If this looks like a `)
+	rePiAborted = regexp.MustCompile(`^ ?(Operation aborted|Aborted after \d+ retry attempts?) *$`)
 )
 
 const (
@@ -495,7 +499,8 @@ func anyNonBlank(lines []string) bool {
 // PiStopped classifies why an idle pi turn ended without finishing: pi paints
 // "Response was truncated before completion." (stopReason length) or
 // "Error: <provider message>" (stopReason error) just above an empty editor
-// box. It returns "truncated", "provider-error" or "". A user abort paints
+// box. It returns "truncated", "limit" (an error naming a usage, credit or key
+// limit), "provider-error" or "". A user abort paints
 // "Operation aborted" or "Aborted after N retry attempt(s)" with no "Error:"
 // prefix, so every "Error:" row is a provider error, abort words included.
 func PiStopped(text string) string {
@@ -530,6 +535,9 @@ func PiStopped(text string) string {
 	case len(block) > 0 && rePiAborted.MatchString(block[0]):
 		return ""
 	case len(block) > 0 && len(block) <= 4 && rePiError.MatchString(block[0]):
+		if rePiLimit.MatchString(strings.Join(block, " ")) {
+			return "limit"
+		}
 		return "provider-error"
 	}
 	return ""
