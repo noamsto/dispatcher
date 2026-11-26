@@ -1833,6 +1833,39 @@ _ro_rule() { printf -v r ' %q' "Edit(/$1/**)"; }
   [ "$(cat "$(lead_rec)")" = "pi $sid" ]
 }
 
+@test "pi resume keeps the recorded session id when its transcript is in the pi store" {
+  setup_worker_wt
+  sed -i -e 's/^engine: claude/engine: pi/' -e 's|^model: sonnet|model: openrouter/deepseek/deepseek-v4-flash|' "$WT/WORKER_TASK.md"
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  sid=11111111-2222-4333-8444-555555555555
+  mkdir -p "$(dirname "$(lead_rec)")" "$HOME/.pi/dispatcher-worker/sessions/--some-wt--"
+  printf 'pi %s\n' "$sid" >"$(lead_rec)"
+  : >"$HOME/.pi/dispatcher-worker/sessions/--some-wt--/2026-01-01T00-00-00-000Z_$sid.jsonl"
+  cd "$WT"
+  run --separate-stderr run_resume
+  [ "$status" -eq 0 ]
+  [[ $stderr != *"no transcript"* ]]
+  grep -qF -- "--session-id $sid" <(launch_log)
+  [ "$(cat "$(lead_rec)")" = "pi $sid" ]
+}
+
+@test "pi resume says it starts fresh when the recorded session has no transcript" {
+  setup_worker_wt
+  sed -i -e 's/^engine: claude/engine: pi/' -e 's|^model: sonnet|model: openrouter/deepseek/deepseek-v4-flash|' "$WT/WORKER_TASK.md"
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  sid=11111111-2222-4333-8444-555555555555
+  mkdir -p "$(dirname "$(lead_rec)")" "$HOME/.pi/dispatcher-worker/sessions"
+  printf 'pi %s\n' "$sid" >"$(lead_rec)"
+  cd "$WT"
+  run --separate-stderr run_resume
+  [ "$status" -eq 0 ]
+  [[ $stderr == *"the lead's recorded pi session has no transcript — relaunching fresh"* ]]
+  run grep -cF -- "--session-id $sid" <(launch_log)
+  [ "$output" = 0 ]
+  grep -qE -- "--session-id $UUID_RE" <(launch_log)
+  [ "$(jq -r 'select(.kind == "resume") | .continued' "$(bus_log)" | tail -1)" = false ]
+}
+
 @test "pi resume of a legacy lead with no role grid still continues the latest session" {
   setup_worker_wt
   sed -i -e 's/^engine: claude/engine: pi/' -e 's|^model: sonnet|model: openrouter/deepseek/deepseek-v4-flash|' "$WT/WORKER_TASK.md"
@@ -2182,6 +2215,8 @@ record_lead_for() {
   sed -i -e 's/^engine: claude/engine: pi/' -e 's|^model: sonnet|model: openrouter/deepseek/deepseek-v4-flash|' "$WT/WORKER_TASK.md"
   stub_tmux_with_pane_at_wt '@4' '%8' iris
   record_lead "pi $LEAD_ID"
+  mkdir -p "$HOME/.pi/dispatcher-worker/sessions/--wt--"
+  : >"$HOME/.pi/dispatcher-worker/sessions/--wt--/2026-01-01T00-00-00-000Z_$LEAD_ID.jsonl"
   cd "$WT"
   run run_resume
   [ "$status" -eq 0 ]

@@ -272,6 +272,26 @@ migrate_dispatch() { # dispatch_remote --host mini 7 x carrying $BUNDLE
   jq -e '.migrated_from == "laptop" and .engine_context == "fresh" and .engine_context_why == "no transcript travelled"' <<<"$(local_dispatch_rows)"
 }
 
+@test "a migrated pi worker lands with its session file in the pi store and resumes it by id" {
+  seed_pushed_branch
+  make_bundle
+  wt="$REMOTE_CLONE/.worktrees/${BRANCH//\//-}"
+
+  TMUX_PANE=%0 DISPATCH_MIGRATE_BUNDLE="$BUNDLE" run --separate-stderr dispatch standard openrouter/deepseek/deepseek-v4-flash --effort medium --crew-id c1 --host mini --agent pi 7 x
+  [ "$status" -eq 0 ] || {
+    echo "$stderr" >&2
+    false
+  }
+  key="--$(printf '%s' "${wt#/}" | tr '/' '-')--"
+  files=("$RHOME/.pi/dispatcher-worker/sessions/$key"/*_"$SID".jsonl)
+  [ "${#files[@]}" -eq 1 ]
+  [ "$(cat "${files[0]}")" = '{"type":"fake-transcript"}' ]
+  [ "$(stat -c %a "${files[0]}")" = 600 ]
+  [ "$(cat "$(remote_crew_dir)/leads/$BRANCH")" = "pi $SID" ]
+  lead_launch | grep -qF -- " --session-id $SID"
+  jq -e '.engine_context == "resumed" and .engine_session == "'"$SID"'"' <<<"$(local_dispatch_rows)"
+}
+
 @test "a transcript already present on the remote is never overwritten: the launch goes fresh" {
   seed_pushed_branch
   make_bundle

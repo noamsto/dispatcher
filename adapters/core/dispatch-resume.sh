@@ -953,10 +953,26 @@ elif [ "$rec_state" = ok ] && [ "$rec_id" != - ]; then
     lead_cont="resume $rec_id"
     lead_session="$rec_id"
   else
-    # pi has no cheap existence probe: --session-id silently starts a new
-    # session under that id if the transcript vanished.
-    lead_sid="$rec_id"
-    lead_session="$rec_id"
+    # --session-id silently starts a blank session under that id when the
+    # transcript is gone (a migrate that carried none, a pruned agent dir), so
+    # probe pi's session store for it. An agent dir that does not resolve here
+    # is left to the fail-closed check below.
+    pi_probe_dir="$(crew pi-agent-dir 2>/dev/null)" || pi_probe_dir=""
+    rec_found=""
+    case "$pi_probe_dir" in
+    /*)
+      for f in "$pi_probe_dir"/sessions/*/*_"$rec_id".jsonl; do
+        [ -f "$f" ] && [ ! -L "$f" ] && rec_found=1
+      done
+      ;;
+    *) rec_found=1 ;;
+    esac
+    if [ -n "$rec_found" ]; then
+      lead_sid="$rec_id"
+      lead_session="$rec_id"
+    else
+      fresh_why="the lead's recorded pi session has no transcript"
+    fi
   fi
 elif [ "$rec_state" = none ] && [ "$(_hdr engine)" != "$agent" ]; then
   fresh_why="the lead ran $(_hdr engine), not $agent, and has no recorded session"
