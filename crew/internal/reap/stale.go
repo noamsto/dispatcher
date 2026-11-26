@@ -238,8 +238,9 @@ func (r *run) clearStale(row latestRow) {
 
 // retireGhost retires a finished session whose worktree is already gone: it
 // posts the `reaped` status and forgets the branch's records, as a reclaim
-// would. Detached worktrees, a window stamped for the branch and remote
-// dispatches are left alone, since reap cannot see their worktree.
+// would. A detached worktree (unless the branch's PR is MERGED or CLOSED), a
+// window stamped for the branch and remote dispatches are left alone, since
+// reap cannot see their worktree.
 func (r *run) retireGhost(ctx context.Context, row latestRow) (bool, int) {
 	if !slices.Contains(terminalStates, any(row.state)) || row.session == "" || row.scrow == "" {
 		return false, 0
@@ -249,8 +250,16 @@ func (r *run) retireGhost(ctx context.Context, row latestRow) (bool, int) {
 		r.gitStderr(err)
 		return false, shellStatus(err)
 	}
-	if worktreeAlive(out, row.branch) || detachedPresent(out) {
+	if worktreeAlive(out, row.branch) {
 		return false, 0
+	}
+	// A detached worktree could be this branch's, and one such tree would keep
+	// every ghost on the roster forever. It only blocks while the branch's PR
+	// has not landed: a MERGED or CLOSED PR leaves no work to lose.
+	if detachedPresent(out) {
+		if _, state := r.orphanPR(ctx, row.branch); state == "" {
+			return false, 0
+		}
 	}
 	if r.windowStamped(ctx, row.branch) || r.remoteDispatch(row) {
 		return false, 0
