@@ -1193,6 +1193,23 @@ EOF
   [[ "$output" == *"claude-only"* ]]
 }
 
+@test "1832: resume exports the subagent lane override for a direct pi lead, none for an OpenRouter lead" {
+  setup_worker_wt
+  sed -i -e 's/^engine: claude/engine: pi/' -e 's|^model: sonnet|model: anthropic/claude-sonnet-5-5|' "$WT/WORKER_TASK.md"
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 0 ]
+  line="$(grep -F 'pi --continue' <(launch_log))"
+  [[ "$line" == *"DISPATCHER_PI_SUBAGENT_MODEL=anthropic/claude-sonnet-5-5 pi --continue"* ]]
+  sed -i 's|^model: .*|model: openrouter/deepseek/deepseek-v4-flash|' "$WT/WORKER_TASK.md"
+  : >"$STUB_LOG"
+  run run_resume
+  [ "$status" -eq 0 ]
+  line="$(grep -F 'pi --continue' <(launch_log))"
+  [[ "$line" != *DISPATCHER_PI_SUBAGENT_* ]]
+}
+
 @test "1304: resume carries the task doc's catalog mcp line to a pi or claude lead" {
   setup_worker_wt
   sed -i -e 's/^engine: claude/engine: pi/' -e 's|^model: sonnet|model: openrouter/deepseek/deepseek-v4-flash|' -e 's/^mcp: $/mcp: sentry/' "$WT/WORKER_TASK.md"

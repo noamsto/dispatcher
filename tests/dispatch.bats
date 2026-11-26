@@ -907,6 +907,42 @@ EOF
   [ "$status" -ne 0 ]
 }
 
+# Subagent billing lane: the roster pins OpenRouter, so a lead on another
+# lane exports its own model for the extension to swap in.
+@test "pi subagent lane: an OpenRouter lead exports no lane override" {
+  stub_launch_bins
+  DISPATCH_PROFILE=personal run run_dispatch standard openrouter/deepseek/deepseek-v4-flash --agent pi --effort high --crew-id c1 42 "pi lane openrouter"
+  [ "$status" -eq 0 ]
+  lead_line=$(grep -F -- " pi --name iris --model" <(launch_log))
+  [[ "$lead_line" != *DISPATCHER_PI_SUBAGENT_* ]]
+}
+
+@test "pi subagent lane: a direct anthropic lead runs its subagents on that model, even at the OpenRouter limit" {
+  stub_launch_bins
+  pi_limit_json '{reason: "OpenRouter key credit limit reached"}'
+  DISPATCH_PROFILE=personal run run_dispatch standard anthropic/claude-sonnet-5-5 --agent pi --ignore-map --effort high --crew-id c1 42 "pi lane anthropic"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"quota exhausted"* ]]
+  lead_line=$(grep -F -- " pi --name iris --model" <(launch_log))
+  [[ "$lead_line" == *"DISPATCHER_PI_SUBAGENT_MODEL=anthropic/claude-sonnet-5-5 "* ]]
+}
+
+@test "pi subagent lane: a local lead runs its subagents on the local model" {
+  stub_launch_bins
+  local_lane_fixture
+  pi_limit_json '{reason: "OpenRouter key credit limit reached"}'
+  DISPATCH_PROFILE=personal run run_dispatch standard "$LOCAL_ID" --agent pi --effort high --crew-id c1 42 "pi lane local"
+  [ "$status" -eq 0 ]
+  lead_line=$(grep -F -- " pi --name iris --model" <(launch_log))
+}
+
+@test "pi subagent lane: an OpenRouter lead at the key limit is refused before launch" {
+  pi_limit_json '{reason: "OpenRouter key credit limit reached"}'
+  DISPATCH_PROFILE=personal run run_dispatch standard openrouter/deepseek/deepseek-v4-flash --agent pi --effort high --crew-id c1 42 "pi lane refused"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"pi quota exhausted (absolute limit: OpenRouter key credit limit reached)"* ]]
+}
+
 # _stub_pi_version <version> — a pi whose `--version` prints <version>.
 _stub_pi_version() {
   printf '#!/usr/bin/env bash\n[ "$1" = --version ] && echo "%s"\nexit 0\n' "$1" >"$STUB_DIR/pi"
