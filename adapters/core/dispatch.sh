@@ -1135,6 +1135,14 @@ _local_id() {
   [ -n "$(_local_entry "$settings" "$1")" ]
 }
 
+# _pi_direct_id <model> — a pi model billed by its own provider (anthropic
+# credit or Gemini budget), not by the OpenRouter key whose month window and
+# limit_reached the engine-level budget stops read.
+_pi_direct_id() {
+  case "$1" in anthropic/* | google/gemini-*) return 0 ;; esac
+  return 1
+}
+
 # Lane profiles (#842): harness-owned worker notes chosen from the engine and
 # model a dispatch was given, so a lane's recurring rules (a local model's "how
 # to work" footer, a security lane's guard rules) are harness knowledge, not text
@@ -2416,8 +2424,10 @@ if [ "${1:-}" = "--spawn-role" ]; then
     local_probe_gate "$spawn_model"
   else
     pace_rule_target "$spawn_agent" "$spawn_model" "$effort"
-    budget_stop "$spawn_agent" "$role"
-    absolute_limit_stop "$spawn_agent" "$role"
+    if ! { [ "$spawn_agent" = pi ] && _pi_direct_id "$spawn_model"; }; then
+      budget_stop "$spawn_agent" "$role"
+      absolute_limit_stop "$spawn_agent" "$role"
+    fi
   fi
   [ "$spawn_agent" = pi ] && seed_pi_agent_dir
   sig_before="$(grid_refit_sig "$win")"
@@ -4068,7 +4078,7 @@ fi
 # the claude-blind warning and absolute_limit_stop below add the rest.
 # --ignore-budget is the manual escape hatch (e.g. credits cover it).
 budget_file="${XDG_DATA_HOME:-$HOME/.local/share}/crew/engine-budget.json"
-[ -n "$local_entry" ] || budget_stop "$agent"
+if [ -z "$local_entry" ] && ! { [ "$agent" = pi ] && _pi_direct_id "$model"; }; then budget_stop "$agent"; fi
 if [ -z "$ignore_budget" ] && [ -f "$budget_file" ]; then
   now_ts="$(date +%s)"
   stale_before=$((now_ts - 7200))
@@ -4079,7 +4089,7 @@ if [ -z "$ignore_budget" ] && [ -f "$budget_file" ]; then
 fi
 
 # Codex/cursor/pi absolute-limit gate, lead and (#636) role targets.
-[ -n "$local_entry" ] || absolute_limit_stop "$agent"
+if [ -z "$local_entry" ] && ! { [ "$agent" = pi ] && _pi_direct_id "$model"; }; then absolute_limit_stop "$agent"; fi
 
 # Role grid. Resolve the topology before scaffolding so a bad spec can't leave a
 # half-built grid. `--roles` is explicit and wins; `--grid` derives the topology
@@ -4226,6 +4236,7 @@ if [ -z "$grid_lazy" ]; then
   for i in "${!role_names[@]}"; do
     if [ "${role_agents[$i]}" = pi ] && _local_id "${role_models[$i]}"; then continue; fi
     pace_rule_target "${role_agents[$i]}" "${role_models[$i]}" "${role_efforts[$i]}" "" "${role_sigils[$i]}"
+    if [ "${role_agents[$i]}" = pi ] && _pi_direct_id "${role_models[$i]}"; then continue; fi
     budget_stop "${role_agents[$i]}" "${role_names[$i]}"
     absolute_limit_stop "${role_agents[$i]}" "${role_names[$i]}"
   done
