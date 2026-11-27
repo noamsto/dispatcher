@@ -1,0 +1,38 @@
+direction: right
+
+classes: {
+  proc: {style: {stroke: "#1565C0"; stroke-width: 2}}
+  pane: {style: {stroke: "#C62828"; stroke-width: 3}}
+  reader: {style: {stroke: "#6A1B9A"; stroke-width: 2}}
+  typist: {style: {stroke: "#EF6C00"; stroke-width: 2}}
+  store: {shape: cylinder; style: {stroke: "#2E7D32"; stroke-width: 2}}
+}
+
+dispatch: "dispatch\nadapters/core/dispatch.sh\nwrites launch script, types it" {class: proc}
+pane: "tmux pane\nengine TUI in the foreground\nclaude · pi · codex · cursor" {class: pane}
+
+stall: "crew stall-watch\ncrew/internal/stall\nframe detectors d0-d3 · d7 · d9\nprobe detectors d4-d6 · d8" {class: reader}
+frame: "frame predicates\ncrew/internal/frame" {class: reader}
+permcheck: "permission-check.sh\nadapters/core" {class: reader}
+
+nudge: "crew nudge\ncrew/internal/nudge\ntwo constant lines" {class: typist}
+rolewatch: "crew role-watch\ncrew/internal/rolewatch\npastes assignments" {class: typist}
+
+bus: "crew bus\nevents.jsonl\n+ delivered marks" {class: store}
+dispatcher: "dispatcher\ncrew watch · crew reply" {class: proc}
+human: "owner" {shape: person}
+
+dispatch -> pane: "tmux send-keys\nlaunch line"
+stall -> pane: "capture-pane" {style.animated: true}
+stall -> frame: classify
+permcheck -> pane: "capture-pane"
+permcheck -> pane: "--answer: key 1" {class: typist}
+nudge -> pane: "send-keys\n(frame-gated)" {style.animated: true}
+rolewatch -> pane: "paste-buffer + Enter"
+stall -> bus: "blocked / failed\nsource watchdog"
+pane -> bus: "crew status / msg\n(from the worker's shell)"
+bus -> dispatcher: wakes
+dispatcher -> bus: "crew reply"
+dispatcher -> nudge: "nudge --wait"
+dispatcher -> permcheck: "allow-once?"
+human -> pane: "types into the TUI"
