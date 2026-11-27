@@ -1,0 +1,1 @@
+{"type":"control_request","request_id":"req-6","request":{"subtype":"can_use_tool","tool_name":"AskUserQuestion","input":{"questions":[{"question":"Pick a colour","header":"Colour","multiSelect":false,"options":[{"label":"red","description":"r"},{"label":"blue","description":"b"}]}]},"tool_use_id":"toolu_06"}}

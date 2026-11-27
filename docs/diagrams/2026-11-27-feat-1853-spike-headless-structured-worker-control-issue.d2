@@ -1,0 +1,22 @@
+direction: right
+
+worker: "worker TUI\n(claude / pi in tmux pane)"
+pane: "tmux pane\n(rendered frames)" {shape: rectangle}
+
+watch: "crew stall-watch\nstall/frame_detectors.go d0–d9" {class: warn}
+frame: "frame classifiers\nframe.go IsPermissionPrompt\nIsPrompt · PiStopped" {class: warn}
+nudge: "crew nudge\ninternal/nudge" {class: warn}
+rolewatch: "role watcher\ninternal/rolewatch" {class: warn}
+dispatcher: "dispatcher\n(crew bus)"
+human: "human at pane\n(pane-injection)" {shape: person}
+
+worker -> pane: draws dialogs,\nquota screens
+watch -> pane: capture-pane {style.animated: true}
+watch -> frame: classify text
+frame -> watch: "prompt:/quiet:/stalled:\n(34 of 46 dialogs unparsed)" {class: warn}
+watch -> dispatcher: blocked status
+dispatcher -> nudge: directive pending
+nudge -> pane: send-keys into\nidle input box {class: warn}
+rolewatch -> pane: types assignments
+watch -> pane: auto-types continue (d9)
+human -> pane: answers dialog

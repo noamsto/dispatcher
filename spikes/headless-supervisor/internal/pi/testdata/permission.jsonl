@@ -1,0 +1,6 @@
+{"type":"extension_ui_request","id":"u1","method":"select","title":"hsup-permission {\"kind\":\"bash\",\"command\":\"touch x\",\"tool\":\"bash\",\"input\":{\"command\":\"touch x\"}}","options":["allow_once","allow_session","deny"]}
+{"type":"extension_ui_request","id":"u2","method":"input","title":"hsup-deny-reason","placeholder":""}
+{"type":"extension_ui_request","id":"u3","method":"notify","message":"hi","notifyType":"info"}
+{"type":"extension_ui_request","id":"u4","method":"select","title":"hsup-ask {\"question\":\"Pick\",\"options\":[\"red\",\"blue\"]}","options":["red","blue"]}
+{"type":"extension_ui_request","id":"u5","method":"select","title":"Plan mode - what next?","options":["Execute the plan (track progress)","Stay in plan mode","Refine the plan"]}
+{"type":"extension_ui_request","id":"u6","method":"confirm","title":"Sure?","message":"really"}

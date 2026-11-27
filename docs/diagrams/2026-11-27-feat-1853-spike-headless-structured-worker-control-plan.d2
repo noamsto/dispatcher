@@ -1,0 +1,27 @@
+direction: right
+
+hsup: "hsup supervisor\ncmd/hsup · internal/supervisor" {class: good}
+policy: "decision policy\nallow_once · allow_session\ndeny(reason) · answer" {class: good}
+transcript: "JSONL transcript\ninternal/transcript (scrubbed)" {class: good; shape: cylinder}
+lock: "session.lock\ninternal/lock (flock)" {class: good}
+
+claude: "claude -p stream-json\n--permission-prompt-tool stdio"
+pi: "pi --mode rpc\n+ pi/gate.ts extension"
+acp: "pi-bolt --mode acp\n(evaluated)" {class: info}
+
+tui: "takeover.sh\nTUI in tmux window" {shape: person}
+dispatcher: "dispatcher / crew bus\n(not wired: out of scope)" {style.stroke-dash: 3}
+
+hsup -> claude: "user msg · interrupt\ncontrol_response" {style.animated: true}
+claude -> hsup: "events · can_use_tool\napi_retry · result" {style.animated: true}
+hsup -> pi: "prompt · steer · abort\nextension_ui_response" {style.animated: true}
+pi -> hsup: "events · extension_ui_request\nauto_retry" {style.animated: true}
+hsup -> acp: "session/prompt"
+acp -> hsup: "session/request_permission"
+hsup -> policy: Request
+policy -> hsup: Decision
+hsup -> transcript: every frame
+hsup -> lock: holds while child runs
+tui -> lock: holds while TUI runs
+tui -> hsup: "ctl pause / resume"
+dispatcher -> hsup: future: directives {style.stroke-dash: 3}

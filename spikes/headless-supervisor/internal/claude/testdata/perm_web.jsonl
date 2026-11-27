@@ -1,0 +1,1 @@
+{"type":"control_request","request_id":"req-5","request":{"subtype":"can_use_tool","tool_name":"WebFetch","input":{"url":"https://example.com/a?b=1","prompt":"summarise"},"tool_use_id":"toolu_05"}}

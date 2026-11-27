@@ -1,0 +1,1 @@
+{"type":"control_request","request_id":"req-4","request":{"subtype":"can_use_tool","tool_name":"mcp__echo__echo","mcp_server":{"name":"echo","source":"dynamic"},"input":{"text":"hi"},"tool_use_id":"toolu_04"}}
