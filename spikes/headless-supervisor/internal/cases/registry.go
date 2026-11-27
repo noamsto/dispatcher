@@ -37,7 +37,6 @@ type Case struct {
 	Run     func(ctx context.Context, env *CaseEnv) (string, error)
 }
 
-// Applies reports whether the case is defined for engine.
 func (c Case) Applies(engine string) bool {
 	engines := c.Engines
 	if len(engines) == 0 {
@@ -65,7 +64,6 @@ func Register(c Case) {
 	registry[c.Name] = c
 }
 
-// Lookup returns the case registered under name.
 func Lookup(name string) (Case, bool) {
 	mu.Lock()
 	defer mu.Unlock()
@@ -73,7 +71,6 @@ func Lookup(name string) (Case, bool) {
 	return c, ok
 }
 
-// All returns every case sorted by name.
 func All() []Case {
 	mu.Lock()
 	defer mu.Unlock()

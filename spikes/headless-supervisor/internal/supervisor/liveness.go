@@ -36,7 +36,6 @@ func (m *Monitor) now() time.Time {
 	return time.Now()
 }
 
-// Begin opens a turn (a user message was sent).
 func (m *Monitor) Begin() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -44,7 +43,6 @@ func (m *Monitor) Begin() {
 	m.last = m.now()
 }
 
-// Observe feeds one engine event.
 func (m *Monitor) Observe(ev event.Event) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

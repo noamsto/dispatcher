@@ -127,10 +127,8 @@ func (r *Run) note(v any) {
 	}
 }
 
-// Note logs a supervisor remark to the transcript.
 func (r *Run) Note(text string) { r.note(map[string]string{"sup": text}) }
 
-// Events returns a copy of every event recorded so far.
 func (r *Run) Events() []event.Event {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -197,7 +195,6 @@ func (r *Run) WaitFor(pred func(event.Event) bool, timeout time.Duration) (event
 	}
 }
 
-// WaitKind is WaitFor on a single event kind.
 func (r *Run) WaitKind(k event.Kind, timeout time.Duration) (event.Event, error) {
 	return r.WaitFor(func(e event.Event) bool { return e.Kind == k }, timeout)
 }
@@ -224,7 +221,6 @@ func (r *Run) Turn(text string, timeout time.Duration) (event.Event, error) {
 	return r.WaitKind(event.KindTurnEnd, timeout)
 }
 
-// Done is closed once the engine's event stream has ended.
 func (r *Run) Done() <-chan struct{} { return r.done }
 
 // Shutdown closes the engine gracefully and kills it when grace elapses.
