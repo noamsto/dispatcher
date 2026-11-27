@@ -40,6 +40,7 @@ Identity and crews:
   occupants       Print the crewed panes holding a worktree path
   register        Register this crew in its own store
   deregister      Drop this crew's registration
+  init            Create a crew directory (meta.json, events.jsonl) without claiming it
   crews           List every crew with traffic on this repo's bus
   adopt           Re-attach to an on-disk crew id
   index           Add a crew to, or rebuild, the repo index of layout-2 crews

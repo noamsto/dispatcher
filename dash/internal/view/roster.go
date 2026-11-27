@@ -36,13 +36,18 @@ type WorkerDispatcher struct {
 	Where  string  `json:"where"`
 	Repo   *string `json:"repo"`
 	Common *string `json:"common"`
+	// PID, Pane and Alive are the dispatcher's registration (pid file, pane
+	// file, signal-0 probe); null when unknown.
+	PID   *int    `json:"pid"`
+	Pane  *string `json:"pane"`
+	Alive *bool   `json:"alive"`
 }
 
 func dispatcherOf(loc *data.DispatcherLoc) *WorkerDispatcher {
 	if loc == nil {
 		return nil
 	}
-	return &WorkerDispatcher{Where: loc.Where, Repo: loc.Repo, Common: loc.Common}
+	return &WorkerDispatcher{Where: loc.Where, Repo: loc.Repo, Common: loc.Common, PID: loc.PID, Pane: loc.Pane, Alive: loc.Alive}
 }
 
 type WorkerRow struct {

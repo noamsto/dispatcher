@@ -70,6 +70,10 @@ type registerCmd struct {
 
 type deregisterCmd struct{}
 
+type initCmd struct {
+	ID string `arg:"" optional:"" name:"id"`
+}
+
 type indexAddCmd struct {
 	Crew *string `name:"crew"`
 }
@@ -893,6 +897,7 @@ var wordings = map[string]wording{
 	"inbox":      plain("inbox"),
 	"register":   plain("register"),
 	"deregister": plain("deregister"),
+	"init":       plain("init"),
 	"log":        plain("log"),
 	"adopt":      plain("adopt"),
 	"pr-watch": {

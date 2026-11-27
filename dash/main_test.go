@@ -270,8 +270,8 @@ func TestRetroReportWithoutRowsRendersNoNotesYet(t *testing.T) {
 	}
 }
 
-const usageText = "usage: crew dash [--crew <id>] [--narrow | --once | --json [--view <name> [--watch] [--keeps]]]\n" +
-	"views: overview, roster, budget, runs, settings, map, fleet\n"
+const usageText = "usage: crew dash [--crew <id>] [--narrow | --once | --json [--view <name> [--watch] [--keeps] [--since <cursor>] [--limit <n>]]]\n" +
+	"views: overview, roster, budget, runs, settings, map, fleet, events\n"
 
 func TestUnknownArgumentExits2WithUsage(t *testing.T) {
 	s := newSandbox(t)

@@ -1002,6 +1002,7 @@ crew dash --json --view <name>           # one view model as JSON
 crew dash --json --view <name> --watch   # one JSON line per bus change
 crew dash --json --view fleet --watch    # the machine-wide fleet view
 crew dash --json --view fleet --keeps    # also probe `crew reap --dry-run --json` for keep reasons (~30s)
+crew dash --json --view events --since <cursor>   # cursor-resumable bus rows (add --watch to stream)
 ```
 
 Theme: the dash draws Catppuccin Mocha on dark terminals and Latte on light

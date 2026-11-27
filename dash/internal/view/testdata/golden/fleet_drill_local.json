@@ -111,6 +111,9 @@
       "crew": "c1",
       "branch": "feat/a",
       "name": "w-a",
+      "session": null,
+      "live": true,
+      "exit_suspect": null,
       "host": "",
       "origin": "local",
       "state": "working",
@@ -217,13 +220,19 @@
       "dispatcher": {
         "where": "here",
         "repo": null,
-        "common": null
+        "common": null,
+        "pid": null,
+        "pane": null,
+        "alive": null
       }
     },
     {
       "crew": "c1",
       "branch": "feat/b",
       "name": "w-b",
+      "session": null,
+      "live": true,
+      "exit_suspect": null,
       "host": "",
       "origin": "local",
       "state": "pr_open",
@@ -349,13 +358,19 @@
       "dispatcher": {
         "where": "here",
         "repo": null,
-        "common": null
+        "common": null,
+        "pid": null,
+        "pane": null,
+        "alive": null
       }
     },
     {
       "crew": "c1",
       "branch": "feat/r1",
       "name": "w-r1",
+      "session": null,
+      "live": true,
+      "exit_suspect": null,
       "host": "halo",
       "origin": "remote_worker",
       "state": "working",
@@ -428,13 +443,19 @@
       "dispatcher": {
         "where": "here",
         "repo": null,
-        "common": null
+        "common": null,
+        "pid": null,
+        "pane": null,
+        "alive": null
       }
     },
     {
       "crew": "c1",
       "branch": "feat/r2",
       "name": "w-r2",
+      "session": null,
+      "live": true,
+      "exit_suspect": null,
       "host": "tp",
       "origin": "remote_worker",
       "state": "working",
@@ -507,13 +528,19 @@
       "dispatcher": {
         "where": "here",
         "repo": null,
-        "common": null
+        "common": null,
+        "pid": null,
+        "pane": null,
+        "alive": null
       }
     },
     {
       "crew": "c1",
       "branch": "feat/far",
       "name": "far",
+      "session": null,
+      "live": null,
+      "exit_suspect": null,
       "host": "far",
       "origin": "remote_worker",
       "state": "",
@@ -586,7 +613,10 @@
       "dispatcher": {
         "where": "here",
         "repo": null,
-        "common": null
+        "common": null,
+        "pid": null,
+        "pane": null,
+        "alive": null
       }
     }
   ],

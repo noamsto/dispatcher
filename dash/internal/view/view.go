@@ -17,7 +17,7 @@ import (
 const SchemaVersion = 1
 
 // Names is every view `--view` accepts, in tab order.
-var Names = []string{"overview", "roster", "budget", "runs", "settings", "map", "fleet"}
+var Names = []string{"overview", "roster", "budget", "runs", "settings", "map", "fleet", "events"}
 
 // Loaded says which sources have delivered at least once.
 type Loaded struct {
@@ -59,6 +59,8 @@ func Build(name string, in Inputs) (any, error) {
 		return BuildMap(in), nil
 	case "fleet":
 		return nil, errors.New("view fleet is machine-wide: build it with BuildFleet from FleetInputs")
+	case "events":
+		return nil, errors.New("view events reads the log from a cursor: build it with BuildEvents from data.ReadEvents")
 	}
 	return nil, fmt.Errorf("unknown view %q (valid: %s)", name, strings.Join(Names, ", "))
 }

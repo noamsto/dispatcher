@@ -54,8 +54,11 @@ func runWatch(ctx context.Context, out io.Writer, changes <-chan struct{}, colle
 			if r.err != nil {
 				return r.err
 			}
-			if err := enc.Encode(r.v); err != nil {
-				return err
+			// A nil value means nothing changed worth a line (events view).
+			if r.v != nil {
+				if err := enc.Encode(r.v); err != nil {
+					return err
+				}
 			}
 			if pending {
 				pending = false

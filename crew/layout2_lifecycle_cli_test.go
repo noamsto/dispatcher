@@ -375,3 +375,61 @@ func TestRegisterVisitingBindsEnvCrewOverTaskDoc(t *testing.T) {
 	}
 	missing(t, c.store("victim")+"/meta.json")
 }
+
+func TestInitCLI(t *testing.T) {
+	t.Run("creates dir, meta and empty log, claims nothing", func(t *testing.T) {
+		c := newLifecycleCLI(t)
+		out, _ := c.expect(0, "init", "c3")
+		var res map[string]any
+		if err := json.Unmarshal([]byte(out), &res); err != nil {
+			t.Fatalf("stdout %q: %v", out, err)
+		}
+		if res["id"] != "c3" || res["dir"] != c.store("c3") || res["log"] != c.store("c3")+"/events.jsonl" || res["created"] != true {
+			t.Errorf("result = %v", res)
+		}
+		if m := c.meta("c3"); m["created_by"] != "init" || m["layout"] != float64(2) || m["visiting"] != false {
+			t.Errorf("meta = %v", m)
+		}
+		eq(t, "log", readText(t, c.store("c3")+"/events.jsonl"), "")
+		missing(t, c.store("c3")+"/pid")
+		missing(t, c.store("c3")+"/pane")
+	})
+	t.Run("idempotent, keeps the log", func(t *testing.T) {
+		c := newLifecycleCLI(t)
+		c.mustRun("init", "c3")
+		if err := os.WriteFile(c.store("c3")+"/events.jsonl", []byte("{\"kind\":\"x\"}\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		out, _ := c.expect(0, "init", "c3")
+		if !strings.Contains(out, `"created":false`) {
+			t.Errorf("second init = %q", out)
+		}
+		eq(t, "log", readText(t, c.store("c3")+"/events.jsonl"), "{\"kind\":\"x\"}\n")
+	})
+	t.Run("outside a repo, id from CREW_ID", func(t *testing.T) {
+		c := newLifecycleCLI(t)
+		c.as("c4")
+		c.expectIn(c.outside, 0, "init")
+		if m := c.meta("c4"); m["home_repo"] != nil {
+			t.Errorf("home_repo = %v, want null", m["home_repo"])
+		}
+	})
+	t.Run("refusals", func(t *testing.T) {
+		c := newLifecycleCLI(t)
+		_, errOut := c.expect(1, "init", "../x")
+		if !strings.Contains(errOut, "invalid crew id") {
+			t.Errorf("stderr = %q", errOut)
+		}
+		if err := os.MkdirAll(c.crewDir("c5"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		_, errOut = c.expect(1, "init", "c5")
+		if !strings.Contains(errOut, "already exists at layout 1") {
+			t.Errorf("stderr = %q", errOut)
+		}
+		_, errOut = c.expect(1, "init")
+		if !strings.Contains(errOut, "needs a crew id") {
+			t.Errorf("stderr = %q", errOut)
+		}
+	})
+}
