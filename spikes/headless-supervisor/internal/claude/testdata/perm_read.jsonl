@@ -1,0 +1,1 @@
+{"type":"control_request","request_id":"req-3","request":{"subtype":"can_use_tool","tool_name":"Read","input":{"file_path":"/outside/secret-free.txt"},"tool_use_id":"toolu_03"}}

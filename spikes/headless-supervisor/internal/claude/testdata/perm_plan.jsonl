@@ -1,0 +1,1 @@
+{"type":"control_request","request_id":"req-7","request":{"subtype":"can_use_tool","tool_name":"ExitPlanMode","input":{"plan":"1. create plan.txt"},"tool_use_id":"toolu_07"}}
