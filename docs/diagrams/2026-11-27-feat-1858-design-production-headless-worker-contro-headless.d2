@@ -1,0 +1,43 @@
+direction: right
+
+classes: {
+  proc: {style: {stroke: "#1565C0"; stroke-width: 2}}
+  new: {style: {stroke: "#2E7D32"; stroke-width: 3; stroke-dash: 0; bold: true}}
+  newstore: {shape: cylinder; style: {stroke: "#2E7D32"; stroke-width: 3}}
+  store: {shape: cylinder; style: {stroke: "#757575"; stroke-width: 2}}
+  legacy: {style: {stroke: "#757575"; stroke-width: 2; stroke-dash: 3}}
+}
+
+dispatch: "dispatch --headless\nadapters/core/dispatch.sh" {class: proc}
+sup: "crew sup run (new)\ncrew/internal/sup\nforeground in the worker pane" {class: new}
+policy: "crew/internal/sup/policy (new)\nDecide: allow · allow_session\ndeny · escalate\nruns the guard scripts" {class: new}
+
+claude: "claude -p stream-json\n--permission-prompt-tool stdio\ncan_use_tool" {class: proc}
+pi: "pi --mode rpc\n+ sup-gate extension (new)\nextension_ui_request" {class: proc}
+
+supdir: "<Crew.Dir>/sup/<worker-key>/ (new)\nsession.json · session.lock\njournal.jsonl · sup.json" {class: newstore}
+socket: "control socket (new)\n\$XDG_RUNTIME_DIR/crew/sup/<h>.sock\npeer-checked" {class: new}
+takeover: "take-over window (new)\nsup-takeover: engine TUI\nflock -o session.lock" {class: new}
+stall: "crew stall-watch --sup (new flag)\nreads sup.json + journal" {class: new}
+
+bus: "crew bus\nevents.jsonl" {class: store}
+dispatcher: "dispatcher\ncrew sup respond (new)" {class: proc}
+pane: "codex · cursor\nunchanged pane lane" {class: legacy}
+
+dispatch -> sup: "launch line typed\ninto the pane's shell"
+dispatch -> pane: "today's launch"
+sup -> claude: "stdin: user msg · control_response" {style.animated: true}
+claude -> sup: "stdout: events · can_use_tool" {style.animated: true}
+sup -> pi: "prompt · steer · ui response" {style.animated: true}
+pi -> sup: "events · gate requests" {style.animated: true}
+sup -> policy: request
+policy -> sup: decision
+sup -> supdir: "holds session.lock\njournals every frame"
+sup -> bus: "blocked: sup\npermission: … [req id]"
+bus -> sup: "delivery loop\nsend between turns"
+bus -> dispatcher: wakes
+dispatcher -> socket: "respond <req> <verdict>"
+socket -> sup
+takeover -> socket: "pause / resume --after-takeover"
+takeover -> supdir: "flock -o while TUI runs"
+stall -> supdir: liveness
