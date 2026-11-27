@@ -15,13 +15,15 @@ policy: "crew/internal/sup/policy (new)\nDecide: allow · allow_session\ndeny ·
 claude: "claude -p stream-json\n--permission-prompt-tool stdio\ncan_use_tool" {class: proc}
 pi: "pi --mode rpc\n+ sup-gate extension (new)\nextension_ui_request" {class: proc}
 
-supdir: "<Crew.Dir>/sup/<worker-key>/ (new)\nsession.json · session.lock\njournal.jsonl · sup.json" {class: newstore}
+supdir: "<Crew.Dir>/sup/<worker-key>/ (new)\nsession.json · session.lock · sup.lock\njournal.jsonl · sup.json" {class: newstore}
 socket: "control socket (new)\n\$XDG_RUNTIME_DIR/crew/sup/<h>.sock\npeer-checked" {class: new}
+tocli: "crew sup takeover (new)\nCLI · dash action · C-t" {class: new}
 takeover: "take-over window (new)\nsup-takeover: engine TUI\nflock -o session.lock" {class: new}
 stall: "crew stall-watch --sup (new flag)\nreads sup.json + journal" {class: new}
 
 bus: "crew bus\nevents.jsonl" {class: store}
-dispatcher: "dispatcher\ncrew sup respond (new)" {class: proc}
+dispatcher: "dispatcher\nrelays · deny · answer\nnever allows" {class: proc}
+human: "human: terminal or dash\ncrew sup show (new)\nallow --digest, confirmed" {class: new}
 pane: "codex · cursor\nunchanged pane lane" {class: legacy}
 
 dispatch -> sup: "launch line typed\ninto the pane's shell"
@@ -32,12 +34,16 @@ sup -> pi: "prompt · steer · ui response" {style.animated: true}
 pi -> sup: "events · gate requests" {style.animated: true}
 sup -> policy: request
 policy -> sup: decision
-sup -> supdir: "holds session.lock\njournals every frame"
-sup -> bus: "blocked: sup\npermission: … [req id]"
+sup -> supdir: "holds sup.lock + session.lock\njournals every frame"
+sup -> bus: "blocked: sup, a wake-up\npermission: … [req id]"
 bus -> sup: "delivery loop\nsend between turns"
 bus -> dispatcher: wakes
-dispatcher -> socket: "respond <req> <verdict>"
+dispatcher -> socket: "show · respond deny | answer"
+dispatcher -> human: relays
+human -> socket: "show · respond allow --digest"
 socket -> sup
-takeover -> socket: "pause / resume --after-takeover"
+tocli -> socket: "pause takeover"
+tocli -> takeover: "opens window"
+takeover -> socket: "trap: resume --after-takeover"
 takeover -> supdir: "flock -o while TUI runs"
 stall -> supdir: liveness
